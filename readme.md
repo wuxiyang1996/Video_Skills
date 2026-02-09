@@ -1,5 +1,34 @@
 # Enhance Agentic Decision-making in Multiple-player long-horizon games with unsupervised and synthetic experiences
 
+[![GitHub Repository](https://img.shields.io/badge/GitHub-Repository-blue)](https://github.com/wuxiyang1996/Game-AI-Agent)
+
+## Overview
+
+This repository provides a framework for enhancing agentic decision-making in multi-player, long-horizon games through unsupervised and synthetic experience generation. The framework integrates with multiple game environments and supports both training-free (RAG-based) and trainable (RL-based) agent architectures.
+
+## Quick Links
+
+- **📦 Environment Wrappers**: [env/](env/) - Natural language wrappers and evaluation scripts for game environments
+  - [Overcooked AI](env/env_wrappers/overcooked_nl_wrapper.py) - Cooperative cooking game wrapper
+    - Source: [overcooked_ai](https://github.com/HumanCompatibleAI/overcooked_ai) by HumanCompatibleAI
+  - [Avalon](env/env_wrappers/avalon_nl_wrapper.py) - Hidden-role deduction game wrapper
+    - Source: [AgentEvolver Games](https://github.com/modelscope/AgentEvolver/blob/main/games/README.md) by ModelScope
+  - [Diplomacy](env/env_wrappers/diplomacy_nl_wrapper.py) - Strategic negotiation game wrapper
+    - Source: [AgentEvolver Games](https://github.com/modelscope/AgentEvolver/blob/main/games/README.md) by ModelScope
+  - [Evaluation Scripts](env/README.md) - Test scripts for running agents in these environments
+
+- **🔗 Repository**: [GitHub - Game-AI-Agent](https://github.com/wuxiyang1996/Game-AI-Agent)
+
+## Dependencies
+
+This framework integrates with the following game environments:
+
+- **Overcooked AI**: Uses [overcooked_ai](https://github.com/HumanCompatibleAI/overcooked_ai) - A benchmark environment for fully cooperative human-AI performance, based on the popular video game Overcooked.
+
+- **Avalon & Diplomacy**: Uses [AgentEvolver Games](https://github.com/modelscope/AgentEvolver/blob/main/games/README.md) - A unified arena for interaction, evaluation, and training of AI agents in social reasoning games (Avalon: hidden-role deduction, Diplomacy: strategic negotiation).
+
+## Introduction
+
 The intention of this readme file is to provide an outline of each module serving for different purposes, and provide some initial instructions for vibe coding, also for the ease of integration and debugging.
 
 The instruction prompt includes the function definition and the ToDo list, including all the functions under a class serving for different purposes.
