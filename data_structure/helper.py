@@ -1,9 +1,13 @@
 # This code is used to store the assistive functions for the data structure function which canot be included 
 # in the data structure class due to some constraints.
 
-from data_structure.experience import Experience
+# Note: Experience import removed to avoid circular import with experience.py
+# If needed, import Experience using TYPE_CHECKING or import inside functions
 from API_func import ask_model
-from typing import List
+from typing import List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from data_structure.experience import Experience
 
 # # This is a helpere function to generate the intentions for the experience.
 # # Only for expereince labeling process. We should have intentions for our own agents.

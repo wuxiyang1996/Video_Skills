@@ -62,6 +62,8 @@ from agents.dummy_agent import (
     GAME_OVERCOOKED,
     OVERCOOKED_VALID_ACTIONS,
     _default_action,
+    run_episode_with_experience_collection,
+    AgentBufferManager,
 )
 
 
@@ -136,13 +138,18 @@ def random_nl_action() -> str:
 def choose_action(obs_nl: str, mode: str, model: str) -> str:
     """Choose an NL action string for one agent based on mode."""
     if mode == "llm":
-        return language_agent_action(
-            state_nl=obs_nl,
-            game=GAME_OVERCOOKED,
-            model=model,
-            use_function_call=True,
-            temperature=0.3,
-        )
+        try:
+            action = language_agent_action(
+                state_nl=obs_nl,
+                game=GAME_OVERCOOKED,
+                model=model,
+                use_function_call=True,
+                temperature=0.3,
+            )
+            return action if action else _default_action(GAME_OVERCOOKED)
+        except Exception as e:
+            print(f"  [WARNING] LLM action failed: {e}, using fallback action")
+            return _default_action(GAME_OVERCOOKED)
     elif mode == "random_nl":
         return random_nl_action()
     else:  # fallback
@@ -178,11 +185,31 @@ def run_episode(
     gui_delay: int,
     verbose: bool,
     episode_id: int,
+    use_experience_collection: bool = False,
+    buffer_manager: Optional[AgentBufferManager] = None,
 ) -> dict:
     """
     Run one multi-agent episode.  Both Chef 0 and Chef 1 are driven by the
     dummy agent.  Prints state + action for every agent each step.
+    
+    Args:
+        use_experience_collection: If True, use experience/episode collection.
+        buffer_manager: Optional buffer manager for experience collection.
     """
+
+    # Use experience collection if requested
+    if use_experience_collection and buffer_manager is not None:
+        return _run_episode_with_experience_collection(
+            layout_name=layout_name,
+            horizon=horizon,
+            mode=mode,
+            model=model,
+            gui=gui,
+            gui_delay=gui_delay,
+            verbose=verbose,
+            episode_id=episode_id,
+            buffer_manager=buffer_manager,
+        )
 
     # 1. Build multi-agent env
     adapter = OvercookedMultiAgentAdapter(layout_name=layout_name, horizon=horizon)
@@ -234,6 +261,7 @@ def run_episode(
         total_reward += reward
         state = info.get("overcooked_state")
 
+        # Always print state and actions (not just in verbose mode)
         _print_step_header(
             step_count, state, obs_list,
             action_0, action_1,
@@ -276,6 +304,140 @@ def run_episode(
     return result
 
 
+def _run_episode_with_experience_collection(
+    layout_name: str,
+    horizon: int,
+    mode: str,
+    model: str,
+    gui: bool,
+    gui_delay: int,
+    verbose: bool,
+    episode_id: int,
+    buffer_manager: AgentBufferManager,
+) -> dict:
+    """
+    Run one episode with experience collection.
+    Manually collects experiences since Overcooked uses list-based observations.
+    """
+    from data_structure.experience import Experience, Episode
+    
+    # Build multi-agent env
+    adapter = OvercookedMultiAgentAdapter(layout_name=layout_name, horizon=horizon)
+    env = OvercookedNLWrapper(
+        env=adapter,
+        horizon=horizon,
+        multi_agent=True,
+        show_gui=gui,
+        gui_delay_ms=gui_delay if gui else None,
+    )
+    
+    # Reset
+    obs_list, info = env.reset()
+    experiences = []
+    total_reward = 0.0
+    step_count = 0
+    action_counts_0: Dict[str, int] = {}
+    action_counts_1: Dict[str, int] = {}
+    
+    task = f"Overcooked episode {episode_id + 1} - Layout: {layout_name}"
+    
+    # Always print episode header (not just verbose)
+    print(f"\n{'='*78}")
+    print(f"  Episode {episode_id + 1}  |  Layout: {layout_name}  |  "
+          f"Horizon: {horizon}  |  Mode: {mode} (with experience collection)")
+    print(f"{'='*78}")
+    
+    prev_state = str(obs_list) if isinstance(obs_list, list) else str(obs_list)
+    terminated = False
+    truncated = False
+    
+    while not (terminated or truncated) and step_count < horizon:
+        step_count += 1
+        
+        # Choose actions
+        action_0 = choose_action(obs_list[0], mode, model)
+        action_1 = choose_action(obs_list[1], mode, model)
+        joint_action = [action_0, action_1]
+        
+        action_counts_0[action_0] = action_counts_0.get(action_0, 0) + 1
+        action_counts_1[action_1] = action_counts_1.get(action_1, 0) + 1
+        
+        # Step environment
+        try:
+            next_obs_list, reward, terminated, truncated, next_info = env.step(joint_action)
+        except Exception as e:
+            if verbose:
+                print(f"\n  [ERROR at step {step_count}] {e}")
+            break
+        
+        total_reward += reward
+        next_state = str(next_obs_list) if isinstance(next_obs_list, list) else str(next_obs_list)
+        done = terminated or truncated
+        
+        # Create experience
+        experience = Experience(
+            state=prev_state,
+            action=joint_action,  # Store as list for multi-agent
+            reward=float(reward),
+            next_state=next_state,
+            done=done,
+            tasks=task,
+            sub_tasks=None,
+        )
+        experience.idx = step_count - 1
+        experiences.append(experience)
+        
+        # Always print state and actions for experience collection mode (not just verbose)
+        state_obj = next_info.get("overcooked_state")
+        print(f"\n  Step {step_count}:")
+        print(f"    State: {format_player_line(state_obj, 0) if state_obj else 'N/A'} | {format_player_line(state_obj, 1) if state_obj else 'N/A'}")
+        print(f"    Actions: Chef 0 -> {action_0}, Chef 1 -> {action_1}")
+        print(f"    Reward: {reward:.2f} | Cumulative: {total_reward:.2f}")
+        
+        # Update for next iteration
+        obs_list = next_obs_list
+        info = next_info
+        prev_state = next_state
+    
+    # Create episode
+    episode = Episode(experiences=experiences, task=task)
+    episode.set_outcome()
+    
+    # Add to buffers
+    buffer_manager.experience_buffer.add_experience(episode)
+    buffer_manager.episode_buffer.add_episode(episode)
+    
+    if gui:
+        env.close_gui()
+    
+    result = {
+        "episode_id": episode_id,
+        "layout": layout_name,
+        "horizon": horizon,
+        "mode": mode,
+        "steps": len(experiences),
+        "total_reward": total_reward,
+        "terminated": terminated,
+        "truncated": truncated,
+        "action_distribution_agent0": action_counts_0,
+        "action_distribution_agent1": action_counts_1,
+        "episode": episode,
+    }
+    
+    if verbose:
+        print(f"\n{'-'*78}")
+        print(f"  Episode {episode_id + 1} Summary (with experience collection)")
+        print(f"{'-'*78}")
+        print(f"  Steps:         {len(experiences)}")
+        print(f"  Total Reward:  {total_reward:.2f}")
+        print(f"  Terminated:    {terminated}")
+        print(f"  Truncated:     {truncated}")
+        print(f"  Chef 0 actions: {action_counts_0}")
+        print(f"  Chef 1 actions: {action_counts_1}")
+    
+    return result
+
+
 def _print_step_header(
     step: int,
     state: Any,
@@ -286,40 +448,53 @@ def _print_step_header(
     cumulative_reward: float,
     verbose: bool,
 ) -> None:
-    """Print per-step info for both agents."""
+    """Print per-step info for both agents with detailed state and actions."""
 
     tag = f"Step {step}"
     if step == 0:
         tag = "Initial State"
 
-    print(f"\n+-- {tag} " + "-" * (73 - len(tag)) + "+")
+    print(f"\n{'='*78}")
+    print(f"  {tag}")
+    print(f"{'='*78}")
 
-    # Compact player summary from raw state
+    # Print state information
     if state is not None:
-        print(f"|  Chef 0: {format_player_line(state, 0)}")
-        print(f"|  Chef 1: {format_player_line(state, 1)}")
+        print(f"\n  STATE:")
+        print(f"    Chef 0: {format_player_line(state, 0)}")
+        print(f"    Chef 1: {format_player_line(state, 1)}")
+        
+        # Print additional state details if available
+        if hasattr(state, "objects"):
+            print(f"    Objects in environment: {len(state.objects) if state.objects else 0}")
+        if hasattr(state, "terrain"):
+            print(f"    Terrain: {type(state.terrain).__name__}")
 
-    # Actions taken (not shown at step 0)
+    # Print actions taken (not shown at step 0)
     if action_0 is not None:
-        print(f"|  Chef 0 action -> {action_0}")
-        print(f"|  Chef 1 action -> {action_1}")
+        print(f"\n  ACTIONS TAKEN:")
+        print(f"    Chef 0 -> {action_0}")
+        print(f"    Chef 1 -> {action_1}")
 
-    # Reward
+    # Print reward information
     if step > 0:
-        reward_str = f"  reward={reward:.2f}" if reward != 0 else ""
-        print(f"|  Cumulative reward: {cumulative_reward:.2f}{reward_str}")
+        print(f"\n  REWARD:")
+        print(f"    Step reward: {reward:.2f}")
+        print(f"    Cumulative reward: {cumulative_reward:.2f}")
 
     # Full NL observations (verbose mode)
     if verbose and obs_list:
-        print(f"|")
-        print(f"|  -- Chef 0 observation --")
+        print(f"\n  OBSERVATIONS:")
+        print(f"    -- Chef 0 observation --")
         for line in obs_list[0].split("\n"):
-            print(f"|    {line}")
-        print(f"|  -- Chef 1 observation --")
+            if line.strip():
+                print(f"    {line}")
+        print(f"    -- Chef 1 observation --")
         for line in obs_list[1].split("\n"):
-            print(f"|    {line}")
+            if line.strip():
+                print(f"    {line}")
 
-    print("+" + "-" * 78 + "+")
+    print(f"{'='*78}")
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +533,14 @@ Modes:
                         help="Milliseconds to pause per GUI frame (default: 200)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Print full NL observations each step")
+    parser.add_argument("--use_experience_collection", action="store_true",
+                        help="Use experience/episode collection with buffers")
+    parser.add_argument("--experience_buffer_size", type=int, default=10000,
+                        help="Size of experience buffer (default: 10000)")
+    parser.add_argument("--episode_buffer_size", type=int, default=1000,
+                        help="Size of episode buffer (default: 1000)")
+    parser.add_argument("--save_episode_buffer", type=str, default=None,
+                        help="Path to save episode buffer as JSON file after all episodes")
 
     args = parser.parse_args()
 
@@ -379,6 +562,14 @@ Modes:
     print(f"  GUI:       {'ON' if args.gui else 'OFF'}"
           + (f"  (delay {args.gui_delay}ms)" if args.gui else ""))
 
+    # Create buffer manager if using experience collection
+    buffer_manager = None
+    if args.use_experience_collection:
+        buffer_manager = AgentBufferManager(
+            experience_buffer_size=args.experience_buffer_size,
+            episode_buffer_size=args.episode_buffer_size,
+        )
+    
     # Run episodes
     all_results = []
     t0 = time.time()
@@ -393,8 +584,16 @@ Modes:
             gui_delay=args.gui_delay,
             verbose=args.verbose,
             episode_id=ep,
+            use_experience_collection=args.use_experience_collection,
+            buffer_manager=buffer_manager,
         )
         all_results.append(result)
+    
+    # Save episode buffer if requested
+    if args.use_experience_collection and buffer_manager and args.save_episode_buffer:
+        buffer_manager.save_episode_buffer(args.save_episode_buffer)
+        print(f"\nSaved episode buffer to {args.save_episode_buffer}")
+        print(f"Buffer stats: {buffer_manager.get_buffer_stats()}")
 
     elapsed = time.time() - t0
 

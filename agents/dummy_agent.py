@@ -10,6 +10,12 @@ Supports all three env_wrappers:
 The agent auto-detects which game is being played from the observation text, or
 can be told explicitly via the `game` parameter.
 
+Experience Collection:
+  Use `run_episode_with_experience_collection()` to run a full episode and automatically
+  collect all experiences in an Episode object following the data structure defined
+  in data_structure.experience. Each step creates an Experience object with state,
+  action, reward, next_state, and done fields, all stored within the Episode.
+
 Usage with OvercookedNLWrapper:
 
   from env_wrappers import OvercookedNLWrapper
@@ -69,7 +75,7 @@ Usage with DiplomacyNLWrapper (multi-agent):
 
 import json
 import re
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict, Any
 
 # Optional: use API_func.ask_model for generic model routing
 try:
@@ -83,6 +89,17 @@ try:
 except (ImportError, AttributeError):
     openai = None
     openai_api_key = None
+
+# Import Experience and Episode classes, and buffers
+try:
+    from data_structure.experience import Experience, Episode, Experience_Replay_Buffer, Episode_Buffer
+except ImportError as e:
+    import warnings
+    warnings.warn(f"Failed to import experience classes: {e}. Experience collection features will be unavailable.")
+    Experience = None
+    Episode = None
+    Experience_Replay_Buffer = None
+    Episode_Buffer = None
 
 
 # ---------------------------------------------------------------------------
@@ -687,3 +704,315 @@ def language_agent_action(
         model=model,
         temperature=temperature,
     )
+
+
+# ---------------------------------------------------------------------------
+# Buffer management class
+# ---------------------------------------------------------------------------
+
+class AgentBufferManager:
+    """
+    Helper class to manage experience and episode buffers for the dummy agent.
+    
+    This class maintains both Experience_Replay_Buffer and Episode_Buffer,
+    making it easy to collect and manage experiences across multiple episodes.
+    """
+    
+    def __init__(
+        self,
+        experience_buffer_size: int = 10000,
+        episode_buffer_size: int = 1000,
+    ):
+        """
+        Initialize buffer manager with specified buffer sizes.
+        
+        Args:
+            experience_buffer_size: Maximum number of experiences to store.
+            episode_buffer_size: Maximum number of episodes to store.
+        """
+        if Experience_Replay_Buffer is None or Episode_Buffer is None:
+            raise ImportError(
+                "Experience_Replay_Buffer and Episode_Buffer classes must be imported. "
+                "Make sure data_structure.experience is available."
+            )
+        
+        self.experience_buffer = Experience_Replay_Buffer(experience_buffer_size)
+        self.episode_buffer = Episode_Buffer(episode_buffer_size)
+    
+    def run_episode(
+        self,
+        env,
+        task: str = "",
+        game: Optional[str] = None,
+        model: Optional[str] = None,
+        use_function_call: bool = True,
+        temperature: float = 0.3,
+        max_steps: int = 1000,
+        verbose: bool = False,
+    ) -> Episode:
+        """
+        Run an episode and automatically add experiences/episodes to buffers.
+        
+        This is a convenience wrapper around run_episode_with_experience_collection
+        that automatically uses this manager's buffers.
+        
+        Args:
+            env: Environment instance.
+            task: Task description for the episode.
+            game: Game type (auto-detected if None).
+            model: Model name for the agent.
+            use_function_call: Whether to use GPT function calling.
+            temperature: Sampling temperature.
+            max_steps: Maximum steps per episode.
+            verbose: Whether to print progress.
+        
+        Returns:
+            Episode object containing all collected experiences.
+        """
+        return run_episode_with_experience_collection(
+            env=env,
+            task=task,
+            game=game,
+            model=model,
+            use_function_call=use_function_call,
+            temperature=temperature,
+            max_steps=max_steps,
+            verbose=verbose,
+            experience_buffer=self.experience_buffer,
+            episode_buffer=self.episode_buffer,
+        )
+    
+    def get_experience_buffer(self) -> Experience_Replay_Buffer:
+        """Get the experience replay buffer."""
+        return self.experience_buffer
+    
+    def get_episode_buffer(self) -> Episode_Buffer:
+        """Get the episode buffer."""
+        return self.episode_buffer
+    
+    def sample_experiences(self, batch_size: int) -> List[Experience]:
+        """Sample a batch of experiences from the experience buffer."""
+        return self.experience_buffer.sample_experience(batch_size)
+    
+    def sample_episodes(self, batch_size: int) -> List[Episode]:
+        """Sample a batch of episodes from the episode buffer."""
+        return self.episode_buffer.sample_episode(batch_size)
+    
+    def get_buffer_stats(self) -> Dict[str, Any]:
+        """Get statistics about the buffers."""
+        return {
+            "experience_buffer_size": len(self.experience_buffer),
+            "experience_buffer_capacity": self.experience_buffer.buffer_size,
+            "episode_buffer_size": len(self.episode_buffer),
+            "episode_buffer_capacity": self.episode_buffer.buffer_size,
+        }
+    
+    def save_episode_buffer(self, filepath: str):
+        """
+        Save the episode buffer to a JSON file.
+        
+        Args:
+            filepath: Path to the JSON file where the episode buffer will be saved.
+        """
+        self.episode_buffer.save_to_json(filepath)
+    
+    @classmethod
+    def load_from_json(
+        cls,
+        filepath: str,
+        experience_buffer_size: int = 10000,
+        episode_buffer_size: Optional[int] = None,
+    ):
+        """
+        Create an AgentBufferManager by loading an episode buffer from a JSON file.
+        
+        Args:
+            filepath: Path to the JSON file containing the episode buffer.
+            experience_buffer_size: Size for the new experience buffer (default: 10000).
+            episode_buffer_size: Size for the episode buffer. If None, uses size from file or defaults to 1000.
+        
+        Returns:
+            AgentBufferManager instance with loaded episode buffer.
+        """
+        if Episode_Buffer is None:
+            raise ImportError(
+                "Episode_Buffer class must be imported. "
+                "Make sure data_structure.experience is available."
+            )
+        
+        # Load episode buffer from file
+        episode_buffer = Episode_Buffer.load_from_json(filepath, buffer_size=episode_buffer_size)
+        
+        # Create manager with loaded buffer
+        manager = cls(
+            experience_buffer_size=experience_buffer_size,
+            episode_buffer_size=episode_buffer.buffer_size,
+        )
+        manager.episode_buffer = episode_buffer
+        
+        return manager
+
+
+# ---------------------------------------------------------------------------
+# Experience collection wrapper
+# ---------------------------------------------------------------------------
+
+def run_episode_with_experience_collection(
+    env,
+    task: str = "",
+    game: Optional[str] = None,
+    model: Optional[str] = None,
+    use_function_call: bool = True,
+    temperature: float = 0.3,
+    max_steps: int = 1000,
+    verbose: bool = False,
+    experience_buffer: Optional[Experience_Replay_Buffer] = None,
+    episode_buffer: Optional[Episode_Buffer] = None,
+) -> Episode:
+    """
+    Run a full episode using the language agent and collect all experiences in an Episode.
+    
+    This function wraps the environment interaction loop and creates Experience objects
+    for each step, storing them all in an Episode. Optionally maintains experience and
+    episode buffers for experience replay.
+    
+    Args:
+        env: Environment instance (must have reset() and step() methods).
+        task: Task description for the episode (optional).
+        game: Game type: "overcooked", "avalon", or "diplomacy". Auto-detected if None.
+        model: Model name for the agent (e.g. "gpt-4o-mini").
+        use_function_call: Whether to use GPT function calling if available.
+        temperature: Sampling temperature for the agent.
+        max_steps: Maximum number of steps before truncating the episode.
+        verbose: Whether to print progress information.
+        experience_buffer: Optional Experience_Replay_Buffer to add experiences to.
+        episode_buffer: Optional Episode_Buffer to add the completed episode to.
+    
+    Returns:
+        Episode object containing all collected Experience objects.
+    
+    Raises:
+        ImportError: If Experience or Episode classes are not available.
+    """
+    if Experience is None or Episode is None:
+        raise ImportError(
+            "Experience and Episode classes must be imported from data_structure.experience. "
+            "Make sure the module is available."
+        )
+    
+    # Reset environment
+    obs, info = env.reset()
+    experiences: List[Experience] = []
+    step_count = 0
+    done = False
+    
+    # Determine if multi-agent (obs is dict) or single-agent (obs is string)
+    is_multi_agent = isinstance(obs, dict)
+    
+    # Get initial state
+    if is_multi_agent:
+        # For multi-agent, use the first observation or combine them
+        initial_state = str(obs) if obs else ""
+    else:
+        initial_state = str(obs) if obs else ""
+    
+    if game is None:
+        game = detect_game(initial_state)
+    
+    if verbose:
+        print(f"Starting episode with game: {game}, task: {task}")
+    
+    prev_state = initial_state
+    
+    while not done and step_count < max_steps:
+        # Get action(s) from agent
+        if is_multi_agent:
+            # Multi-agent: get actions for all active players
+            actions: Dict[Any, Any] = {}
+            active_players = info.get("active_players", list(obs.keys()) if isinstance(obs, dict) else [])
+            
+            for player_id in active_players:
+                player_obs = obs.get(player_id, "") if isinstance(obs, dict) else str(obs)
+                if player_obs:
+                    action = language_agent_action(
+                        player_obs,
+                        game=game,
+                        model=model,
+                        use_function_call=use_function_call,
+                        temperature=temperature,
+                    )
+                    actions[player_id] = action
+        else:
+            # Single-agent: get one action
+            action = language_agent_action(
+                prev_state,
+                game=game,
+                model=model,
+                use_function_call=use_function_call,
+                temperature=temperature,
+            )
+            actions = action
+        
+        # Execute action in environment
+        next_obs, reward, terminated, truncated, next_info = env.step(actions)
+        done = terminated or truncated
+        
+        # Convert observations and rewards to strings/numbers for Experience
+        state_str = prev_state
+        action_str = str(actions) if not isinstance(actions, (str, list)) else actions
+        reward_val = reward
+        if isinstance(reward, dict):
+            # For multi-agent, sum rewards or use a representative value
+            reward_val = sum(reward.values()) if reward else 0.0
+        
+        if is_multi_agent:
+            next_state_str = str(next_obs) if isinstance(next_obs, dict) else str(next_obs)
+        else:
+            next_state_str = str(next_obs) if next_obs else ""
+        
+        # Create Experience object
+        experience = Experience(
+            state=state_str,
+            action=action_str,
+            reward=float(reward_val) if reward_val is not None else 0.0,
+            next_state=next_state_str,
+            done=bool(done),
+            intentions=None,  # Can be filled later
+            tasks=task if task else None,
+            sub_tasks=None,  # Can be filled later
+        )
+        experience.idx = step_count
+        experiences.append(experience)
+        
+        if verbose:
+            print(f"Step {step_count}: action={action_str}, reward={reward_val}, done={done}")
+        
+        # Update for next iteration
+        obs = next_obs
+        info = next_info
+        prev_state = next_state_str
+        step_count += 1
+        
+        if done:
+            break
+    
+    # Create Episode with all experiences
+    episode = Episode(experiences=experiences, task=task if task else "Unspecified task")
+    episode.set_outcome()
+    
+    # Add experiences to experience buffer if provided
+    if experience_buffer is not None:
+        experience_buffer.add_experience(episode)  # This adds all experiences from the episode
+        if verbose:
+            print(f"Added {len(experiences)} experiences to experience buffer (size: {len(experience_buffer)})")
+    
+    # Add episode to episode buffer if provided
+    if episode_buffer is not None:
+        episode_buffer.add_episode(episode)
+        if verbose:
+            print(f"Added episode to episode buffer (size: {len(episode_buffer)})")
+    
+    if verbose:
+        print(f"Episode completed: {len(experiences)} steps, total reward: {episode.get_reward()}")
+    
+    return episode

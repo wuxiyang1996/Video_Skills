@@ -43,7 +43,12 @@ import json
 import urllib.request
 
 from env_wrappers.diplomacy_nl_wrapper import DiplomacyNLWrapper
-from agents.dummy_agent import GAME_DIPLOMACY, language_agent_action
+from agents.dummy_agent import (
+    GAME_DIPLOMACY,
+    language_agent_action,
+    run_episode_with_experience_collection,
+    AgentBufferManager,
+)
 
 
 def _diplomacy_visualizer_state(env: DiplomacyNLWrapper, info: dict, status: str = "running") -> Dict[str, Any]:
@@ -82,6 +87,10 @@ def run_diplomacy_with_dummy_agent(
     seed: int = 42,
     verbose: bool = True,
     visualizer_url: Optional[str] = None,
+    use_experience_collection: bool = False,
+    experience_buffer_size: int = 10000,
+    episode_buffer_size: int = 1000,
+    save_episode_buffer: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Run Diplomacy for a few phases; all powers are controlled by the dummy language agent.
@@ -89,9 +98,30 @@ def run_diplomacy_with_dummy_agent(
     If visualizer_url is set (e.g. http://localhost:8000), state is pushed after each step
     so you can watch the rollout in the browser (open /diplomacy/observe first).
 
+    Args:
+        use_experience_collection: If True, use experience/episode collection with buffers.
+        experience_buffer_size: Size of experience buffer if using collection.
+        episode_buffer_size: Size of episode buffer if using collection.
+        save_episode_buffer: Optional path to save episode buffer as JSON.
+
     Returns:
-        dict with "obs", "rewards", "info" from the final step, and "history".
+        dict with "obs", "rewards", "info" from the final step, "history",
+        and optionally "episode" (Episode object) if use_experience_collection is True.
     """
+    # Use experience collection if requested
+    if use_experience_collection:
+        return _run_diplomacy_with_experience_collection(
+            max_phases=max_phases,
+            model=model,
+            seed=seed,
+            verbose=verbose,
+            visualizer_url=visualizer_url,
+            experience_buffer_size=experience_buffer_size,
+            episode_buffer_size=episode_buffer_size,
+            save_episode_buffer=save_episode_buffer,
+        )
+    
+    # Original implementation
     env = DiplomacyNLWrapper(seed=seed)
     obs, info = env.reset()
     history = []
@@ -151,6 +181,73 @@ def run_diplomacy_with_dummy_agent(
     }
 
 
+def _run_diplomacy_with_experience_collection(
+    max_phases: int = 5,
+    model: str = "gpt-4o-mini",
+    seed: int = 42,
+    verbose: bool = True,
+    visualizer_url: Optional[str] = None,
+    experience_buffer_size: int = 10000,
+    episode_buffer_size: int = 1000,
+    save_episode_buffer: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Run Diplomacy game with experience and episode collection.
+    """
+    env = DiplomacyNLWrapper(seed=seed)
+    
+    # Create buffer manager
+    buffer_manager = AgentBufferManager(
+        experience_buffer_size=experience_buffer_size,
+        episode_buffer_size=episode_buffer_size,
+    )
+    
+    # Run episode with experience collection
+    task = "Diplomacy game"
+    episode = buffer_manager.run_episode(
+        env=env,
+        task=task,
+        game=GAME_DIPLOMACY,
+        model=model,
+        use_function_call=True,
+        temperature=0.3,
+        max_steps=max_phases,
+        verbose=verbose,
+    )
+    
+    # Save episode buffer if requested
+    if save_episode_buffer:
+        buffer_manager.save_episode_buffer(save_episode_buffer)
+        if verbose:
+            print(f"Saved episode buffer to {save_episode_buffer}")
+    
+    # Get final state info
+    final_obs = episode.experiences[-1].next_state if episode.experiences else ""
+    final_reward = episode.get_reward()
+    final_info = {"episode_length": len(episode.experiences), "task": episode.task}
+    
+    # Build history from experiences
+    history = []
+    for exp in episode.experiences:
+        history.append({
+            "state": exp.state,
+            "action": exp.action,
+            "reward": exp.reward,
+            "next_state": exp.next_state,
+            "done": exp.done,
+        })
+    
+    return {
+        "obs": final_obs,
+        "rewards": final_reward,
+        "info": final_info,
+        "history": history,
+        "steps": len(episode.experiences),
+        "episode": episode,
+        "buffer_stats": buffer_manager.get_buffer_stats(),
+    }
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Run Diplomacy with dummy LLM agent for all powers")
@@ -160,6 +257,10 @@ def main():
     parser.add_argument("--quiet", action="store_true", help="Less output")
     parser.add_argument("--visualizer", action="store_true", help="Push state to games web server so you can watch rollout in browser")
     parser.add_argument("--visualizer_url", default="http://localhost:8000", help="Base URL of games web server (default: http://localhost:8000)")
+    parser.add_argument("--use_experience_collection", action="store_true", help="Use experience/episode collection with buffers")
+    parser.add_argument("--experience_buffer_size", type=int, default=10000, help="Size of experience buffer (default: 10000)")
+    parser.add_argument("--episode_buffer_size", type=int, default=1000, help="Size of episode buffer (default: 1000)")
+    parser.add_argument("--save_episode_buffer", type=str, default=None, help="Path to save episode buffer as JSON file")
     args = parser.parse_args()
 
     result = run_diplomacy_with_dummy_agent(
@@ -168,8 +269,18 @@ def main():
         seed=args.seed,
         verbose=not args.quiet,
         visualizer_url=args.visualizer_url if args.visualizer else None,
+        use_experience_collection=args.use_experience_collection,
+        experience_buffer_size=args.experience_buffer_size,
+        episode_buffer_size=args.episode_buffer_size,
+        save_episode_buffer=args.save_episode_buffer,
     )
-    print(f"Finished in {result['steps']} phases. Game done: {result['info'].get('is_game_done')}")
+    
+    if args.use_experience_collection:
+        print(f"Finished in {result['steps']} phases.")
+        print(f"Episode task: {result['info'].get('task', 'N/A')}")
+        print(f"Buffer stats: {result.get('buffer_stats', {})}")
+    else:
+        print(f"Finished in {result['steps']} phases. Game done: {result['info'].get('is_game_done')}")
 
 
 if __name__ == "__main__":

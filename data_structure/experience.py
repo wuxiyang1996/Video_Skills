@@ -8,10 +8,15 @@
 
 # Please note that this code only include the data structure code, data management and data processing are for other files.
 
-from typing import List, Optional
+from __future__ import annotations  # Enable postponed evaluation of annotations
+
+from typing import List, Optional, TYPE_CHECKING
 from API_func import ask_model
 import random
-from data_structure.helper import *
+import json
+from pathlib import Path
+# Note: helper.py imports are commented out to avoid circular import
+# from data_structure.helper import *
 
 # The data structure for the experience, which is used to store the experience of the agent.
 # TODO: Multi-modality
@@ -396,6 +401,114 @@ class Experience_Replay_Buffer:
     
     def __len__(self):
         return len(self.buffer)
+
+
+# Episode Buffer
+# The intention of this class is to store complete episodes for experience replay and analysis.
+class Episode_Buffer:
+    def __init__(self, buffer_size: int):
+        self.buffer = []
+        self.buffer_size = buffer_size
+
+    # Add episode(s) to the buffer.
+    # Enforces buffer size limit using FIFO (First In First Out) policy.
+    # Supports both single episode and list of episodes.
+    def add_episode(self, episode):
+        # Handle both single episode and list of episodes
+        if isinstance(episode, list):
+            # Add multiple episodes at once
+            self.buffer.extend(episode)
+        elif isinstance(episode, Episode):
+            # Add single episode
+            self.buffer.append(episode)
+        else:
+            raise TypeError(f"Expected Episode or list of Episodes, got {type(episode)}")
+        
+        # Remove oldest episodes if buffer exceeds maximum size
+        if len(self.buffer) > self.buffer_size:
+            overflow = len(self.buffer) - self.buffer_size
+            self.buffer = self.buffer[overflow:]
+
+    def add_episodes(self, episodes: List[Episode]):
+        """Add multiple episodes at once (convenience method)."""
+        self.add_episode(episodes)
+
+    def sample_episode(self, batch_size: int):
+        """Sample random episodes from the buffer."""
+        return random.sample(self.buffer, min(batch_size, len(self.buffer)))
+
+    # Return all the episode summaries for query and RAG.
+    def get_episode_summary(self, query: str):
+        return [episode.summary for episode in self.buffer if episode.summary and query in episode.summary]
+    
+    def __len__(self):
+        """Return the number of episodes in the buffer."""
+        return len(self.buffer)
+
+    # Convert the episode buffer to a dictionary.
+    def to_dict(self):
+        return {
+            "episodes": [episode.to_dict() for episode in self.buffer],
+        }
+    
+    # Convert the dictionary to an episode buffer.
+    def from_dict(self, dict: dict):
+        self.buffer = [Episode.from_dict(ep) for ep in dict["episodes"]]
+        return self
+    
+    # Save episode buffer to JSON file.
+    def save_to_json(self, filepath: str):
+        """
+        Save the episode buffer to a JSON file.
+        
+        Args:
+            filepath: Path to the JSON file where the buffer will be saved.
+        """
+        filepath = Path(filepath)
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        
+        buffer_dict = self.to_dict()
+        # Also save buffer metadata
+        buffer_dict["buffer_size"] = self.buffer_size
+        buffer_dict["num_episodes"] = len(self.buffer)
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(buffer_dict, f, indent=2, ensure_ascii=False)
+    
+    # Load episode buffer from JSON file.
+    @classmethod
+    def load_from_json(cls, filepath: str, buffer_size: Optional[int] = None):
+        """
+        Load an episode buffer from a JSON file.
+        
+        Args:
+            filepath: Path to the JSON file to load from.
+            buffer_size: Optional buffer size. If None, uses the size from the file or defaults to 1000.
+        
+        Returns:
+            Episode_Buffer instance loaded from the file.
+        """
+        filepath = Path(filepath)
+        
+        if not filepath.exists():
+            raise FileNotFoundError(f"Episode buffer file not found: {filepath}")
+        
+        with open(filepath, 'r', encoding='utf-8') as f:
+            buffer_dict = json.load(f)
+        
+        # Get buffer size (prefer provided, then from file, then default)
+        size = buffer_size
+        if size is None:
+            size = buffer_dict.get("buffer_size", 1000)
+        
+        # Create buffer instance
+        buffer = cls(buffer_size=size)
+        
+        # Load episodes
+        episodes_data = buffer_dict.get("episodes", [])
+        buffer.buffer = [Episode.from_dict(ep_dict) for ep_dict in episodes_data]
+        
+        return buffer
 
 
 # Store the tool/strategy extracted from the unlabeled experiences.
