@@ -22,6 +22,13 @@ This repository provides a framework for enhancing agentic decision-making in mu
   - Multimodal embedding: default [Qwen/Qwen3-VL-Embedding-2B](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B)
   - Configurable via `RAG_EMBEDDING_MODEL` and `MULTIMODAL_EMBEDDING_MODEL` or constructor args; see [rag/README.md](rag/README.md)
 
+- **✂️ Stage 1 Boundary Proposal**: [skill_agents/boundary_proposal/](skill_agents/boundary_proposal/) - High-recall candidate cut points for trajectory segmentation
+  - Integrated with `Episode` / `SubTask_Experience` data structures and per-env signal extractors (Overcooked, Avalon, Diplomacy)
+  - Optional RAG-embedding change-point detection via `TextEmbedder`
+  - `segment_episode()` — full pipeline: Episode → SubTask_Experience segments
+  - `annotate_episode_boundaries()` — mark boundaries for `separate_into_sub_episodes()`
+  - See [skill_agents/boundary_proposal/README.md](skill_agents/boundary_proposal/README.md)
+
 - **🔗 Repository**: [GitHub - Game-AI-Agent](https://github.com/wuxiyang1996/Game-AI-Agent)
 
 ## Dependencies
@@ -207,3 +214,4 @@ https://huggingface.co/Qwen/Qwen-Image-Edit-2511
 
 Bagel
 https://huggingface.co/ByteDance-Seed/BAGEL-7B-MoT
+ 
