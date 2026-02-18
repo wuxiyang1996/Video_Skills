@@ -108,6 +108,9 @@ except ImportError as e:
 GAME_OVERCOOKED = "overcooked"
 GAME_AVALON = "avalon"
 GAME_DIPLOMACY = "diplomacy"
+GAME_GAMINGAGENT = "gamingagent"
+GAME_VIDEOGAMEBENCH = "videogamebench"
+GAME_VIDEOGAMEBENCH_DOS = "videogamebench_dos"
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +187,61 @@ DIPLOMACY_USER_TEMPLATE = (
 
 
 # ---------------------------------------------------------------------------
+# GamingAgent constants
+# ---------------------------------------------------------------------------
+GAMINGAGENT_SYSTEM_PROMPT = (
+    "You are playing a game from LMGame-Bench (GamingAgent). "
+    "You receive the current game state in text form and must choose one action per turn.\n\n"
+    "Read the state description and the list of valid actions. Reply with exactly one valid action. "
+    "Use the exact action name from the valid actions list."
+)
+
+GAMINGAGENT_USER_TEMPLATE = (
+    "Current game state:\n\n{state}\n\n"
+    "What action do you take? Reply with exactly one action from the valid actions list."
+)
+
+
+# ---------------------------------------------------------------------------
+# VideoGameBench constants
+# ---------------------------------------------------------------------------
+VIDEOGAMEBENCH_VALID_ACTIONS = ("no-op", "A", "B", "SELECT", "START", "RIGHT", "LEFT", "UP", "DOWN")
+
+VIDEOGAMEBENCH_SYSTEM_PROMPT = (
+    "You are playing a Game Boy game (VideoGameBench). "
+    "You see the game screen and must choose one button action per step.\n\n"
+    "Valid actions: no-op, A, B, SELECT, START, RIGHT, LEFT, UP, DOWN.\n"
+    "Reply with exactly one action. Use the exact name (e.g. 'A', 'UP', 'no-op')."
+)
+
+VIDEOGAMEBENCH_USER_TEMPLATE = (
+    "Current game state:\n\n{state}\n\n"
+    "What action do you take? Reply with exactly one: no-op, A, B, SELECT, START, RIGHT, LEFT, UP, or DOWN."
+)
+
+
+# ---------------------------------------------------------------------------
+# VideoGameBench DOS constants (DOS games only, no Game Boy)
+# ---------------------------------------------------------------------------
+VIDEOGAMEBENCH_DOS_VALID_KEYS = (
+    "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+    "Space", "Enter", "Escape", "KeyW", "KeyA", "KeyS", "KeyD",
+)
+
+VIDEOGAMEBENCH_DOS_SYSTEM_PROMPT = (
+    "You are playing a DOS video game (VideoGameBench). "
+    "You see the game screen and must choose one keyboard key to press per step.\n\n"
+    "Valid keys: ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Space, Enter, Escape, KeyW, KeyA, KeyS, KeyD.\n"
+    "Reply with exactly one key name (e.g. ArrowUp, Space, KeyW)."
+)
+
+VIDEOGAMEBENCH_DOS_USER_TEMPLATE = (
+    "Current game state:\n\n{state}\n\n"
+    "What key do you press? Reply with exactly one: ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Space, Enter, Escape, KeyW, KeyA, KeyS, or KeyD."
+)
+
+
+# ---------------------------------------------------------------------------
 # Game auto-detection
 # ---------------------------------------------------------------------------
 
@@ -191,13 +249,33 @@ def detect_game(state_nl: str) -> str:
     """
     Auto-detect which game is being played from the observation text.
 
-    Returns one of: GAME_OVERCOOKED, GAME_AVALON, GAME_DIPLOMACY.
+    Returns one of: GAME_OVERCOOKED, GAME_AVALON, GAME_DIPLOMACY, GAME_GAMINGAGENT, GAME_VIDEOGAMEBENCH.
     Falls back to GAME_OVERCOOKED if detection fails.
     """
     if not state_nl or not isinstance(state_nl, str):
         return GAME_OVERCOOKED
 
     text = state_nl.lower()
+
+    # VideoGameBench DOS markers
+    if "dos game screen" in text or "choose one key" in text:
+        return GAME_VIDEOGAMEBENCH_DOS
+    if "arrowup" in text or "arrowdown" in text:
+        return GAME_VIDEOGAMEBENCH_DOS
+
+    # VideoGameBench Game Boy markers (deprecated in evaluate_videogamebench)
+    if "game screen" in text and ("no-op" in text or "choose one action" in text):
+        return GAME_VIDEOGAMEBENCH
+    if "videogamebench" in text and "dos" in text:
+        return GAME_VIDEOGAMEBENCH_DOS
+
+    # GamingAgent / LMGame-Bench markers (textual game state with valid actions)
+    if "valid actions:" in text and any(
+        m in text for m in ("push", "hard_drop", "board", "sokoban", "2048", "tetris")
+    ):
+        return GAME_GAMINGAGENT
+    if "choose one action" in text and "step" in text and len(text) < 500:
+        return GAME_VIDEOGAMEBENCH
 
     # Diplomacy markers
     if "diplomacy" in text or "supply centers" in text or "orderable" in text:
@@ -237,6 +315,12 @@ def _get_system_prompt(game: str) -> str:
         return AVALON_SYSTEM_PROMPT
     if game == GAME_DIPLOMACY:
         return DIPLOMACY_SYSTEM_PROMPT
+    if game == GAME_GAMINGAGENT:
+        return GAMINGAGENT_SYSTEM_PROMPT
+    if game == GAME_VIDEOGAMEBENCH:
+        return VIDEOGAMEBENCH_SYSTEM_PROMPT
+    if game == GAME_VIDEOGAMEBENCH_DOS:
+        return VIDEOGAMEBENCH_DOS_SYSTEM_PROMPT
     return OVERCOOKED_SYSTEM_PROMPT
 
 
@@ -246,6 +330,12 @@ def _get_user_prompt(state_nl: str, game: str) -> str:
         return AVALON_USER_TEMPLATE.format(state=state_nl)
     if game == GAME_DIPLOMACY:
         return DIPLOMACY_USER_TEMPLATE.format(state=state_nl)
+    if game == GAME_GAMINGAGENT:
+        return GAMINGAGENT_USER_TEMPLATE.format(state=state_nl)
+    if game == GAME_VIDEOGAMEBENCH:
+        return VIDEOGAMEBENCH_USER_TEMPLATE.format(state=state_nl)
+    if game == GAME_VIDEOGAMEBENCH_DOS:
+        return VIDEOGAMEBENCH_DOS_USER_TEMPLATE.format(state=state_nl)
     return OVERCOOKED_USER_TEMPLATE.format(state=state_nl)
 
 
@@ -370,6 +460,84 @@ def _extract_avalon_action(text: str, state_nl: str) -> Union[str, List[int], in
 # Action extraction: Diplomacy
 # ---------------------------------------------------------------------------
 
+def _parse_valid_actions_from_state(state_nl: str) -> List[str]:
+    """Extract valid action names from 'Valid actions: a, b, c' in state_nl."""
+    m = re.search(r"[Vv]alid\s+actions?\s*[:\-]\s*(.+?)(?:\n|\.|$)", state_nl)
+    if not m:
+        return []
+    raw = m.group(1).strip()
+    actions = [a.strip().lower() for a in re.split(r"[,;]", raw) if a.strip()]
+    return actions
+
+
+def _extract_gamingagent_action(text: str, state_nl: str) -> Optional[str]:
+    """Extract one valid GamingAgent action from model reply."""
+    if not text or not isinstance(text, str):
+        return None
+    valid = _parse_valid_actions_from_state(state_nl)
+    reply = text.strip().lower()
+    words = re.findall(r"[\w_]+", reply)
+    for w in words:
+        wl = w.lower()
+        for v in valid:
+            if wl == v.lower() or (len(wl) >= 2 and v.lower().startswith(wl)):
+                return v
+    if valid:
+        return valid[0]
+    return None
+
+
+def _extract_videogamebench_action(text: str) -> Optional[str]:
+    """Extract VideoGameBench action (no-op, A, B, etc.) from model reply."""
+    if not text or not isinstance(text, str):
+        return "no-op"
+    reply = text.strip().lower()
+    words = re.findall(r"[a-z_\-]+", reply)
+    for w in words:
+        if w in VIDEOGAMEBENCH_VALID_ACTIONS:
+            return w
+        if w in ("noop", "none", "nothing", "stay", "wait"):
+            return "no-op"
+        if w in ("a", "b"):
+            return w.upper()
+        if w in ("select", "start"):
+            return w.upper()
+        if w in ("right", "left", "up", "down"):
+            return w.upper()
+    return "no-op"
+
+
+def _extract_videogamebench_dos_action(text: str) -> Optional[str]:
+    """Extract VideoGameBench DOS key (ArrowUp, Space, etc.) from model reply."""
+    if not text or not isinstance(text, str):
+        return "Space"
+    s = text.strip()
+    if s in VIDEOGAMEBENCH_DOS_VALID_KEYS:
+        return s
+    lower = s.lower()
+    key_map = {
+        "up": "ArrowUp", "arrowup": "ArrowUp", "↑": "ArrowUp",
+        "down": "ArrowDown", "arrowdown": "ArrowDown", "↓": "ArrowDown",
+        "left": "ArrowLeft", "arrowleft": "ArrowLeft", "←": "ArrowLeft",
+        "right": "ArrowRight", "arrowright": "ArrowRight", "→": "ArrowRight",
+        "space": "Space", "spacebar": "Space",
+        "enter": "Enter", "return": "Enter",
+        "escape": "Escape", "esc": "Escape",
+        "w": "KeyW", "keyw": "KeyW",
+        "a": "KeyA", "keya": "KeyA",
+        "s": "KeyS", "keys": "KeyS",
+        "d": "KeyD", "keyd": "KeyD",
+    }
+    for k, v in key_map.items():
+        if k in lower or lower == k:
+            return v
+    words = re.findall(r"[a-z]+", lower)
+    for w in words:
+        if w in key_map:
+            return key_map[w]
+    return "Space"
+
+
 def _extract_diplomacy_orders(text: str) -> List[str]:
     """
     Extract Diplomacy order strings from model reply.
@@ -421,8 +589,8 @@ def extract_action(text: str, game: str, state_nl: str = "") -> Union[str, List[
 
     Args:
         text: Raw LLM reply text.
-        game: One of GAME_OVERCOOKED, GAME_AVALON, GAME_DIPLOMACY.
-        state_nl: Original state observation (needed for Avalon phase detection).
+        game: One of GAME_OVERCOOKED, GAME_AVALON, GAME_DIPLOMACY, GAME_GAMINGAGENT, GAME_VIDEOGAMEBENCH.
+        state_nl: Original state observation (needed for Avalon phase detection, GamingAgent valid actions).
 
     Returns:
         The extracted action in the format expected by the corresponding env wrapper.
@@ -431,6 +599,12 @@ def extract_action(text: str, game: str, state_nl: str = "") -> Union[str, List[
         return _extract_avalon_action(text, state_nl)
     if game == GAME_DIPLOMACY:
         return _extract_diplomacy_orders(text)
+    if game == GAME_GAMINGAGENT:
+        return _extract_gamingagent_action(text, state_nl)
+    if game == GAME_VIDEOGAMEBENCH:
+        return _extract_videogamebench_action(text)
+    if game == GAME_VIDEOGAMEBENCH_DOS:
+        return _extract_videogamebench_dos_action(text)
     return _extract_overcooked_action(text)
 
 
@@ -440,6 +614,12 @@ def _default_action(game: str) -> Union[str, List[str]]:
         return "approve"
     if game == GAME_DIPLOMACY:
         return []
+    if game == GAME_GAMINGAGENT:
+        return "stay"  # Generic; env may have different default
+    if game == GAME_VIDEOGAMEBENCH:
+        return "no-op"
+    if game == GAME_VIDEOGAMEBENCH_DOS:
+        return "Space"
     return "stay"
 
 
@@ -549,6 +729,79 @@ def _build_avalon_tools() -> list:
     ]
 
 
+def _build_gamingagent_tools(state_nl: str = "") -> list:
+    """Build OpenAI function-calling tool for GamingAgent (dynamic valid actions)."""
+    valid = _parse_valid_actions_from_state(state_nl)
+    enum_actions = valid if valid else ["stay", "up", "down", "left", "right"]
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "choose_action",
+                "description": "Choose the action for your turn in the game.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "description": f"One of the valid actions. Valid: {', '.join(enum_actions)}",
+                        }
+                    },
+                    "required": ["action"],
+                },
+            },
+        }
+    ]
+
+
+def _build_videogamebench_tools() -> list:
+    """Build OpenAI function-calling tool for VideoGameBench (Game Boy)."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "choose_action",
+                "description": "Choose a button action for the Game Boy game.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": list(VIDEOGAMEBENCH_VALID_ACTIONS),
+                            "description": "One of: no-op, A, B, SELECT, START, RIGHT, LEFT, UP, DOWN",
+                        }
+                    },
+                    "required": ["action"],
+                },
+            },
+        }
+    ]
+
+
+def _build_videogamebench_dos_tools() -> list:
+    """Build OpenAI function-calling tool for VideoGameBench DOS games."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "choose_action",
+                "description": "Choose a keyboard key for the DOS game.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": list(VIDEOGAMEBENCH_DOS_VALID_KEYS),
+                            "description": "One of: ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Space, Enter, Escape, KeyW, KeyA, KeyS, KeyD",
+                        }
+                    },
+                    "required": ["action"],
+                },
+            },
+        }
+    ]
+
+
 def _build_diplomacy_tools() -> list:
     """Build OpenAI function-calling tool definition for Diplomacy."""
     return [
@@ -604,11 +857,24 @@ def ask_gpt_function_action(
         tools = _build_diplomacy_tools()
         func_name = "submit_orders"
         result_key = "orders"
+    elif game == GAME_AVALON:
+        tools = _build_avalon_tools()
+        func_name = "choose_action"
+        result_key = "action"
+    elif game == GAME_GAMINGAGENT:
+        tools = _build_gamingagent_tools(state_nl)
+        func_name = "choose_action"
+        result_key = "action"
+    elif game == GAME_VIDEOGAMEBENCH:
+        tools = _build_videogamebench_tools()
+        func_name = "choose_action"
+        result_key = "action"
+    elif game == GAME_VIDEOGAMEBENCH_DOS:
+        tools = _build_videogamebench_dos_tools()
+        func_name = "choose_action"
+        result_key = "action"
     else:
-        if game == GAME_AVALON:
-            tools = _build_avalon_tools()
-        else:
-            tools = _build_overcooked_tools()
+        tools = _build_overcooked_tools()
         func_name = "choose_action"
         result_key = "action"
 
@@ -642,6 +908,23 @@ def ask_gpt_function_action(
                 action = (args or {}).get(result_key, "")
                 if action in OVERCOOKED_VALID_ACTIONS:
                     return action
+
+            if game == GAME_GAMINGAGENT:
+                action = (args or {}).get(result_key, "")
+                if action:
+                    return str(action)
+
+            if game == GAME_VIDEOGAMEBENCH:
+                action = (args or {}).get(result_key, "no-op")
+                if action in VIDEOGAMEBENCH_VALID_ACTIONS:
+                    return action
+                return "no-op"
+
+            if game == GAME_VIDEOGAMEBENCH_DOS:
+                action = (args or {}).get(result_key, "Space")
+                if action in VIDEOGAMEBENCH_DOS_VALID_KEYS:
+                    return action
+                return "Space"
 
             if game == GAME_AVALON:
                 action = (args or {}).get(result_key, "")

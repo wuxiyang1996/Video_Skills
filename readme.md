@@ -8,14 +8,21 @@ This repository provides a framework for enhancing agentic decision-making in mu
 
 ## Quick Links
 
-- **📦 Environment Wrappers**: [env/](env/) - Natural language wrappers and evaluation scripts for game environments
-  - [Overcooked AI](env/env_wrappers/overcooked_nl_wrapper.py) - Cooperative cooking game wrapper
+- **📦 Environment Wrappers**: [env_wrappers/](env_wrappers/) - Natural language wrappers and evaluation scripts for game environments
+  - [Overcooked AI](env_wrappers/overcooked_nl_wrapper.py) - Cooperative cooking game wrapper
     - Source: [overcooked_ai](https://github.com/HumanCompatibleAI/overcooked_ai) by HumanCompatibleAI
-  - [Avalon](env/env_wrappers/avalon_nl_wrapper.py) - Hidden-role deduction game wrapper
+    - Evaluation: [evaluate_overcooked/](evaluate_overcooked/)
+  - [Avalon](env_wrappers/avalon_nl_wrapper.py) - Hidden-role deduction game wrapper
     - Source: [AgentEvolver Games](https://github.com/modelscope/AgentEvolver/blob/main/games/README.md) by ModelScope
-  - [Diplomacy](env/env_wrappers/diplomacy_nl_wrapper.py) - Strategic negotiation game wrapper
+  - [Diplomacy](env_wrappers/diplomacy_nl_wrapper.py) - Strategic negotiation game wrapper
     - Source: [AgentEvolver Games](https://github.com/modelscope/AgentEvolver/blob/main/games/README.md) by ModelScope
-  - [Evaluation Scripts](env/README.md) - Test scripts for running agents in these environments
+  - [Avalon & Diplomacy](evaluation_evolver/) - Evaluation scripts for AgentEvolver games
+  - [GamingAgent](env_wrappers/gamingagent_nl_wrapper.py) - LMGame-Bench (2048, Sokoban, Tetris, etc.)
+    - Source: [GamingAgent](https://github.com/lmgame-org/GamingAgent)
+    - Evaluation: [evaluate_gamingagent/](evaluate_gamingagent/)
+  - [VideoGameBench](env_wrappers/videogamebench_dos_nl_wrapper.py) - DOS games only (JS-DOS in browser; Game Boy excluded)
+    - Source: [videogamebench](https://github.com/.../videogamebench)
+    - Evaluation: [evaluate_videogamebench/](evaluate_videogamebench/)
 
 - **🔍 RAG & Embeddings**: [rag/](rag/) - Embedding models for experience retrieval
   - Text (RAG) embedding: default [Qwen/Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)
