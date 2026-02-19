@@ -39,6 +39,8 @@ This repository provides a framework for enhancing agentic decision-making in mu
   - **Agent B (SkillBank)**: Hard-EM (decode → update → gate); optional boundary/tie-breaker learners.
   - Shared: [metrics](trainer/common/metrics.py), [reward_shaping](trainer/decision/reward_shaping.py), [eval_harness](trainer/common/eval_harness.py). Entry: [launch_trainer](trainer/decision/launch_trainer.py), [launch_coevolution](trainer/launch_coevolution.py). [trainer/README.md](trainer/README.md)
 
+- **▶️ Inference** — [inference/](inference/): Run the decision agent and store rollouts in [data_structure](data_structure/experience.py) format (`Episode` + `Experience`). `run_inference(env, task=..., episode_buffer=..., save_path=...)`; `rollout_to_episode(rollout, task=...)` to convert an existing rollout. [inference/README.md](inference/README.md)
+
 ---
 
 # 1. Environments
@@ -358,6 +360,49 @@ This mode uses RAG to query experiences most relevant to the current situation a
 ## Trainable agent
 
 This mode gathers experience via interaction and synthesis and updates parameters with reinforcement learning. The **[trainer/](trainer/)** module implements it: the VLM Decision Agent is trained with **GRPO** (retrieval as first-class actions; reward = r_env + shaping + query/call costs), and the Skill Bank is updated via **Hard-EM**. See [trainer/README.md](trainer/README.md) and the “Trainer Code” section below.
+
+## Inference: run and store rollouts
+
+The **[inference/](inference/)** module runs the decision agent and stores rollouts in the [data_structure](data_structure/experience.py) format (`Episode` with list of `Experience`). Use this for collecting trajectories without training (e.g. for skill pipeline ingestion or replay buffers).
+
+**Run one episode and get an `Episode`:**
+```python
+from inference import run_inference, rollout_to_episode
+from data_structure.experience import Episode_Buffer, Experience_Replay_Buffer
+
+episode = run_inference(
+    env,
+    task="Complete level 1",
+    max_steps=500,
+    verbose=True,
+)
+```
+
+**Optional: add to buffers and/or append to a JSONL file:**
+```python
+ep_buffer = Episode_Buffer(buffer_size=100)
+exp_buffer = Experience_Replay_Buffer(buffer_size=10_000)
+episode = run_inference(
+    env,
+    task="Complete level 1",
+    episode_buffer=ep_buffer,
+    experience_buffer=exp_buffer,
+    save_path="rollouts/episodes.jsonl",
+    verbose=True,
+)
+```
+
+**Convert an existing `run_episode_vlm_agent` result to `Episode`:**
+```python
+from decision_agents import run_episode_vlm_agent
+from inference import rollout_to_episode
+
+rollout = run_episode_vlm_agent(env, max_steps=500)
+episode = rollout_to_episode(rollout, task="My task")
+# episode.experiences, episode.to_dict() for JSON
+```
+
+Storage: each episode is one JSON object per line (JSONL) when `save_path` is set. See [inference/README.md](inference/README.md) for full details.
 
 ## ToDo (design modules)
 
