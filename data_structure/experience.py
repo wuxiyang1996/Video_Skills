@@ -45,16 +45,10 @@ class Experience:
         self.sub_tasks = sub_tasks # Short-term tasks, represening the current strategy of the agent.
         
         # Summarization of the experience.
-        # Essential for expeerience query and retrieal, also for the experience synthesis
+        # Essential for experience query and retrieval.
         self.summary = None
         # Summary of the state of the experience, used for quick retrieval and query.
         self.summary_state = None
-
-        # Synthetic experience fields.
-        self.is_synthetic = False
-
-        # only set with the experience is synthetic.
-        self.syn_experience_quality = None
 
     # Generate the summary of the experience.
     # The intention of this function is to generate the summmary of the current state and 
@@ -120,8 +114,6 @@ class Experience:
             "sub_tasks": self.sub_tasks,
             "summary": self.summary,
             "summary_state": self.summary_state,
-            "is_synthetic": self.is_synthetic,
-            "syn_experience_quality": self.syn_experience_quality,
             "idx": self.idx,
         }
     
@@ -132,14 +124,12 @@ class Experience:
         self.reward = dict["reward"]
         self.next_state = dict["next_state"]
         self.done = dict["done"]
-        self.intentions = dict["intentions"]
-        self.tasks = dict["tasks"]
-        self.sub_tasks = dict["sub_tasks"]
-        self.summary = dict["summary"]
-        self.summary_state = dict["summary_state"]
-        self.is_synthetic = dict["is_synthetic"]
-        self.syn_experience_quality = dict["syn_experience_quality"]
-        self.idx = dict["idx"]
+        self.intentions = dict.get("intentions")
+        self.tasks = dict.get("tasks")
+        self.sub_tasks = dict.get("sub_tasks")
+        self.summary = dict.get("summary")
+        self.summary_state = dict.get("summary_state")
+        self.idx = dict.get("idx")
         return self
 
 
@@ -158,12 +148,6 @@ class Episode:
 
         # The outcome of the episode.
         self.outcome = None
-
-        # Synthetic experience fields.
-        self.is_synthetic = False
-
-        # only set with the experience is synthetic.
-        self.syn_experience_quality = None
 
     def get_reward(self):
         return sum(experience.reward for experience in self.experiences)
@@ -221,17 +205,13 @@ class Episode:
             "experiences": [exp.to_dict() for exp in self.experiences],
             "task": self.task,
             "outcome": self.outcome,
-            "is_synthetic": self.is_synthetic,
-            "syn_experience_quality": self.syn_experience_quality,
         }
 
     # Convert the dictionary to an episode.
     def from_dict(self, dict: dict):
         self.experiences = [Experience.from_dict(exp) for exp in dict["experiences"]]
         self.task = dict["task"]
-        self.outcome = dict["outcome"]
-        self.is_synthetic = dict["is_synthetic"]
-        self.syn_experience_quality = dict["syn_experience_quality"]
+        self.outcome = dict.get("outcome")
         return self
 
 # The intention of this class is to store the experience of the agent for each sub-task.
@@ -259,13 +239,6 @@ class SubTask_Experience:
 
         # The cumulative reward of the sub-task experience. For the ease to quick retrieval and query.
         self.cumulative_reward = sum(exp.reward for exp in experiences)
-
-        # Synthetic experience fields.
-        self.is_synthetic = False
-
-        # only set with the experience is synthetic.
-        self.syn_experience_quality = None
-
 
     # Helper to generate intentions for this experience (for experience labeling).
     # We should have intentions for our own agents.

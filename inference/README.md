@@ -45,7 +45,7 @@ episode = rollout_to_episode(rollout, task="My task")
 
 ## Storage format
 
-- **Episode**: `experiences` (list of `Experience`), `task`, `outcome`, `is_synthetic`, etc. See `Episode.to_dict()`.
+- **Episode**: `experiences` (list of `Experience`), `task`, `outcome`, etc. See `Episode.to_dict()`.
 - **Experience**: `state`, `action`, `reward`, `next_state`, `done`, optional `intentions`, `tasks`, `sub_tasks`, `summary`, `idx`, etc.
 - **save_path**: If provided, each episode is appended as one JSON object per line (JSONL), so multiple runs can append to the same file.
 

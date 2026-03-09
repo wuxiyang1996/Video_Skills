@@ -1,12 +1,14 @@
-# Enhance Agentic Decision-making in Multiple-player long-horizon games with unsupervised and synthetic experiences
+# Enhance Agentic Decision-making in Multiple-player long-horizon games with unsupervised experiences
 
 [![GitHub Repository](https://img.shields.io/badge/GitHub-Repository-blue)](https://github.com/wuxiyang1996/Game-AI-Agent)
 
 ## Overview
 
-This repository provides a framework for enhancing agentic decision-making in multi-player, long-horizon games through unsupervised and synthetic experience generation. The framework integrates with multiple game environments and supports both training-free (RAG-based) and trainable (RL-based) agent architectures. This readme outlines each module, gives initial instructions for vibe coding, and aims to ease integration and debugging (including function definitions and ToDo lists for each class).
+This repository provides a framework for enhancing agentic decision-making in multi-player, long-horizon games through unsupervised experience. The framework integrates with multiple game environments and supports both training-free (RAG-based) and trainable (RL-based) agent architectures. This readme outlines each module, gives initial instructions for vibe coding, and aims to ease integration and debugging (including function definitions and ToDo lists for each class).
 
-**Contents:** 1. [Environments](#1-environments) · 2. [Data structure](#2-data-structure) · 3. [Skill agent](#3-skill-agent) · 4. [Decision-making agent](#4-decision-making-agent) · 5. [Experience synthesis](#5-experience-synthesis) · 6. [Trainer code](#6-trainer-code) · [ToDo (unfinished)](#todo-unfinished--future--consolidated)
+**No external repos are bundled.** This repository contains only Game-AI-Agent code. For Avalon/Diplomacy you need [AgentEvolver](https://github.com/modelscope/AgentEvolver) (clone as sibling or on `PYTHONPATH`). For GamingAgent or VideoGameBench evaluation, clone those repos as siblings when needed; see the respective `evaluate_*/setup_*_eval_env.md` files.
+
+**Contents:** 1. [Environments](#1-environments) · 2. [Data structure](#2-data-structure) · 3. [Skill agent](#3-skill-agent) · 4. [Decision-making agent](#4-decision-making-agent) · 5. [Trainer code](#5-trainer-code) · [ToDo (unfinished)](#todo-unfinished--future--consolidated)
 
 ## Quick Links
 
@@ -14,8 +16,8 @@ This repository provides a framework for enhancing agentic decision-making in mu
 
 - **📦 Environment Wrappers** — [env_wrappers/](env_wrappers/): NL wrappers and evaluation for game environments
   - [Overcooked AI](env_wrappers/overcooked_nl_wrapper.py) — [overcooked_ai](https://github.com/HumanCompatibleAI/overcooked_ai); eval: [evaluate_overcooked/](evaluate_overcooked/)
-  - [Avalon](env_wrappers/avalon_nl_wrapper.py) · [Diplomacy](env_wrappers/diplomacy_nl_wrapper.py) — [AgentEvolver Games](https://github.com/modelscope/AgentEvolver/blob/main/games/README.md); eval: [evaluation_evolver/](evaluation_evolver/)
-  - [GamingAgent](env_wrappers/gamingagent_nl_wrapper.py) — LMGame-Bench (2048, Sokoban, Tetris); [GamingAgent](https://github.com/lmgame-org/GamingAgent); eval: [evaluate_gamingagent/](evaluate_gamingagent/)
+  - [Avalon](env_wrappers/avalon_nl_wrapper.py) · [Diplomacy](env_wrappers/diplomacy_nl_wrapper.py) — require **AgentEvolver** (external; [AgentEvolver Games](https://github.com/modelscope/AgentEvolver/blob/main/games/README.md)); eval: [evaluation_evolver/](evaluation_evolver/)
+  - [GamingAgent](env_wrappers/gamingagent_nl_wrapper.py) — LMGame-Bench (2048, Sokoban, Tetris); requires **GamingAgent** (external); eval: [evaluate_gamingagent/](evaluate_gamingagent/)
   - [VideoGameBench](env_wrappers/videogamebench_dos_nl_wrapper.py) — DOS games; eval: [evaluate_videogamebench/](evaluate_videogamebench/)
 
 - **🔍 RAG & Embeddings** — [rag/](rag/): Text (default [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)), multimodal (default [Qwen3-VL-Embedding-2B](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B)); config: `RAG_EMBEDDING_MODEL`, `MULTIMODAL_EMBEDDING_MODEL`. [rag/README.md](rag/README.md)
@@ -50,10 +52,10 @@ This framework integrates with the following game environments. Each has an NL w
 | Environment | Source | Wrapper | Evaluation |
 |-------------|--------|---------|------------|
 | **Overcooked AI** | [overcooked_ai](https://github.com/HumanCompatibleAI/overcooked_ai) — cooperative human-AI benchmark (Overcooked game) | [overcooked_nl_wrapper.py](env_wrappers/overcooked_nl_wrapper.py) | [evaluate_overcooked/](evaluate_overcooked/) |
-| **Avalon** | [AgentEvolver Games](https://github.com/modelscope/AgentEvolver/blob/main/games/README.md) — hidden-role deduction | [avalon_nl_wrapper.py](env_wrappers/avalon_nl_wrapper.py) | [evaluation_evolver/](evaluation_evolver/) |
-| **Diplomacy** | [AgentEvolver Games](https://github.com/modelscope/AgentEvolver/blob/main/games/README.md) — strategic negotiation | [diplomacy_nl_wrapper.py](env_wrappers/diplomacy_nl_wrapper.py) | [evaluation_evolver/](evaluation_evolver/) |
-| **GamingAgent (LMGame-Bench)** | [GamingAgent](https://github.com/lmgame-org/GamingAgent) — 2048, Sokoban, Tetris, etc. | [gamingagent_nl_wrapper.py](env_wrappers/gamingagent_nl_wrapper.py) | [evaluate_gamingagent/](evaluate_gamingagent/) |
-| **VideoGameBench** | DOS games (JS-DOS in browser; Game Boy excluded) | [videogamebench_dos_nl_wrapper.py](env_wrappers/videogamebench_dos_nl_wrapper.py) | [evaluate_videogamebench/](evaluate_videogamebench/) |
+| **Avalon** | **External:** [AgentEvolver Games](https://github.com/modelscope/AgentEvolver/blob/main/games/README.md) — hidden-role deduction | [avalon_nl_wrapper.py](env_wrappers/avalon_nl_wrapper.py) | [evaluation_evolver/](evaluation_evolver/) |
+| **Diplomacy** | **External:** [AgentEvolver Games](https://github.com/modelscope/AgentEvolver/blob/main/games/README.md) — strategic negotiation | [diplomacy_nl_wrapper.py](env_wrappers/diplomacy_nl_wrapper.py) | [evaluation_evolver/](evaluation_evolver/) |
+| **GamingAgent (LMGame-Bench)** | **External:** [GamingAgent](https://github.com/lmgame-org/GamingAgent) — 2048, Sokoban, Tetris, etc. | [gamingagent_nl_wrapper.py](env_wrappers/gamingagent_nl_wrapper.py) | [evaluate_gamingagent/](evaluate_gamingagent/) |
+| **VideoGameBench** | **External:** DOS games (JS-DOS in browser; Game Boy excluded) | [videogamebench_dos_nl_wrapper.py](env_wrappers/videogamebench_dos_nl_wrapper.py) | [evaluate_videogamebench/](evaluate_videogamebench/) |
 
 ---
 
@@ -162,7 +164,7 @@ This part defines how **experiences**, **episodes**, and **sub-task (skill)** se
 
 ## Experience
 
-Same as in standard RL: **state, action, intention, reward, next state, done**. Implemented in [data_structure/experience.py](data_structure/experience.py) as `Experience` with required fields plus optional: **intentions**, **tasks**, **sub_tasks**, **summary**, **summary_state**, **idx**, **sub_task_done**; synthetic fields **is_synthetic**, **syn_experience_quality**. Long-term goal, short-term goal, synthesis label, and experience quality score can be filled as needed. A field for experience value is left for prioritized replay. The **summary** (and **summary_state**) support RAG and embedding-based retrieval. Depending on the environment, not all fields are provided; the actual state used by LLM agents is often a **summary of the state**, which also serves as context for RAG retrieval.
+Same as in standard RL: **state, action, intention, reward, next state, done**. Implemented in [data_structure/experience.py](data_structure/experience.py) as `Experience` with required fields plus optional: **intentions**, **tasks**, **sub_tasks**, **summary**, **summary_state**, **idx**, **sub_task_done**. Long-term goal and short-term goal can be filled as needed. A field for experience value is left for prioritized replay. The **summary** (and **summary_state**) support RAG and embedding-based retrieval. Depending on the environment, not all fields are provided; the actual state used by LLM agents is often a **summary of the state**, which also serves as context for RAG retrieval.
 
 ## Episode
 
@@ -182,14 +184,14 @@ All live in [data_structure/experience.py](data_structure/experience.py).
 
 ### ToDo (data structure)
 
-**Status (repo-wide):** Not all ToDos are finalized. Implemented: experience/episode buffers (FIFO + add/sample), summary generation and RAG-backed memory/skill query, trainer prioritized replay, and sub-task pipeline (skill_agents). Open or partial: in/out policy scoring for buffer, per-env format helpers, completion validator, reward labeling, experience synthesis, and some trainer items (LoRA, stronger replay). RAG is not fine-tuned (frozen by design). See notes below.
+**Status (repo-wide):** Not all ToDos are finalized. Implemented: experience/episode buffers (FIFO + add/sample), summary generation and RAG-backed memory/skill query, trainer prioritized replay, and sub-task pipeline (skill_agents). Open or partial: in/out policy scoring for buffer, per-env format helpers, completion validator, reward labeling, and some trainer items (LoRA, stronger replay). RAG is not fine-tuned (frozen by design). See notes below.
 
 1. **[Partial]** Experience buffer with in/out policy models that evaluate relative quality and relevance to the proposed latent state (intentions / sub-goals) and current state; push/pop (or add/sample) for adding/removing experiences.  
    *Done:* [Experience_Replay_Buffer](data_structure/experience.py) and [Episode_Buffer](data_structure/experience.py) (add/sample, save/load); [trainer ReplayBuffer](trainer/decision/replay_buffer.py) with prioritized sampling. *Open:* policy-based in/out scoring for quality/relevance to intentions.
 2. **[Partial]** Per-environment helpers to convert raw experience sequences into this format and fill blank fields; sample experiences may be required.  
    *Done:* [Experience](data_structure/experience.py) optional fields; [skill_agents](skill_agents/infer_segmentation/episode_adapter.py) uses `summary_state`/`summary`/`state`; [decision_agents](decision_agents/agent_helper.py) `get_state_summary` / `infer_intention`. *Open:* central per-env “raw → Episode” conversion helpers.
 3. **[Done]** (N/A) Hooks for experience quality evaluation and prioritized replay; optional auto-ranking inside the experience buffer.  
-   Not required. Existing support is sufficient: [ReplayBuffer](trainer/decision/replay_buffer.py) has priority-weighted sampling; `Experience` has `syn_experience_quality` and a value field for replay. No plans for explicit quality hooks or auto-ranking in [Episode_Buffer](data_structure/experience.py) / [Experience_Replay_Buffer](data_structure/experience.py).
+   Not required. Existing support is sufficient: [ReplayBuffer](trainer/decision/replay_buffer.py) has priority-weighted sampling and a value field for replay. No plans for explicit quality hooks or auto-ranking in [Episode_Buffer](data_structure/experience.py) / [Experience_Replay_Buffer](data_structure/experience.py).
 4. **[Done]** Experience summary generation when missing; experience embedding code for RAG and experience query.  
    *Done:* [Experience.generate_summary](data_structure/experience.py) / `generate_summary_state`; [get_state_summary](decision_agents/agent_helper.py); [EpisodicMemoryStore](decision_agents/agent_helper.py) (RAG-backed memory query); [SkillQueryEngine](skill_agents/query.py) (RAG-backed skill query). Episode_Buffer.get_episode_summary is keyword-only (no embedding).
 
@@ -359,7 +361,7 @@ This mode uses RAG to query experiences most relevant to the current situation a
 
 ## Trainable agent
 
-This mode gathers experience via interaction and synthesis and updates parameters with reinforcement learning. The **[trainer/](trainer/)** module implements it: the VLM Decision Agent is trained with **GRPO** (retrieval as first-class actions; reward = r_env + shaping + query/call costs), and the Skill Bank is updated via **Hard-EM**. See [trainer/README.md](trainer/README.md) and the “Trainer Code” section below.
+This mode gathers experience via interaction and updates parameters with reinforcement learning. The **[trainer/](trainer/)** module implements it: the VLM Decision Agent is trained with **GRPO** (retrieval as first-class actions; reward = r_env + shaping + query/call costs), and the Skill Bank is updated via **Hard-EM**. See [trainer/README.md](trainer/README.md) and the “Trainer Code” section below.
 
 ## Inference: run and store rollouts
 
@@ -413,11 +415,9 @@ The decision-making agent is expected to support:
 3. **(Training-free)** Integrate a RAG module to query relevant experience from the buffer.
 4. **Action generation** — From current state (summary), in-episode history, and (for training-free) retrieved context, output the next action.
 
-The counterfactual action generation module should reuse the same structure; gradients are not applied from that path.
-
 ## Reward design for skill agent
 
-This part is for the **skill agent** ([skill_agents/](skill_agents/)): reward signals and training objectives used when building or evaluating the skill bank and when training experience synthesis. RAG is not fine-tuned (frozen); SFT can be used to train experience synthesis (e.g. [world_model](world_model/)).
+This part is for the **skill agent** ([skill_agents/](skill_agents/)): reward signals and training objectives used when building or evaluating the skill bank. RAG is not fine-tuned (frozen).
 
 We adopt the idea of GDPO: normalize each kind of reward under each category. Reward categories to involve in this system include:
 
@@ -429,31 +429,7 @@ The first two are env-related. A time-sensitive discount can be applied to penal
 
 ---
 
-# 5. Experience synthesis
-
-**Counterfactual experience generation:** Given the current state and action, produce "what if" outcomes for alternative valid actions. The [world_model/](world_model/) module implements this via **multi-modal** (image editing) and **agentic textual** (LLM) backends, plus **experience planning** and **synthetic experience evaluation**. See [world_model/Readme.md](world_model/Readme.md).
-
-### Implemented ([world_model/](world_model/))
-
-| Component | Description | Links |
-|-----------|-------------|--------|
-| **Multi-modal world model** | Image editing: current frame + historical summary + instructions → synthetic next frame(s). | [world_model/multi_modal/](world_model/multi_modal/) — [LongCat](https://huggingface.co/meituan-longcat/LongCat-Image-Edit), [Qwen-Edit](https://huggingface.co/Qwen/Qwen-Image-Edit-2511), [BAGEL](https://huggingface.co/ByteDance-Seed/BAGEL-7B-MoT) ([BAGEL_DEPLOYMENT.md](world_model/multi_modal/BAGEL_DEPLOYMENT.md)) |
-| **Agentic textual world model** | LLM-based: state + historical summary + instructions → next state (text), action, reward. | [world_model/agentic_textual/](world_model/agentic_textual/) |
-| **Experience planning** | NL descriptions → step-by-step plans; optional skill-bank grounding. Plans feed into world models. | [world_model/experience_planning/](world_model/experience_planning/) |
-| **Synthetic experience evaluation** | LLM-as-a-judge: fidelity, consistency, instruction adherence, diversity, informativeness → verdict (ACCEPT / REFINE / REGENERATE / DISCARD). | [world_model/evaluation/](world_model/evaluation/) |
-
-Generated experience can be validated with CoT (see [Completion validator](#completion-validator)); [world_model/evaluation/](world_model/evaluation/) provides batch evaluation and verdicts.
-
-### ToDo (future)
-
-1. **Synthesis function (richer):** Extend to (1) enumerate available actions from state; (2) optionally modify sub-task assignment under constraints; (3) infer next state and reward. Current world model already does step-level and multi-step synthesis from state + instructions.
-2. **Validation:** Optional LLM-as-a-Judge for "aligned with reality" (True/False) beyond the existing [evaluation](world_model/evaluation/) dimensions.
-3. **Rollout diversity:** Support single state-action and multi-step sub-task synthesis with validation in both cases; consider diversity of generated experience.
-4. **Training:** SFT to improve experience synthesis quality and plausibility.
-
----
-
-# 6. Trainer code
+# 5. Trainer code
 
 The training code uses experience to train agents so they (i) take better actions, (ii) get better summaries of the environment, and (iii) improve retrieval and skill-following. It lives in **[trainer/](trainer/)** and implements co-evolution for both agents.
 
@@ -504,9 +480,6 @@ Unfinished or future work across the repo. See in-doc sections for details.
 | **Reward labeling** | Reward score target vs next state (progress toward goal); optional state embedding | **Open** (TBD) |
 | **Completion** | LLM completion-level function (distinct from r_follow) | **Open** |
 | **Completion** | Steps-left estimator (initial + final state; use RAG experience) | **Open** |
-| **Experience synthesis** | Richer synthesis (enumerate actions, modify sub-task under constraints) | **Open** |
-| **Experience synthesis** | Optional LLM-as-Judge “aligned with reality” beyond evaluation dimensions | **Open** |
-| **Experience synthesis** | Rollout diversity and SFT for synthesis quality | **Open** |
 | **Decision agent** | Reachable tasks / intention update; optional RAG for training-free | **Open** (partially done: get_state_summary, infer_intention, EpisodicMemoryStore) |
 | **Trainer** | PPO / GDPO / LoRA integration; stronger prioritized replay; LoRA in policy interface | **Open** |
 

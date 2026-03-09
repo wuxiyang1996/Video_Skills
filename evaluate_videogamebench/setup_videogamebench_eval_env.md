@@ -1,14 +1,16 @@
 # Setting up the VideoGameBench evaluation environment
 
+**VideoGameBench is not included in this repo.** You need the external VideoGameBench repository.
+
 **DOS games only** — Game Boy / PyBoy games are excluded (no ROMs or emulator required).
 
-## 1. VideoGameBench repository
+## 1. VideoGameBench repository (external)
 
-Clone and install VideoGameBench:
+Clone and install VideoGameBench as a sibling of Game-AI-Agent (or elsewhere and add to `PYTHONPATH`):
 
 ```powershell
 cd D:\ICML2026
-git clone https://github.com/.../videogamebench.git
+git clone <videogamebench-repo-url>
 cd videogamebench
 pip install -e .
 ```

@@ -1,10 +1,10 @@
 # Setting up the GamingAgent evaluation environment
 
-Follow these steps so the `evaluate_gamingagent` scripts can run with the GamingAgent (LMGame-Bench) environments.
+**GamingAgent is not included in this repo.** You need the external [GamingAgent](https://github.com/lmgame-org/GamingAgent) repository. Follow these steps so the `evaluate_gamingagent` scripts can run with the GamingAgent (LMGame-Bench) environments.
 
-## 1. GamingAgent repository
+## 1. GamingAgent repository (external)
 
-Clone and install GamingAgent:
+Clone and install GamingAgent as a sibling of Game-AI-Agent (or elsewhere and add to `PYTHONPATH`):
 
 ```powershell
 cd D:\ICML2026
