@@ -271,6 +271,10 @@ class SkillQueryEngine:
             entry: Dict[str, Any] = {"skill_id": sid}
             if c is not None:
                 entry["version"] = c.version
+                if getattr(c, "name", None):
+                    entry["name"] = c.name
+                if getattr(c, "description", None):
+                    entry["description"] = c.description
                 entry["n_add"] = len(c.eff_add) if c.eff_add else 0
                 entry["n_del"] = len(c.eff_del) if c.eff_del else 0
                 entry["n_event"] = len(c.eff_event) if c.eff_event else 0
@@ -287,6 +291,10 @@ class SkillQueryEngine:
             return None
 
         detail: Dict[str, Any] = {"skill_id": skill_id}
+        if getattr(c, "name", None):
+            detail["name"] = c.name
+        if getattr(c, "description", None):
+            detail["description"] = c.description
         detail["contract"] = _contract_summary(c)
 
         r = self._bank.get_report(skill_id)

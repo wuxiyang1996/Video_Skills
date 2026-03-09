@@ -497,13 +497,64 @@ class SkillBankAgent:
                     for rec in cluster:
                         if rec in self._new_pool:
                             self._new_pool.remove(rec)
-                    logger.info("Materialized new skill %s (%d instances, pass_rate=%.2f)",
-                                new_id, len(cluster), sr.get("pass_rate", 0))
+                    # Prompt LLM to label the new skill with a human-readable name
+                    contract = self.bank.get_contract(new_id)
+                    if contract is not None:
+                        observation_slices = []
+                        for rec in cluster[:3]:
+                            obs = self._observations_by_traj.get(rec.traj_id, [])
+                            if rec.t_start is not None and rec.t_end is not None:
+                                observation_slices.append(
+                                    obs[rec.t_start : rec.t_end + 1]
+                                )
+                        if observation_slices:
+                            from skill_agents.infer_segmentation.llm_teacher import (
+                                suggest_skill_name,
+                            )
+                            from skill_agents.infer_segmentation.config import (
+                                LLMTeacherConfig,
+                            )
+                            llm_cfg = LLMTeacherConfig(model=self.config.llm_model)
+                            naming = suggest_skill_name(
+                                observation_slices,
+                                eff_add=list(contract.eff_add) or None,
+                                eff_del=list(contract.eff_del) or None,
+                                eff_event=list(contract.eff_event) or None,
+                                config=llm_cfg,
+                            )
+                            if naming and naming.get("name"):
+                                contract.name = naming["name"]
+                                contract.description = naming.get("description")
+                                self.bank.add_or_update(contract)
+                                logger.info(
+                                    "Materialized new skill %s -> %s (%d instances, pass_rate=%.2f)",
+                                    new_id,
+                                    naming["name"],
+                                    len(cluster),
+                                    sr.get("pass_rate", 0),
+                                )
+                            else:
+                                logger.info(
+                                    "Materialized new skill %s (%d instances, pass_rate=%.2f)",
+                                    new_id, len(cluster), sr.get("pass_rate", 0),
+                                )
+                        else:
+                            logger.info(
+                                "Materialized new skill %s (%d instances, pass_rate=%.2f)",
+                                new_id, len(cluster), sr.get("pass_rate", 0),
+                            )
+                    else:
+                        logger.info(
+                            "Materialized new skill %s (%d instances, pass_rate=%.2f)",
+                            new_id, len(cluster), sr.get("pass_rate", 0),
+                        )
                 else:
                     self.bank.remove(new_id)
                     for rec in cluster:
                         rec.skill_label = "__NEW__"
 
+        if created and self.config.bank_path:
+            self.bank.save(self.config.bank_path)
         self._invalidate_query_engine()
         return created
 

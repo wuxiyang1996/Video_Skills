@@ -90,6 +90,10 @@ class SkillEffectsContract:
     skill_id: str
     version: int = 1
 
+    # Human-readable name and description (e.g. from LLM when materializing new skills)
+    name: Optional[str] = None
+    description: Optional[str] = None
+
     eff_add: Set[str] = field(default_factory=set)
     eff_del: Set[str] = field(default_factory=set)
     eff_event: Set[str] = field(default_factory=set)
@@ -113,6 +117,8 @@ class SkillEffectsContract:
         return {
             "skill_id": self.skill_id,
             "version": self.version,
+            "name": self.name,
+            "description": self.description,
             "eff_add": sorted(self.eff_add),
             "eff_del": sorted(self.eff_del),
             "eff_event": sorted(self.eff_event),
@@ -127,6 +133,8 @@ class SkillEffectsContract:
         return cls(
             skill_id=d["skill_id"],
             version=d.get("version", 1),
+            name=d.get("name"),
+            description=d.get("description"),
             eff_add=set(d.get("eff_add", [])),
             eff_del=set(d.get("eff_del", [])),
             eff_event=set(d.get("eff_event", [])),

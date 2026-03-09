@@ -422,6 +422,95 @@ def _collect_one_uncertain_pref(
     )
 
 
+# ── Naming new skills ─────────────────────────────────────────────────
+
+def _build_skill_naming_prompt(
+    observation_slices: List[Sequence],
+    eff_add: Optional[Sequence[str]] = None,
+    eff_del: Optional[Sequence[str]] = None,
+    eff_event: Optional[Sequence[str]] = None,
+) -> str:
+    """Build a prompt for the LLM to suggest a human-readable name for a new skill."""
+    parts = [
+        "You are an expert at labeling agent skills from behavior.",
+        "",
+        "Below are one or more trajectory segments that were grouped as the same skill.",
+        "Suggest a short, actionable skill name (2–6 words) and a one-line description.",
+        "",
+        "Segment observations (state summaries):",
+    ]
+    for i, obs_slice in enumerate(observation_slices[:3]):  # at most 3 segments
+        parts.append(f"  Segment {i + 1}: {str(list(obs_slice))[:800]}")
+    if eff_add or eff_del or eff_event:
+        parts.append("")
+        parts.append("Learned effects of this skill:")
+        if eff_add:
+            parts.append(f"  adds: {list(eff_add)}")
+        if eff_del:
+            parts.append(f"  deletes: {list(eff_del)}")
+        if eff_event:
+            parts.append(f"  events: {list(eff_event)}")
+    parts.extend([
+        "",
+        "Return ONLY a JSON object (no extra text):",
+        '{"name": "short skill name", "description": "one line description"}',
+        "Use snake_case or short phrases for name (e.g. \"pick_up_onion\", \"navigate to pot\").",
+    ])
+    return "\n".join(parts)
+
+
+def suggest_skill_name(
+    observation_slices: List[Sequence],
+    eff_add: Optional[Sequence[str]] = None,
+    eff_del: Optional[Sequence[str]] = None,
+    eff_event: Optional[Sequence[str]] = None,
+    config: Optional[LLMTeacherConfig] = None,
+) -> Optional[Dict[str, str]]:
+    """
+    Ask the LLM to suggest a human-readable name and description for a new skill.
+
+    Used when materializing __NEW__ segments into a real skill so the bank
+    has a readable label (e.g. \"pick_up_onion\") instead of only an ID.
+
+    Parameters
+    ----------
+    observation_slices : list of observation sequences
+        One or more segment observation slices (e.g. from cluster segments).
+    eff_add, eff_del, eff_event : optional
+        Effect literals learned for this skill (from contract).
+    config : LLMTeacherConfig, optional
+        Model and sampling settings.
+
+    Returns
+    -------
+    dict with "name" and "description" keys, or None if the LLM response could not be parsed.
+    """
+    cfg = config or LLMTeacherConfig()
+    ask = _get_ask_model()
+    prompt = _build_skill_naming_prompt(
+        observation_slices,
+        eff_add=eff_add,
+        eff_del=eff_del,
+        eff_event=eff_event,
+    )
+    response = ask(
+        prompt,
+        model=cfg.model,
+        temperature=cfg.temperature,
+        max_tokens=cfg.max_tokens,
+    )
+    parsed = _parse_json_from_response(response)
+    if not parsed or "name" not in parsed:
+        return None
+    name = (parsed.get("name") or "").strip()
+    if not name:
+        return None
+    return {
+        "name": name,
+        "description": (parsed.get("description") or "").strip() or None,
+    }
+
+
 def collect_uncertain_preferences(
     result,
     observations: Sequence,
