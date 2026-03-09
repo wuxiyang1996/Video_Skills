@@ -13,6 +13,7 @@ Build and maintain a **Skill Bank** from long-horizon game trajectories: segment
 | **SkillBankMVP** | Persistent storage (JSONL) for skill contracts and verification reports. |
 | **tool_call_reward** | Reward for tool calls (query_skill / query_memory / call_skill) for agentic RL training. |
 | **PLAN.md** | Operating plan (stages, constraints, data model). |
+| **PIPELINE_CALL_FLOW.md** | How each function is called within the agent framework (illustration). |
 
 Subpackages implement each stage:
 
@@ -247,7 +248,6 @@ skill_agents/
 ├── infer_segmentation/ # Stage 2
 ├── stage3_mvp/         # Stage 3 contract learn/verify/refine
 ├── bank_maintenance/   # Stage 4 split/merge/refine
-├── stage4_bank_update/ # Alternative Stage 4 impl
 ├── contract_verification/
 └── skill_evaluation/   # Quality evaluation
 ```

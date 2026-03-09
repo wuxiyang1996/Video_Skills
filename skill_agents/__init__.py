@@ -18,7 +18,7 @@ Subpackages:
   - skill_bank: Persistent storage for learned skill contracts.
   - skill_evaluation: Holistic quality assessment of extracted skills (coherence,
     discriminability, composability, generalization, utility, granularity).
-  - stage4_bank_update / bank_maintenance: Split, merge, refine, and local re-decode.
+  - bank_maintenance: Split, merge, refine, and local re-decode.
 """
 
 from skill_agents.pipeline import SkillBankAgent, PipelineConfig, IterationSnapshot

@@ -474,6 +474,7 @@ class SkillBankAgent:
                     t_start=rec.t_start,
                     t_end=rec.t_end,
                     skill_label=new_id,
+                    ui_events=list(rec.events) if getattr(rec, "events", None) else [],
                 )
                 for rec in cluster
             ]
@@ -504,9 +505,9 @@ class SkillBankAgent:
                         for rec in cluster[:3]:
                             obs = self._observations_by_traj.get(rec.traj_id, [])
                             if rec.t_start is not None and rec.t_end is not None:
-                                observation_slices.append(
-                                    obs[rec.t_start : rec.t_end + 1]
-                                )
+                                sl = obs[rec.t_start : rec.t_end + 1]
+                                if len(sl) > 0:
+                                    observation_slices.append(sl)
                         if observation_slices:
                             from skill_agents.infer_segmentation.llm_teacher import (
                                 suggest_skill_name,

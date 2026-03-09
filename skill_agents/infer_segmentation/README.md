@@ -156,9 +156,20 @@ We only store **pairwise** preferences (A ≻ B). To get a **full ranking** of s
 
 So: pairwise preferences train the scorer; the **ranking** for a segment is obtained by scoring all skills for that segment and sorting.
 
+## Modes: Inference (with LLM) vs Offline (no LLM)
+
+There are two ways to run segmentation:
+
+| Mode | Function | When to use |
+|------|----------|-------------|
+| **Inference with LLM** | `infer_and_segment` | You want to use an LLM (e.g. GPT-5) at inference time: the LLM is prompted to rank skills for segments and transitions, preferences are collected, the PreferenceScorer is trained, and decoding runs. Use this when you want to interface with GPT or another API model. |
+| **Offline (no LLM)** | `infer_and_segment_offline` | No LLM calls. You supply pre-trained `behavior_fit_fn` and `transition_fn` (e.g. from a saved PreferenceScorer or mock). Use for (1) **training** runs where preferences were collected elsewhere (e.g. human labels or a separate batch), or (2) **testing** without API keys, or (3) inference when you already have a trained scorer and do not want to call an API. |
+
+So: **inference mode** = segmentation that can call GPT-5 (or another LLM); **offline** = segmentation with no LLM, using only the scoring functions you provide (trained or hand-written).
+
 ## Quick Start
 
-### With LLM (full pipeline)
+### Inference with LLM (e.g. GPT-5)
 
 ```python
 from skill_agents.infer_segmentation import infer_and_segment
@@ -178,7 +189,7 @@ for seg in result.segments:
 store.save("preferences.json")
 ```
 
-### Offline (no LLM)
+### Offline (no LLM) — pre-trained scorer or testing
 
 ```python
 from skill_agents.infer_segmentation import infer_and_segment_offline
@@ -187,6 +198,7 @@ result, sub_episodes = infer_and_segment_offline(
     episode,
     skill_names=["move", "attack", "gather"],
     behavior_fit_fn=my_custom_scorer,
+    transition_fn=my_transition_fn,
 )
 ```
 
@@ -427,8 +439,8 @@ Defines how each segment–skill pair is scored (weighted sum of four terms).
 | Function | Purpose |
 |----------|--------|
 | **infer_segmentation(candidates, T, skill_names, ...)** | Low-level: run decoder with a given or built SegmentScorer. Returns **SegmentationResult**. |
-| **infer_and_segment(episode, skill_names, env_name, ...)** | Full pipeline with LLM: Stage 1 → collect prefs → train → decode → optional active-learning loop. Returns **(SegmentationResult, list[SubTask_Experience], PreferenceStore)**. |
-| **infer_and_segment_offline(episode, skill_names, ...)** | Offline: no LLM; Stage 1 → decode with provided scoring functions. For testing. |
+| **infer_and_segment(episode, skill_names, env_name, ...)** | Inference with LLM (e.g. GPT-5): Stage 1 → collect prefs → train → decode → optional active-learning loop. Returns **(SegmentationResult, list[SubTask_Experience], PreferenceStore)**. |
+| **infer_and_segment_offline(episode, skill_names, ...)** | Offline (no LLM): Stage 1 → decode with provided scoring functions. For training from pre-collected prefs or testing. |
 
 ### `__init__.py` — Public API
 

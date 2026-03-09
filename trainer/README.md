@@ -1,5 +1,23 @@
 # Training Infrastructure
 
+**Preferred: VERL (verl-agent).** For distributed GiGPO/PPO training with vLLM/sglang and FSDP, use [VERL](https://github.com/verl-project/verl) via [verl-agent](https://github.com/verl-project/verl-agent):
+
+```bash
+# From Game-AI-Agent repo root; requires verl-agent at ../verl-agent
+python -m scripts.run_trainer --verl
+python -m scripts.run_trainer --verl algorithm.adv_estimator=gigpo trainer.nnodes=2
+```
+
+Or run the trainer module (no `--config` → delegates to VERL):
+
+```bash
+python -m trainer.decision.launch_train env.env_name=gameai ...
+```
+
+Standalone (in-repo) training remains available for debugging or when VERL is not installed: `python -m scripts.run_trainer --config trainer/common/configs/decision_grpo.yaml`.
+
+---
+
 Co-evolution training for two agents:
 
 - **Agent A (VLM Decision Agent):** Trained with **GRPO** (Group Relative Policy Optimization), where `QUERY_MEM` / `QUERY_SKILL` / `CALL_SKILL` are treated as actions with query/call costs + optional skill-follow shaping.

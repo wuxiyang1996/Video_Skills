@@ -1,8 +1,26 @@
 """
-Rollout collector for the Decision Agent GRPO trainer.
+Rollout collector for the Decision Agent.
 
-Collects complete episode rollouts using the EnvWrapper, recording actions,
-observations, reward breakdowns, predicates, embeddings, and policy logprobs.
+Two modes:
+  1. collect_rollout / collect_batch — original single-env sequential
+     collection (for standalone / eval use without VERL)
+  2. VERLRolloutAdapter — bridges the Game-AI env to VERL's
+     TrajectoryCollector.multi_turn_loop(), which handles batched
+     multi-turn collection with vLLM/sglang actor inference.
+
+VERL integration:
+  In VERL training, rollout collection is done by:
+    gen_batch_output = traj_collector.multi_turn_loop(
+        gen_batch, actor_rollout_wg, envs, is_train=True
+    )
+  This replaces collect_batch(). The TrajectoryCollector handles:
+    - Batched prompt tokenization
+    - vLLM/sglang sequence generation
+    - Projection (text → env action via gameai_projection)
+    - Multi-turn env stepping
+    - Reward accumulation into episode_rewards
+  See trainer/decision/env_wrapper.py for the GameAIEnvironmentManager
+  that provides the VERL env interface.
 """
 
 from __future__ import annotations
@@ -13,7 +31,6 @@ from typing import Any, Callable, Dict, List, Optional
 
 from trainer.common.metrics import RolloutRecord, RolloutStep
 from trainer.common.seeds import SeedManager
-from trainer.decision.env_wrapper import EnvWrapper
 from trainer.decision.reward_shaping import TrainRewardShaper
 
 logger = logging.getLogger(__name__)
@@ -31,7 +48,7 @@ def classify_action_type(action: str) -> str:
 
 
 def collect_rollout(
-    env_wrapper: EnvWrapper,
+    env_wrapper,
     policy: Any,
     reward_shaper: TrainRewardShaper,
     seed: int,
@@ -40,20 +57,9 @@ def collect_rollout(
     extract_predicates: Optional[Callable[[str], Dict[str, float]]] = None,
     extract_embedding: Optional[Callable[[str], List[float]]] = None,
 ) -> RolloutRecord:
-    """Collect one complete episode rollout.
+    """Collect one complete episode rollout (standalone mode).
 
-    Args:
-        env_wrapper: EnvWrapper instance (handles retrieval-as-action)
-        policy: PolicyInterface for action sampling
-        reward_shaper: TrainRewardShaper for reward computation
-        seed: environment seed
-        max_steps: per-episode step limit
-        episode_id: unique episode identifier
-        extract_predicates: optional callable(obs) -> dict of predicate probs
-        extract_embedding: optional callable(obs) -> embedding vector
-
-    Returns:
-        RolloutRecord with complete step-by-step data.
+    For VERL training, use TrajectoryCollector.multi_turn_loop() instead.
     """
     episode_id = episode_id or str(uuid.uuid4())[:8]
     reward_shaper.reset()
@@ -152,21 +158,13 @@ def collect_batch(
     max_steps: int = 500,
     **kwargs,
 ) -> List[RolloutRecord]:
-    """Collect a batch of rollouts with different seeds.
+    """Collect a batch of rollouts with different seeds (standalone mode).
 
-    Args:
-        env_factory: callable(seed) -> game env instance
-        policy: PolicyInterface
-        skill_bank: current SkillBankMVP
-        memory: EpisodicMemoryStore
-        reward_config: RewardConfig
-        seed_manager: SeedManager for deterministic seeds
-        batch_size: number of episodes
-        max_steps: per-episode step limit
-
-    Returns:
-        list of RolloutRecords
+    For VERL training, use TrajectoryCollector.multi_turn_loop() instead,
+    which handles batched multi-turn collection with distributed inference.
     """
+    from trainer.decision.env_wrapper import EnvWrapper
+
     records: List[RolloutRecord] = []
 
     for i in range(batch_size):
@@ -189,3 +187,76 @@ def collect_batch(
             logger.warning("Rollout %d (seed=%d) failed: %s", i, seed, exc)
 
     return records
+
+
+# ---------------------------------------------------------------------------
+# VERL rollout adapter
+# ---------------------------------------------------------------------------
+try:
+    import torch
+    from verl import DataProto
+    _HAS_VERL = True
+except ImportError:
+    _HAS_VERL = False
+
+
+if _HAS_VERL:
+    class VERLRolloutAdapter:
+        """Adapter that converts VERL multi-turn rollout output to RolloutRecords.
+
+        After VERL's TrajectoryCollector.multi_turn_loop() produces a
+        DataProto batch, this adapter extracts per-episode RolloutRecords
+        for use in co-evolution EM, logging, and evaluation.
+
+        Usage:
+            gen_batch_output = traj_collector.multi_turn_loop(...)
+            adapter = VERLRolloutAdapter(tokenizer)
+            records = adapter.extract_records(gen_batch_output)
+        """
+
+        def __init__(self, tokenizer=None):
+            self.tokenizer = tokenizer
+
+        def extract_records(self, batch: DataProto) -> List[RolloutRecord]:
+            """Extract RolloutRecords from a VERL DataProto batch.
+
+            Reads episode_rewards, episode_lengths, and non_tensor_batch
+            fields populated by the GameAIEnvironmentManager during rollout.
+            """
+            records = []
+            ntb = batch.non_tensor_batch
+
+            for i in range(len(batch)):
+                episode_id = ntb.get("traj_uid", [f"ep_{i}"])[i] if "traj_uid" in ntb else f"ep_{i}"
+                episode_reward = float(ntb["episode_rewards"][i]) if "episode_rewards" in ntb else 0.0
+                episode_length = int(ntb["episode_lengths"][i]) if "episode_lengths" in ntb else 1
+
+                steps = []
+                for t in range(episode_length):
+                    step = RolloutStep(
+                        step=t,
+                        obs_id=f"{episode_id}_obs_{t}",
+                        action="",
+                        action_type="primitive",
+                        r_env=episode_reward / max(episode_length, 1) if t == episode_length - 1 else 0.0,
+                        r_total=episode_reward / max(episode_length, 1) if t == episode_length - 1 else 0.0,
+                        done=(t == episode_length - 1),
+                        episode_id=str(episode_id),
+                        traj_id=str(episode_id),
+                        seed=0,
+                    )
+                    steps.append(step)
+
+                if steps:
+                    record = RolloutRecord(
+                        episode_id=str(episode_id),
+                        traj_id=str(episode_id),
+                        seed=0,
+                        steps=steps,
+                    )
+                    record.finalize()
+                    record.won = bool(ntb.get("won", [False])[i]) if "won" in ntb else False
+                    record.score = episode_reward
+                    records.append(record)
+
+            return records

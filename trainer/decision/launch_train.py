@@ -1,8 +1,17 @@
 """
-CLI entry point for Decision Agent GRPO training.
+CLI entry point for Decision Agent training.
 
-Usage:
-    python -m trainer.decision.launch_train --config trainer/common/configs/decision_grpo.yaml
+Two modes:
+  1. Standalone: python -m trainer.decision.launch_train --config ...
+     Uses LLMPolicy + custom GRPO trainer (no VERL dependency).
+  2. VERL mode (preferred): python -m trainer.decision.launch_train [overrides...]
+     Delegates to verl-agent (https://github.com/verl-project/verl) and runs
+     verl.trainer.main_gameai with Hydra, Ray, vLLM/sglang and FSDP.
+
+VERL launch:
+    python -m scripts.run_trainer --verl [overrides...]
+    # or from this module (no --config):
+    python -m trainer.decision.launch_train algorithm.adv_estimator=gigpo env.env_name=gameai ...
 """
 
 from __future__ import annotations
@@ -15,24 +24,20 @@ from typing import Any, Dict, Optional
 
 import yaml
 
-from trainer.common.eval_harness import run_decision_eval
-from trainer.common.logging import TrainLogger
-from trainer.common.metrics import aggregate_decision_metrics
-from trainer.common.seeds import SeedManager, set_global_seed
-from trainer.decision.grpo_trainer import GRPOConfig, GRPOTrainer
-from trainer.decision.policy_interface import LLMPolicy
-from trainer.decision.replay_buffer import ReplayBuffer
-from trainer.decision.rollout_collector import collect_batch
-
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Original standalone mode (no VERL)
+# ---------------------------------------------------------------------------
 
 def load_config(path: str) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
-def build_grpo_config(cfg: Dict[str, Any]) -> GRPOConfig:
+def build_grpo_config(cfg: Dict[str, Any]):
+    from trainer.decision.grpo_trainer import GRPOConfig
     grpo = cfg.get("grpo", {})
     return GRPOConfig(
         group_size=grpo.get("group_size", 8),
@@ -54,14 +59,16 @@ def train_decision_agent(
     skill_bank: Any = None,
     memory: Any = None,
 ) -> None:
-    """Main training loop for the Decision Agent.
+    """Main training loop for standalone mode (no VERL)."""
+    from trainer.common.eval_harness import run_decision_eval
+    from trainer.common.logging import TrainLogger
+    from trainer.common.metrics import aggregate_decision_metrics
+    from trainer.common.seeds import SeedManager, set_global_seed
+    from trainer.decision.grpo_trainer import GRPOConfig, GRPOTrainer
+    from trainer.decision.policy_interface import LLMPolicy
+    from trainer.decision.replay_buffer import ReplayBuffer
+    from trainer.decision.rollout_collector import collect_batch
 
-    Args:
-        cfg: parsed YAML config dict
-        env_factory: callable(seed) -> env; if None, uses a dummy
-        skill_bank: SkillBankMVP instance
-        memory: EpisodicMemoryStore instance
-    """
     set_global_seed(42)
 
     grpo_cfg = build_grpo_config(cfg)
@@ -174,19 +181,358 @@ def train_decision_agent(
     logger.info("Decision Agent training complete (%d episodes)", episode_count)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Decision Agent GRPO Training")
-    parser.add_argument(
-        "--config", type=str,
-        default="trainer/common/configs/decision_grpo.yaml",
-        help="Path to GRPO config YAML",
+# ---------------------------------------------------------------------------
+# VERL mode
+# ---------------------------------------------------------------------------
+try:
+    import ray
+    import hydra
+    from omegaconf import OmegaConf
+    _HAS_VERL = True
+except ImportError:
+    _HAS_VERL = False
+
+
+def _make_gameai_envs(config):
+    """Build Game-AI environments for VERL training."""
+    from trainer.decision.env_wrapper import (
+        build_gameai_envs,
+        gameai_projection,
+        GameAIEnvironmentManager,
     )
-    args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    seed = config.env.get("seed", 42)
+    env_num = config.data.train_batch_size
+    group_n = config.env.rollout.n
 
-    cfg = load_config(args.config)
-    train_decision_agent(cfg)
+    # Build env factory from game config
+    env_factory = _get_env_factory(config)
+
+    vec_env = build_gameai_envs(
+        env_factory=env_factory,
+        seed=seed,
+        env_num=env_num,
+        group_n=group_n,
+    )
+    envs = GameAIEnvironmentManager(vec_env, gameai_projection, config)
+
+    # Validation envs
+    val_env_num = config.data.val_batch_size
+    val_vec_env = build_gameai_envs(
+        env_factory=env_factory,
+        seed=seed + 10000,
+        env_num=val_env_num,
+        group_n=1,
+    )
+    val_envs = GameAIEnvironmentManager(val_vec_env, gameai_projection, config)
+
+    return envs, val_envs
+
+
+def _get_env_factory(config):
+    """Get env factory from config, with fallback."""
+    env_name = config.env.get("env_name", "gameai")
+    max_steps = config.env.get("max_steps", 50)
+
+    def factory(seed=0):
+        try:
+            from decision_agents.envs import make_game_env
+            return make_game_env(env_name, seed=seed, max_steps=max_steps)
+        except ImportError:
+            logger.warning("Could not import game env, using dummy")
+            return _DummyEnv(seed=seed)
+
+    return factory
+
+
+class _DummyEnv:
+    """Minimal dummy env for testing the VERL integration."""
+    def __init__(self, seed=0):
+        self.seed = seed
+        self._step = 0
+
+    def reset(self):
+        self._step = 0
+        return "Game started. You are in a room.", {}
+
+    def step(self, action):
+        self._step += 1
+        done = self._step >= 5
+        return f"Step {self._step}: You did '{action}'.", 0.1 if done else 0.0, done, {"won": done}
+
+
+def _make_reward_fn(config, tokenizer):
+    """Build VERL reward function for Game-AI."""
+    from trainer.decision.reward_shaping import GameAIRewardManager
+
+    reward_fn = GameAIRewardManager(
+        tokenizer=tokenizer,
+        num_examine=0,
+        normalize_by_length=False,
+    )
+    val_reward_fn = GameAIRewardManager(
+        tokenizer=tokenizer,
+        num_examine=1,
+        normalize_by_length=False,
+    )
+    return reward_fn, val_reward_fn
+
+
+if _HAS_VERL:
+    @ray.remote(num_cpus=1)
+    class GameAITaskRunner:
+        """VERL task runner for Game-AI training.
+
+        Follows the same pattern as verl.trainer.main_ppo.TaskRunner
+        but builds Game-AI environments and reward functions, and
+        optionally uses GameAITrainer for co-evolution support.
+        """
+
+        def run(self, config):
+            from pprint import pprint
+            from verl.utils.fs import copy_to_local
+            from verl.utils.dataset.rl_dataset import RLHFDataset, collate_fn
+
+            pprint(OmegaConf.to_container(config, resolve=True))
+            OmegaConf.resolve(config)
+
+            local_path = copy_to_local(
+                config.actor_rollout_ref.model.path,
+                use_shm=config.actor_rollout_ref.model.get("use_shm", False),
+            )
+
+            # Build Game-AI envs
+            envs, val_envs = _make_gameai_envs(config)
+
+            # Tokenizer
+            from verl.utils import hf_processor, hf_tokenizer
+            trust_remote_code = config.data.get("trust_remote_code", False)
+            tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code)
+            processor = hf_processor(local_path, trust_remote_code=trust_remote_code, use_fast=True)
+
+            # Worker classes
+            if config.actor_rollout_ref.actor.strategy in ["fsdp", "fsdp2"]:
+                from verl.single_controller.ray import RayWorkerGroup
+                from verl.workers.fsdp_workers import ActorRolloutRefWorker, CriticWorker
+                actor_rollout_cls = ActorRolloutRefWorker
+                ray_worker_group_cls = RayWorkerGroup
+            else:
+                raise NotImplementedError(f"Strategy {config.actor_rollout_ref.actor.strategy} not supported")
+
+            from verl.trainer.ppo.ray_trainer import ResourcePoolManager, Role
+
+            role_worker_mapping = {
+                Role.ActorRollout: ray.remote(actor_rollout_cls),
+                Role.Critic: ray.remote(CriticWorker),
+            }
+
+            global_pool_id = "global_pool"
+            resource_pool_spec = {
+                global_pool_id: [config.trainer.n_gpus_per_node] * config.trainer.nnodes,
+            }
+            mapping = {
+                Role.ActorRollout: global_pool_id,
+                Role.Critic: global_pool_id,
+            }
+
+            # Reward model worker (if enabled)
+            if config.reward_model.enable:
+                if config.reward_model.strategy in ["fsdp", "fsdp2"]:
+                    from verl.workers.fsdp_workers import RewardModelWorker
+                else:
+                    raise NotImplementedError
+                role_worker_mapping[Role.RewardModel] = ray.remote(RewardModelWorker)
+                mapping[Role.RewardModel] = global_pool_id
+
+            # Reference policy (for KL)
+            if config.algorithm.use_kl_in_reward or config.actor_rollout_ref.actor.use_kl_loss:
+                role_worker_mapping[Role.RefPolicy] = ray.remote(actor_rollout_cls)
+                mapping[Role.RefPolicy] = global_pool_id
+
+            # Reward functions
+            reward_fn, val_reward_fn = _make_reward_fn(config, tokenizer)
+
+            resource_pool_manager = ResourcePoolManager(
+                resource_pool_spec=resource_pool_spec, mapping=mapping,
+            )
+
+            # Trajectory collector
+            from agent_system.multi_turn_rollout import TrajectoryCollector
+            traj_collector = TrajectoryCollector(
+                config=config, tokenizer=tokenizer, processor=processor,
+            )
+
+            # Datasets
+            from verl.utils.dataset.rl_dataset import collate_fn
+            train_dataset = _create_rl_dataset(config.data.train_files, config.data, tokenizer, processor)
+            val_dataset = _create_rl_dataset(config.data.val_files, config.data, tokenizer, processor)
+            train_sampler = _create_rl_sampler(config.data, train_dataset)
+
+            # Choose trainer: GameAITrainer (with co-evolution) or plain RayPPOTrainer
+            coevo_callback = None
+            if config.get("coevolution", {}).get("enable", False):
+                coevo_callback = _build_coevo_callback(config, envs, val_envs)
+
+            if coevo_callback is not None:
+                from trainer.decision.grpo_trainer import GameAITrainer
+                trainer_cls = GameAITrainer
+                extra_kwargs = {"coevo_callback": coevo_callback}
+            else:
+                from verl.trainer.ppo.ray_trainer import RayPPOTrainer
+                trainer_cls = RayPPOTrainer
+                extra_kwargs = {}
+
+            trainer = trainer_cls(
+                config=config,
+                tokenizer=tokenizer,
+                processor=processor,
+                role_worker_mapping=role_worker_mapping,
+                resource_pool_manager=resource_pool_manager,
+                ray_worker_group_cls=ray_worker_group_cls,
+                reward_fn=reward_fn,
+                val_reward_fn=val_reward_fn,
+                train_dataset=train_dataset,
+                val_dataset=val_dataset,
+                collate_fn=collate_fn,
+                train_sampler=train_sampler,
+                device_name=config.trainer.device,
+                traj_collector=traj_collector,
+                envs=envs,
+                val_envs=val_envs,
+                **extra_kwargs,
+            )
+            trainer.init_workers()
+            trainer.fit()
+
+
+def _build_coevo_callback(config, envs, val_envs):
+    """Build the co-evolution callback from config."""
+    from trainer.decision.coevolution_callback import (
+        CoEvolutionConfig,
+        SkillBankCoEvolutionCallback,
+    )
+
+    coevo_cfg = config.coevolution
+    callback_config = CoEvolutionConfig(
+        bank_update_cadence=coevo_cfg.get("bank_update_cadence", 10),
+        em_max_iterations=coevo_cfg.get("em_max_iterations", 3),
+        min_pass_rate=coevo_cfg.get("min_pass_rate", 0.6),
+        max_new_rate=coevo_cfg.get("max_new_rate", 0.3),
+        bank_dir=coevo_cfg.get("bank_dir", "runs/skillbank"),
+    )
+
+    initial_bank = None
+    try:
+        from skill_agents.skill_bank.bank import SkillBankMVP
+        initial_bank = SkillBankMVP()
+    except ImportError:
+        pass
+
+    return SkillBankCoEvolutionCallback(
+        config=callback_config,
+        initial_bank=initial_bank,
+        envs=envs,
+        val_envs=val_envs,
+    )
+
+
+def _create_rl_dataset(data_paths, data_config, tokenizer, processor):
+    """Create an RL dataset (mirrors verl.trainer.main_ppo)."""
+    from torch.utils.data import Dataset
+    from verl.utils.dataset.rl_dataset import RLHFDataset
+
+    if "custom_cls" in data_config and data_config.custom_cls.get("path", None) is not None:
+        from verl.utils.import_utils import load_extern_type
+        dataset_cls = load_extern_type(data_config.custom_cls.path, data_config.custom_cls.name)
+    else:
+        dataset_cls = RLHFDataset
+
+    return dataset_cls(
+        data_files=data_paths,
+        tokenizer=tokenizer,
+        processor=processor,
+        config=data_config,
+    )
+
+
+def _create_rl_sampler(data_config, dataset):
+    """Create a sampler (mirrors verl.trainer.main_ppo)."""
+    import torch
+    from torch.utils.data import RandomSampler, SequentialSampler
+
+    if data_config.shuffle:
+        gen = torch.Generator()
+        gen.manual_seed(data_config.get("seed", 1))
+        return RandomSampler(data_source=dataset, generator=gen)
+    return SequentialSampler(data_source=dataset)
+
+
+def run_verl_training(config) -> None:
+    """Launch VERL-based Game-AI training."""
+    from verl.trainer.constants_ppo import get_ppo_ray_runtime_env
+
+    if not ray.is_initialized():
+        default_runtime_env = get_ppo_ray_runtime_env()
+        ray_init_kwargs = config.get("ray_init", {})
+        runtime_env_kwargs = ray_init_kwargs.get("runtime_env", {})
+        runtime_env = OmegaConf.merge(default_runtime_env, runtime_env_kwargs)
+        ray_init_kwargs = OmegaConf.create({**ray_init_kwargs, "runtime_env": runtime_env})
+        ray.init(**OmegaConf.to_container(ray_init_kwargs))
+
+    runner = GameAITaskRunner.remote()
+    ray.get(runner.run.remote(config))
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+def main():
+    """Entry point supporting both standalone and VERL modes.
+
+    If no --config flag, delegates to verl-agent's main_gameai (VERL).
+    With --config, runs standalone GRPO.
+    """
+    if _HAS_VERL and "--config" not in sys.argv:
+        # VERL mode: delegate to verl-agent's verl.trainer.main_gameai
+        import os
+        import subprocess
+        _repo_root = Path(__file__).resolve().parent.parent.parent
+        _verl_agent_root = _repo_root.parent / "verl-agent"
+        if not _verl_agent_root.is_dir():
+            logger.error(
+                "VERL mode requires verl-agent at %s. Use --config for standalone mode.",
+                _verl_agent_root,
+            )
+            sys.exit(1)
+        env = os.environ.copy()
+        path_parts = [str(_repo_root), str(_verl_agent_root)]
+        if env.get("PYTHONPATH"):
+            path_parts.append(env["PYTHONPATH"])
+        env["PYTHONPATH"] = os.pathsep.join(path_parts)
+        cmd = [sys.executable, "-m", "verl.trainer.main_gameai"] + [
+            a for a in sys.argv[1:] if a != "--config"
+        ]
+        logger.info("Delegating to VERL: %s", " ".join(cmd))
+        subprocess.run(cmd, env=env, cwd=str(_repo_root.parent))
+        return
+    else:
+        # Standalone mode
+        parser = argparse.ArgumentParser(description="Decision Agent GRPO Training")
+        parser.add_argument(
+            "--config", type=str,
+            default="trainer/common/configs/decision_grpo.yaml",
+            help="Path to GRPO config YAML",
+        )
+        args = parser.parse_args()
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        )
+
+        cfg = load_config(args.config)
+        train_decision_agent(cfg)
 
 
 if __name__ == "__main__":

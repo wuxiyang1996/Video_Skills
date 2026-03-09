@@ -1,9 +1,15 @@
 """
 Run inference (decision agent) and store rollouts in data_structure format.
 
-Fatal hyperparameters and game env list: see inference_defaults.py.
+VERL inference (vLLM/sglang via verl-agent): use --verl.
+Local inference (single env, no VERL): use --game and other options.
 
 Usage:
+  # VERL-based inference (recommended when using VERL for training)
+  python -m scripts.run_inference --verl
+  python -m scripts.run_inference --verl data.val_batch_size=8
+
+  # Local inference
   python -m scripts.run_inference --game overcooked --task "Complete level" --max-steps 500
   python -m scripts.run_inference --game gamingagent --save-path rollouts/episodes.jsonl --verbose
   python -m scripts.run_inference --print-envs
@@ -66,14 +72,19 @@ def _make_env_for_game(game: str, seed: int = 0, max_steps: int = 500):
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run inference and store rollouts. Fatal hyperparameters in scripts/inference_defaults.py.",
+        description="Run inference and store rollouts. Use --verl for VERL (verl-agent) inference.",
+    )
+    parser.add_argument(
+        "--verl",
+        action="store_true",
+        help="Run VERL-based inference (verl-agent eval-only). Requires verl-agent at ../verl-agent.",
     )
     parser.add_argument(
         "--game",
         type=str,
         default="",
         choices=INFERENCE_GAME_ENVS + [""],
-        help="Game env name (required for auto env; use env_wrappers for others)",
+        help="Game env name (required for auto env when not using --verl)",
     )
     parser.add_argument(
         "--task",
@@ -132,7 +143,10 @@ def main() -> None:
         action="store_true",
         help="Print fatal hyperparameter defaults and exit",
     )
-    args = parser.parse_args()
+    args, rest = parser.parse_known_args()
+    if args.verl:
+        from inference.run_verl_inference import run_verl_inference
+        sys.exit(run_verl_inference(rest))
 
     if args.print_envs:
         print("Inference game envs (inference_defaults.INFERENCE_GAME_ENVS):")
@@ -147,7 +161,7 @@ def main() -> None:
         return
 
     if not args.game:
-        parser.error("--game is required to run inference (or use inference.run_inference(env=...) directly)")
+        parser.error("--game is required for local inference (or use --verl for VERL inference)")
 
     from inference import run_inference
     from data_structure.experience import Episode_Buffer, Experience_Replay_Buffer

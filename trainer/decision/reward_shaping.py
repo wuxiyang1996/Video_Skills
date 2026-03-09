@@ -1,27 +1,35 @@
 """
-Reward shaping for the Decision Agent GRPO trainer.
+Reward shaping for the Decision Agent, compatible with VERL.
 
-Wraps decision_agents.reward_func.RewardComputer with bank-state-aware
-shaping and provides the compute_reward(prev, action, next, bank_state)
-contract specified in the training plan.
+Two interfaces:
+  1. TrainRewardShaper — original per-step reward computation (used inside
+     the environment workers during rollout collection).
+  2. GameAIRewardManager — VERL reward manager that converts episode-level
+     scalar rewards into per-token reward tensors for advantage computation.
+
+VERL integration:
+  The environment workers (GameAIVecEnv) already accumulate shaped rewards
+  (r_env + r_follow + r_cost) into the per-step rewards returned by step().
+  VERL's TrajectoryCollector sums these into episode_rewards.
+  GameAIRewardManager then converts that scalar into a token-level tensor
+  by placing it on the last response token, as required by VERL's
+  advantage estimators (GRPO, GiGPO, etc.).
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from decision_agents.reward_func import (
-    RewardComputer,
-    RewardConfig,
-    RewardResult,
-)
+import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class RewardBreakdown:
     """Extended reward breakdown for training logs."""
-
     r_env: float = 0.0
     r_follow: float = 0.0
     r_cost: float = 0.0
@@ -32,10 +40,8 @@ class RewardBreakdown:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "r_env": self.r_env,
-            "r_follow": self.r_follow,
-            "r_cost": self.r_cost,
-            "r_total": self.r_total,
+            "r_env": self.r_env, "r_follow": self.r_follow,
+            "r_cost": self.r_cost, "r_total": self.r_total,
             "action_type": self.action_type,
             "active_skill_id": self.active_skill_id,
             "newly_satisfied": self.newly_satisfied,
@@ -43,44 +49,36 @@ class RewardBreakdown:
 
 
 class TrainRewardShaper:
-    """Reward shaper for GRPO training.
+    """Per-step reward shaper (used inside environment workers).
 
-    Extends the base RewardComputer with:
-      - Bank-state-aware contract lookup
-      - Progress-to-late-states shaping when active_skill != None
-      - Full breakdown output for logging
+    Wraps decision_agents.reward_func.RewardComputer with bank-state-aware
+    shaping.  Still used for computing the shaped per-step reward that
+    gets accumulated into episode_rewards by VERL's rollout loop.
     """
 
-    def __init__(self, config: Optional[RewardConfig] = None, skill_bank: Any = None):
-        self.config = config or RewardConfig()
-        self.computer = RewardComputer(self.config)
+    def __init__(self, config=None, skill_bank=None):
+        try:
+            from decision_agents.reward_func import RewardComputer, RewardConfig
+            self.config = config or RewardConfig()
+            self.computer = RewardComputer(self.config)
+        except ImportError:
+            self.config = config
+            self.computer = None
         self.skill_bank = skill_bank
 
     def reset(self) -> None:
-        self.computer.reset()
+        if self.computer is not None:
+            self.computer.reset()
 
     def compute_reward(
-        self,
-        r_env: float,
-        action_type: str,
-        observation: str,
-        active_skill_id: Optional[str] = None,
-        skill_contract: Any = None,
-        bank_state: Optional[Any] = None,
+        self, r_env: float, action_type: str, observation: str,
+        active_skill_id: Optional[str] = None, skill_contract=None,
+        bank_state=None,
     ) -> RewardBreakdown:
-        """Compute reward with full breakdown.
+        """Compute reward with full breakdown."""
+        if self.computer is None:
+            return RewardBreakdown(r_env=r_env, r_total=r_env, action_type=action_type)
 
-        Args:
-            r_env: raw environment reward
-            action_type: "primitive" | "QUERY_MEM" | "QUERY_SKILL" | "CALL_SKILL"
-            observation: current observation text
-            active_skill_id: skill currently being followed
-            skill_contract: SkillEffectsContract (if known)
-            bank_state: current skill bank (for contract lookup)
-
-        Returns:
-            RewardBreakdown with all components.
-        """
         bank = bank_state or self.skill_bank
         contract = skill_contract
         if contract is None and active_skill_id and bank:
@@ -90,35 +88,104 @@ class TrainRewardShaper:
                 contract = None
 
         prev_satisfied = len(self.computer.satisfied_predicates)
-
         rr = self.computer.compute_reward(
-            r_env=r_env,
-            action_type=action_type,
-            observation=observation,
-            active_skill_id=active_skill_id,
-            skill_contract=contract,
+            r_env=r_env, action_type=action_type, observation=observation,
+            active_skill_id=active_skill_id, skill_contract=contract,
         )
-
         new_satisfied = len(self.computer.satisfied_predicates) - prev_satisfied
 
         return RewardBreakdown(
-            r_env=rr.r_env,
-            r_follow=rr.r_follow,
-            r_cost=rr.r_cost,
-            r_total=rr.r_total,
-            action_type=action_type,
+            r_env=rr.r_env, r_follow=rr.r_follow, r_cost=rr.r_cost,
+            r_total=rr.r_total, action_type=action_type,
             active_skill_id=active_skill_id,
             newly_satisfied=max(new_satisfied, 0),
         )
 
-    def update_bank(self, new_bank: Any) -> None:
-        """Update the skill bank reference (after co-evolution update)."""
+    def update_bank(self, new_bank) -> None:
         self.skill_bank = new_bank
 
     @property
-    def cumulative(self) -> RewardResult:
-        return self.computer.cumulative
+    def cumulative(self):
+        return self.computer.cumulative if self.computer else None
 
     @property
     def history(self) -> list:
-        return self.computer.history
+        return self.computer.history if self.computer else []
+
+
+# ---------------------------------------------------------------------------
+# VERL-compatible reward manager
+# ---------------------------------------------------------------------------
+try:
+    import torch
+    from verl import DataProto
+    _HAS_VERL = True
+except ImportError:
+    _HAS_VERL = False
+
+
+if _HAS_VERL:
+    class GameAIRewardManager:
+        """VERL reward manager for Game-AI.
+
+        Converts episode-level scalar rewards (already shaped by the env
+        workers) into per-token reward tensors as required by VERL's
+        advantage computation pipeline.
+        """
+
+        def __init__(
+            self, tokenizer, num_examine: int = 0,
+            normalize_by_length: bool = False,
+        ):
+            self.tokenizer = tokenizer
+            self.num_examine = num_examine
+            self.normalize_by_length = normalize_by_length
+
+        def __call__(self, data: DataProto, return_dict: bool = False):
+            if "rm_scores" in data.batch.keys():
+                if return_dict:
+                    return {"reward_tensor": data.batch["rm_scores"]}
+                return data.batch["rm_scores"]
+
+            reward_tensor = torch.zeros_like(
+                data.batch["responses"], dtype=torch.float32
+            )
+            already_printed = {}
+
+            for i in range(len(data)):
+                data_item = data[i]
+                prompt_ids = data_item.batch["prompts"]
+                prompt_length = prompt_ids.shape[-1]
+                valid_response_length = data_item.batch["attention_mask"][prompt_length:].sum()
+
+                episode_rewards = data_item.non_tensor_batch["episode_rewards"]
+                episode_lengths = data_item.non_tensor_batch["episode_lengths"]
+
+                if self.normalize_by_length and episode_lengths > 0:
+                    score = episode_rewards / episode_lengths
+                else:
+                    score = episode_rewards
+
+                reward_tensor[i, valid_response_length - 1] = torch.tensor(
+                    score, dtype=torch.float32, device=prompt_ids.device
+                )
+
+                data_source = data_item.non_tensor_batch.get("data_source", "gameai")
+                if data_source not in already_printed:
+                    already_printed[data_source] = 0
+                if (already_printed[data_source] < self.num_examine
+                        and np.random.random() < 0.1):
+                    already_printed[data_source] += 1
+                    valid_prompt_length = data_item.batch["attention_mask"][:prompt_length].sum()
+                    p_str = self.tokenizer.decode(
+                        prompt_ids[-valid_prompt_length:], skip_special_tokens=False
+                    )
+                    r_ids = data_item.batch["responses"][:valid_response_length]
+                    r_str = self.tokenizer.decode(r_ids, skip_special_tokens=False)
+                    print(f"[{data_source}][prompt] {p_str[:200]}")
+                    print(f"[{data_source}][response] {r_str[:200]}")
+                    print(f"[{data_source}][score] {score}")
+
+            if return_dict:
+                return {"reward_tensor": reward_tensor, "reward_extra_info": {}}
+            return reward_tensor

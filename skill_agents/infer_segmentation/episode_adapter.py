@@ -106,6 +106,31 @@ def _decode(
     return viterbi_decode(candidates, T, scorer, observations, actions, predicates, config)
 
 
+def _segments_to_sub_episodes(result, experiences: list, task, outcome_length: int) -> list:
+    """Build SubTask_Experience list from segmentation result and episode experiences."""
+    from data_structure.experience import SubTask_Experience
+    T = len(experiences)
+    sub_episodes = []
+    for seg in result.segments:
+        start, end = seg.start, min(seg.end + 1, T)
+        segment_exps = experiences[start:end]
+        outcome_start = end
+        outcome_end = min(end + outcome_length, T)
+        outcome_exps = (
+            experiences[outcome_start:outcome_end]
+            if outcome_start < outcome_end
+            else None
+        )
+        sub_ep = SubTask_Experience(
+            sub_task=seg.assigned_skill,
+            final_goal=task,
+            experiences=segment_exps,
+            outcome=outcome_exps,
+        )
+        sub_episodes.append(sub_ep)
+    return sub_episodes
+
+
 # ── Low-level API ────────────────────────────────────────────────────
 
 def infer_segmentation(
@@ -160,13 +185,15 @@ def infer_and_segment(
     extractor_kwargs=None,
 ) -> Tuple[SegmentationResult, list, PreferenceStore]:
     """
-    Full preference-learning pipeline:
+    Inference pipeline with LLM (e.g. GPT-5):
       1. Stage 1 → candidate boundaries C.
       2. LLM teacher ranks skills for candidate segments → preferences.
       3. Train PreferenceScorer from preferences.
       4. Decode with trained scorer.
       5. Query LLM on uncertain segments → more preferences → retrain.
       6. Return segments + diagnostics + preference store.
+
+    Use this when you want to interface with an LLM at inference time.
 
     Parameters
     ----------
@@ -264,28 +291,7 @@ def infer_and_segment(
         scorer = _build_scorer_from_preferences(skill_names, store, cfg)
         result = _decode(centers, T, scorer, observations, actions, predicates, cfg)
 
-    # ── Convert to SubTask_Experience ───────────────────────────────
-    sub_episodes = []
-    for seg in result.segments:
-        start, end = seg.start, min(seg.end + 1, T)
-        segment_exps = experiences[start:end]
-
-        outcome_start = end
-        outcome_end = min(end + outcome_length, T)
-        outcome_exps = (
-            experiences[outcome_start:outcome_end]
-            if outcome_start < outcome_end
-            else None
-        )
-
-        sub_ep = SubTask_Experience(
-            sub_task=seg.assigned_skill,
-            final_goal=episode.task,
-            experiences=segment_exps,
-            outcome=outcome_exps,
-        )
-        sub_episodes.append(sub_ep)
-
+    sub_episodes = _segments_to_sub_episodes(result, experiences, episode.task, outcome_length)
     return result, sub_episodes, store
 
 
@@ -304,9 +310,11 @@ def infer_and_segment_offline(
     extractor_kwargs=None,
 ) -> Tuple[SegmentationResult, list]:
     """
-    Offline pipeline (no LLM calls): uses provided scoring functions.
+    Offline pipeline (no LLM): decode using provided scoring functions only.
 
-    For testing and debugging without API keys.
+    No LLM (e.g. GPT-5) is called. Use when (1) you have a pre-trained
+    PreferenceScorer and want inference without API, (2) training/decoding
+    from pre-collected preferences, or (3) testing without API keys.
     """
     from data_structure.experience import SubTask_Experience
     from skill_agents.boundary_proposal import (
@@ -345,26 +353,5 @@ def infer_and_segment_offline(
         transition_fn=transition_fn,
         duration_stats=duration_stats,
     )
-
-    sub_episodes = []
-    for seg in result.segments:
-        start, end = seg.start, min(seg.end + 1, T)
-        segment_exps = experiences[start:end]
-
-        outcome_start = end
-        outcome_end = min(end + outcome_length, T)
-        outcome_exps = (
-            experiences[outcome_start:outcome_end]
-            if outcome_start < outcome_end
-            else None
-        )
-
-        sub_ep = SubTask_Experience(
-            sub_task=seg.assigned_skill,
-            final_goal=episode.task,
-            experiences=segment_exps,
-            outcome=outcome_exps,
-        )
-        sub_episodes.append(sub_ep)
-
+    sub_episodes = _segments_to_sub_episodes(result, experiences, episode.task, outcome_length)
     return result, sub_episodes

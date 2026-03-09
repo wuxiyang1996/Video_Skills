@@ -53,7 +53,7 @@ Given trajectories (states/obs, actions, UI events, vision outputs) you will:
 | **Stage 1**       | `boundary_proposal`  | **ProposeCuts:** `propose_from_episode()`, `propose_boundary_candidates()`. High-recall candidate set C from predicate flips, surprisal, changepoint, hard events (UI/done/reward). See [boundary_proposal/README.md](boundary_proposal/README.md). |
 | **Stage 2**       | `infer_segmentation` | **InferSegmentation:** `infer_and_segment()`, `infer_and_segment_offline()`, `viterbi_decode()` / `beam_decode()`. Segment score = behavior_fit + duration_prior + transition_prior + λ·contract_compat. Use `top_m_skills` for retrieval (score only top-M skills per segment). NEW = `__NEW__` with penalty. See [infer_segmentation/README.md](infer_segmentation/README.md), [infer_segmentation/OVERVIEW.md](infer_segmentation/OVERVIEW.md). |
 | **Stage 3**       | `stage3_mvp`         | **Contract learn/verify:** `run_stage3_mvp()` — summarize segments, compute effects, `learn_effects_contract()`, `verify_effects_contract()`, `refine_effects_contract()`. Produces `SkillEffectsContract` + `VerificationReport` + counterexamples. |
-| **Stage 4**       | `stage4_bank_update` or `bank_maintenance` | **BankUpdater:** Split / merge / refine with indices (`EffectInvertedIndex`, `MinHashLSH`, `EmbeddingANN`), `local_redecode`, diff report. Use `run_stage4` or `run_bank_maintenance`. |
+| **Stage 4**       | `bank_maintenance` | **BankUpdater:** Split / merge / refine with indices (`EffectInvertedIndex`, `MinHashLSH`, `EmbeddingANN`), `local_redecode`, diff report. Use `run_bank_maintenance`. |
 | **Materialize NEW** | `contract_verification.updates.materialize_new_skills` | Cluster NEW_POOL by effect signatures; learn+verify; gate and add to bank. |
 | **SkillEval**     | `skill_evaluation`   | **SkillEvaluator:** `run_skill_evaluation()` — per-skill quality (coherence, discriminability, composability, generalization, utility, granularity). Current impl is LLM-as-judge; for **automated gating** use numeric thresholds (pass rate, support, margin) in split/merge/refine logic. |
 
@@ -200,6 +200,6 @@ Use numeric thresholds in split/merge/refine (e.g. `check_split_triggers`, `veri
 - [infer_segmentation/OVERVIEW.md](infer_segmentation/OVERVIEW.md) — File-by-file summary for Stage 2.
 - `skill_bank/bank.py` — SkillBankMVP persistence and versioning.
 - `stage3_mvp/run_stage3_mvp.py` — Contract learn/verify/refine pipeline.
-- `stage4_bank_update/run_stage4.py`, `bank_maintenance/run_bank_maintenance.py` — Split/merge/refine + re-decode.
+- `bank_maintenance/run_bank_maintenance.py` — Split/merge/refine + re-decode.
 - `contract_verification/updates.py` — `materialize_new_skills` (NEW_POOL clustering).
 - `skill_evaluation/run_evaluation.py` — Quality dimensions and optional LLM synthesis.

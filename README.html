@@ -65,7 +65,7 @@ blockquote { border-left: 3px solid #d0d7de; padding-left: 10px; color: #57606a;
 <li><strong>Stage 1</strong> <a href="skill_agents/boundary_proposal/">boundary_proposal/</a>: Candidate cut points C (signals: rule-based or LLM <code>env_name="llm"</code>; optional RAG change-point; <code>merge_radius</code>). <a href="skill_agents/boundary_proposal/README.md">README</a></li>
 <li><strong>Stage 2</strong> <a href="skill_agents/infer_segmentation/">infer_segmentation/</a>: Decode over C with preference scorer (LLM → Bradley–Terry) → segments + labels (bank + <code>__NEW__</code>). <a href="skill_agents/infer_segmentation/README.md">README</a></li>
 <li><strong>Stage 3</strong> <a href="skill_agents/stage3_mvp/">stage3_mvp/</a>: Effects contract learn/verify/refine; NEW → pool.</li>
-<li><strong>Stage 4</strong> <a href="skill_agents/bank_maintenance/">bank_maintenance/</a>: Split/merge/refine; <code>materialize_new_skills</code>. Alt: <a href="skill_agents/stage4_bank_update/">stage4_bank_update/</a>.</li>
+<li><strong>Stage 4</strong> <a href="skill_agents/bank_maintenance/">bank_maintenance/</a>: Split/merge/refine; <code>materialize_new_skills</code>.</li>
 <li>
 <p><strong>Query &amp; storage</strong>: <a href="skill_agents/query.py">SkillQueryEngine</a> (RAG + keyword/effect), <a href="skill_agents/skill_bank/bank.py">SkillBankMVP</a>, <a href="skill_agents/tool_call_reward.py">tool_call_reward</a>, <a href="skill_agents/skill_evaluation/">skill_evaluation/</a>. <a href="skill_agents/README.md">skill_agents/README.md</a> · <a href="skill_agents/PLAN.md">PLAN.md</a></p>
 </li>

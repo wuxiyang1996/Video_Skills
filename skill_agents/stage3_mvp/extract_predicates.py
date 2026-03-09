@@ -11,19 +11,12 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional
 
+from skill_agents.default_predicates import default_extract_predicates
 from skill_agents.stage3_mvp.predicate_vocab import PredicateVocab
 
 
 # Type alias for a single-frame predicate extractor
 ExtractFn = Callable[[Any], Dict[str, float]]
-
-
-def default_extract_predicates(obs: Any) -> Dict[str, float]:
-    """Fallback extractor: returns empty predicates.
-
-    Replace with a domain-specific extractor for real use.
-    """
-    return {}
 
 
 class CompositePredicateExtractor:

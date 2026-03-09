@@ -2,7 +2,25 @@
 
 Run the **decision agent** ([decision_agents/](../decision_agents/)) and store rollouts in the **data_structure** format ([data_structure/experience.py](../data_structure/experience.py)): `Experience` list and `Episode`.
 
-## Usage
+## VERL-based inference (recommended for vLLM/sglang)
+
+Inference using [VERL](https://github.com/verl-project/verl) and [verl-agent](https://github.com/verl-project/verl-agent) runs the same env and reward as training, in evaluation-only mode (no PPO updates):
+
+```bash
+# From repo root; requires verl-agent at ../verl-agent
+python -m inference.run_verl_inference
+# With overrides (Hydra)
+python -m inference.run_verl_inference trainer.val_before_train=True data.val_batch_size=8
+```
+
+Or via the scripts runner:
+
+```bash
+python -m scripts.run_inference --verl
+python -m scripts.run_inference --verl data.val_batch_size=8
+```
+
+## Local inference (single episode, no VERL)
 
 ```python
 from inference import run_inference, rollout_to_episode
@@ -51,5 +69,5 @@ episode = rollout_to_episode(rollout, task="My task")
 
 ## Dependencies
 
-- `decision_agents`: `run_episode_vlm_agent`, `VLMDecisionAgent`
-- `data_structure.experience`: `Experience`, `Episode`, optionally `Episode_Buffer`, `Experience_Replay_Buffer`
+- **Local inference:** `decision_agents` (`run_episode_vlm_agent`, `VLMDecisionAgent`), `data_structure.experience` (`Experience`, `Episode`, optionally `Episode_Buffer`, `Experience_Replay_Buffer`)
+- **VERL inference:** `verl-agent` at `../verl-agent` (install with `pip install -e .`); uses same stack as VERL training (Ray, vLLM/sglang)

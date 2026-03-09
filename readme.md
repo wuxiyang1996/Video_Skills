@@ -6,7 +6,9 @@
 
 This repository provides a framework for enhancing agentic decision-making in multi-player, long-horizon games through unsupervised experience. The framework integrates with multiple game environments and supports both training-free (RAG-based) and trainable (RL-based) agent architectures. This readme outlines each module, gives initial instructions for vibe coding, and aims to ease integration and debugging (including function definitions and ToDo lists for each class).
 
-**No external repos are bundled.** This repository contains only Game-AI-Agent code. For Avalon/Diplomacy you need [AgentEvolver](https://github.com/modelscope/AgentEvolver) (clone as sibling or on `PYTHONPATH`). For GamingAgent or VideoGameBench evaluation, clone those repos as siblings when needed; see the respective `evaluate_*/setup_*_eval_env.md` files.
+**No external repos are bundled.** This repository contains only Game-AI-Agent code. For Avalon/Diplomacy you need [AgentEvolver](https://github.com/modelscope/AgentEvolver) (clone as sibling or on `PYTHONPATH`). For GamingAgent or VideoGameBench evaluation, clone those repos as siblings when needed; see the respective `evaluate_*/setup_*_eval_env.md` files. For **VERL training and inference** (vLLM/sglang, GiGPO/PPO), use [verl-agent](https://github.com/verl-project/verl-agent) as a sibling and see [INSTALL.md](INSTALL.md).
+
+**Install:** See **[INSTALL.md](INSTALL.md)** for setup and VERL/verl-agent. Quick: add this repo to `PYTHONPATH`, or `conda env create -f environment.yml` then `conda activate game-ai-agent`.
 
 **Contents:** 1. [Environments](#1-environments) · 2. [Data structure](#2-data-structure) · 3. [Skill agent](#3-skill-agent) · 4. [Decision-making agent](#4-decision-making-agent) · 5. [Trainer code](#5-trainer-code) · [ToDo (unfinished)](#todo-unfinished--future--consolidated)
 
@@ -33,7 +35,7 @@ This repository provides a framework for enhancing agentic decision-making in mu
   - **Stage 1** [boundary_proposal/](skill_agents/boundary_proposal/): Candidate cut points C (signals: rule-based or LLM `env_name="llm"`; optional RAG change-point; `merge_radius`). [README](skill_agents/boundary_proposal/README.md)
   - **Stage 2** [infer_segmentation/](skill_agents/infer_segmentation/): Decode over C with preference scorer (LLM → Bradley–Terry) → segments + labels (bank + `__NEW__`). [README](skill_agents/infer_segmentation/README.md)
   - **Stage 3** [stage3_mvp/](skill_agents/stage3_mvp/): Effects contract learn/verify/refine; NEW → pool.
-  - **Stage 4** [bank_maintenance/](skill_agents/bank_maintenance/): Split/merge/refine; `materialize_new_skills`. Alt: [stage4_bank_update/](skill_agents/stage4_bank_update/).
+  - **Stage 4** [bank_maintenance/](skill_agents/bank_maintenance/): Split/merge/refine; `materialize_new_skills`.
   - **Query & storage**: [SkillQueryEngine](skill_agents/query.py) (RAG + keyword/effect), [SkillBankMVP](skill_agents/skill_bank/bank.py), [tool_call_reward](skill_agents/tool_call_reward.py), [skill_evaluation/](skill_agents/skill_evaluation/). [skill_agents/README.md](skill_agents/README.md) · [PLAN.md](skill_agents/PLAN.md)
 
 - **🏋️ Training** — [trainer/](trainer/): Co-evolution of both agents.
@@ -184,7 +186,7 @@ All live in [data_structure/experience.py](data_structure/experience.py).
 
 ### ToDo (data structure)
 
-**Status (repo-wide):** Not all ToDos are finalized. Implemented: experience/episode buffers (FIFO + add/sample), summary generation and RAG-backed memory/skill query, trainer prioritized replay, and sub-task pipeline (skill_agents). Open or partial: in/out policy scoring for buffer, per-env format helpers, completion validator, reward labeling, and some trainer items (LoRA, stronger replay). RAG is not fine-tuned (frozen by design). See notes below.
+**Status (repo-wide):** Not all ToDos are finalized. Implemented: experience/episode buffers (FIFO + add/sample), summary generation and RAG-backed memory/skill query, trainer prioritized replay, and sub-task pipeline (skill_agents). Open or partial: in/out policy scoring for buffer, per-env format helpers, completion validator, and some trainer items (LoRA, stronger replay). RAG is not fine-tuned (frozen by design). See notes below.
 
 1. **[Partial]** Experience buffer with in/out policy models that evaluate relative quality and relevance to the proposed latent state (intentions / sub-goals) and current state; push/pop (or add/sample) for adding/removing experiences.  
    *Done:* [Experience_Replay_Buffer](data_structure/experience.py) and [Episode_Buffer](data_structure/experience.py) (add/sample, save/load); [trainer ReplayBuffer](trainer/decision/replay_buffer.py) with prioritized sampling. *Open:* policy-based in/out scoring for quality/relevance to intentions.
@@ -252,8 +254,6 @@ agent.save()
 
 # 4. Decision-making agent
 
-## Reward labeling (for tasks)
-
 ## Reward design for decision agent (implemented)
 
 The [decision_agents](decision_agents/) reward is implemented in [reward_func.py](decision_agents/reward_func.py). After every `take_action`, the **reward** tool computes a composite reward used for training-free logging and for GRPO training.
@@ -269,23 +269,6 @@ The [decision_agents](decision_agents/) reward is implemented in [reward_func.py
 **r_follow** logic (stateful per episode): For the active skill’s contract **eff_add**, the [RewardComputer](decision_agents/reward_func.py) checks the current observation (keyword presence). It awards a per-predicate bonus for each newly satisfied predicate, a completion bonus when *all* eff_add are satisfied, and a small penalty per step with no new progress. No terminal “skill done” signal—shaping is dense.
 
 **Usage:** The runner calls `RewardComputer.compute_reward(r_env, action_type, observation, active_skill_id, skill_contract)` after each step; see [agent.py](decision_agents/agent.py) and [run_episode_vlm_agent](decision_agents/agent.py). Config is [RewardConfig](decision_agents/reward_func.py); trainer uses the same contract in [trainer/decision/reward_shaping.py](trainer/decision/reward_shaping.py).
-
----
-
-## Reward labeling (possible extension, TBD)
-
-(I am not sure if this could work, TBD)
-
-The general idea for this part is to compute the **similarity between the next state of one experience and a target (final sub-task / task state)**, to encourage the agent to achieve maximum progress toward the goal. This would be an *additional* reward signal, separate from the implemented **r_env + r_follow + r_cost** above.
-
-- The embedding used for this “progress toward goal” reward could be different from the one used by RAG (e.g. an LLM-produced state embedding).
-- Such a function could be done with CoT to improve plausibility.
-
-**ToDo (future):**
-
-1. **Summary for states:** Use a summary generation function for the state (and optionally the target). *Already available:* [get_state_summary](decision_agents/agent_helper.py) (observation → text summary) and [Experience.generate_summary](data_structure/experience.py) / [generate_summary_state](data_structure/experience.py) for experience tuples. A future reward could consume these or a dedicated “state embedding” for similarity.
-2. **Reward score (target vs next state):** Define a reward score between the **target state** and the **next state** of the current experience (e.g. after queried from a buffer). The reward score should reflect *progress toward the goal*, not raw RAG similarity: e.g. an initial state that is far in similarity but on a good trajectory toward the final state should still get high reward when it contributes to the goal.
-3. **Design note:** Consider using the *change* in reward (increase/decrease) in a RAG-like state space, rather than the absolute value, to emphasize progress.
 
 ## Completion validator
 
@@ -477,7 +460,6 @@ Unfinished or future work across the repo. See in-doc sections for details.
 | **Sub-task (skill agent)** | Tighter constraints (max sub-task length, intention-derived skill candidates) | **Open** |
 | **Sub-task (skill agent)** | Training code for labeling model (supervised signal + GRPO/Hard-EM) | **Open** |
 | **Sub-task (skill agent)** | In-context learning for segment labels from retrieved demonstrations | **Open** |
-| **Reward labeling** | Reward score target vs next state (progress toward goal); optional state embedding | **Open** (TBD) |
 | **Completion** | LLM completion-level function (distinct from r_follow) | **Open** |
 | **Completion** | Steps-left estimator (initial + final state; use RAG experience) | **Open** |
 | **Decision agent** | Reachable tasks / intention update; optional RAG for training-free | **Open** (partially done: get_state_summary, infer_intention, EpisodicMemoryStore) |

@@ -1,9 +1,22 @@
 """
-Policy interface for the VLM Decision Agent under GRPO training.
+Policy interface for the VLM Decision Agent.
 
-Abstracts logprob extraction and action sampling from the underlying LLM,
-so the GRPO trainer can compute the ranking objective without knowing model
-internals.
+Two modes:
+  1. LLMPolicy — original API-based policy (for standalone / evaluation use)
+  2. VERLActorProxy — thin proxy around VERL's distributed actor worker group
+     (vLLM/sglang-backed).  In VERL training, the actor is managed by
+     RayPPOTrainer; this proxy is only used if Game-AI code needs to call
+     the actor outside the normal VERL rollout loop (e.g. evaluation).
+
+VERL integration:
+  During training, VERL's TrajectoryCollector handles all action sampling
+  and logprob computation via actor_rollout_wg.generate_sequences() and
+  actor_rollout_wg.compute_log_prob().  The custom PolicyInterface is NOT
+  used in the hot path — VERL manages everything.
+
+  The VERLActorProxy is provided for evaluation / standalone scenarios
+  where the caller wants a PolicyInterface-compatible API but the model
+  is served by VERL's vLLM/sglang inference engine.
 """
 
 from __future__ import annotations
@@ -42,16 +55,7 @@ class PolicyInterface(ABC):
         context: Optional[Dict[str, Any]] = None,
         temperature: float = 0.7,
     ) -> PolicyOutput:
-        """Sample an action from the policy.
-
-        Args:
-            observation: current observation text/state
-            context: additional context (skill cards, memory, internal state)
-            temperature: sampling temperature
-
-        Returns:
-            PolicyOutput with action string, logprob, and optional value estimate
-        """
+        """Sample an action from the policy."""
 
     @abstractmethod
     def logprob(
@@ -73,10 +77,7 @@ class PolicyInterface(ABC):
 
     @abstractmethod
     def update(self, loss: float, grads: Optional[Any] = None) -> Dict[str, float]:
-        """Apply one gradient step.
-
-        Returns training stats (loss, grad_norm, etc.)
-        """
+        """Apply one gradient step. Returns training stats."""
 
     @abstractmethod
     def get_parameters(self) -> Any:
@@ -90,13 +91,7 @@ class PolicyInterface(ABC):
 class LLMPolicy(PolicyInterface):
     """Concrete policy implementation wrapping an LLM API.
 
-    For GRPO, we need:
-      1. Multiple rollouts per prompt (group sampling)
-      2. Log-probability of each chosen action
-      3. Parameter updates via the GRPO objective
-
-    This implementation uses the model's logprobs API when available,
-    and falls back to approximation otherwise.
+    Used for standalone training / evaluation without VERL.
     """
 
     def __init__(
@@ -117,7 +112,6 @@ class LLMPolicy(PolicyInterface):
         context: Optional[Dict[str, Any]] = None,
         temperature: float = 0.7,
     ) -> PolicyOutput:
-        """Sample an action using the LLM."""
         try:
             from API_func import ask_model
         except ImportError:
@@ -125,57 +119,41 @@ class LLMPolicy(PolicyInterface):
 
         prompt = self._build_prompt(observation, context)
         response = ask_model(
-            prompt,
-            model=self.model_name,
-            temperature=temperature,
-            max_tokens=400,
+            prompt, model=self.model_name,
+            temperature=temperature, max_tokens=400,
         )
         action = self._extract_action(response or "")
         lp = self._estimate_logprob(prompt, action, temperature)
 
         return PolicyOutput(
-            action=action,
-            logprob=lp,
+            action=action, logprob=lp,
             raw_response=response or "",
             metadata={"prompt_len": len(prompt)},
         )
 
-    def logprob(
-        self,
-        observation: str,
-        action: str,
-        context: Optional[Dict[str, Any]] = None,
-    ) -> float:
-        """Compute (approximate) logprob for a given action."""
+    def logprob(self, observation, action, context=None):
         prompt = self._build_prompt(observation, context)
         return self._estimate_logprob(prompt, action, temperature=0.0)
 
-    def batch_logprobs(
-        self,
-        observations: List[str],
-        actions: List[str],
-        contexts: Optional[List[Dict[str, Any]]] = None,
-    ) -> List[float]:
-        """Batch logprob computation."""
+    def batch_logprobs(self, observations, actions, contexts=None):
         contexts = contexts or [None] * len(observations)
         return [
             self.logprob(obs, act, ctx)
             for obs, act, ctx in zip(observations, actions, contexts)
         ]
 
-    def update(self, loss: float, grads: Optional[Any] = None) -> Dict[str, float]:
-        """Record training step (actual gradient update depends on backend)."""
+    def update(self, loss, grads=None):
         self._step_count += 1
         return {"loss": loss, "step": self._step_count, "lr": self.lr}
 
-    def get_parameters(self) -> Any:
+    def get_parameters(self):
         return dict(self._parameters)
 
-    def load_parameters(self, params: Any) -> None:
+    def load_parameters(self, params):
         if isinstance(params, dict):
             self._parameters = params
 
-    def _build_prompt(self, observation: str, context: Optional[Dict[str, Any]]) -> str:
+    def _build_prompt(self, observation, context):
         if self.prompt_builder is not None:
             return self.prompt_builder(observation, context)
         parts = [f"Observation: {observation[:2000]}"]
@@ -200,7 +178,121 @@ class LLMPolicy(PolicyInterface):
         return words[-1] if words else "no-op"
 
     @staticmethod
-    def _estimate_logprob(prompt: str, action: str, temperature: float) -> float:
-        """Approximate logprob via heuristic (placeholder for real API logprobs)."""
+    def _estimate_logprob(prompt, action, temperature):
         action_len = max(len(action.split()), 1)
         return -0.5 * action_len - 0.1 * math.log(max(temperature, 0.01))
+
+
+# ---------------------------------------------------------------------------
+# VERL-compatible actor proxy
+# ---------------------------------------------------------------------------
+try:
+    import torch
+    from verl import DataProto
+    _HAS_VERL = True
+except ImportError:
+    _HAS_VERL = False
+
+
+if _HAS_VERL:
+    class VERLActorProxy(PolicyInterface):
+        """Policy proxy that delegates to a VERL actor worker group.
+
+        This wraps VERL's distributed actor (vLLM/sglang) behind the
+        PolicyInterface API.  Primarily useful for evaluation loops that
+        want a PolicyInterface but should use the VERL-managed model.
+
+        Note: During VERL training, the TrajectoryCollector and
+        RayPPOTrainer call the actor directly — this proxy is NOT used
+        in the training hot path.
+        """
+
+        def __init__(
+            self,
+            actor_rollout_wg,
+            tokenizer,
+            temperature: float = 0.7,
+            max_tokens: int = 512,
+        ):
+            self.actor_wg = actor_rollout_wg
+            self.tokenizer = tokenizer
+            self.temperature = temperature
+            self.max_tokens = max_tokens
+
+        def sample(self, observation, context=None, temperature=None):
+            """Sample an action by calling VERL actor's generate_sequences."""
+            temp = temperature or self.temperature
+            prompt_text = observation
+            if context:
+                if context.get("skill_cards"):
+                    prompt_text += f"\nAvailable skills: {context['skill_cards']}"
+
+            input_ids = self.tokenizer.encode(
+                prompt_text, return_tensors="pt",
+                truncation=True, max_length=4096,
+            )
+            attention_mask = torch.ones_like(input_ids)
+
+            batch = DataProto.from_single_dict({
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "position_ids": torch.arange(input_ids.shape[-1]).unsqueeze(0),
+            })
+            batch.meta_info["do_sample"] = True
+            batch.meta_info["temperature"] = temp
+            batch.meta_info["max_new_tokens"] = self.max_tokens
+
+            output = self.actor_wg.generate_sequences(batch)
+            response_ids = output.batch["responses"][0]
+            response_text = self.tokenizer.decode(
+                response_ids, skip_special_tokens=True,
+            )
+
+            # Extract action from <action> tags
+            import re
+            match = re.search(r"<action>(.*?)</action>", response_text, re.DOTALL)
+            action = match.group(1).strip() if match else response_text.strip()
+
+            logprob = 0.0
+            if "old_log_probs" in output.batch:
+                mask = output.batch.get("response_mask", torch.ones_like(response_ids, dtype=torch.float32))
+                logprob = float((output.batch["old_log_probs"][0] * mask).sum())
+
+            return PolicyOutput(
+                action=action, logprob=logprob,
+                raw_response=response_text,
+                metadata={"prompt_len": input_ids.shape[-1]},
+            )
+
+        def logprob(self, observation, action, context=None):
+            prompt_text = observation
+            full_text = prompt_text + action
+            input_ids = self.tokenizer.encode(
+                full_text, return_tensors="pt",
+                truncation=True, max_length=4096,
+            )
+            attention_mask = torch.ones_like(input_ids)
+            batch = DataProto.from_single_dict({
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "position_ids": torch.arange(input_ids.shape[-1]).unsqueeze(0),
+            })
+            output = self.actor_wg.compute_log_prob(batch)
+            if "old_log_probs" in output.batch:
+                return float(output.batch["old_log_probs"].sum())
+            return 0.0
+
+        def batch_logprobs(self, observations, actions, contexts=None):
+            return [
+                self.logprob(o, a) for o, a in zip(observations, actions)
+            ]
+
+        def update(self, loss, grads=None):
+            # In VERL, updates are handled by RayPPOTrainer.
+            return {"note": "updates handled by VERL RayPPOTrainer"}
+
+        def get_parameters(self):
+            return None  # Managed by VERL FSDP
+
+        def load_parameters(self, params):
+            pass  # Managed by VERL checkpoint system

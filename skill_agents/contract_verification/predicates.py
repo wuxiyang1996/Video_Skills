@@ -17,17 +17,7 @@ import numpy as np
 
 from skill_agents.contract_verification.config import PredicateConfig
 from skill_agents.contract_verification.schemas import SegmentRecord
-
-
-# ── Default predicate extractor ──────────────────────────────────────
-
-def default_extract_predicates(state_or_obs: object) -> Dict[str, float]:
-    """Fallback extractor: returns an empty predicate dict.
-
-    Replace with a domain-specific extractor (vision model, rule-based, LLM)
-    for real use.
-    """
-    return {}
+from skill_agents.default_predicates import default_extract_predicates
 
 
 # ── Core: build predicate summaries for a segment ───────────────────

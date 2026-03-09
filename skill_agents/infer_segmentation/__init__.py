@@ -15,10 +15,12 @@ Pipeline:
 High-level API
 --------------
 - ``infer_and_segment(episode, skill_names, ...)``
-    Full pipeline: Stage 1 → LLM preferences → train → decode → iterate.
+    Inference with LLM (e.g. GPT-5): Stage 1 → LLM preferences → train → decode.
+    Use when you want to interface with an LLM at inference time.
 
 - ``infer_and_segment_offline(episode, skill_names, ...)``
-    Offline (no LLM): uses provided scoring functions for testing.
+    Offline (no LLM): decode using provided behavior_fit_fn and transition_fn only.
+    Use for training from pre-collected preferences, or testing without API.
 
 - ``infer_segmentation(candidates, T, skill_names, ...)``
     Low-level: run decoder with a given scorer.
