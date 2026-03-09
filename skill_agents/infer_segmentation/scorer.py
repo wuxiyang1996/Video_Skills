@@ -256,6 +256,66 @@ class SegmentScorer:
             ),
         }
 
+    def score_breakdown_batch(
+        self,
+        requests: List[Tuple[int, int, str, Optional[str], Sequence, Sequence, Optional[dict], Optional[dict]]],
+    ) -> List[Dict[str, float]]:
+        """
+        Compute score breakdown for many (i, j, skill, prev_skill, obs, actions, pred_start, pred_end)
+        in one call. Uses behavior_fit_batch when the behavior_fit_fn supports it (e.g. PreferenceScorer).
+        """
+        if not requests:
+            return []
+        w = self._weights
+        # Batch behavior_fit when available
+        bf_results: List[float] = [0.0] * len(requests)
+        batch_indices: List[int] = []
+        batch_reqs: List[Tuple[Sequence, Sequence, str, int, int]] = []
+        for r, req in enumerate(requests):
+            i, j, skill, prev_skill, obs, actions_slice, p_start, p_end = req
+            length = j - i + 1
+            if skill == NEW_SKILL:
+                bf_results[r] = self._new_cfg.background_log_prob * len(obs)
+            else:
+                batch_indices.append(r)
+                batch_reqs.append((obs, actions_slice, skill, i, j))
+        if batch_reqs:
+            bf_fn = getattr(self._behavior_fit, "behavior_fit_batch", None)
+            if callable(bf_fn):
+                bf_batch = bf_fn(batch_reqs)
+                for idx, r in enumerate(batch_indices):
+                    bf_results[r] = bf_batch[idx]
+            else:
+                for idx, r in enumerate(batch_indices):
+                    obs, actions_slice, skill, i, j = batch_reqs[idx]
+                    bf_results[r] = self.behavior_fit(obs, actions_slice, skill, i, j)
+        # Build full breakdown per request
+        out = []
+        for r, req in enumerate(requests):
+            i, j, skill, prev_skill, obs, actions_slice, p_start, p_end = req
+            length = j - i + 1
+            bf_raw = bf_results[r]
+            dp_raw = self.duration_prior(length, skill)
+            tp_raw = self.transition_prior(skill, prev_skill)
+            cc_raw = self.contract_compat(skill, p_start, p_end)
+            out.append({
+                "behavior_fit": bf_raw,
+                "behavior_fit_w": w.behavior_fit * bf_raw,
+                "duration_prior": dp_raw,
+                "duration_prior_w": w.duration_prior * dp_raw,
+                "transition_prior": tp_raw,
+                "transition_prior_w": w.transition_prior * tp_raw,
+                "contract_compat": cc_raw,
+                "contract_compat_w": w.contract_compat * cc_raw,
+                "total": (
+                    w.behavior_fit * bf_raw
+                    + w.duration_prior * dp_raw
+                    + w.transition_prior * tp_raw
+                    + w.contract_compat * cc_raw
+                ),
+            })
+        return out
+
     def rank_skills_for_segment(
         self,
         i: int,

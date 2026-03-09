@@ -21,8 +21,10 @@ from __future__ import annotations
 import json
 import re
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from skill_agents.infer_segmentation.config import LLMTeacherConfig
 
@@ -35,6 +37,17 @@ def _get_ask_model():
     """Lazy import to avoid pulling in API dependencies at module load."""
     from API_func import ask_model
     return ask_model
+
+
+def _wrap_ask_with_semaphore(ask: Callable, max_concurrent: int):
+    """Wrap ask so at most max_concurrent calls run at once (e.g. for local GPU)."""
+    sem = threading.Semaphore(max_concurrent)
+
+    def limited_ask(*args, **kwargs):
+        with sem:
+            return ask(*args, **kwargs)
+
+    return limited_ask
 
 
 def _parse_json_from_response(response: str) -> Optional[dict]:
@@ -192,6 +205,38 @@ def ranking_to_pairwise(
 
 # ── Public API ────────────────────────────────────────────────────────
 
+def _collect_one_segment_prefs(
+    start: int,
+    end: int,
+    observations: Sequence,
+    actions: Sequence,
+    skill_names: List[str],
+    predicates: Optional[List[Optional[dict]]],
+    cfg: LLMTeacherConfig,
+    ask,
+) -> list:
+    """Get pairwise preferences for a single segment (used by batch workers)."""
+    seg_obs = observations[start: end + 1]
+    seg_act = actions[start: end + 1]
+    p_start = predicates[start] if predicates and start < len(predicates) else None
+    p_end = predicates[end] if predicates and end < len(predicates) else None
+    prompt = _build_segment_ranking_prompt(
+        seg_obs, seg_act, skill_names, start, end, p_start, p_end,
+    )
+    response = ask(
+        prompt, model=cfg.model,
+        temperature=cfg.temperature, max_tokens=cfg.max_tokens,
+    )
+    parsed = _parse_json_from_response(response)
+    if not parsed or "ranking" not in parsed:
+        return []
+    ranking = [s for s in parsed["ranking"] if s in skill_names]
+    evidence = parsed.get("reasoning", "")
+    if len(ranking) < 2:
+        return []
+    return ranking_to_pairwise(ranking, start, end, "llm", evidence)
+
+
 def collect_segment_preferences(
     segments: List[Tuple[int, int]],
     observations: Sequence,
@@ -203,6 +248,9 @@ def collect_segment_preferences(
     """
     Proactive preference collection: ask the LLM to rank skills for
     each segment.  Used for cold-start before any scorer is trained.
+
+    When config.max_workers > 1, LLM calls are run in parallel to reduce
+    wall-clock time.
 
     Parameters
     ----------
@@ -223,31 +271,70 @@ def collect_segment_preferences(
     """
     cfg = config or LLMTeacherConfig()
     ask = _get_ask_model()
+    max_workers = getattr(cfg, "max_workers", None)
+    if max_workers is None or max_workers <= 1:
+        # Sequential
+        all_prefs = []
+        for start, end in segments:
+            prefs = _collect_one_segment_prefs(
+                start, end, observations, actions, skill_names, predicates, cfg, ask,
+            )
+            all_prefs.extend(prefs)
+        return all_prefs
+
+    # Parallel batch; cap concurrent LLM calls if set (e.g. local GPU)
+    max_concurrent = getattr(cfg, "max_concurrent_llm_calls", None)
+    if max_concurrent is not None and max_concurrent > 0:
+        ask = _wrap_ask_with_semaphore(ask, max_concurrent)
     all_prefs = []
-
-    for start, end in segments:
-        seg_obs = observations[start: end + 1]
-        seg_act = actions[start: end + 1]
-        p_start = predicates[start] if predicates and start < len(predicates) else None
-        p_end = predicates[end] if predicates and end < len(predicates) else None
-
-        prompt = _build_segment_ranking_prompt(
-            seg_obs, seg_act, skill_names, start, end, p_start, p_end,
-        )
-        response = ask(
-            prompt, model=cfg.model,
-            temperature=cfg.temperature, max_tokens=cfg.max_tokens,
-        )
-        parsed = _parse_json_from_response(response)
-
-        if parsed and "ranking" in parsed:
-            ranking = [s for s in parsed["ranking"] if s in skill_names]
-            evidence = parsed.get("reasoning", "")
-            if len(ranking) >= 2:
-                pairs = ranking_to_pairwise(ranking, start, end, "llm", evidence)
-                all_prefs.extend(pairs)
-
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _collect_one_segment_prefs,
+                start, end, observations, actions, skill_names, predicates, cfg, ask,
+            ): (start, end)
+            for start, end in segments
+        }
+        for future in as_completed(futures):
+            try:
+                prefs = future.result()
+                all_prefs.extend(prefs)
+            except Exception:
+                pass  # skip failed segments
     return all_prefs
+
+
+def _collect_one_transition_prefs(
+    prev_skill: str,
+    skill_names: List[str],
+    cfg: LLMTeacherConfig,
+    ask,
+) -> list:
+    """Get transition preferences for one prev_skill (used by batch workers)."""
+    from skill_agents.infer_segmentation.preference import PreferenceExample
+
+    prompt = _build_transition_ranking_prompt(prev_skill, skill_names)
+    response = ask(
+        prompt, model=cfg.model,
+        temperature=cfg.temperature, max_tokens=cfg.max_tokens,
+    )
+    parsed = _parse_json_from_response(response)
+    if not parsed or "ranking" not in parsed:
+        return []
+    ranking = [s for s in parsed["ranking"] if s in skill_names]
+    evidence = parsed.get("reasoning", "")
+    prefs = []
+    for i in range(len(ranking)):
+        for j in range(i + 1, len(ranking)):
+            prefs.append(PreferenceExample(
+                segment_start=-1,
+                segment_end=-1,
+                skill_win=f"{prev_skill}->{ranking[i]}",
+                skill_lose=f"{prev_skill}->{ranking[j]}",
+                evidence=evidence,
+                source="llm",
+            ))
+    return prefs
 
 
 def collect_transition_preferences(
@@ -258,43 +345,81 @@ def collect_transition_preferences(
     Ask the LLM to rank transition likelihoods for each skill.
 
     For each skill as prev_skill, collects pairwise preferences on
-    which next-skill is more likely.
-
-    Returns
-    -------
-    list[PreferenceExample]
-        Pairwise preferences with segment_start=segment_end=-1
-        (sentinel for transition prefs).
+    which next-skill is more likely. When config.max_workers > 1,
+    LLM calls run in parallel.
     """
     from skill_agents.infer_segmentation.preference import PreferenceExample
 
     cfg = config or LLMTeacherConfig()
     ask = _get_ask_model()
+    max_workers = getattr(cfg, "max_workers", None)
+    if max_workers is None or max_workers <= 1:
+        all_prefs = []
+        for prev_skill in skill_names:
+            all_prefs.extend(
+                _collect_one_transition_prefs(prev_skill, skill_names, cfg, ask),
+            )
+        return all_prefs
+
+    max_concurrent = getattr(cfg, "max_concurrent_llm_calls", None)
+    if max_concurrent is not None and max_concurrent > 0:
+        ask = _wrap_ask_with_semaphore(ask, max_concurrent)
     all_prefs = []
-
-    for prev_skill in skill_names:
-        prompt = _build_transition_ranking_prompt(prev_skill, skill_names)
-        response = ask(
-            prompt, model=cfg.model,
-            temperature=cfg.temperature, max_tokens=cfg.max_tokens,
-        )
-        parsed = _parse_json_from_response(response)
-
-        if parsed and "ranking" in parsed:
-            ranking = [s for s in parsed["ranking"] if s in skill_names]
-            evidence = parsed.get("reasoning", "")
-            for i in range(len(ranking)):
-                for j in range(i + 1, len(ranking)):
-                    all_prefs.append(PreferenceExample(
-                        segment_start=-1,
-                        segment_end=-1,
-                        skill_win=f"{prev_skill}->{ranking[i]}",
-                        skill_lose=f"{prev_skill}->{ranking[j]}",
-                        evidence=evidence,
-                        source="llm",
-                    ))
-
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_collect_one_transition_prefs, ps, skill_names, cfg, ask): ps
+            for ps in skill_names
+        }
+        for future in as_completed(futures):
+            try:
+                all_prefs.extend(future.result())
+            except Exception:
+                pass
     return all_prefs
+
+
+def _collect_one_uncertain_pref(
+    seg,
+    observations: Sequence,
+    actions: Sequence,
+    cfg: LLMTeacherConfig,
+    ask,
+) -> Optional[object]:
+    """Get one A/B preference for an uncertain segment (used by batch workers)."""
+    from skill_agents.infer_segmentation.preference import PreferenceExample
+
+    if len(seg.candidates) < 2:
+        return None
+    skill_a = seg.candidates[0].skill
+    skill_b = seg.candidates[1].skill
+    seg_obs = observations[seg.start: seg.end + 1]
+    seg_act = actions[seg.start: seg.end + 1]
+    prompt = _build_pairwise_prompt(
+        seg_obs, seg_act, skill_a, skill_b, seg.start, seg.end,
+    )
+    response = ask(
+        prompt, model=cfg.model,
+        temperature=cfg.temperature, max_tokens=cfg.max_tokens,
+    )
+    parsed = _parse_json_from_response(response)
+    if not parsed:
+        return None
+    choice = parsed.get("choice", "").upper().strip()
+    evidence = parsed.get("evidence", "")
+    if choice == "A":
+        win, lose = skill_a, skill_b
+    elif choice == "B":
+        win, lose = skill_b, skill_a
+    else:
+        return None
+    return PreferenceExample(
+        segment_start=seg.start,
+        segment_end=seg.end,
+        skill_win=win,
+        skill_lose=lose,
+        evidence=evidence,
+        source="llm",
+    )
 
 
 def collect_uncertain_preferences(
@@ -309,60 +434,39 @@ def collect_uncertain_preferences(
     Active learning: query the LLM only on uncertain segments (low margin).
 
     For each uncertain segment, asks the LLM to choose between the top-2
-    skill candidates.
-
-    Parameters
-    ----------
-    result : SegmentationResult
-        Output from a previous decoding pass.
-
-    Returns
-    -------
-    list[PreferenceExample]
+    skill candidates.     When config.max_workers > 1, LLM calls run in parallel.
     """
-    from skill_agents.infer_segmentation.preference import PreferenceExample
-
     cfg = config or LLMTeacherConfig()
     ask = _get_ask_model()
-    all_prefs = []
-
     uncertain = result.uncertain_segments(margin_threshold)
     uncertain.sort(key=lambda s: s.margin)
+    to_query = [seg for seg in uncertain[:max_queries] if len(seg.candidates) >= 2]
+    if not to_query:
+        return []
 
-    for seg in uncertain[:max_queries]:
-        if len(seg.candidates) < 2:
-            continue
+    max_workers = getattr(cfg, "max_workers", None)
+    if max_workers is None or max_workers <= 1:
+        all_prefs = []
+        for seg in to_query:
+            pref = _collect_one_uncertain_pref(seg, observations, actions, cfg, ask)
+            if pref is not None:
+                all_prefs.append(pref)
+        return all_prefs
 
-        skill_a = seg.candidates[0].skill
-        skill_b = seg.candidates[1].skill
-        seg_obs = observations[seg.start: seg.end + 1]
-        seg_act = actions[seg.start: seg.end + 1]
-
-        prompt = _build_pairwise_prompt(
-            seg_obs, seg_act, skill_a, skill_b, seg.start, seg.end,
-        )
-        response = ask(
-            prompt, model=cfg.model,
-            temperature=cfg.temperature, max_tokens=cfg.max_tokens,
-        )
-        parsed = _parse_json_from_response(response)
-
-        if parsed:
-            choice = parsed.get("choice", "").upper().strip()
-            evidence = parsed.get("evidence", "")
-            if choice == "A":
-                win, lose = skill_a, skill_b
-            elif choice == "B":
-                win, lose = skill_b, skill_a
-            else:
-                continue
-            all_prefs.append(PreferenceExample(
-                segment_start=seg.start,
-                segment_end=seg.end,
-                skill_win=win,
-                skill_lose=lose,
-                evidence=evidence,
-                source="llm",
-            ))
-
+    max_concurrent = getattr(cfg, "max_concurrent_llm_calls", None)
+    if max_concurrent is not None and max_concurrent > 0:
+        ask = _wrap_ask_with_semaphore(ask, max_concurrent)
+    all_prefs = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_collect_one_uncertain_pref, seg, observations, actions, cfg, ask): seg
+            for seg in to_query
+        }
+        for future in as_completed(futures):
+            try:
+                pref = future.result()
+                if pref is not None:
+                    all_prefs.append(pref)
+            except Exception:
+                pass
     return all_prefs

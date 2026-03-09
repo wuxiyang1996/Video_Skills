@@ -75,6 +75,8 @@ def beam_decode(
     if boundary_set[0] != 0:
         boundary_set = [0] + boundary_set
 
+    use_batch = hasattr(scorer, "score_breakdown_batch") and callable(getattr(scorer, "score_breakdown_batch", None))
+
     # Seed beam: one entry starting at time 0, no skill yet
     beam: List[_BeamEntry] = [_BeamEntry(neg_score=0.0, last_cut=0, last_skill=None, path=[])]
 
@@ -99,14 +101,21 @@ def beam_decode(
                 p_start = predicates[seg_start] if predicates and seg_start < len(predicates) else None
                 p_end = predicates[seg_end] if predicates and seg_end < len(predicates) else None
 
-                scored: List[Tuple[float, str, Dict[str, float]]] = []
-                for sk in skills:
-                    bd = scorer.score_breakdown(
-                        seg_start, seg_end, sk, entry.last_skill,
-                        obs_slice, act_slice, p_start, p_end,
-                    )
-                    scored.append((bd["total"], sk, bd))
-
+                if use_batch:
+                    batch_reqs = [
+                        (seg_start, seg_end, sk, entry.last_skill, obs_slice, act_slice, p_start, p_end)
+                        for sk in skills
+                    ]
+                    breakdowns = scorer.score_breakdown_batch(batch_reqs)
+                    scored = [(bd["total"], sk, bd) for sk, bd in zip(skills, breakdowns)]
+                else:
+                    scored = []
+                    for sk in skills:
+                        bd = scorer.score_breakdown(
+                            seg_start, seg_end, sk, entry.last_skill,
+                            obs_slice, act_slice, p_start, p_end,
+                        )
+                        scored.append((bd["total"], sk, bd))
                 scored.sort(key=lambda x: -x[0])
                 cands = [
                     SkillCandidate(skill=s[1], total_score=s[0], breakdown=s[2])

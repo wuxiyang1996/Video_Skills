@@ -221,6 +221,57 @@ class PreferenceScorer:
             return 0.0
         return (wins - losses) / total
 
+    def _segment_win_rate_batch(
+        self,
+        requests: List[Tuple[str, int, int]],
+    ) -> List[float]:
+        """
+        Compute segment win rate for many (skill, seg_start, seg_end) at once.
+        Single pass over prefs; for each pref, update counts for overlapping requests.
+        """
+        if not self._segment_prefs:
+            return [0.0] * len(requests)
+        skill_to_idx = {s: i for i, s in enumerate(self._skill_names)}
+        R = len(requests)
+        wins = [0] * R
+        losses = [0] * R
+        for pref in self._segment_prefs:
+            p_start, p_end = pref.segment_start, pref.segment_end
+            win_idx = skill_to_idx.get(pref.skill_win, -1)
+            lose_idx = skill_to_idx.get(pref.skill_lose, -1)
+            for r in range(R):
+                skill, s, e = requests[r]
+                if p_start > e or p_end < s:
+                    continue
+                r_skill_idx = skill_to_idx.get(skill, -2)
+                if win_idx == r_skill_idx:
+                    wins[r] += 1
+                if lose_idx == r_skill_idx:
+                    losses[r] += 1
+        out = []
+        for r in range(R):
+            total = wins[r] + losses[r]
+            out.append((wins[r] - losses[r]) / total if total > 0 else 0.0)
+        return out
+
+    def behavior_fit_batch(
+        self,
+        requests: List[Tuple[Sequence, Sequence, str, int, int]],
+    ) -> List[float]:
+        """
+        Compute behavior_fit for many (observations, actions, skill, seg_start, seg_end)
+        in one call. Uses batched segment win rate for speed at inference time.
+        """
+        if not requests:
+            return []
+        seg_reqs = [(skill, seg_start, seg_end) for (_, _, skill, seg_start, seg_end) in requests]
+        seg_scores = self._segment_win_rate_batch(seg_reqs)
+        out = []
+        for r, ((obs, act, skill, s, e), seg_score) in enumerate(zip(requests, seg_scores)):
+            global_score = self._global_scores.get(skill, 0.0)
+            out.append((global_score + seg_score * 5.0) * len(obs))
+        return out
+
     def behavior_fit(
         self,
         observations: Sequence,
@@ -282,11 +333,57 @@ class PreferenceScorer:
 
         return loss
 
-    def update(self, preferences: List[PreferenceExample]) -> float:
-        """One gradient step on all preferences.  Returns average loss."""
+    def _bt_batch_update(
+        self,
+        scores: Dict[str, float],
+        preferences: List[PreferenceExample],
+    ) -> float:
+        """
+        One batch Bradley-Terry step: accumulate gradients over all preferences
+        then apply once per key. Same objective as sequential _bt_update.
+        """
+        if not preferences:
+            return 0.0
+        grad_accum: Dict[str, float] = {}
+        total_loss = 0.0
+        for pref in preferences:
+            key_win = pref.skill_win
+            key_lose = pref.skill_lose
+            sw = scores.get(key_win, 0.0)
+            sl = scores.get(key_lose, 0.0)
+            diff = sw - sl
+            prob = 1.0 / (1.0 + math.exp(-diff))
+            prob = max(min(prob, 1.0 - 1e-10), 1e-10)
+            total_loss += -math.log(prob)
+            g = 1.0 - prob
+            grad_accum[key_win] = grad_accum.get(key_win, 0.0) + g
+            grad_accum[key_lose] = grad_accum.get(key_lose, 0.0) - g
+        for key, g in grad_accum.items():
+            if key in scores:
+                scores[key] += self._lr * g
+            else:
+                scores[key] = self._lr * g
+        return total_loss / len(preferences)
+
+    def update(self, preferences: List[PreferenceExample], batch: bool = True) -> float:
+        """
+        One gradient step on all preferences.
+
+        If batch=True (default), accumulates gradients over all preferences
+        and applies once per parameter (faster, same objective). If batch=False,
+        updates after each preference (sequential, original behavior).
+        """
+        if not preferences:
+            return 0.0
+        if batch:
+            segment_prefs = [p for p in preferences if not p.is_transition_pref]
+            transition_prefs = [p for p in preferences if p.is_transition_pref]
+            loss_seg = self._bt_batch_update(self._global_scores, segment_prefs)
+            loss_trans = self._bt_batch_update(self._transition_scores, transition_prefs)
+            n = len(preferences)
+            return (loss_seg * len(segment_prefs) + loss_trans * len(transition_prefs)) / max(n, 1)
         total_loss = 0.0
         count = 0
-
         for pref in preferences:
             if pref.is_transition_pref:
                 loss = self._bt_update(
@@ -302,19 +399,19 @@ class PreferenceScorer:
                 )
             total_loss += loss
             count += 1
-
         return total_loss / max(count, 1)
 
     def train(
         self,
         store: PreferenceStore,
         epochs: int = 10,
+        batch: bool = True,
     ) -> List[float]:
-        """Train for multiple epochs, return per-epoch losses."""
+        """Train for multiple epochs, return per-epoch losses. If batch=True (default), each epoch does one batch BT update; if False, one update per preference."""
         self._segment_prefs = store.segment_preferences
         losses = []
         for _ in range(epochs):
-            loss = self.update(store.examples)
+            loss = self.update(store.examples, batch=batch)
             losses.append(loss)
         return losses
 

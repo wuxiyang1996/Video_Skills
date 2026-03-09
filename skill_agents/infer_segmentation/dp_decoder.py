@@ -108,19 +108,27 @@ def viterbi_decode(
 
     # ── Base case: first segment starts at boundary_set[0] ──────────
     first_b = boundary_set[0]  # should be 0
+    use_batch = hasattr(scorer, "score_breakdown_batch") and callable(getattr(scorer, "score_breakdown_batch", None))
     for bi in range(1, num_bounds):
         j = boundary_set[bi]
         seg_obs, seg_act = _get_obs_actions(observations, actions, first_b, j)
         p_start = _get_predicates(predicates, first_b)
         p_end = _get_predicates(predicates, j)
 
-        scored: List[Tuple[float, int, Dict[str, float]]] = []
-        for ki, sk in enumerate(skills):
-            bd = scorer.score_breakdown(
-                first_b, j, sk, None, seg_obs, seg_act, p_start, p_end
-            )
-            scored.append((bd["total"], ki, bd))
-
+        if use_batch:
+            batch_reqs = [
+                (first_b, j, sk, None, seg_obs, seg_act, p_start, p_end)
+                for sk in skills
+            ]
+            breakdowns = scorer.score_breakdown_batch(batch_reqs)
+            scored = [(bd["total"], ki, bd) for ki, bd in enumerate(breakdowns)]
+        else:
+            scored = []
+            for ki, sk in enumerate(skills):
+                bd = scorer.score_breakdown(
+                    first_b, j, sk, None, seg_obs, seg_act, p_start, p_end
+                )
+                scored.append((bd["total"], ki, bd))
         scored.sort(key=lambda x: -x[0])
 
         cands = [
@@ -153,14 +161,20 @@ def viterbi_decode(
                     continue
                 base = dp[prev_bi][prev_ki]
 
-                scored_inner: List[Tuple[float, int, Dict[str, float]]] = []
-                for ki, sk in enumerate(skills):
-                    bd = scorer.score_breakdown(
-                        i, j, sk, prev_sk, seg_obs, seg_act, p_start, p_end
-                    )
-                    total = base + bd["total"]
-                    scored_inner.append((total, ki, bd))
-
+                if use_batch:
+                    batch_reqs = [
+                        (i, j, sk, prev_sk, seg_obs, seg_act, p_start, p_end)
+                        for sk in skills
+                    ]
+                    breakdowns = scorer.score_breakdown_batch(batch_reqs)
+                    scored_inner = [(base + bd["total"], ki, bd) for ki, bd in enumerate(breakdowns)]
+                else:
+                    scored_inner = []
+                    for ki, sk in enumerate(skills):
+                        bd = scorer.score_breakdown(
+                            i, j, sk, prev_sk, seg_obs, seg_act, p_start, p_end
+                        )
+                        scored_inner.append((base + bd["total"], ki, bd))
                 scored_inner.sort(key=lambda x: -x[0])
 
                 cands = [

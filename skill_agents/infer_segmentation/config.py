@@ -47,6 +47,11 @@ class LLMTeacherConfig:
     model: Optional[str] = None  # None = use ask_model default (gpt-4o)
     temperature: float = 0.3
     max_tokens: int = 1000
+    # Number of worker threads (None or 1 = sequential).
+    max_workers: Optional[int] = 8
+    # Cap on concurrent LLM calls (e.g. GPU inference). None = no cap.
+    # Set to 1 for local GPU to avoid OOM; keep parallel task flow.
+    max_concurrent_llm_calls: Optional[int] = None
 
 
 @dataclass

@@ -67,7 +67,7 @@ The `PreferenceScorer` is trained from collected preferences:
 
 - **Behavior fit**: learned per-skill affinity (how well each skill matches segments)
 - **Transition prior**: learned per-transition affinity (how likely each skill follows another)
-- Training uses **Bradley-Terry** log-likelihood on pairwise preferences
+- Training uses **Bradley-Terry** log-likelihood on pairwise preferences (batch update by default: accumulate gradients over all preferences then apply once per parameter)
 - The LLM's ranking implicitly considers duration and state-change consistency, so these are folded into the learned behavior_fit
 
 ## How the score is computed
@@ -306,6 +306,8 @@ config = SegmentationConfig(
     llm_teacher=LLMTeacherConfig(
         model="gpt-4o",       # or None for default
         temperature=0.3,
+        max_workers=8,        # worker threads (None or 1 = sequential)
+        max_concurrent_llm_calls=None,  # cap concurrent inference (e.g. 1 for local GPU)
     ),
     preference=PreferenceLearningConfig(
         num_iterations=3,      # active learning rounds
@@ -316,6 +318,8 @@ config = SegmentationConfig(
     ),
 )
 ```
+
+**Local models (skill bank / GPU):** Keep parallel task flow but avoid GPU OOM by capping concurrent inference: set `max_concurrent_llm_calls=1` (or 2 if your GPU can handle it). Worker threads still run in parallel for prompt building and result parsing; only the actual model call is serialized.
 
 ## Preference Data Schema
 
@@ -362,7 +366,7 @@ This section is a quick reference for what each file and its main components do.
 | **ScorerWeights** | Weights for the four score terms: `behavior_fit`, `duration_prior`, `transition_prior`, `contract_compat`. |
 | **DurationPriorConfig** | Gaussian duration prior: `default_mean`, `default_std`, `min_length`, `max_length`. |
 | **NewSkillConfig** | Special `__NEW__` skill: `enabled`, `penalty`, `background_log_prob`. |
-| **LLMTeacherConfig** | LLM calls: `model`, `temperature`, `max_tokens`. |
+| **LLMTeacherConfig** | LLM calls: `model`, `temperature`, `max_tokens`, `max_workers`, `max_concurrent_llm_calls` (set to 1 for local GPU to avoid OOM). |
 | **PreferenceLearningConfig** | Preference loop: `num_iterations`, `margin_threshold`, `max_queries_per_iter`, `training_epochs`, `learning_rate`, `collect_transitions`. |
 | **DecoderConfig** | Decoder: `top_m_skills`, `beam_width`, `beam_max_segments`, `top_k_diagnostics`. |
 | **SegmentationConfig** | Top-level config aggregating all of the above; `method` = `"dp"` or `"beam"`. |
@@ -395,7 +399,7 @@ Defines how each segment–skill pair is scored (weighted sum of four terms).
 | **PreferenceQuery** | Template for a single uncertain-segment query (top-2 candidates, scores, margin). |
 | **PreferenceStore** | List of PreferenceExamples; `add`, `add_batch`, `segment_preferences`, `transition_preferences`, `save`, `load`. |
 | **generate_preference_queries(result, margin_threshold, max_queries)** | Build PreferenceQueries for segments with margin below threshold (active learning). |
-| **PreferenceScorer** | Trained from preferences. **behavior_fit** and **transition_prior** plug into SegmentScorer; **train(store, epochs)** runs Bradley–Terry. |
+| **PreferenceScorer** | Trained from preferences. **behavior_fit** and **transition_prior** plug into SegmentScorer; **train(store, epochs)** runs Bradley–Terry. **behavior_fit_batch** enables batched preference scoring at inference (decoders use **score_breakdown_batch** when available). |
 
 ### `llm_teacher.py` — LLM as preference teacher
 
