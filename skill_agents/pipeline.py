@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from skill_agents.skill_bank.bank import SkillBankMVP
+from skill_agents.skill_bank.new_pool import NewPoolManager, NewPoolConfig
 from skill_agents.stage3_mvp.schemas import (
     SegmentRecord,
     SkillEffectsContract,
@@ -63,10 +64,19 @@ class PipelineConfig:
     max_queries_per_iter: int = 5
     new_skill_penalty: float = 5.0
 
+    # Contract feedback: Stage 3 → Stage 2 closed loop
+    contract_feedback_mode: str = "off"  # "off" | "weak" | "strong"
+    contract_feedback_strength: float = 0.3
+
     # Stage 3: contract learning
     eff_freq: float = 0.8
     min_instances_per_skill: int = 5
     start_end_window: int = 5
+
+    # NEW pool management
+    new_pool_min_cluster_size: int = 5
+    new_pool_min_consistency: float = 0.5
+    new_pool_min_distinctiveness: float = 0.25
 
     # Stage 4: bank maintenance
     split_pass_rate_threshold: float = 0.7
@@ -141,7 +151,13 @@ class SkillBankAgent:
 
         self.bank = bank or SkillBankMVP(path=self.config.bank_path)
         self._all_segments: List[SegmentRecord] = []
-        self._new_pool: List[SegmentRecord] = []
+        self._new_pool: List[SegmentRecord] = []  # legacy list (kept for compat)
+        self._new_pool_mgr = NewPoolManager(config=NewPoolConfig(
+            min_cluster_size=self.config.new_pool_min_cluster_size,
+            min_consistency=self.config.new_pool_min_consistency,
+            min_distinctiveness=self.config.new_pool_min_distinctiveness,
+            min_pass_rate=self.config.split_pass_rate_threshold,
+        ))
         self._observations_by_traj: Dict[str, list] = {}
         self._traj_lengths: Dict[str, int] = {}
         self._preference_store: Any = None  # lazily created
@@ -216,6 +232,7 @@ class SkillBankAgent:
             infer_and_segment_offline,
         )
         from skill_agents.infer_segmentation.config import (
+            ContractFeedbackConfig,
             SegmentationConfig,
             NewSkillConfig,
             PreferenceLearningConfig,
@@ -239,9 +256,18 @@ class SkillBankAgent:
                 max_queries_per_iter=cfg.max_queries_per_iter,
             ),
             llm_teacher=LLMTeacherConfig(model=cfg.llm_model),
+            contract_feedback=ContractFeedbackConfig(
+                mode=cfg.contract_feedback_mode,
+                strength=cfg.contract_feedback_strength,
+            ),
         )
         proposal_config = ProposalConfig(merge_radius=cfg.merge_radius)
         _extractor_kwargs = extractor_kwargs or {"model": cfg.extractor_model}
+
+        # Build compat_fn from the bank when contract feedback is enabled
+        _compat_fn = None
+        if cfg.contract_feedback_mode != "off" and len(self.bank) > 0:
+            _compat_fn = self.bank.compat_fn
 
         store = self._get_or_create_preference_store()
 
@@ -256,6 +282,7 @@ class SkillBankAgent:
                 surprisal=surprisal,
                 preference_store=store,
                 extractor_kwargs=_extractor_kwargs,
+                compat_fn=_compat_fn,
             )
             self._preference_store = store
         else:
@@ -268,6 +295,7 @@ class SkillBankAgent:
                 embedder=embedder,
                 surprisal=surprisal,
                 extractor_kwargs=_extractor_kwargs,
+                compat_fn=_compat_fn,
             )
 
         traj_id = getattr(episode, "task", None) or f"traj_{len(self._traj_lengths)}"
@@ -283,7 +311,8 @@ class SkillBankAgent:
         ]
         self._traj_lengths[traj_id] = len(exps)
 
-        for idx, seg in enumerate(result.segments):
+        segments = result.segments
+        for idx, seg in enumerate(segments):
             seg_id = f"{traj_id}_seg{idx:04d}"
             rec = SegmentRecord(
                 seg_id=seg_id,
@@ -294,6 +323,9 @@ class SkillBankAgent:
             )
             if seg.assigned_skill == "__NEW__":
                 self._new_pool.append(rec)
+                pred_skill = segments[idx - 1].assigned_skill if idx > 0 else None
+                succ_skill = segments[idx + 1].assigned_skill if idx < len(segments) - 1 else None
+                self._new_pool_mgr.add(rec, predecessor_skill=pred_skill, successor_skill=succ_skill)
             self._all_segments.append(rec)
 
     # ── Batch ingestion ──────────────────────────────────────────────
@@ -434,10 +466,44 @@ class SkillBankAgent:
     # ── Materialize NEW ──────────────────────────────────────────────
 
     def materialize_new_skills(self) -> int:
-        """Cluster NEW_POOL and promote qualifying clusters to real skills.
+        """Promote qualifying ``__NEW__`` clusters to real skills.
+
+        Uses the ``NewPoolManager`` for rich clustering (effect similarity,
+        consistency, separability).  Falls back to the legacy signature-based
+        approach only when the pool manager is empty but _new_pool has records.
 
         Returns the number of new skills created.
         """
+        from skill_agents.infer_segmentation.config import LLMTeacherConfig
+
+        llm_cfg = LLMTeacherConfig(model=self.config.llm_model) if self.config.llm_model else None
+
+        # Try the new pool manager first
+        if self._new_pool_mgr.size >= self.config.new_pool_min_cluster_size:
+            logger.info(
+                "NEW pool: %d candidates, running promotion.",
+                self._new_pool_mgr.size,
+            )
+            created_ids = self._new_pool_mgr.promote(
+                bank=self.bank,
+                observations_by_traj=self._observations_by_traj,
+                llm_config=llm_cfg,
+            )
+            # Sync legacy pool
+            promoted_seg_ids = {c.seg_id for c in self._new_pool_mgr.records}
+            self._new_pool = [
+                r for r in self._new_pool
+                if r.seg_id not in self._new_pool_mgr._promoted_ids
+            ]
+
+            for cid in created_ids:
+                logger.info("Materialized new skill %s via NewPoolManager.", cid)
+
+            if created_ids and self.config.bank_path:
+                self.bank.save(self.config.bank_path)
+            self._invalidate_query_engine()
+            return len(created_ids)
+
         if len(self._new_pool) < self.config.min_new_cluster_size:
             logger.info(
                 "NEW pool too small (%d < %d), skipping materialization.",
@@ -445,6 +511,14 @@ class SkillBankAgent:
             )
             return 0
 
+        logger.info(
+            "NEW pool: %d legacy records, running legacy promotion.",
+            len(self._new_pool),
+        )
+        return self._materialize_legacy()
+
+    def _materialize_legacy(self) -> int:
+        """Legacy promotion: cluster by exact effect_signature string."""
         from skill_agents.stage3_mvp.run_stage3_mvp import (
             run_stage3_mvp,
             SegmentSpec,
@@ -498,57 +572,6 @@ class SkillBankAgent:
                     for rec in cluster:
                         if rec in self._new_pool:
                             self._new_pool.remove(rec)
-                    # Prompt LLM to label the new skill with a human-readable name
-                    contract = self.bank.get_contract(new_id)
-                    if contract is not None:
-                        observation_slices = []
-                        for rec in cluster[:3]:
-                            obs = self._observations_by_traj.get(rec.traj_id, [])
-                            if rec.t_start is not None and rec.t_end is not None:
-                                sl = obs[rec.t_start : rec.t_end + 1]
-                                if len(sl) > 0:
-                                    observation_slices.append(sl)
-                        if observation_slices:
-                            from skill_agents.infer_segmentation.llm_teacher import (
-                                suggest_skill_name,
-                            )
-                            from skill_agents.infer_segmentation.config import (
-                                LLMTeacherConfig,
-                            )
-                            llm_cfg = LLMTeacherConfig(model=self.config.llm_model)
-                            naming = suggest_skill_name(
-                                observation_slices,
-                                eff_add=list(contract.eff_add) or None,
-                                eff_del=list(contract.eff_del) or None,
-                                eff_event=list(contract.eff_event) or None,
-                                config=llm_cfg,
-                            )
-                            if naming and naming.get("name"):
-                                contract.name = naming["name"]
-                                contract.description = naming.get("description")
-                                self.bank.add_or_update(contract)
-                                logger.info(
-                                    "Materialized new skill %s -> %s (%d instances, pass_rate=%.2f)",
-                                    new_id,
-                                    naming["name"],
-                                    len(cluster),
-                                    sr.get("pass_rate", 0),
-                                )
-                            else:
-                                logger.info(
-                                    "Materialized new skill %s (%d instances, pass_rate=%.2f)",
-                                    new_id, len(cluster), sr.get("pass_rate", 0),
-                                )
-                        else:
-                            logger.info(
-                                "Materialized new skill %s (%d instances, pass_rate=%.2f)",
-                                new_id, len(cluster), sr.get("pass_rate", 0),
-                            )
-                    else:
-                        logger.info(
-                            "Materialized new skill %s (%d instances, pass_rate=%.2f)",
-                            new_id, len(cluster), sr.get("pass_rate", 0),
-                        )
                 else:
                     self.bank.remove(new_id)
                     for rec in cluster:
@@ -737,6 +760,25 @@ class SkillBankAgent:
         """
         engine = self._get_query_engine()
         return engine.query(key, top_k=top_k)
+
+    def select_skill(
+        self,
+        query: str,
+        current_state: Optional[Dict[str, float]] = None,
+        top_k: int = 3,
+    ) -> List[Dict[str, Any]]:
+        """Rich skill selection combining retrieval relevance with execution
+        applicability.
+
+        Preferred API for decision agents.  When ``current_state`` is
+        provided, the result includes ``applicability`` and ``confidence``
+        in addition to ``relevance``.
+
+        Returns list of ``SkillSelectionResult.to_dict()``.
+        """
+        engine = self._get_query_engine()
+        results = engine.select(query, current_state=current_state, top_k=top_k)
+        return [r.to_dict() for r in results]
 
     def query_by_effects(
         self,

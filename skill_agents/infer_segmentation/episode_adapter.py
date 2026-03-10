@@ -74,6 +74,7 @@ def _build_scorer_from_preferences(
     skill_names: List[str],
     store: PreferenceStore,
     config: SegmentationConfig,
+    compat_fn=None,
 ) -> SegmentScorer:
     """Train a PreferenceScorer and wrap it in a SegmentScorer."""
     pref_scorer = PreferenceScorer(
@@ -88,6 +89,7 @@ def _build_scorer_from_preferences(
         config=config,
         behavior_fit_fn=pref_scorer.behavior_fit,
         transition_fn=pref_scorer.transition_prior,
+        compat_fn=compat_fn,
     )
 
 
@@ -183,6 +185,7 @@ def infer_and_segment(
     outcome_length: int = 5,
     preference_store: Optional[PreferenceStore] = None,
     extractor_kwargs=None,
+    compat_fn=None,
 ) -> Tuple[SegmentationResult, list, PreferenceStore]:
     """
     Inference pipeline with LLM (e.g. GPT-5):
@@ -273,7 +276,7 @@ def infer_and_segment(
             store.add_batch(transition_prefs)
 
     # ── Train scorer and decode ─────────────────────────────────────
-    scorer = _build_scorer_from_preferences(skill_names, store, cfg)
+    scorer = _build_scorer_from_preferences(skill_names, store, cfg, compat_fn=compat_fn)
     result = _decode(centers, T, scorer, observations, actions, predicates, cfg)
 
     # ── Active learning iterations ──────────────────────────────────
@@ -288,7 +291,7 @@ def infer_and_segment(
             break
 
         store.add_batch(new_prefs)
-        scorer = _build_scorer_from_preferences(skill_names, store, cfg)
+        scorer = _build_scorer_from_preferences(skill_names, store, cfg, compat_fn=compat_fn)
         result = _decode(centers, T, scorer, observations, actions, predicates, cfg)
 
     sub_episodes = _segments_to_sub_episodes(result, experiences, episode.task, outcome_length)
@@ -308,6 +311,7 @@ def infer_and_segment_offline(
     transition_fn=None,
     duration_stats=None,
     extractor_kwargs=None,
+    compat_fn=None,
 ) -> Tuple[SegmentationResult, list]:
     """
     Offline pipeline (no LLM): decode using provided scoring functions only.
@@ -352,6 +356,7 @@ def infer_and_segment_offline(
         behavior_fit_fn=behavior_fit_fn,
         transition_fn=transition_fn,
         duration_stats=duration_stats,
+        compat_fn=compat_fn,
     )
     sub_episodes = _segments_to_sub_episodes(result, experiences, episode.task, outcome_length)
     return result, sub_episodes

@@ -9,16 +9,17 @@ Build and maintain a **Skill Bank** from long-horizon game trajectories: segment
 | Component | Purpose |
 |-----------|--------|
 | **SkillBankAgent** | Full pipeline: ingest episodes → segment → learn contracts → maintain bank → query. |
-| **SkillQueryEngine** | Rich retrieval: keyword and effect-based search over the bank. |
-| **SkillBankMVP** | Persistent storage (JSONL) for skill contracts and verification reports. |
+| **SkillQueryEngine** | Rich retrieval + skill selection policy: keyword, effect-based, and state-aware search. |
+| **SkillBankMVP** | Persistent storage (JSONL) for skill contracts and verification reports. Provides `compat_fn` for Stage 3 → Stage 2 feedback. |
+| **NewPoolManager** | Rich tracking and promotion of `__NEW__` segments into real skills. |
 | **tool_call_reward** | Reward for tool calls (query_skill / query_memory / call_skill) for agentic RL training. |
 | **PLAN.md** | Operating plan (stages, constraints, data model). |
 | **PIPELINE_CALL_FLOW.md** | How each function is called within the agent framework (illustration). |
 
 Subpackages implement each stage:
 
-- **boundary_proposal** — Stage 1: high-recall candidate cut points.
-- **infer_segmentation** — Stage 2: skill labelling with preference learning.
+- **boundary_proposal** — Stage 1: high-recall candidate cut points + boundary plausibility scoring.
+- **infer_segmentation** — Stage 2: skill labelling with preference learning + contract feedback loop.
 - **stage3_mvp** — Stage 3: effects-only contract learn/verify/refine.
 - **bank_maintenance** — Stage 4: split / merge / refine skills.
 - **skill_evaluation** — Quality assessment (optional LLM judge).
@@ -40,6 +41,12 @@ config = PipelineConfig(
     preference_store_path="data/preferences.json",
     report_dir="data/reports",
     min_instances_per_skill=5,
+    # Contract feedback: Stage 3 → Stage 2 closed loop
+    contract_feedback_mode="weak",   # "off" | "weak" | "strong"
+    contract_feedback_strength=0.3,
+    # NEW pool management
+    new_pool_min_cluster_size=5,
+    new_pool_min_consistency=0.5,
 )
 
 agent = SkillBankAgent(config=config)
@@ -64,6 +71,16 @@ agent.save()
 results = agent.query_skill("navigate to pot and place onion", top_k=3)
 for r in results:
     print(r["skill_id"], r["score"], r.get("micro_plan"))
+
+# Rich skill selection (preferred for decision agents):
+# separates retrieval relevance from execution applicability
+results = agent.select_skill(
+    query="navigate to pot",
+    current_state={"near_pot": 0.1, "holding_onion": 0.9},
+    top_k=3,
+)
+for r in results:
+    print(r["skill_id"], r["relevance"], r["applicability"], r["confidence"])
 
 # Effect-based: find skills that achieve desired state changes
 results = agent.query_by_effects(
@@ -155,11 +172,12 @@ Predicate satisfaction is implemented by tokenizing the predicate and the outcom
 | `ingest_episodes(episodes, ...)` | Segment each episode then run Stage 3 (contract learning). Returns list of `(result, sub_episodes)` per episode. |
 | `run_contract_learning()` | Stage 3: learn/verify/refine effects contracts from accumulated segments. |
 | `run_bank_maintenance(...)` | Stage 4: split / merge / refine skills. |
-| `materialize_new_skills()` | Promote `__NEW__` segments meeting thresholds to new skills. |
+| `materialize_new_skills()` | Promote `__NEW__` segments via `NewPoolManager` (rich clustering + consistency checks). |
 | `run_evaluation(episode_outcomes=...)` | Run skill quality evaluation (optional). |
 | `run_full_iteration(episodes=...)` | One pass: (optional ingest) → Stage 3 → Stage 4 → materialize → snapshot. |
 | `run_until_stable(max_iterations=...)` | Iterate until convergence; then `save()`. |
 | `query_skill(key, top_k=3)` | Keyword-style retrieval; returns list of `{skill_id, score, contract, micro_plan}`. |
+| `select_skill(query, current_state=..., top_k=3)` | **Rich skill selection**: relevance + applicability + confidence. Preferred for decision agents. |
 | `query_by_effects(desired_add=..., desired_del=..., top_k=3)` | Effect-based retrieval. |
 | `list_skills()` | Compact list of all skills. |
 | `get_skill_detail(skill_id)` | Full contract + report for one skill. |
@@ -181,17 +199,30 @@ bank = SkillBankMVP("bank.jsonl")
 bank.load()
 
 engine = SkillQueryEngine(bank)            # auto-loads RAG embedder
-# or pass an explicit embedder:
-# from rag import get_text_embedder
-# engine = SkillQueryEngine(bank, embedder=get_text_embedder(), embedding_weight=0.6)
 
+# Simple retrieval (backward compatible)
 results = engine.query("place onion in pot", top_k=3)
 detail = engine.get_detail("place_onion")
 list_all = engine.list_all()
 
+# Rich skill selection (preferred for decision agents):
+# separates retrieval relevance from execution applicability
+selections = engine.select(
+    query="place onion in pot",
+    current_state={"near_pot": 0.8, "holding_onion": 0.9},
+    top_k=3,
+)
+for s in selections:
+    print(s.skill_id, s.relevance, s.applicability, s.confidence)
+    print("  matched:", s.matched_effects, "missing:", s.missing_effects)
+
 # Format expected by decision_agents run_tool(QUERY_SKILL)
-decision_result = engine.query_for_decision_agent("place onion", top_k=1)
-# → {"skill_id": "...", "micro_plan": [...], "contract": {...}}
+decision_result = engine.query_for_decision_agent(
+    "place onion",
+    current_state={"near_pot": 0.8},  # optional: enables applicability scoring
+    top_k=1,
+)
+# → {"skill_id": "...", "relevance": 0.8, "applicability": 0.6, "confidence": 0.7, ...}
 ```
 
 ### PipelineConfig
@@ -205,9 +236,14 @@ Key options (see `pipeline.PipelineConfig` for all):
 | `merge_radius` | `5` | Merge boundary candidates within this many steps (Stage 1). |
 | `preference_iterations` | `3` | Active-learning rounds in Stage 2. |
 | `margin_threshold` | `1.0` | Segments with margin below this get preference queries. |
+| `contract_feedback_mode` | `"off"` | Stage 3 → Stage 2 contract feedback: `"off"`, `"weak"`, `"strong"`. |
+| `contract_feedback_strength` | `0.3` | Weight of contract compatibility term in Stage 2 scoring. |
 | `eff_freq` | `0.8` | Min frequency for a literal to be in a contract (Stage 3). |
 | `min_instances_per_skill` | `5` | Skip skills with fewer instances in Stage 3. |
-| `min_new_cluster_size` | `5` | Min segment count to materialize a NEW skill. |
+| `min_new_cluster_size` | `5` | Min segment count to materialize a NEW skill (legacy path). |
+| `new_pool_min_cluster_size` | `5` | Min cluster size for `NewPoolManager` promotion. |
+| `new_pool_min_consistency` | `0.5` | Min effect pattern consistency for NEW promotion. |
+| `new_pool_min_distinctiveness` | `0.25` | Min Jaccard distance from existing skills. |
 | `max_iterations` | `5` | Cap for `run_until_stable()`. |
 
 ---
@@ -215,12 +251,12 @@ Key options (see `pipeline.PipelineConfig` for all):
 ## Data flow
 
 1. **Episode** (from env rollouts or demos) has `experiences` (list of state/action/reward/done, etc.) and `task`. Use `Episode` from `data_structure.experience` in this repo.
-2. **Stage 1** (boundary_proposal): extract signals → propose candidate cut points **C**.
-3. **Stage 2** (infer_segmentation): decode over **C** with preference-learned scorer → segments + skill labels (including `__NEW__`).
-4. **Stage 3** (stage3_mvp): for each non-NEW skill, learn effects contract, verify, refine; persist to bank. NEW segments go to a pool.
+2. **Stage 1** (boundary_proposal): extract signals → propose candidate cut points **C**. Optionally filter with `BoundaryPreferenceScorer` for plausibility.
+3. **Stage 2** (infer_segmentation): decode over **C** with preference-learned scorer → segments + skill labels (including `__NEW__`). When contract feedback is enabled (`contract_feedback_mode="weak"|"strong"`), the scorer uses `bank.compat_fn` to bias labelling toward skills whose contracts match observed predicate changes.
+4. **Stage 3** (stage3_mvp): for each non-NEW skill, learn effects contract, verify, refine; persist to bank. **Contracts feed back into Stage 2** via `compat_fn` (closed loop).
 5. **Stage 4** (bank_maintenance): split low-quality skills, merge similar ones, refine contracts; optional local re-decode.
-6. **Materialize NEW**: cluster NEW pool by effect signature; create new skills when support and pass rate are high enough.
-7. **Query**: decision agent (or any client) calls `query_skill(key)` or `query_by_effects(...)`.
+6. **Materialize NEW**: `NewPoolManager` clusters NEW pool by effect similarity (Jaccard, not exact match), tracks context metadata (predecessor/successor, duration), and promotes clusters meeting support + consistency + separability criteria.
+7. **Query / Select**: decision agent calls `select_skill(query, current_state)` for rich results (relevance + applicability + confidence), or `query_skill(key)` / `query_by_effects(...)` for backward-compatible retrieval.
 
 ---
 
@@ -273,18 +309,21 @@ See [trainer/README.md](../trainer/README.md) for full co-evolution setup and co
 
 ```
 skill_agents/
-├── README.md           # This file
-├── PLAN.md             # SkillBank Agent operating plan
-├── __init__.py         # SkillBankAgent, SkillQueryEngine, PipelineConfig, SkillBankMVP, tool_call_reward
-├── pipeline.py         # SkillBankAgent orchestrator
-├── query.py            # SkillQueryEngine
-├── tool_call_reward.py # Reward for tool calls (agentic RL)
+├── README.md              # This file
+├── PLAN.md                # SkillBank Agent operating plan
+├── CHANGELOG_REFACTOR.md  # Detailed changelog for the refactoring
+├── __init__.py            # SkillBankAgent, SkillQueryEngine, SkillSelectionResult, NewPoolManager, etc.
+├── pipeline.py            # SkillBankAgent orchestrator (contract feedback, NEW pool integration)
+├── query.py               # SkillQueryEngine + SkillSelectionResult (retrieval + selection policy)
+├── tool_call_reward.py    # Reward for tool calls (agentic RL)
 ├── skill_bank/
-│   └── bank.py         # SkillBankMVP persistence
-├── boundary_proposal/  # Stage 1
-├── infer_segmentation/ # Stage 2
-├── stage3_mvp/         # Stage 3 contract learn/verify/refine
-├── bank_maintenance/   # Stage 4 split/merge/refine
+│   ├── bank.py            # SkillBankMVP persistence + compat_fn (Stage 3→2 feedback)
+│   └── new_pool.py        # NewPoolManager: rich NEW tracking + promotion
+├── boundary_proposal/     # Stage 1 + boundary preference learning
+│   └── boundary_preference.py  # BoundaryPreferenceScorer
+├── infer_segmentation/    # Stage 2 (ContractFeedbackConfig, boundary quality term)
+├── stage3_mvp/            # Stage 3 contract learn/verify/refine
+├── bank_maintenance/      # Stage 4 split/merge/refine
 ├── contract_verification/
-└── skill_evaluation/   # Quality evaluation
+└── skill_evaluation/      # Quality evaluation
 ```

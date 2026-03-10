@@ -19,6 +19,81 @@ from skill_agents.stage3_mvp.schemas import (
 )
 
 
+def _effects_compat_score(
+    contract: SkillEffectsContract,
+    predicates_start: Optional[dict],
+    predicates_end: Optional[dict],
+    p_thresh: float = 0.5,
+    missing_penalty: float = -0.5,
+    contradiction_penalty: float = -1.0,
+) -> float:
+    """Compute effects-based compatibility between a contract and observed predicates.
+
+    This is the core closed-loop signal from Stage 3 → Stage 2.  It rewards
+    segments whose observed predicate changes match the skill's learned effects
+    and penalises mismatches.
+
+    Parameters
+    ----------
+    contract : SkillEffectsContract
+        The skill's effects contract (eff_add, eff_del, eff_event).
+    predicates_start, predicates_end : dict or None
+        Predicate dicts at segment start/end.  Values are floats in [0, 1]
+        (probabilities) or bools.
+    p_thresh : float
+        Threshold above which a predicate is considered "true".
+    missing_penalty : float
+        Score contribution when an expected effect literal is absent.
+    contradiction_penalty : float
+        Score contribution when an effect is directly contradicted.
+
+    Returns
+    -------
+    float
+        Normalised score in approx. [-1, +1].  0.0 when contract is empty.
+    """
+    n_clauses = len(contract.eff_add or set()) + len(contract.eff_del or set()) + len(contract.eff_event or set())
+    if n_clauses == 0:
+        return 0.0
+
+    P_end = predicates_end or {}
+    # Convert bools to floats
+    P_end_f = {k: (float(v) if not isinstance(v, (float, int)) else float(v))
+               for k, v in P_end.items()}
+
+    score = 0.0
+
+    # eff_add: predicate should be true at end
+    for lit in (contract.eff_add or set()):
+        val = P_end_f.get(lit)
+        if val is not None and val >= p_thresh:
+            score += 1.0  # match
+        elif val is not None and val < p_thresh:
+            score += contradiction_penalty  # contradicted
+        else:
+            score += missing_penalty  # not observed
+
+    # eff_del: predicate should be false at end
+    for lit in (contract.eff_del or set()):
+        val = P_end_f.get(lit)
+        if val is not None and val < p_thresh:
+            score += 1.0  # match (deleted = now false)
+        elif val is not None and val >= p_thresh:
+            score += contradiction_penalty  # still true = contradicted
+        else:
+            score += missing_penalty  # not observed
+
+    # eff_event: event should have occurred (check if present in end predicates)
+    for lit in (contract.eff_event or set()):
+        val = P_end_f.get(lit)
+        if val is not None and val >= p_thresh:
+            score += 1.0
+        else:
+            score += missing_penalty
+
+    return score / n_clauses
+
+
 class SkillBankMVP:
     """Persistent skill bank for effects-only contracts.
 
@@ -105,6 +180,38 @@ class SkillBankMVP:
                     self._reports[contract.skill_id] = VerificationReport.from_dict(
                         entry["report"]
                     )
+
+    # ── Stage 2 integration ─────────────────────────────────────────
+
+    def compat_fn(
+        self,
+        skill: str,
+        predicates_start: Optional[dict],
+        predicates_end: Optional[dict],
+    ) -> float:
+        """Effects-based contract compatibility scorer for ``SegmentScorer``.
+
+        Plug into Stage 2::
+
+            scorer = SegmentScorer(..., compat_fn=bank.compat_fn)
+
+        Scoring logic (effects-only, easy to extend to preconditions later):
+          +1 for each expected eff_add literal observed true at segment end
+          +1 for each expected eff_del literal observed false at segment end
+          -0.5 for each expected eff_add literal *missing* at segment end
+          -1.0 for each *contradictory* effect (eff_add false, eff_del true)
+
+        The raw score is normalized to [-1, +1] by the number of contract
+        literals.  Returns 0.0 when the skill has no contract or no effects.
+        """
+        contract = self._contracts.get(skill)
+        if contract is None:
+            return 0.0
+        return _effects_compat_score(contract, predicates_start, predicates_end)
+
+    def get_skill_names(self) -> List[str]:
+        """Active skill names for Stage 2 pipeline input."""
+        return list(self._contracts.keys())
 
     # ── Summary / debug ─────────────────────────────────────────────
 

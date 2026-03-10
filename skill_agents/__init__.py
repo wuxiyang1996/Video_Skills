@@ -22,8 +22,9 @@ Subpackages:
 """
 
 from skill_agents.pipeline import SkillBankAgent, PipelineConfig, IterationSnapshot
-from skill_agents.query import SkillQueryEngine
+from skill_agents.query import SkillQueryEngine, SkillSelectionResult
 from skill_agents.skill_bank.bank import SkillBankMVP
+from skill_agents.skill_bank.new_pool import NewPoolManager, NewPoolConfig
 from skill_agents.tool_call_reward import (
     ToolCallRewardConfig,
     ToolCallRewardResult,
@@ -36,7 +37,10 @@ __all__ = [
     "PipelineConfig",
     "IterationSnapshot",
     "SkillQueryEngine",
+    "SkillSelectionResult",
     "SkillBankMVP",
+    "NewPoolManager",
+    "NewPoolConfig",
     "ToolCallRewardConfig",
     "ToolCallRewardResult",
     "compute_tool_call_reward",

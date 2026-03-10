@@ -1,14 +1,17 @@
 """
-Skill query engine — rich retrieval API over the Skill Bank.
+Skill query engine — evolving from pure retriever to skill selection policy.
 
-Provides **embedding-based retrieval** (via RAG ``TextEmbedder``) combined
-with keyword matching, effect-based retrieval, and detailed skill
-inspection.  Designed as the query backend for ``decision_agents``
-(``query_skill`` tool) and the pipeline's ``SkillBankAgent.query_skill``.
+The query layer exposes two conceptual dimensions to the decision agent:
 
-When a ``TextEmbedderBase`` is supplied (or auto-loaded from ``rag``),
-skill descriptions are embedded and queries use cosine similarity
-blended with keyword / Jaccard scores.
+  1. **Retrieval relevance** — how well a skill's description / effects match
+     the query (embedding similarity + keyword Jaccard).
+  2. **Execution applicability** — how confident we are that the skill can
+     actually execute successfully in the current state (contract match,
+     verification pass rate, supporting evidence).
+
+Decision agents should consume the rich ``SkillSelectionResult`` returned by
+``select()`` rather than the flat dicts from ``query()``.  The old ``query()``
+API is preserved for backward compatibility.
 
 Usage::
 
@@ -16,21 +19,30 @@ Usage::
     from skill_agents.skill_bank.bank import SkillBankMVP
 
     bank = SkillBankMVP("bank.jsonl"); bank.load()
-    engine = SkillQueryEngine(bank)          # auto-loads RAG embedder
-    engine = SkillQueryEngine(bank, embedder=my_embedder)  # explicit
+    engine = SkillQueryEngine(bank)
 
+    # Simple retrieval (backward compatible)
     results = engine.query("navigate to pot and place onion", top_k=3)
-    details = engine.get_detail("nav_to_pot")
+
+    # Rich skill selection for decision agents
+    selection = engine.select(
+        query="navigate to pot",
+        current_state={"near_pot": 0.1, "holding_onion": 0.9},
+        top_k=3,
+    )
+    for r in selection:
+        print(r.skill_id, r.relevance, r.applicability, r.confidence)
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 
 import numpy as np
 
-from skill_agents.skill_bank.bank import SkillBankMVP
+from skill_agents.skill_bank.bank import SkillBankMVP, _effects_compat_score
 from skill_agents.stage3_mvp.schemas import SkillEffectsContract, VerificationReport
 
 
@@ -65,6 +77,10 @@ def _skill_description(sid: str, c: Optional[SkillEffectsContract]) -> str:
     """Build a textual description of a skill for embedding."""
     parts = [sid.replace("_", " ")]
     if c is not None:
+        if getattr(c, "name", None):
+            parts.append(c.name)
+        if getattr(c, "description", None):
+            parts.append(c.description)
         for lit in sorted(c.eff_add or set()):
             parts.append(lit)
         for lit in sorted(c.eff_del or set()):
@@ -74,6 +90,49 @@ def _skill_description(sid: str, c: Optional[SkillEffectsContract]) -> str:
     return " ".join(parts)
 
 
+# ── Rich result type for decision agents ─────────────────────────────
+
+@dataclass
+class SkillSelectionResult:
+    """Rich result from the skill selection policy.
+
+    Decision agents should use these fields to decide which skill to execute:
+      - ``relevance``: how well the skill matches the query (0-1).
+      - ``applicability``: how well the current state matches the skill's
+        contract / preconditions (approx. -1 to +1).
+      - ``confidence``: combined score incorporating pass rate and evidence.
+      - ``matched_effects``: which contract effects match the desired outcome.
+      - ``missing_effects``: expected effects not matched by the current state.
+    """
+
+    skill_id: str
+    relevance: float = 0.0
+    applicability: float = 0.0
+    confidence: float = 0.0
+    contract_match_score: float = 0.0
+    pass_rate: Optional[float] = None
+    n_instances: int = 0
+    matched_effects: List[str] = field(default_factory=list)
+    missing_effects: List[str] = field(default_factory=list)
+    contract: Dict[str, Any] = field(default_factory=dict)
+    micro_plan: List[Dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "skill_id": self.skill_id,
+            "relevance": round(self.relevance, 4),
+            "applicability": round(self.applicability, 4),
+            "confidence": round(self.confidence, 4),
+            "contract_match_score": round(self.contract_match_score, 4),
+            "pass_rate": round(self.pass_rate, 3) if self.pass_rate is not None else None,
+            "n_instances": self.n_instances,
+            "matched_effects": self.matched_effects,
+            "missing_effects": self.missing_effects,
+            "contract": self.contract,
+            "micro_plan": self.micro_plan,
+        }
+
+
 class SkillQueryEngine:
     """Query interface over a SkillBankMVP with RAG embedding support.
 
@@ -81,11 +140,11 @@ class SkillQueryEngine:
     - **embedding query**: cosine similarity over skill descriptions via RAG.
     - **keyword query**: match query tokens against skill ID and effect literals.
     - **effect query**: find skills whose effects overlap with desired state changes.
+    - **select**: rich skill selection policy combining relevance + applicability.
     - **list / detail**: enumerate skills or inspect one in depth.
 
-    The final score is a weighted blend of embedding similarity and keyword
-    Jaccard (controlled by ``embedding_weight``).  When no embedder is
-    available, the engine falls back to keyword-only scoring.
+    The ``select()`` method is the preferred API for decision agents.  The old
+    ``query()`` API is preserved for backward compatibility.
     """
 
     def __init__(
@@ -94,13 +153,6 @@ class SkillQueryEngine:
         embedder: Any = None,
         embedding_weight: float = 0.6,
     ) -> None:
-        """
-        Args:
-            bank: The skill bank to query over.
-            embedder: Optional ``TextEmbedderBase``.  When *None* the engine
-                tries to auto-load one from ``rag.get_text_embedder()``.
-            embedding_weight: Blend weight for embedding vs keyword score.
-        """
         self._bank = bank
         self._embedding_weight = embedding_weight
         self._embedder = embedder
@@ -165,16 +217,150 @@ class SkillQueryEngine:
         except Exception:
             return None
 
-    # ── Keyword query ────────────────────────────────────────────────
+    # ── Retrieval relevance (internal) ───────────────────────────────
+
+    def _compute_relevance(self, query: str) -> Dict[str, float]:
+        """Compute retrieval relevance for all skills given a query."""
+        q_tokens = _tokenize(query)
+        emb_scores = self._embedding_scores(query)
+        w = self._embedding_weight if emb_scores is not None else 0.0
+
+        scores: Dict[str, float] = {}
+        for i, sid in enumerate(self._skill_id_order):
+            id_score = _jaccard(q_tokens, self._id_tokens.get(sid, set()))
+            eff_score = _jaccard(q_tokens, self._effect_tokens.get(sid, set()))
+            kw_score = 0.6 * id_score + 0.4 * eff_score
+            emb = float(emb_scores[i]) if emb_scores is not None else 0.0
+            scores[sid] = w * emb + (1.0 - w) * kw_score
+        return scores
+
+    # ── Execution applicability (internal) ───────────────────────────
+
+    def _compute_applicability(
+        self,
+        sid: str,
+        current_state: Optional[Dict[str, float]] = None,
+    ) -> tuple:
+        """Compute applicability score and effect match details for a skill.
+
+        Returns (applicability_score, matched_effects, missing_effects).
+        """
+        c = self._bank.get_contract(sid)
+        if c is None:
+            return 0.0, [], []
+
+        if current_state is None:
+            # Without state info, rely on pass rate as a proxy
+            r = self._bank.get_report(sid)
+            pass_rate = r.overall_pass_rate if r else 0.5
+            return pass_rate - 0.5, [], []  # center around 0
+
+        # Use the effects compat scorer
+        compat = _effects_compat_score(c, current_state, current_state)
+
+        matched = []
+        missing = []
+        for lit in (c.eff_add or set()):
+            val = current_state.get(lit)
+            if val is not None:
+                matched.append(lit)
+            else:
+                missing.append(lit)
+        for lit in (c.eff_del or set()):
+            val = current_state.get(lit)
+            if val is not None:
+                matched.append(lit)
+            else:
+                missing.append(lit)
+
+        return compat, sorted(matched), sorted(missing)
+
+    def _compute_confidence(
+        self,
+        sid: str,
+        relevance: float,
+        applicability: float,
+    ) -> float:
+        """Combined confidence blending relevance, applicability, and pass rate.
+
+        Confidence = w_rel * relevance + w_app * norm_applicability + w_pr * pass_rate
+        """
+        r = self._bank.get_report(sid)
+        pass_rate = r.overall_pass_rate if r else 0.5
+
+        norm_app = (applicability + 1.0) / 2.0  # map [-1,1] to [0,1]
+
+        w_rel, w_app, w_pr = 0.4, 0.35, 0.25
+        return w_rel * relevance + w_app * norm_app + w_pr * pass_rate
+
+    # ── Rich selection API (preferred for decision agents) ───────────
+
+    def select(
+        self,
+        query: str,
+        current_state: Optional[Dict[str, float]] = None,
+        top_k: int = 3,
+    ) -> List[SkillSelectionResult]:
+        """Rich skill selection combining retrieval relevance with execution
+        applicability.
+
+        This is the preferred API for decision agents.  It separates "is this
+        skill relevant to what I want?" from "can this skill execute now?"
+        and provides supporting evidence.
+
+        Parameters
+        ----------
+        query : str
+            Natural-language description of the desired action/goal.
+        current_state : dict, optional
+            Current predicate state as ``{predicate: probability}``.
+            When provided, enables contract-based applicability scoring.
+        top_k : int
+            Number of results to return.
+
+        Returns
+        -------
+        list[SkillSelectionResult]
+            Sorted by confidence (highest first).
+        """
+        relevance_scores = self._compute_relevance(query)
+
+        results: List[SkillSelectionResult] = []
+        for sid in self._skill_id_order:
+            rel = relevance_scores.get(sid, 0.0)
+            app, matched, missing = self._compute_applicability(sid, current_state)
+            conf = self._compute_confidence(sid, rel, app)
+
+            c = self._bank.get_contract(sid)
+            r = self._bank.get_report(sid)
+
+            result = SkillSelectionResult(
+                skill_id=sid,
+                relevance=rel,
+                applicability=app,
+                confidence=conf,
+                contract_match_score=app,
+                pass_rate=r.overall_pass_rate if r else None,
+                n_instances=c.n_instances if c else 0,
+                matched_effects=matched,
+                missing_effects=missing,
+                contract=_contract_summary(c) if c else {},
+                micro_plan=[
+                    {"action": None, "effect": lit}
+                    for lit in sorted(c.eff_add or set())[:7]
+                ] if c else [],
+            )
+            results.append(result)
+
+        results.sort(key=lambda r: -r.confidence)
+        return results[:top_k]
+
+    # ── Backward-compatible query API ────────────────────────────────
 
     def query(self, key: str, top_k: int = 3) -> List[Dict[str, Any]]:
         """Score every skill against a natural-language query key.
 
-        Scoring blends cosine-similarity (from RAG embeddings) with
-        keyword Jaccard over skill-ID tokens and effect-literal tokens.
-
-        Returns up to *top_k* results, each a dict with ``skill_id``,
-        ``score``, ``contract`` summary, and ``micro_plan``.
+        Backward-compatible API.  For richer results, use ``select()``.
         """
         q_tokens = _tokenize(key)
         if not q_tokens:
@@ -220,12 +406,7 @@ class SkillQueryEngine:
         desired_del: Optional[set] = None,
         top_k: int = 3,
     ) -> List[Dict[str, Any]]:
-        """Find skills whose contract effects best match desired state changes.
-
-        Uses Jaccard similarity between the query effect set and each
-        skill's effect set, blended with embedding similarity when
-        available.
-        """
+        """Find skills whose contract effects best match desired state changes."""
         query_set = (desired_add or set()) | (desired_del or set())
         if not query_set:
             return self.list_all()[:top_k]
@@ -318,14 +499,25 @@ class SkillQueryEngine:
     def query_for_decision_agent(
         self,
         key: str,
+        current_state: Optional[Dict[str, float]] = None,
         top_k: int = 1,
     ) -> Dict[str, Any]:
-        """Convenience method returning a single best-match result dict
-        compatible with the ``run_tool(TOOL_QUERY_SKILL, ...)`` interface
-        in ``decision_agents.agent``.
+        """Convenience method for decision agents returning a single best-match.
 
-        Returns ``{"skill_id": str|None, "micro_plan": list[dict]}``.
+        When ``current_state`` is provided, uses the full selection policy
+        (relevance + applicability).  Otherwise falls back to retrieval only.
+
+        Returns a dict with: skill_id, micro_plan, contract, relevance,
+        applicability, confidence.
         """
+        if current_state is not None:
+            results = self.select(key, current_state=current_state, top_k=top_k)
+            if not results:
+                return {"skill_id": None, "micro_plan": [], "confidence": 0.0}
+            best = results[0]
+            return best.to_dict()
+
+        # Backward-compatible path
         results = self.query(key, top_k=top_k)
         if not results:
             return {"skill_id": None, "micro_plan": []}

@@ -12,9 +12,12 @@ preferences via ``PreferenceScorer`` (trained with Bradley-Terry).
 
 The **duration prior** uses a simple Gaussian (or can be learned).
 
-The **contract compatibility** is folded into behavior_fit — the LLM
-teacher already considers state changes when ranking skills, so the
-learned behavior_fit implicitly captures it.
+The **contract compatibility** term provides the Stage 3 → Stage 2
+closed-loop feedback.  When ``ContractFeedbackConfig.mode`` is
+``"weak"`` or ``"strong"``, the ``compat_fn`` from the skill bank
+scores each segment against the skill's learned effects contract.
+Set ``mode="off"`` (default) to disable and fall back to the LLM
+teacher's implicit contract awareness via behavior_fit.
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ from typing import (
 import numpy as np
 
 from skill_agents.infer_segmentation.config import (
+    ContractFeedbackConfig,
     DurationPriorConfig,
     NewSkillConfig,
     ScorerWeights,
@@ -97,7 +101,8 @@ def gaussian_duration_log_prob(
 
 class SegmentScorer:
     """
-    Composite scorer: combines preference-learned terms with duration prior.
+    Composite scorer: combines preference-learned terms with duration prior
+    and (optionally) contract compatibility from the skill bank.
 
     In the preference-learning pipeline:
       - ``behavior_fit`` comes from ``PreferenceScorer.behavior_fit``
@@ -105,7 +110,9 @@ class SegmentScorer:
       - ``transition_prior`` comes from ``PreferenceScorer.transition_prior``
         (trained on LLM transition rankings).
       - ``duration_prior`` uses a Gaussian (configurable).
-      - ``contract_compat`` is 0 (folded into behavior_fit by the LLM).
+      - ``contract_compat`` feeds back Stage 3 effects contracts.
+        Controlled by ``ContractFeedbackConfig``.  Pass
+        ``compat_fn=bank.compat_fn`` to enable the closed loop.
 
     For offline testing, you can pass a custom ``behavior_fit_fn`` instead.
     """
@@ -119,6 +126,7 @@ class SegmentScorer:
         transition_fn: Optional[Callable] = None,
         duration_stats: Optional[Dict[str, Tuple[float, float]]] = None,
         compat_fn: Optional[Callable] = None,
+        boundary_scorer: Optional[Callable] = None,
     ) -> None:
         self.config = config or SegmentationConfig()
         self._weights = self.config.weights
@@ -131,6 +139,7 @@ class SegmentScorer:
         self._transition_fn = transition_fn
         self._duration_stats = duration_stats
         self._compat_fn = compat_fn
+        self._boundary_scorer = boundary_scorer
         self._new_cfg = self.config.new_skill
 
         import inspect
@@ -196,6 +205,12 @@ class SegmentScorer:
             return self._compat_fn(skill, predicates_start, predicates_end)
         return 0.0
 
+    def boundary_quality(self, seg_start: int, seg_end: int) -> float:
+        """Boundary plausibility bonus from BoundaryPreferenceScorer."""
+        if self._boundary_scorer is not None:
+            return self._boundary_scorer(seg_start, seg_end)
+        return 0.0
+
     # ── composite score ─────────────────────────────────────────────
 
     def score(
@@ -216,8 +231,9 @@ class SegmentScorer:
         dp_ = w.duration_prior * self.duration_prior(length, skill)
         tp = w.transition_prior * self.transition_prior(skill, prev_skill)
         cc = w.contract_compat * self.contract_compat(skill, predicates_start, predicates_end)
+        bq = self.boundary_quality(i, j)
 
-        return bf + dp_ + tp + cc
+        return bf + dp_ + tp + cc + bq
 
     def score_breakdown(
         self,
@@ -238,6 +254,7 @@ class SegmentScorer:
         dp_raw = self.duration_prior(length, skill)
         tp_raw = self.transition_prior(skill, prev_skill)
         cc_raw = self.contract_compat(skill, predicates_start, predicates_end)
+        bq_raw = self.boundary_quality(i, j)
 
         return {
             "behavior_fit": bf_raw,
@@ -248,11 +265,13 @@ class SegmentScorer:
             "transition_prior_w": w.transition_prior * tp_raw,
             "contract_compat": cc_raw,
             "contract_compat_w": w.contract_compat * cc_raw,
+            "boundary_quality": bq_raw,
             "total": (
                 w.behavior_fit * bf_raw
                 + w.duration_prior * dp_raw
                 + w.transition_prior * tp_raw
                 + w.contract_compat * cc_raw
+                + bq_raw
             ),
         }
 
@@ -298,6 +317,7 @@ class SegmentScorer:
             dp_raw = self.duration_prior(length, skill)
             tp_raw = self.transition_prior(skill, prev_skill)
             cc_raw = self.contract_compat(skill, p_start, p_end)
+            bq_raw = self.boundary_quality(i, j)
             out.append({
                 "behavior_fit": bf_raw,
                 "behavior_fit_w": w.behavior_fit * bf_raw,
@@ -307,11 +327,13 @@ class SegmentScorer:
                 "transition_prior_w": w.transition_prior * tp_raw,
                 "contract_compat": cc_raw,
                 "contract_compat_w": w.contract_compat * cc_raw,
+                "boundary_quality": bq_raw,
                 "total": (
                     w.behavior_fit * bf_raw
                     + w.duration_prior * dp_raw
                     + w.transition_prior * tp_raw
                     + w.contract_compat * cc_raw
+                    + bq_raw
                 ),
             })
         return out

@@ -12,13 +12,33 @@ from typing import Optional
 
 
 @dataclass
+class ContractFeedbackConfig:
+    """Controls the Stage 3 → Stage 2 contract feedback loop.
+
+    Three modes selected by ``mode``:
+      - ``"off"``:    no contract feedback (``contract_compat`` weight = 0).
+      - ``"weak"``:   light bias from contracts (default ``strength`` = 0.3).
+      - ``"strong"``: heavy reliance on contracts (default ``strength`` = 1.0).
+
+    When ``mode != "off"``, the ``contract_compat`` weight in ``ScorerWeights``
+    is automatically set to ``strength`` unless manually overridden.
+    """
+
+    mode: str = "off"  # "off" | "weak" | "strong"
+    strength: float = 0.3  # effective weight when mode != "off"
+    p_thresh: float = 0.5
+    missing_penalty: float = -0.5
+    contradiction_penalty: float = -1.0
+
+
+@dataclass
 class ScorerWeights:
     """Relative weights for each term in the segment score decomposition."""
 
     behavior_fit: float = 1.0
     duration_prior: float = 0.3
     transition_prior: float = 1.0
-    contract_compat: float = 0.0  # folded into behavior_fit via LLM ranking
+    contract_compat: float = 0.0  # set by ContractFeedbackConfig or manually
 
 
 @dataclass
@@ -91,5 +111,18 @@ class SegmentationConfig:
     llm_teacher: LLMTeacherConfig = field(default_factory=LLMTeacherConfig)
     preference: PreferenceLearningConfig = field(default_factory=PreferenceLearningConfig)
     decoder: DecoderConfig = field(default_factory=DecoderConfig)
+    contract_feedback: ContractFeedbackConfig = field(default_factory=ContractFeedbackConfig)
 
     method: str = "dp"  # "dp" (Viterbi) or "beam"
+
+    def __post_init__(self) -> None:
+        """Apply contract feedback mode to scorer weights if not manually set."""
+        cf = self.contract_feedback
+        if cf.mode == "off":
+            pass  # keep contract_compat at whatever the user set (default 0.0)
+        elif cf.mode == "weak":
+            if self.weights.contract_compat == 0.0:
+                self.weights.contract_compat = cf.strength
+        elif cf.mode == "strong":
+            if self.weights.contract_compat == 0.0:
+                self.weights.contract_compat = max(cf.strength, 1.0)

@@ -55,6 +55,10 @@ from skill_agents.boundary_proposal.episode_adapter import (
     annotate_episode_boundaries,
     extract_signals,
 )
+from skill_agents.boundary_proposal.boundary_preference import (
+    BoundaryPreferenceScorer,
+    BoundaryPreferenceConfig,
+)
 
 __all__ = [
     # High-level (framework-integrated)
@@ -74,4 +78,7 @@ __all__ = [
     "get_signal_extractor",
     "SignalExtractorBase",
     "HybridSignalExtractor",
+    # Boundary preference
+    "BoundaryPreferenceScorer",
+    "BoundaryPreferenceConfig",
 ]
