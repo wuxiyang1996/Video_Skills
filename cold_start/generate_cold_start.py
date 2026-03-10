@@ -150,6 +150,8 @@ class ColdStartEnvWrapper:
         text = self._obs_to_text(obs)
         info["action_names"] = self._action_names
         info["game"] = GAME_GAMINGAGENT
+        info["env_name"] = "gamingagent"
+        info["game_name"] = self._game_name
         return text, info
 
     def step(self, action) -> Tuple[str, float, bool, bool, Dict[str, Any]]:
@@ -163,6 +165,8 @@ class ColdStartEnvWrapper:
         text = self._obs_to_text(obs)
         info["action_names"] = self._action_names
         info["game"] = GAME_GAMINGAGENT
+        info["env_name"] = "gamingagent"
+        info["game_name"] = self._game_name
         info["perf_score"] = result[5] if len(result) > 5 else 0.0
         return text, float(reward), bool(terminated), bool(truncated), info
 
@@ -234,7 +238,12 @@ def run_dummy_agent_episode(
         if done:
             break
 
-    episode = Episode(experiences=experiences, task=task)
+    episode = Episode(
+        experiences=experiences,
+        task=task,
+        env_name="gamingagent",
+        game_name=game_name,
+    )
     episode.set_outcome()
     stats = {
         "game": game_name,
@@ -274,11 +283,11 @@ def run_vlm_agent_episode(
     )
 
     meta = episode.metadata or {}
-    total_reward = sum(exp.reward for exp in episode.experiences)
     stats = {
         "game": game_name,
         "steps": meta.get("steps", len(episode.experiences)),
-        "total_reward": total_reward,
+        "total_reward": episode.get_reward(),
+        "total_shaped_reward": episode.get_total_reward(),
         "terminated": meta.get("done", False),
         "truncated": False,
         "model": model,

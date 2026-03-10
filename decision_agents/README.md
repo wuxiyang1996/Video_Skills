@@ -16,22 +16,38 @@ VLM decision-making agent that plays video games step-by-step using a **two-turn
 
 ## Quick start — run a full episode
 
+`run_episode_vlm_agent()` returns an **`Episode`** object (from `data_structure.experience`) with fully-populated `Experience` objects per step.
+
 ```python
 from decision_agents import VLMDecisionAgent, run_episode_vlm_agent, RewardConfig
 
 # Wrap your env (must have reset() → (obs, info) and step(action) → (obs, r, term, trunc, info))
-result = run_episode_vlm_agent(
+episode = run_episode_vlm_agent(
     env,
     model="gpt-4o-mini",       # or "gpt-4o", "claude-...", "gemini-..."
+    task="Complete level 1",
     max_steps=200,
     verbose=True,
 )
 
-print(result["steps"])             # number of env steps taken
-print(result["rewards"])           # list of r_total per step
-print(result["reward_details"])    # list of dicts: {r_env, r_follow, r_cost, r_total}
-print(result["cumulative_reward"]) # episode totals
-print(result["done"])              # whether episode terminated
+# Episode structure
+print(episode.get_length())                      # number of env steps taken
+print([e.reward for e in episode.experiences])    # list of r_total per step
+print([e.reward_details for e in episode.experiences])  # {r_env, r_follow, r_cost, r_total}
+print(episode.metadata["cumulative_reward"])      # episode totals
+print(episode.experiences[-1].done)               # whether episode terminated
+
+# Each Experience has rich fields populated from agent state:
+exp = episode.experiences[0]
+print(exp.summary_state)   # from get_state_summary tool
+print(exp.intentions)      # from get_intention tool
+print(exp.sub_tasks)       # active skill ID being followed
+print(exp.reward_details)  # full reward breakdown dict
+
+# Serialize/deserialize
+d = episode.to_dict()
+from data_structure.experience import Episode
+restored = Episode.from_dict(d)
 ```
 
 ### With a skill bank and custom reward config
@@ -71,7 +87,12 @@ agent = VLMDecisionAgent(
     skill_abort_k=5,          # abort skill after 5 steps without progress
 )
 
-result = run_episode_vlm_agent(env, agent=agent, max_steps=500, verbose=True)
+episode = run_episode_vlm_agent(env, agent=agent, task="Deliver 3 soups", max_steps=500, verbose=True)
+
+# Episode is ready for skill pipeline ingestion — no conversion needed:
+from skill_agents.pipeline import SkillBankAgent
+skill_agent = SkillBankAgent(bank_path="skills/bank.jsonl")
+skill_agent.ingest_episodes([episode])
 ```
 
 ---

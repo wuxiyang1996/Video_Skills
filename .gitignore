@@ -1,2 +1,7 @@
 # API keys and secrets - never commit
 api_keys.py
+
+# Python bytecode (can contain secrets from imported modules)
+__pycache__/
+*.pyc
+*.pyo

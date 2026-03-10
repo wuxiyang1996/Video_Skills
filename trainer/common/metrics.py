@@ -61,6 +61,7 @@ class RolloutRecord:
     traj_id: str = ""
     seed: int = 0
     env_name: str = ""
+    game_name: str = ""
 
     steps: List[RolloutStep] = field(default_factory=list)
 

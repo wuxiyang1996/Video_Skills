@@ -99,9 +99,14 @@ class VideoGameBenchDOSNLWrapper:
     Use with async DOS pipeline (DOSGameServer, DOSGameInterface).
     """
 
-    def __init__(self, valid_keys: Optional[List[str]] = None):
+    def __init__(
+        self,
+        valid_keys: Optional[List[str]] = None,
+        game_name: str = "dos_game",
+    ):
         self._step_count = 0
         self._valid_keys = valid_keys or VIDEOGAMEBENCH_DOS_VALID_KEYS
+        self._game_name = game_name
 
     def build_state_nl(self) -> str:
         return state_to_natural_language(step=self._step_count, valid_keys=self._valid_keys)
@@ -111,3 +116,9 @@ class VideoGameBenchDOSNLWrapper:
 
     def advance_step(self) -> None:
         self._step_count += 1
+
+    def inject_info(self, info: dict) -> dict:
+        """Add env_name and game_name to an info dict for Episode identification."""
+        info["env_name"] = "videogamebench_dos"
+        info["game_name"] = self._game_name
+        return info

@@ -10,6 +10,7 @@
 
 from __future__ import annotations  # Enable postponed evaluation of annotations
 
+import uuid
 from typing import List, Optional, TYPE_CHECKING
 from API_func import ask_model
 import random
@@ -53,6 +54,10 @@ class Experience:
         # Per-step reward breakdown (r_env, r_follow, r_cost, r_total).
         # Populated by the VLM decision agent's reward tool.
         self.reward_details: Optional[dict] = None
+
+        # Action classification: "primitive", "QUERY_MEM", "QUERY_SKILL", "CALL_SKILL".
+        # Used by the trainer for reward cost computation and action-type metrics.
+        self.action_type: Optional[str] = None
 
     # Generate the summary of the experience.
     # The intention of this function is to generate the summmary of the current state and 
@@ -105,7 +110,6 @@ class Experience:
             self.generate_summary()
         return self.intentions, self.summary
 
-    # Convert the experience to a dictionary.
     def to_dict(self):
         d = {
             "state": self.state,
@@ -122,6 +126,8 @@ class Experience:
         }
         if self.reward_details is not None:
             d["reward_details"] = self.reward_details
+        if self.action_type is not None:
+            d["action_type"] = self.action_type
         return d
     
     @classmethod
@@ -141,6 +147,7 @@ class Experience:
         exp.summary_state = d.get("summary_state")
         exp.idx = d.get("idx")
         exp.reward_details = d.get("reward_details")
+        exp.action_type = d.get("action_type")
         return exp
 
 
@@ -148,8 +155,25 @@ class Experience:
 # Please include the intention and task generation process in the episode.
 # The episode initially from the rollout, leaving for fruther process and push into the experience replay buffer.
 class Episode:
-    def __init__(self, experiences: List[Experience], task: str, metadata: Optional[dict] = None):
+    def __init__(
+        self,
+        experiences: List[Experience],
+        task: str,
+        metadata: Optional[dict] = None,
+        episode_id: Optional[str] = None,
+        env_name: Optional[str] = None,
+        game_name: Optional[str] = None,
+    ):
         self.experiences = experiences
+
+        # Unique identifier for this episode (auto-generated if not provided).
+        self.episode_id: str = episode_id or str(uuid.uuid4())
+
+        # Platform / wrapper name (e.g. "gamingagent", "videogamebench_dos", "overcooked").
+        self.env_name: Optional[str] = env_name
+
+        # Specific game within the platform (e.g. "sokoban", "2048", "doom2", "kirby").
+        self.game_name: Optional[str] = game_name
 
         # The summary of the episode.
         self.summary = None
@@ -160,12 +184,25 @@ class Episode:
         # The outcome of the episode.
         self.outcome = None
 
-        # Arbitrary metadata (reward_details per step, cumulative_reward,
-        # agent_state snapshot, game name, model, etc.).
+        # Arbitrary metadata (cumulative_reward, agent_state snapshot, etc.).
         self.metadata: Optional[dict] = metadata
 
     def get_reward(self):
+        """Sum of raw environment rewards (r_env) across all experiences."""
         return sum(experience.reward for experience in self.experiences)
+
+    def get_total_reward(self):
+        """Sum of shaped total rewards (r_total) from reward_details.
+
+        Falls back to r_env (self.reward) when reward_details is absent.
+        """
+        total = 0.0
+        for exp in self.experiences:
+            if exp.reward_details and "r_total" in exp.reward_details:
+                total += exp.reward_details["r_total"]
+            else:
+                total += exp.reward
+        return total
 
     def get_length(self):
         return len(self.experiences)
@@ -214,12 +251,15 @@ class Episode:
                 self.experiences[curr_idx:next_idx]))
         return sub_episodes
 
-    # Convert the episode to a dictionary.
     def to_dict(self):
         d = {
+            "episode_id": self.episode_id,
+            "env_name": self.env_name,
+            "game_name": self.game_name,
             "experiences": [exp.to_dict() for exp in self.experiences],
             "task": self.task,
             "outcome": self.outcome,
+            "summary": self.summary,
         }
         if self.metadata is not None:
             d["metadata"] = self.metadata
@@ -229,7 +269,14 @@ class Episode:
     def from_dict(cls, d: dict) -> "Episode":
         """Construct an Episode from a dictionary."""
         experiences = [Experience.from_dict(exp) for exp in d["experiences"]]
-        ep = cls(experiences=experiences, task=d["task"], metadata=d.get("metadata"))
+        ep = cls(
+            experiences=experiences,
+            task=d["task"],
+            metadata=d.get("metadata"),
+            episode_id=d.get("episode_id"),
+            env_name=d.get("env_name"),
+            game_name=d.get("game_name"),
+        )
         ep.outcome = d.get("outcome")
         ep.summary = d.get("summary")
         return ep
@@ -239,7 +286,7 @@ class Episode:
 # Denote that this data structure is used for labeling strategies or tools to complete the sub-task, within a limited length.
 # Please note that this is for training purposes, only update after the current rollout is completed.
 class SubTask_Experience:
-    def __init__(self, sub_task: str, final_goal: str, experiences: List[Experience], outcome:Optional[List[Experience]] = None):
+    def __init__(self, sub_task: str, final_goal: str, experiences: List[Experience], outcome:Optional[List[Experience]] = None, seg_id: Optional[str] = None):
         # What's this strategy or tool used for.
         self.sub_task = sub_task
         self.final_goal = final_goal
@@ -249,6 +296,9 @@ class SubTask_Experience:
         # Outcome of the sub-task.
         self.outcome_experiences = outcome
         
+        # Link to the corresponding SegmentRecord from the skill pipeline.
+        self.seg_id: Optional[str] = seg_id
+
         # The summary for query this strategy or tool.
         self.summary = None
         # The summary of the outcome of the sub-task. 
@@ -335,12 +385,12 @@ class SubTask_Experience:
         return self.summary, self.outcome_summary, self.sub_task_label
     
 
-    # Convert the sub-task experience to a dictionary.
     def to_dict(self):
         d = {
             "sub_task": self.sub_task,
             "final_goal": self.final_goal,
             "sub_task_experience": [exp.to_dict() for exp in self.sub_task_experience],
+            "seg_id": self.seg_id,
         }
         if self.outcome_experiences is not None:
             d["outcome_experiences"] = [exp.to_dict() for exp in self.outcome_experiences]
@@ -360,6 +410,7 @@ class SubTask_Experience:
             final_goal=d["final_goal"],
             experiences=sub_task_exps,
             outcome=outcome_exps,
+            seg_id=d.get("seg_id"),
         )
 
 # Experience Replay Buffer
@@ -395,9 +446,9 @@ class Experience_Replay_Buffer:
         """Add multiple experiences at once (convenience method)."""
         self.add_experience(experiences)
 
-    # Return all the experience summaries for query and RAG.
     def get_experience_summary(self, query: str):
-        return [experience.summary for experience in self.buffer if query in experience.summary]
+        return [experience.summary for experience in self.buffer
+                if experience.summary and query in experience.summary]
 
     def sample_experience(self, batch_size: int):
         return random.sample(self.buffer, batch_size)
@@ -549,9 +600,9 @@ class Tool_Buffer:
         """Sample random tools from the buffer."""
         return random.sample(self.buffer, min(batch_size, len(self.buffer)))
 
-    # Return all the tool summaries for query and RAG.
     def get_tool_summary(self, query: str):
-        return [tool.summary for tool in self.buffer if query in tool.summary]
+        return [tool.summary for tool in self.buffer
+                if tool.summary and query in tool.summary]
     
     def __len__(self):
         """Return the number of tools in the buffer."""

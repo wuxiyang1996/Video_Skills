@@ -100,7 +100,6 @@ def _result_to_rollout_record(
     """
     from trainer.common.metrics import RolloutStep
 
-    # Extract data from Episode or legacy dict.
     try:
         from data_structure.experience import Episode as _Episode
         is_episode = isinstance(result, _Episode)
@@ -109,19 +108,51 @@ def _result_to_rollout_record(
 
     if is_episode:
         meta = result.metadata or {}
-        actions = [exp.action for exp in result.experiences]
-        reward_details = [
-            exp.reward_details or {"r_env": exp.reward}
-            for exp in result.experiences
-        ]
         cumulative = meta.get("cumulative_reward", {})
         done_flag = meta.get("done", result.outcome if result.outcome is not None else False)
-    else:
-        meta = result if isinstance(result, dict) else {}
-        actions = meta.get("actions", [])
-        reward_details = meta.get("reward_details", [])
-        cumulative = meta.get("cumulative_reward", {})
-        done_flag = meta.get("done", False)
+        ep_id = getattr(result, "episode_id", None) or episode_id
+        env_name = getattr(result, "env_name", "") or ""
+        game_name = getattr(result, "game_name", "") or ""
+
+        steps = []
+        for t, exp in enumerate(result.experiences):
+            rd = exp.reward_details or {"r_env": exp.reward}
+            step = RolloutStep(
+                step=t,
+                obs_id=f"obs_{t}",
+                action=str(exp.action),
+                action_type=exp.action_type or "primitive",
+                r_env=rd.get("r_env", 0.0),
+                r_follow=rd.get("r_follow", 0.0),
+                r_cost=rd.get("r_cost", 0.0),
+                r_total=rd.get("r_total", 0.0),
+                done=exp.done,
+                episode_id=ep_id,
+                seed=seed,
+                active_skill_id=exp.sub_tasks,
+            )
+            steps.append(step)
+
+        record = RolloutRecord(
+            episode_id=ep_id,
+            seed=seed,
+            env_name=env_name,
+            game_name=game_name,
+            steps=steps,
+        )
+        record.total_reward = cumulative.get("r_total", sum(s.r_total for s in steps))
+        record.total_r_env = cumulative.get("r_env", sum(s.r_env for s in steps))
+        record.episode_length = len(steps)
+        record.won = done_flag
+        record.score = record.total_r_env
+        return record
+
+    # Legacy flat dict path
+    meta = result if isinstance(result, dict) else {}
+    actions = meta.get("actions", [])
+    reward_details = meta.get("reward_details", [])
+    cumulative = meta.get("cumulative_reward", {})
+    done_flag = meta.get("done", False)
 
     steps = []
     for t in range(len(actions)):

@@ -400,7 +400,12 @@ def _run_episode_with_experience_collection(
         prev_state = next_state
     
     # Create episode
-    episode = Episode(experiences=experiences, task=task)
+    episode = Episode(
+        experiences=experiences,
+        task=task,
+        env_name="overcooked",
+        game_name="overcooked",
+    )
     episode.set_outcome()
     
     # Add to buffers

@@ -613,6 +613,8 @@ class DiplomacyNLWrapper:
         )
 
         info = {
+            "env_name": "diplomacy",
+            "game_name": "diplomacy",
             "phase": current_phase,
             "phase_type": phase_type,
             "phases_processed": self._phases_processed,

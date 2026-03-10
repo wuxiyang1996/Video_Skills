@@ -508,6 +508,8 @@ class OvercookedNLWrapper:
             )
             obs = state_nl
         self._render_gui(state)
+        info["env_name"] = "overcooked"
+        info["game_name"] = "overcooked"
         return obs, info
 
     def step(
@@ -574,6 +576,8 @@ class OvercookedNLWrapper:
             )
             obs = state_nl
         self._render_gui(state)
+        info["env_name"] = "overcooked"
+        info["game_name"] = "overcooked"
         return obs, reward, terminated, truncated, info
 
     @property

@@ -164,14 +164,18 @@ class GamingAgentNLWrapper:
         self,
         env: Any,
         include_action_hint: bool = True,
+        game_name: Optional[str] = None,
     ):
         """
         Args:
             env: GamingAgentEnv (or any env with obs["text"] and string-action step).
             include_action_hint: If True, append valid action names to the NL state.
+            game_name: Specific game identifier (e.g. "sokoban", "2048").
+                       Auto-detected from observation text if not provided.
         """
         self._env = env
         self._include_action_hint = include_action_hint
+        self._game_name: Optional[str] = game_name
         self._action_names: List[str] = []
         self._step_count = 0
 
@@ -201,6 +205,9 @@ class GamingAgentNLWrapper:
         info["structured_state"] = build_structured_state_summary(
             obs, step=0, action_names=self._action_names,
         )
+        detected = self._game_name or info["structured_state"].get("game", "text_game")
+        info["env_name"] = "gamingagent"
+        info["game_name"] = detected
         return nl, info
 
     def step(
@@ -220,6 +227,9 @@ class GamingAgentNLWrapper:
             action_names=self._action_names,
             last_reward=self._last_reward,
         )
+        detected = self._game_name or info["structured_state"].get("game", "text_game")
+        info["env_name"] = "gamingagent"
+        info["game_name"] = detected
         return nl, float(reward), bool(terminated), bool(truncated), info
 
     def close(self) -> None:

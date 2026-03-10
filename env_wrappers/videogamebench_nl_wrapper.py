@@ -227,6 +227,8 @@ class VideoGameBenchNLWrapper:
         info["structured_state"] = build_structured_state_summary(
             step=0, game_name=self._game_name,
         )
+        info["env_name"] = "videogamebench"
+        info["game_name"] = self._game_name
         return nl, info
 
     def step(
@@ -258,6 +260,8 @@ class VideoGameBenchNLWrapper:
             recent_rewards=self._recent_rewards,
             game_name=self._game_name,
         )
+        info["env_name"] = "videogamebench"
+        info["game_name"] = self._game_name
         return nl, float(reward), bool(terminated), bool(truncated), info
 
     def close(self) -> None:

@@ -20,7 +20,7 @@ This repository provides a framework for enhancing agentic decision-making in mu
   - [Overcooked AI](env_wrappers/overcooked_nl_wrapper.py) — [overcooked_ai](https://github.com/HumanCompatibleAI/overcooked_ai); eval: [evaluate_overcooked/](evaluate_overcooked/)
   - [Avalon](env_wrappers/avalon_nl_wrapper.py) · [Diplomacy](env_wrappers/diplomacy_nl_wrapper.py) — require **AgentEvolver** (external; [AgentEvolver Games](https://github.com/modelscope/AgentEvolver/blob/main/games/README.md)); eval: [evaluation_evolver/](evaluation_evolver/)
   - [GamingAgent](env_wrappers/gamingagent_nl_wrapper.py) — LMGame-Bench (2048, Sokoban, Tetris); requires **GamingAgent** (external); eval: [evaluate_gamingagent/](evaluate_gamingagent/)
-  - [VideoGameBench](env_wrappers/videogamebench_dos_nl_wrapper.py) — DOS games; eval: [evaluate_videogamebench/](evaluate_videogamebench/)
+  - [VideoGameBench GB](env_wrappers/videogamebench_nl_wrapper.py) — Game Boy games (Kirby, etc.); [VideoGameBench DOS](env_wrappers/videogamebench_dos_nl_wrapper.py) — DOS games (Doom, Civ, etc.); eval: [evaluate_videogamebench/](evaluate_videogamebench/)
 
 - **🔍 RAG & Embeddings** — [rag/](rag/): Text (default [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)), multimodal (default [Qwen3-VL-Embedding-2B](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B)); config: `RAG_EMBEDDING_MODEL`, `MULTIMODAL_EMBEDDING_MODEL`. [rag/README.md](rag/README.md)
 
@@ -44,7 +44,7 @@ This repository provides a framework for enhancing agentic decision-making in mu
   - **Co-evolution callback**: [coevolution_callback.py](trainer/decision/coevolution_callback.py) — `SkillBankCoEvolutionCallback` + `SkillAgentToolPipeline` + `SegmentationStore`; integrates `skill_agents.tool_call_reward` into reward shaping.
   - Shared: [metrics](trainer/common/metrics.py), [reward_shaping](trainer/decision/reward_shaping.py), [eval_harness](trainer/common/eval_harness.py). Entry: [launch_train](trainer/decision/launch_train.py), [launch_coevolution](trainer/launch_coevolution.py). [trainer/README.md](trainer/README.md)
 
-- **▶️ Inference** — [inference/](inference/): Run the decision agent and store rollouts in [data_structure](data_structure/experience.py) format (`Episode` + `Experience`). `run_inference(env, task=..., episode_buffer=..., save_path=...)`; `rollout_to_episode(rollout, task=...)` to convert an existing rollout. [inference/README.md](inference/README.md)
+- **▶️ Inference** — [inference/](inference/): Run the decision agent and store rollouts in [data_structure](data_structure/experience.py) format (`Episode` + `Experience`). `run_episode_vlm_agent()` returns `Episode` directly; `run_inference()` wraps it with buffer/save support. `rollout_to_episode()` remains for legacy flat-dict conversion. [inference/README.md](inference/README.md)
 
 ---
 
@@ -58,7 +58,24 @@ This framework integrates with the following game environments. Each has an NL w
 | **Avalon** | **External:** [AgentEvolver Games](https://github.com/modelscope/AgentEvolver/blob/main/games/README.md) — hidden-role deduction | [avalon_nl_wrapper.py](env_wrappers/avalon_nl_wrapper.py) | [evaluation_evolver/](evaluation_evolver/) |
 | **Diplomacy** | **External:** [AgentEvolver Games](https://github.com/modelscope/AgentEvolver/blob/main/games/README.md) — strategic negotiation | [diplomacy_nl_wrapper.py](env_wrappers/diplomacy_nl_wrapper.py) | [evaluation_evolver/](evaluation_evolver/) |
 | **GamingAgent (LMGame-Bench)** | **External:** [GamingAgent](https://github.com/lmgame-org/GamingAgent) — 2048, Sokoban, Tetris, etc. | [gamingagent_nl_wrapper.py](env_wrappers/gamingagent_nl_wrapper.py) | [evaluate_gamingagent/](evaluate_gamingagent/) |
-| **VideoGameBench** | **External:** DOS games (JS-DOS in browser; Game Boy excluded) | [videogamebench_dos_nl_wrapper.py](env_wrappers/videogamebench_dos_nl_wrapper.py) | [evaluate_videogamebench/](evaluate_videogamebench/) |
+| **VideoGameBench (Game Boy)** | **External:** [VideoGameBench](https://github.com/) — Game Boy ROMs via PyBoy | [videogamebench_nl_wrapper.py](env_wrappers/videogamebench_nl_wrapper.py) | [evaluate_videogamebench/](evaluate_videogamebench/) |
+| **VideoGameBench (DOS)** | **External:** DOS games (JS-DOS in browser) | [videogamebench_dos_nl_wrapper.py](env_wrappers/videogamebench_dos_nl_wrapper.py) | [evaluate_videogamebench/](evaluate_videogamebench/) |
+
+### Wrapper identification contract
+
+All wrappers set `info["env_name"]` and `info["game_name"]` on every `reset()` and `step()` call. These two fields, together with `episode_id` (auto-generated UUID on each `Episode`), form a **three-part identifier** that uniquely locates any trajectory across platforms:
+
+| Wrapper | `info["env_name"]` | `info["game_name"]` | Notes |
+|---------|---------------------|---------------------|-------|
+| GamingAgentNLWrapper | `"gamingagent"` | Auto-detected from obs (`"sokoban"`, `"tetris"`, `"2048"`, …) or explicit `game_name` constructor arg | Constructor: `GamingAgentNLWrapper(env, game_name="sokoban")` |
+| VideoGameBenchNLWrapper | `"videogamebench"` | From constructor `game_name` (e.g. `"kirby"`) | Constructor: `VideoGameBenchNLWrapper(env, game_name="kirby")` |
+| VideoGameBenchDOSNLWrapper | `"videogamebench_dos"` | From constructor `game_name` (e.g. `"doom2"`) | Stateless helper; call `wrapper.inject_info(info)` to set fields |
+| OvercookedNLWrapper | `"overcooked"` | `"overcooked"` | Single-game platform |
+| AvalonNLWrapper | `"avalon"` | `"avalon"` | Single-game platform |
+| DiplomacyNLWrapper | `"diplomacy"` | `"diplomacy"` | Single-game platform |
+| ColdStartEnvWrapper | `"gamingagent"` | Registry key (e.g. `"sokoban"`, `"twenty_forty_eight"`) | Used in [cold_start/](cold_start/) |
+
+`run_episode_vlm_agent()` reads `info["env_name"]` and `info["game_name"]` to populate the `Episode`. Fallback chain: `info["game"]` → `detect_game(obs)` → `info["structured_state"]["game"]`.
 
 ---
 
@@ -88,8 +105,12 @@ The **decision_agents** (VLM decision-making agent) and **skill_agents** (Skill 
 │              ▼                                 ▼                             │
 │   ┌──────────────────────┐         ┌──────────────────────┐                 │
 │   │  Episode (trajectory) │ ──────► │  Skill Bank (JSONL)   │                 │
-│   │  observations, actions│  feed  │  contracts, reports  │                 │
-│   │  rewards, done        │  back  │  versioned, queryable │                 │
+│   │  ID: episode_id (UUID)│  feed  │  contracts, reports  │                 │
+│   │  env_name + game_name │  back  │  versioned, queryable │                 │
+│   │  Experience per step: │        │                      │                 │
+│   │  state, action, reward│        │                      │                 │
+│   │  summary_state,       │        │                      │                 │
+│   │  intentions, sub_tasks│        │                      │                 │
 │   └──────────────────────┘         └──────────────────────┘                 │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -125,12 +146,14 @@ Both agents gracefully degrade to keyword-only retrieval if the RAG module or mo
    `skill_agent = SkillBankAgent(bank_path="..."); skill_agent.load()` or `skill_agent.ingest_episodes(seed_episodes)`.
 
 2. **Play**  
-   Run the VLM agent with that bank:  
-   `run_episode_vlm_agent(env, agent=VLMDecisionAgent(skill_bank=skill_agent), ...)`.
+   Run the VLM agent with that bank — returns an `Episode` directly:  
+   `episode = run_episode_vlm_agent(env, agent=VLMDecisionAgent(skill_bank=skill_agent), task="...", ...)`.  
+   Each `Experience` in the episode has `summary_state`, `intentions`, `sub_tasks`, and `reward_details` populated from agent internal state — no post-hoc conversion needed.
 
 3. **Feed back**  
-   Collect the episode (observations, actions, rewards) into an `Episode` and ingest:  
-   `skill_agent.ingest_episodes([episode])` then optionally `skill_agent.run_until_stable()`.
+   Ingest the episode directly into the skill pipeline:  
+   `skill_agent.ingest_episodes([episode])` then optionally `skill_agent.run_until_stable()`.  
+   The skill agents read `summary_state`/`intentions`/`sub_tasks` from each Experience for boundary proposal and segmentation.
 
 4. **Repeat**  
    The bank improves (new skills from `__NEW__`, splits/merges/refinements), so the next run has better `query_skill` results and reward shaping.
@@ -164,20 +187,50 @@ This part defines how **experiences**, **episodes**, and **sub-task (skill)** se
 
 - **Data structure details** (class definitions, buffers, serialization) are in **[data_structure/](data_structure/)**, in particular [data_structure/experience.py](data_structure/experience.py) and [data_structure/helper.py](data_structure/helper.py).
 - **Usage** — how episodes and experiences are produced and consumed:
-  - **[decision_agents/](decision_agents/)**: produces rollout data (observations, actions, rewards, reward_details) via `run_episode_vlm_agent()`; can be converted to `Experience` / `Episode` for downstream use.
-  - **[skill_agents/](skill_agents/)**: consumes `Episode` (list of `Experience`) for boundary proposal and segmentation; produces `SubTask_Experience` segments and skill labels. See [skill_agents/infer_segmentation/episode_adapter.py](skill_agents/infer_segmentation/episode_adapter.py), [skill_agents/boundary_proposal/](skill_agents/boundary_proposal/), and [skill_agents/README.md](skill_agents/README.md).
+  - **[decision_agents/](decision_agents/)**: `run_episode_vlm_agent()` directly returns an `Episode` with fully-populated `Experience` objects (`summary_state`, `intentions`, `sub_tasks`, `reward_details` filled from agent internal state during rollout). No separate conversion step needed.
+  - **[skill_agents/](skill_agents/)**: consumes `Episode` (list of `Experience`) for boundary proposal and segmentation; reads `summary_state`/`summary`/`state` for observations, `sub_tasks`/`intentions`/`done` for predicates. Produces `SubTask_Experience` segments and skill labels. See [skill_agents/infer_segmentation/episode_adapter.py](skill_agents/infer_segmentation/episode_adapter.py), [skill_agents/boundary_proposal/](skill_agents/boundary_proposal/), and [skill_agents/README.md](skill_agents/README.md).
 
 ## Experience
 
-Same as in standard RL: **state, action, intention, reward, next state, done**. Implemented in [data_structure/experience.py](data_structure/experience.py) as `Experience` with required fields plus optional: **intentions**, **tasks**, **sub_tasks**, **summary**, **summary_state**, **idx**, **sub_task_done**. Long-term goal and short-term goal can be filled as needed. A field for experience value is left for prioritized replay. The **summary** (and **summary_state**) support RAG and embedding-based retrieval. Depending on the environment, not all fields are provided; the actual state used by LLM agents is often a **summary of the state**, which also serves as context for RAG retrieval.
+Same as in standard RL: **state, action, intention, reward, next state, done**. Implemented in [data_structure/experience.py](data_structure/experience.py) as `Experience` with required fields plus optional: **intentions**, **tasks**, **sub_tasks**, **summary**, **summary_state**, **idx**, **sub_task_done**, **reward_details**, **action_type**. Long-term goal and short-term goal can be filled as needed. A field for experience value is left for prioritized replay. The **summary** (and **summary_state**) support RAG and embedding-based retrieval. The **reward_details** dict stores per-step reward breakdown (`r_env`, `r_follow`, `r_cost`, `r_total`) from the VLM decision agent. The **action_type** classifies each step as `"primitive"`, `"QUERY_MEM"`, `"QUERY_SKILL"`, or `"CALL_SKILL"`. Depending on the environment, not all fields are provided; the actual state used by LLM agents is often a **summary of the state**, which also serves as context for RAG retrieval.
+
+`run_episode_vlm_agent()` now populates Experience fields directly from agent internal state during the rollout:
+
+| Experience field | Source |
+|---|---|
+| `summary_state` | `agent.state.last_state_summary` (from `get_state_summary` tool) |
+| `intentions` | `agent.state.current_intention` (from `get_intention` tool) |
+| `sub_tasks` | `agent.state.active_skill_id` (current skill being followed) |
+| `reward_details` | Full reward breakdown dict from `RewardComputer` |
+| `action_type` | Classified from action string: `"primitive"`, `"QUERY_MEM"`, `"QUERY_SKILL"`, `"CALL_SKILL"` |
+
+This means skill agents can directly consume VLM agent rollouts — no conversion or post-hoc labeling needed for the fields that `_extract_obs_actions()` and `_extract_predicates()` read.
+
+Serialization: `Experience.from_dict()` is a `@classmethod` that constructs a new Experience from a dict (including all optional fields).
 
 ## Episode
 
-An **episode** is a sequence of experiences (time-length limited) with final reward, length, and optional outcome/summary. Implemented as `Episode` in [data_structure/experience.py](data_structure/experience.py): **experiences**, **task**, **outcome**, **summary**; methods include **get_reward()**, **get_length()**, **set_outcome()**, **separate_into_sub_episodes()** (splits by sub-task indices into `SubTask_Experience`).
+An **episode** is a sequence of experiences (time-length limited) with final reward, length, optional outcome/summary, and **metadata**. Implemented as `Episode` in [data_structure/experience.py](data_structure/experience.py): **experiences**, **task**, **outcome**, **summary**, **metadata**; methods include **get_reward()**, **get_total_reward()**, **get_length()**, **set_outcome()**, **separate_into_sub_episodes()** (splits by sub-task indices into `SubTask_Experience`).
+
+### Three-part identifier
+
+Every Episode carries a triple that uniquely identifies it across both GamingAgent and VideoGameBench:
+
+| Field | Type | Description | Example |
+|-------|------|-------------|---------|
+| `episode_id` | `str` | Auto-generated UUID (or caller-provided) | `"a3f1b2c4-..."` |
+| `env_name` | `str` | Platform / wrapper name | `"gamingagent"`, `"videogamebench"`, `"videogamebench_dos"`, `"overcooked"` |
+| `game_name` | `str` | Specific game within the platform | `"sokoban"`, `"2048"`, `"kirby"`, `"doom2"`, `"overcooked"` |
+
+For single-game platforms (Overcooked, Avalon, Diplomacy), `env_name == game_name`. For multi-game platforms (GamingAgent, VideoGameBench), `game_name` disambiguates which game was played. All three fields are populated automatically by `run_episode_vlm_agent()` from wrapper `info` and are persisted through `to_dict()` / `from_dict()`.
+
+The **metadata** dict stores rollout-level information (cumulative reward, final agent state, etc.). When returned by `run_episode_vlm_agent()`, metadata includes: `cumulative_reward`, `agent_state`, `done`, `steps`.
+
+Serialization: `Episode.from_dict()` is a `@classmethod` that reconstructs an Episode (including `episode_id`, `env_name`, `game_name`, metadata) from a dict.
 
 ## Sub-task (skill) experience
 
-**SubTask_Experience** represents a contiguous segment of experiences that accomplish a sub-task (strategy/skill): **sub_task**, **final_goal**, **sub_task_experience** (list of `Experience`), **outcome_experiences**, **summary**, **outcome_summary**, **length**, **cumulative_reward**. Used by [skill_agents](skill_agents/) for skill labeling and the skill bank pipeline.
+**SubTask_Experience** represents a contiguous segment of experiences that accomplish a sub-task (strategy/skill): **sub_task**, **final_goal**, **sub_task_experience** (list of `Experience`), **outcome_experiences** (nullable), **summary**, **outcome_summary**, **length**, **cumulative_reward**. Used by [skill_agents](skill_agents/) for skill labeling and the skill bank pipeline. Serialization: `SubTask_Experience.from_dict()` is a `@classmethod`; `to_dict()` handles `None` outcome_experiences.
 
 ## Buffers
 
@@ -338,7 +391,7 @@ Defaults: `RewardConfig(w_follow=0.1, query_mem_cost=-0.05, query_skill_cost=-0.
 - **infer_intention(summary, game, model, context)** — subgoal phrase.
 - **EpisodicMemoryStore** — RAG-backed memory; **add_experience()**, **query(key, k)**.
 - **skill_bank_to_text(bank)**, **query_skill_bank(bank, key, top_k)** — used in prompts and by run_tool(TOOL_QUERY_SKILL).
-- The agent's **skill_bank** can be a **SkillBankMVP** or a **SkillBankAgent**; **run_episode_vlm_agent(env, agent=..., max_steps=...)** runs the full two-turn loop and returns observations, actions, rewards, reward_details, done, steps, cumulative_reward.
+- The agent's **skill_bank** can be a **SkillBankMVP** or a **SkillBankAgent**; **run_episode_vlm_agent(env, agent=..., task=..., max_steps=...)** runs the full two-turn loop and returns an **`Episode`** with fully-populated `Experience` objects (including `summary_state`, `intentions`, `sub_tasks`, `reward_details`, `action_type`). The Episode is identified by a triple: `episode_id` (UUID), `env_name` (platform), `game_name` (specific game) — populated automatically from wrapper `info`. Episode metadata contains cumulative_reward, agent_state, done, and step count.
 
 See [decision_agents/README.md](decision_agents/README.md) for API, quick start, and reward details.
 
@@ -381,15 +434,25 @@ episode = run_inference(
 )
 ```
 
-**Convert an existing `run_episode_vlm_agent` result to `Episode`:**
+**`run_episode_vlm_agent` already returns an `Episode`:**
 ```python
 from decision_agents import run_episode_vlm_agent
-from inference import rollout_to_episode
 
-rollout = run_episode_vlm_agent(env, max_steps=500)
-episode = rollout_to_episode(rollout, task="My task")
-# episode.experiences, episode.to_dict() for JSON
+episode = run_episode_vlm_agent(env, task="My task", max_steps=500)
+# episode.episode_id: auto-generated UUID
+# episode.env_name:   from wrapper info (e.g. "gamingagent", "videogamebench")
+# episode.game_name:  specific game (e.g. "sokoban", "kirby", "doom2")
+# episode.experiences: list of Experience with summary_state, intentions, sub_tasks populated
+# episode.metadata: rollout-level data (cumulative_reward, agent_state, done, steps)
+# episode.to_dict(): for JSON save/load (includes all identifier fields)
+
+# Feed directly into skill pipeline:
+from skill_agents.pipeline import SkillBankAgent
+skill_agent = SkillBankAgent(bank_path="skills/bank.jsonl")
+skill_agent.ingest_episodes([episode])
 ```
+
+`rollout_to_episode()` is still available for backward compatibility with legacy flat dicts.
 
 Storage: each episode is one JSON object per line (JSONL) when `save_path` is set. See [inference/README.md](inference/README.md) for full details.
 
@@ -441,7 +504,7 @@ The training code uses experience to train agents so they (i) take better action
   - On accepted update: hot-swaps bank into environment workers, persists segmentations.
 
 - **Shared**
-  - **Rollout schema**: [trainer/common/metrics.py](trainer/common/metrics.py) — `RolloutRecord` / `RolloutStep` (single source of truth for both trainers).
+  - **Rollout schema**: [trainer/common/metrics.py](trainer/common/metrics.py) — `RolloutRecord` / `RolloutStep` (single source of truth for both trainers). `RolloutRecord` carries `episode_id`, `env_name`, and `game_name` from the source `Episode`.
   - **Reward contract**: [trainer/decision/reward_shaping.py](trainer/decision/reward_shaping.py) — `compute_reward(prev, action, next, bank_state)` → r_env, r_follow, r_cost, r_tool, r_total.
   - **Eval & logging**: [trainer/common/eval_harness.py](trainer/common/eval_harness.py) (fixed-seed eval, SkillBank quick eval for gating), [trainer/common/logging.py](trainer/common/logging.py), [trainer/common/seeds.py](trainer/common/seeds.py).
   - **Configs**: [trainer/common/configs/decision_grpo.yaml](trainer/common/configs/decision_grpo.yaml), [trainer/common/configs/skillbank_em.yaml](trainer/common/configs/skillbank_em.yaml).

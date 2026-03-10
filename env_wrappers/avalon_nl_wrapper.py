@@ -620,6 +620,8 @@ class AvalonNLWrapper:
         )
 
         return {
+            "env_name": "avalon",
+            "game_name": "avalon",
             "phase": phase_id,
             "phase_name": _PHASE_NAMES.get(phase_id, f"Phase {phase_id}"),
             "turn": self.env.turn,

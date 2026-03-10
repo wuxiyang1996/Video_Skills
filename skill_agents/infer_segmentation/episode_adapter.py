@@ -128,6 +128,7 @@ def _segments_to_sub_episodes(result, experiences: list, task, outcome_length: i
             final_goal=task,
             experiences=segment_exps,
             outcome=outcome_exps,
+            seg_id=getattr(seg, "seg_id", None),
         )
         sub_episodes.append(sub_ep)
     return sub_episodes

@@ -471,8 +471,6 @@ def run_episode_vlm_agent(
     step_count = 0
     done = False
     experiences: List[Experience] = []
-    all_observations: List[str] = [observation]
-    all_reward_details: List[Dict[str, float]] = []
 
     while step_count < max_steps:
         # ── Phase A: optional non-action tool (get_state_summary / get_intention) ──
@@ -546,7 +544,6 @@ def run_episode_vlm_agent(
         )
         agent.update_from_tool_result(TOOL_REWARD, rr, observation, info.get("game"))
         rr_dict = rr.to_dict() if isinstance(rr, RewardResult) else {"r_env": env_reward}
-        all_reward_details.append(rr_dict)
 
         # Resolve next observation
         if is_multi:
@@ -568,6 +565,7 @@ def run_episode_vlm_agent(
         exp.idx = step_count
         exp.summary_state = pre_action_summary if pre_action_summary else None
         exp.reward_details = rr_dict
+        exp.action_type = action_type
         experiences.append(exp)
 
         if verbose:
@@ -578,22 +576,21 @@ def run_episode_vlm_agent(
         observation = next_observation
         info = dict(next_info or {})
         info.setdefault("game", detect_game(observation))
-        all_observations.append(observation)
         step_count += 1
 
         if done:
             break
 
     cumulative = agent.reward_computer.cumulative
+    env_name = info.get("env_name") or info.get("game") or detect_game(observation)
+    game_name = info.get("game_name") or info.get("structured_state", {}).get("game") or env_name
 
     episode = Episode(
         experiences=experiences,
         task=episode_task or "Unspecified task",
+        env_name=env_name,
+        game_name=game_name,
         metadata={
-            "observations": all_observations,
-            "actions": [exp.action for exp in experiences],
-            "rewards": [exp.reward for exp in experiences],
-            "reward_details": all_reward_details,
             "done": done,
             "steps": step_count,
             "agent_state": {

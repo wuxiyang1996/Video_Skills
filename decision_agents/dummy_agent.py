@@ -1279,8 +1279,13 @@ def run_episode_with_experience_collection(
         if done:
             break
     
-    # Create Episode with all experiences
-    episode = Episode(experiences=experiences, task=task if task else "Unspecified task")
+    # Create Episode with all experiences, populating identifiers from wrapper info.
+    episode = Episode(
+        experiences=experiences,
+        task=task if task else "Unspecified task",
+        env_name=info.get("env_name") or game or "",
+        game_name=info.get("game_name") or info.get("structured_state", {}).get("game") or "",
+    )
     episode.set_outcome()
     
     # Add experiences to experience buffer if provided

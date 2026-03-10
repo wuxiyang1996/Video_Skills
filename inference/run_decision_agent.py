@@ -79,7 +79,10 @@ def rollout_to_episode(
     episode = Episode(
         experiences=experiences,
         task=task or "Unspecified task",
-        metadata={k: v for k, v in rollout.items() if k != "observations"},
+        env_name=rollout.get("env_name") or rollout.get("game") or "",
+        game_name=rollout.get("game_name") or "",
+        metadata={k: v for k, v in rollout.items()
+                  if k not in ("observations", "actions", "rewards", "reward_details")},
     )
     episode.set_outcome()
     return episode
