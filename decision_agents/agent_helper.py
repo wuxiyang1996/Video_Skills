@@ -296,7 +296,6 @@ def get_state_summary(
                 pass
 
     return ""
-gi
 
 # ---------------------------------------------------------------------------
 # Intention inference

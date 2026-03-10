@@ -50,6 +50,10 @@ class Experience:
         # Summary of the state of the experience, used for quick retrieval and query.
         self.summary_state = None
 
+        # Per-step reward breakdown (r_env, r_follow, r_cost, r_total).
+        # Populated by the VLM decision agent's reward tool.
+        self.reward_details: Optional[dict] = None
+
     # Generate the summary of the experience.
     # The intention of this function is to generate the summmary of the current state and 
     def generate_summary(self):
@@ -103,7 +107,7 @@ class Experience:
 
     # Convert the experience to a dictionary.
     def to_dict(self):
-        return {
+        d = {
             "state": self.state,
             "action": self.action,
             "reward": self.reward,
@@ -116,28 +120,35 @@ class Experience:
             "summary_state": self.summary_state,
             "idx": self.idx,
         }
+        if self.reward_details is not None:
+            d["reward_details"] = self.reward_details
+        return d
     
-    # Convert the dictionary to an experience.
-    def from_dict(self, dict: dict):
-        self.state = dict["state"]
-        self.action = dict["action"]
-        self.reward = dict["reward"]
-        self.next_state = dict["next_state"]
-        self.done = dict["done"]
-        self.intentions = dict.get("intentions")
-        self.tasks = dict.get("tasks")
-        self.sub_tasks = dict.get("sub_tasks")
-        self.summary = dict.get("summary")
-        self.summary_state = dict.get("summary_state")
-        self.idx = dict.get("idx")
-        return self
+    @classmethod
+    def from_dict(cls, d: dict) -> "Experience":
+        """Construct an Experience from a dictionary."""
+        exp = cls(
+            state=d["state"],
+            action=d["action"],
+            reward=d["reward"],
+            next_state=d["next_state"],
+            done=d["done"],
+            intentions=d.get("intentions"),
+            tasks=d.get("tasks"),
+            sub_tasks=d.get("sub_tasks"),
+        )
+        exp.summary = d.get("summary")
+        exp.summary_state = d.get("summary_state")
+        exp.idx = d.get("idx")
+        exp.reward_details = d.get("reward_details")
+        return exp
 
 
 # Episode is the collection of experiences, which is used to store the experience of the agent.
 # Please include the intention and task generation process in the episode.
 # The episode initially from the rollout, leaving for fruther process and push into the experience replay buffer.
 class Episode:
-    def __init__(self, experiences: List[Experience], task: str):
+    def __init__(self, experiences: List[Experience], task: str, metadata: Optional[dict] = None):
         self.experiences = experiences
 
         # The summary of the episode.
@@ -148,6 +159,10 @@ class Episode:
 
         # The outcome of the episode.
         self.outcome = None
+
+        # Arbitrary metadata (reward_details per step, cumulative_reward,
+        # agent_state snapshot, game name, model, etc.).
+        self.metadata: Optional[dict] = metadata
 
     def get_reward(self):
         return sum(experience.reward for experience in self.experiences)
@@ -201,18 +216,23 @@ class Episode:
 
     # Convert the episode to a dictionary.
     def to_dict(self):
-        return {
+        d = {
             "experiences": [exp.to_dict() for exp in self.experiences],
             "task": self.task,
             "outcome": self.outcome,
         }
+        if self.metadata is not None:
+            d["metadata"] = self.metadata
+        return d
 
-    # Convert the dictionary to an episode.
-    def from_dict(self, dict: dict):
-        self.experiences = [Experience.from_dict(exp) for exp in dict["experiences"]]
-        self.task = dict["task"]
-        self.outcome = dict.get("outcome")
-        return self
+    @classmethod
+    def from_dict(cls, d: dict) -> "Episode":
+        """Construct an Episode from a dictionary."""
+        experiences = [Experience.from_dict(exp) for exp in d["experiences"]]
+        ep = cls(experiences=experiences, task=d["task"], metadata=d.get("metadata"))
+        ep.outcome = d.get("outcome")
+        ep.summary = d.get("summary")
+        return ep
 
 # The intention of this class is to store the experience of the agent for each sub-task.
 # While the sub-tasks could be taken as a part of the entire episode.
@@ -317,20 +337,30 @@ class SubTask_Experience:
 
     # Convert the sub-task experience to a dictionary.
     def to_dict(self):
-        return {
+        d = {
             "sub_task": self.sub_task,
             "final_goal": self.final_goal,
             "sub_task_experience": [exp.to_dict() for exp in self.sub_task_experience],
-            "outcome_experiences": [exp.to_dict() for exp in self.outcome_experiences],
         }
+        if self.outcome_experiences is not None:
+            d["outcome_experiences"] = [exp.to_dict() for exp in self.outcome_experiences]
+        else:
+            d["outcome_experiences"] = None
+        return d
 
-    # Convert the dictionary to a sub-task experience.
-    def from_dict(self, dict: dict):
-        self.sub_task = dict["sub_task"]
-        self.final_goal = dict["final_goal"]
-        self.sub_task_experience = [Experience.from_dict(exp) for exp in dict["sub_task_experience"]]
-        self.outcome_experiences = [Experience.from_dict(exp) for exp in dict["outcome_experiences"]]
-        return self
+    @classmethod
+    def from_dict(cls, d: dict) -> "SubTask_Experience":
+        """Construct a SubTask_Experience from a dictionary."""
+        sub_task_exps = [Experience.from_dict(exp) for exp in d["sub_task_experience"]]
+        outcome_exps = None
+        if d.get("outcome_experiences"):
+            outcome_exps = [Experience.from_dict(exp) for exp in d["outcome_experiences"]]
+        return cls(
+            sub_task=d["sub_task"],
+            final_goal=d["final_goal"],
+            experiences=sub_task_exps,
+            outcome=outcome_exps,
+        )
 
 # Experience Replay Buffer
 # The intention of this class is to store the experience of the agent for the experience replay.
@@ -425,8 +455,8 @@ class Episode_Buffer:
         }
     
     # Convert the dictionary to an episode buffer.
-    def from_dict(self, dict: dict):
-        self.buffer = [Episode.from_dict(ep) for ep in dict["episodes"]]
+    def from_dict(self, d: dict):
+        self.buffer = [Episode.from_dict(ep) for ep in d["episodes"]]
         return self
     
     # Save episode buffer to JSON file.
@@ -534,6 +564,6 @@ class Tool_Buffer:
         }
     
     # Convert the dictionary to a tool buffer, while the content is the sub-task experience.
-    def from_dict(self, dict: dict):
-        self.buffer = [SubTask_Experience.from_dict(tool) for tool in dict["tools"]]
+    def from_dict(self, d: dict):
+        self.buffer = [SubTask_Experience.from_dict(tool) for tool in d["tools"]]
         return self

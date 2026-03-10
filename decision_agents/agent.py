@@ -15,6 +15,8 @@ try:
 except ImportError:
     ask_model = None
 
+from data_structure.experience import Experience, Episode
+
 from .agent_helper import (
     get_state_summary as helper_get_state_summary,
     infer_intention as helper_infer_intention,
@@ -430,16 +432,22 @@ def run_episode_vlm_agent(
     skill_bank: Any = None,
     memory: Optional[EpisodicMemoryStore] = None,
     reward_config: Optional[RewardConfig] = None,
+    task: str = "",
     max_steps: int = 1000,
     verbose: bool = False,
-) -> Dict[str, Any]:
+) -> Episode:
     """
     Run one episode with the two-turn micro-loop per timestep:
       1) (optional) get_state_summary / get_intention
       2) take_action  (exactly one env action)
       3) reward       (compute r_env, r_follow, r_cost, r_total)
 
-    Returns dict with keys: observations, actions, rewards, reward_details, done, steps, agent_state.
+    Returns an Episode (data_structure format) with:
+      - Experience objects per step, fully populated (state, action, reward,
+        next_state, done, summary_state, intentions, sub_tasks, reward_details).
+      - Episode.metadata with per-step reward_details, cumulative_reward,
+        final agent_state, done flag, and step count — for callers that need
+        the flat rollout information.
     """
     if agent is None:
         agent = VLMDecisionAgent(
@@ -456,16 +464,17 @@ def run_episode_vlm_agent(
     info = dict(info or {})
     info.setdefault("game", detect_game(observation))
 
+    episode_task = task or info.get("task", "")
+
     last_tool_name: Optional[str] = None
     last_tool_result: Any = None
-    steps = 0
+    step_count = 0
     done = False
+    experiences: List[Experience] = []
     all_observations: List[str] = [observation]
-    all_actions: List[Any] = []
-    all_rewards: List[float] = []
     all_reward_details: List[Dict[str, float]] = []
 
-    while steps < max_steps:
+    while step_count < max_steps:
         # ── Phase A: optional non-action tool (get_state_summary / get_intention) ──
         out = agent.step(observation, info, last_tool_name, last_tool_result)
         tool_name = out.get("tool", TOOL_TAKE_ACTION)
@@ -485,6 +494,11 @@ def run_episode_vlm_agent(
             if tool_name not in (TOOL_TAKE_ACTION,):
                 tool_name = TOOL_TAKE_ACTION
                 tool_args = {"action": _default_action(info.get("game") or detect_game(observation))}
+
+        # Snapshot agent state BEFORE the action for this experience
+        pre_action_summary = agent.state.last_state_summary or ""
+        pre_action_intention = agent.state.current_intention or ""
+        pre_action_skill = agent.state.active_skill_id
 
         # ── Phase B: take_action ──
         action = tool_args.get("action")
@@ -509,8 +523,6 @@ def run_episode_vlm_agent(
 
         next_obs, reward, terminated, truncated, next_info = env.step(actions)
         done = terminated or truncated
-        all_actions.append(action)
-        steps += 1
 
         progress = None
         if reward and float(reward) != 0:
@@ -533,39 +545,65 @@ def run_episode_vlm_agent(
             env=None,
         )
         agent.update_from_tool_result(TOOL_REWARD, rr, observation, info.get("game"))
-        all_rewards.append(rr.r_total if isinstance(rr, RewardResult) else env_reward)
-        all_reward_details.append(rr.to_dict() if isinstance(rr, RewardResult) else {"r_env": env_reward})
+        rr_dict = rr.to_dict() if isinstance(rr, RewardResult) else {"r_env": env_reward}
+        all_reward_details.append(rr_dict)
+
+        # Resolve next observation
+        if is_multi:
+            next_observation = str(next_obs.get(list(next_obs.keys())[0], "")) if next_obs else ""
+        else:
+            next_observation = str(next_obs) if next_obs else ""
+
+        # ── Build Experience with all fields populated ──
+        exp = Experience(
+            state=observation,
+            action=str(action),
+            reward=env_reward,
+            next_state=next_observation,
+            done=done,
+            intentions=pre_action_intention if pre_action_intention else None,
+            tasks=episode_task if episode_task else None,
+            sub_tasks=pre_action_skill,
+        )
+        exp.idx = step_count
+        exp.summary_state = pre_action_summary if pre_action_summary else None
+        exp.reward_details = rr_dict
+        experiences.append(exp)
 
         if verbose:
-            print(f"  step {steps}: action={action}  {rr}")
+            print(f"  step {step_count}: action={action}  {rr}")
 
         last_tool_name = TOOL_REWARD
         last_tool_result = rr
-
-        if is_multi:
-            observation = str(next_obs.get(list(next_obs.keys())[0], "")) if next_obs else ""
-        else:
-            observation = str(next_obs) if next_obs else ""
+        observation = next_observation
         info = dict(next_info or {})
         info.setdefault("game", detect_game(observation))
         all_observations.append(observation)
+        step_count += 1
 
         if done:
             break
 
     cumulative = agent.reward_computer.cumulative
-    return {
-        "observations": all_observations,
-        "actions": all_actions,
-        "rewards": all_rewards,
-        "reward_details": all_reward_details,
-        "done": done,
-        "steps": steps,
-        "agent_state": {
-            "current_intention": agent.state.current_intention,
-            "progress_notes": agent.state.progress_notes,
-            "last_actions": agent.state.last_actions,
-            "active_skill_id": agent.state.active_skill_id,
+
+    episode = Episode(
+        experiences=experiences,
+        task=episode_task or "Unspecified task",
+        metadata={
+            "observations": all_observations,
+            "actions": [exp.action for exp in experiences],
+            "rewards": [exp.reward for exp in experiences],
+            "reward_details": all_reward_details,
+            "done": done,
+            "steps": step_count,
+            "agent_state": {
+                "current_intention": agent.state.current_intention,
+                "progress_notes": agent.state.progress_notes,
+                "last_actions": agent.state.last_actions,
+                "active_skill_id": agent.state.active_skill_id,
+            },
+            "cumulative_reward": cumulative.to_dict(),
         },
-        "cumulative_reward": cumulative.to_dict(),
-    }
+    )
+    episode.set_outcome()
+    return episode

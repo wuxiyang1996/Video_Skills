@@ -1,0 +1,23 @@
+{
+  "timestamp": "2026-03-10T07:25:35.341277",
+  "model": "gpt-5-mini",
+  "agent_type": "vlm",
+  "games": [
+    "twenty_forty_eight"
+  ],
+  "episodes_per_game": 1,
+  "max_steps": 20,
+  "labeled": false,
+  "elapsed_seconds": 2.639772891998291,
+  "episode_stats": [
+    {
+      "game": "twenty_forty_eight",
+      "steps": 11,
+      "total_reward": 0.0,
+      "terminated": true,
+      "truncated": false,
+      "model": "gpt-5-mini",
+      "agent_type": "vlm"
+    }
+  ]
+}

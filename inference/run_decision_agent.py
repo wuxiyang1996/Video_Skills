@@ -19,26 +19,32 @@ except ImportError:
 
 
 def rollout_to_episode(
-    rollout: Dict[str, Any],
+    rollout,
     task: str = "",
 ):
-    """Convert run_episode_vlm_agent result to Episode (data_structure format)."""
-    """
-    Convert a decision-agent rollout (run_episode_vlm_agent result) into an Episode
-    using the data_structure format (Experience list + Episode).
+    """Convert a decision-agent rollout into an Episode (data_structure format).
 
-    rollout must have keys: observations (list of state strings), actions, rewards,
-    and optionally done. Step i uses state=observations[i], action=actions[i],
-    reward=rewards[i], next_state=observations[i+1], done only on the last step.
+    Accepts either:
+      - An Episode object (returned directly by run_episode_vlm_agent) — passed through.
+      - A legacy flat dict with keys: observations, actions, rewards, done.
     """
     if Episode is None or Experience is None:
         raise ImportError(
             "Experience and Episode are required from data_structure.experience. "
             "Install or add the data_structure package."
         )
+
+    # If already an Episode, just return it (optionally update the task).
+    if isinstance(rollout, Episode):
+        if task and (not rollout.task or rollout.task == "Unspecified task"):
+            rollout.task = task
+        return rollout
+
+    # Legacy path: flat dict from older callers.
     observations: List[str] = list(rollout.get("observations", []))
     actions: List[Any] = list(rollout.get("actions", []))
     rewards: List[float] = list(rollout.get("rewards", []))
+    reward_details_list: List[dict] = list(rollout.get("reward_details", []))
     done_flag: bool = bool(rollout.get("done", False))
 
     experiences: List[Experience] = []
@@ -66,9 +72,15 @@ def rollout_to_episode(
             sub_tasks=None,
         )
         exp.idx = i
+        if i < len(reward_details_list):
+            exp.reward_details = reward_details_list[i]
         experiences.append(exp)
 
-    episode = Episode(experiences=experiences, task=task or "Unspecified task")
+    episode = Episode(
+        experiences=experiences,
+        task=task or "Unspecified task",
+        metadata={k: v for k, v in rollout.items() if k != "observations"},
+    )
     episode.set_outcome()
     return episode
 
@@ -109,18 +121,17 @@ def run_inference(
             "Experience and Episode are required from data_structure.experience."
         )
 
-    rollout = run_episode_vlm_agent(
+    episode = run_episode_vlm_agent(
         env,
         agent=agent,
         model=model,
         skill_bank=skill_bank,
         memory=memory,
         reward_config=reward_config,
+        task=task,
         max_steps=max_steps,
         verbose=verbose,
     )
-
-    episode = rollout_to_episode(rollout, task=task)
 
     if episode_buffer is not None:
         episode_buffer.add_episode(episode)

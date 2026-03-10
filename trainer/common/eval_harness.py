@@ -92,16 +92,38 @@ def run_decision_eval(
 
 
 def _result_to_rollout_record(
-    result: Dict[str, Any], seed: int, episode_id: str
+    result, seed: int, episode_id: str
 ) -> RolloutRecord:
-    """Convert run_episode_vlm_agent output dict to a RolloutRecord."""
+    """Convert run_episode_vlm_agent output to a RolloutRecord.
+
+    Accepts either an Episode (new format) or a flat dict (legacy).
+    """
     from trainer.common.metrics import RolloutStep
 
-    steps = []
-    actions = result.get("actions", [])
-    reward_details = result.get("reward_details", [])
-    observations = result.get("observations", [])
+    # Extract data from Episode or legacy dict.
+    try:
+        from data_structure.experience import Episode as _Episode
+        is_episode = isinstance(result, _Episode)
+    except ImportError:
+        is_episode = False
 
+    if is_episode:
+        meta = result.metadata or {}
+        actions = [exp.action for exp in result.experiences]
+        reward_details = [
+            exp.reward_details or {"r_env": exp.reward}
+            for exp in result.experiences
+        ]
+        cumulative = meta.get("cumulative_reward", {})
+        done_flag = meta.get("done", result.outcome if result.outcome is not None else False)
+    else:
+        meta = result if isinstance(result, dict) else {}
+        actions = meta.get("actions", [])
+        reward_details = meta.get("reward_details", [])
+        cumulative = meta.get("cumulative_reward", {})
+        done_flag = meta.get("done", False)
+
+    steps = []
     for t in range(len(actions)):
         rd = reward_details[t] if t < len(reward_details) else {}
         step = RolloutStep(
@@ -122,11 +144,10 @@ def _result_to_rollout_record(
         seed=seed,
         steps=steps,
     )
-    cumulative = result.get("cumulative_reward", {})
     record.total_reward = cumulative.get("r_total", sum(s.r_total for s in steps))
     record.total_r_env = cumulative.get("r_env", sum(s.r_env for s in steps))
     record.episode_length = len(steps)
-    record.won = result.get("done", False)
+    record.won = done_flag
     record.score = record.total_r_env
     return record
 
