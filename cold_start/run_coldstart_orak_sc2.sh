@@ -8,6 +8,7 @@
 # Usage:
 #   bash cold_start/run_coldstart_orak_sc2.sh                       # 10 episodes (default)
 #   bash cold_start/run_coldstart_orak_sc2.sh --episodes 3 -v       # quick test
+#   bash cold_start/run_coldstart_orak_sc2.sh --workers 4           # 4 parallel SC2 instances
 #   bash cold_start/run_coldstart_orak_sc2.sh --resume              # resume interrupted run
 #   bash cold_start/run_coldstart_orak_sc2.sh --help                # all options
 #
@@ -67,7 +68,7 @@ echo ""
 EXTRA_ARGS=("$@")
 
 if [ ${#EXTRA_ARGS[@]} -eq 0 ]; then
-    EXTRA_ARGS=(--episodes 10 --max_steps 1000 --no_label --resume -v)
+    EXTRA_ARGS=(--episodes 10 --max_steps 500 --workers 4 --no_label --resume -v)
 fi
 
 python "${SCRIPT_DIR}/generate_cold_start_orak.py" \

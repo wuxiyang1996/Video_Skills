@@ -1,0 +1,2717 @@
+{
+  "episode_id": "3b5724bd-1a28-4d2b-87d2-d27a08a4d0f7",
+  "env_name": "avalon",
+  "game_name": "avalon",
+  "experiences": [
+    {
+      "state": "{\"0\": \"=== Avalon Game — Team Selection ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 3.\\nTeam size required: 2 players.\\n\\nWaiting for Player 3 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\", \"1\": \"=== Avalon Game — Team Selection ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 3.\\nTeam size required: 2 players.\\n\\nWaiting for Player 3 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\", \"2\": \"=== Avalon Game — Team Selection ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 3.\\nTeam size required: 2 players.\\n\\nWaiting for Player 3 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\", \"3\": \"=== Avalon Game — Team Selection ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 3.\\nTeam size required: 2 players.\\n\\nYou are the quest leader. Propose a team of 2 players.\\nReply with 2 player IDs (0 to 4), e.g.: \\\"0, 2, 3\\\"\", \"4\": \"=== Avalon Game — Team Selection ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 3.\\nTeam size required: 2 players.\\n\\nWaiting for Player 3 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\"}",
+      "action": "{\"3\": \"0, 3\"}",
+      "reward": 0.0,
+      "next_state": "{\"0\": \"=== Avalon Game — Team Voting ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\", \"1\": \"=== Avalon Game — Team Voting ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\", \"2\": \"=== Avalon Game — Team Voting ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\", \"3\": \"=== Avalon Game — Team Voting ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\", \"4\": \"=== Avalon Game — Team Voting ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\"}",
+      "done": false,
+      "intentions": "Player 3: I know only my own role: I am Good (Servant), with no direct info about others yet. On round 1 as leader, optimal good play is to propose a minimally controversial team that includes myself so I can guarantee one good vote on the quest; with no evidence, any partner is symmetric. Choosing an early simple team reveals little and preserves flexibility. I’ll pick myself plus Player 0 as a standard opening proposal.",
+      "tasks": "Win a game of Avalon through social deduction, strategic voting, and deception.",
+      "sub_tasks": null,
+      "summary": null,
+      "summary_state": null,
+      "idx": 0,
+      "raw_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 0,
+        "phase_name": "Team Selection",
+        "turn": 0,
+        "round": 0,
+        "leader": 3,
+        "team_size": 2,
+        "quest_results": [],
+        "quest_team": [],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [],
+        "last_vote_result": null,
+        "active_players": [
+          3
+        ],
+        "expected_action": "Leader proposes a team of 2 (list of player IDs).",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_select",
+          "self": "role:Merlin(G)",
+          "progress": "quest:0/5 good:0 evil:0",
+          "critical": "leader:p3 team_sz:2 rd:1/5",
+          "objective": "propose_team"
+        }
+      },
+      "raw_next_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 1,
+        "phase_name": "Team Voting",
+        "turn": 0,
+        "round": 0,
+        "leader": 4,
+        "team_size": 2,
+        "quest_results": [],
+        "quest_team": [
+          0,
+          3
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]"
+        ],
+        "last_vote_result": null,
+        "active_players": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "expected_action": "All players vote: approve / reject.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_vote",
+          "self": "role:Merlin(G)",
+          "progress": "quest:0/5 good:0 evil:0",
+          "critical": "leader:p4 team_sz:2 rd:1/5 team:[0, 3]",
+          "objective": "approve_or_reject_team"
+        }
+      },
+      "available_actions": {
+        "type": "team_selection",
+        "active_players": [
+          3
+        ],
+        "team_size": 2,
+        "player_ids": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "interface": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "num_players": 5
+      },
+      "action_type": "primitive"
+    },
+    {
+      "state": "{\"0\": \"=== Avalon Game — Team Voting ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\", \"1\": \"=== Avalon Game — Team Voting ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\", \"2\": \"=== Avalon Game — Team Voting ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\", \"3\": \"=== Avalon Game — Team Voting ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\", \"4\": \"=== Avalon Game — Team Voting ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\"}",
+      "action": "{\"0\": \"approve\", \"1\": \"reject\", \"2\": \"approve\", \"3\": \"approve\", \"4\": \"approve\"}",
+      "reward": 0.0,
+      "next_state": "{\"0\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nYou are on the quest team: [0, 3].\\n\\nVote for the quest outcome: PASS (success) or FAIL (sabotage).\\nReply with: pass / fail\\n(As a Good player, you should vote pass.)\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'approve', 3: 'approve', 4: 'approve'}.\", \"1\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest team [0, 3] is voting. You are not on the team.\\nWaiting for quest result.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'approve', 3: 'approve', 4: 'approve'}.\", \"2\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest team [0, 3] is voting. You are not on the team.\\nWaiting for quest result.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'approve', 3: 'approve', 4: 'approve'}.\", \"3\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nYou are on the quest team: [0, 3].\\n\\nVote for the quest outcome: PASS (success) or FAIL (sabotage).\\nReply with: pass / fail\\n(As a Good player, you should vote pass.)\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'approve', 3: 'approve', 4: 'approve'}.\", \"4\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest team [0, 3] is voting. You are not on the team.\\nWaiting for quest result.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'approve', 3: 'approve', 4: 'approve'}.\"}",
+      "done": false,
+      "intentions": "Player 0: I am Merlin and know 1 and 2 are evil, so 0 and 3 is a clean-looking quest 1 team from my perspective. In team voting, good should generally approve a strong first team that excludes known evil. Approving reveals little beyond normal support for a plausible team and helps get a likely successful quest through.\nPlayer 1: I know Player 2 is my evil teammate, so team [0,3] contains no known evil and is likely all good. As evil in round 1, the optimal play is usually to reject a clean-looking team to avoid an easy good pass, though an approve could create cover; since this team excludes both evils, rejecting is better. My vote only slightly reveals suspicion of this team, which is acceptable and helps evil if enough players also reject.\nPlayer 2: I know player 1 is my evil teammate, so team [0,3] contains no evil players. As evil, the optimal play is usually to avoid openly rejecting a clean-looking first team if that could create suspicion; approving can help me blend in while giving good a chance to pass quest 1, which is acceptable early and may build trust on uninvolved players. My vote reveals alignment-related preferences, so approving this two-good team is the less suspicious option.\nPlayer 3: No role-specific information yet from prior play; as a Servant on round 1, quest 1, the standard good play is usually to approve an initial 2-person team unless there is evidence against it. I proposed [0,3], and I know I am good, so this team has at least one good member. Approving gives early information from the quest result without giving away anything extra beyond normal voting patterns.\nPlayer 4: No hard role info yet from quest history or voting patterns. As Good Servant on round 1, a standard heuristic in 5-player Avalon is to approve the first team to gather information unless there's a strong reason not to. Team [0,3] includes the leader but not me; approving gives us an early signal from quest result without revealing special information, and a reject now is low-information.",
+      "tasks": "Win a game of Avalon through social deduction, strategic voting, and deception.",
+      "sub_tasks": null,
+      "summary": null,
+      "summary_state": null,
+      "idx": 1,
+      "raw_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 1,
+        "phase_name": "Team Voting",
+        "turn": 0,
+        "round": 0,
+        "leader": 4,
+        "team_size": 2,
+        "quest_results": [],
+        "quest_team": [
+          0,
+          3
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]"
+        ],
+        "last_vote_result": null,
+        "active_players": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "expected_action": "All players vote: approve / reject.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_vote",
+          "self": "role:Merlin(G)",
+          "progress": "quest:0/5 good:0 evil:0",
+          "critical": "leader:p4 team_sz:2 rd:1/5 team:[0, 3]",
+          "objective": "approve_or_reject_team"
+        }
+      },
+      "raw_next_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 2,
+        "phase_name": "Quest Voting",
+        "turn": 0,
+        "round": 0,
+        "leader": 4,
+        "team_size": 2,
+        "quest_results": [],
+        "quest_team": [
+          0,
+          3
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject)."
+        ],
+        "last_vote_result": {
+          "outcome": "Approved",
+          "votes": {
+            "0": "approve",
+            "1": "reject",
+            "2": "approve",
+            "3": "approve",
+            "4": "approve"
+          }
+        },
+        "active_players": [
+          0,
+          3
+        ],
+        "expected_action": "Quest team members vote: pass / fail.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "quest_vote",
+          "self": "role:Merlin(G)",
+          "progress": "quest:0/5 good:0 evil:0",
+          "critical": "leader:p4 team_sz:2 rd:1/5 team:[0, 3]",
+          "objective": "pass_or_fail_quest"
+        }
+      },
+      "available_actions": {
+        "type": "team_vote",
+        "active_players": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "choices": [
+          "approve",
+          "reject"
+        ]
+      },
+      "interface": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "num_players": 5
+      },
+      "action_type": "primitive"
+    },
+    {
+      "state": "{\"0\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nYou are on the quest team: [0, 3].\\n\\nVote for the quest outcome: PASS (success) or FAIL (sabotage).\\nReply with: pass / fail\\n(As a Good player, you should vote pass.)\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'approve', 3: 'approve', 4: 'approve'}.\", \"1\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest team [0, 3] is voting. You are not on the team.\\nWaiting for quest result.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'approve', 3: 'approve', 4: 'approve'}.\", \"2\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest team [0, 3] is voting. You are not on the team.\\nWaiting for quest result.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'approve', 3: 'approve', 4: 'approve'}.\", \"3\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nYou are on the quest team: [0, 3].\\n\\nVote for the quest outcome: PASS (success) or FAIL (sabotage).\\nReply with: pass / fail\\n(As a Good player, you should vote pass.)\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'approve', 3: 'approve', 4: 'approve'}.\", \"4\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nNo quests completed yet.\\nCurrent quest: 1 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest team [0, 3] is voting. You are not on the team.\\nWaiting for quest result.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'approve', 3: 'approve', 4: 'approve'}.\"}",
+      "action": "{\"0\": \"pass\", \"3\": \"pass\"}",
+      "reward": 0.0,
+      "next_state": "{\"0\": \"=== Avalon Game — Team Selection ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 4.\\nTeam size required: 3 players.\\n\\nWaiting for Player 4 (quest leader) to propose a team of 3.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"1\": \"=== Avalon Game — Team Selection ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 4.\\nTeam size required: 3 players.\\n\\nWaiting for Player 4 (quest leader) to propose a team of 3.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"2\": \"=== Avalon Game — Team Selection ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 4.\\nTeam size required: 3 players.\\n\\nWaiting for Player 4 (quest leader) to propose a team of 3.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"3\": \"=== Avalon Game — Team Selection ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 4.\\nTeam size required: 3 players.\\n\\nWaiting for Player 4 (quest leader) to propose a team of 3.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"4\": \"=== Avalon Game — Team Selection ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 4.\\nTeam size required: 3 players.\\n\\nYou are the quest leader. Propose a team of 3 players.\\nReply with 3 player IDs (0 to 4), e.g.: \\\"0, 2, 3\\\"\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\"}",
+      "done": false,
+      "intentions": "Player 0: I am Merlin and know players 1 and 2 are Evil. The current phase is quest voting on team [0,3], and as a Good player on the quest I should always pass. Failing is impossible/incorrect for Good and would only harm my team while revealing nothing useful. Player 3 is not in my known Evil pair, so this team likely succeeds unless 3 is hidden Mordred, but my action should still be pass.\nPlayer 3: I am a Servant on the good side, so I must support quest success. There is limited role information so far: only Player 1 rejected the opening team [0,3], which is a weak signal but not enough to infer alignment. In quest voting, optimal good play is always to pass; failing would directly help evil and falsely implicate the team. My pass reveals nothing beyond normal good behavior and is best for my team.",
+      "tasks": "Win a game of Avalon through social deduction, strategic voting, and deception.",
+      "sub_tasks": null,
+      "summary": null,
+      "summary_state": null,
+      "idx": 2,
+      "raw_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 2,
+        "phase_name": "Quest Voting",
+        "turn": 0,
+        "round": 0,
+        "leader": 4,
+        "team_size": 2,
+        "quest_results": [],
+        "quest_team": [
+          0,
+          3
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject)."
+        ],
+        "last_vote_result": {
+          "outcome": "Approved",
+          "votes": {
+            "0": "approve",
+            "1": "reject",
+            "2": "approve",
+            "3": "approve",
+            "4": "approve"
+          }
+        },
+        "active_players": [
+          0,
+          3
+        ],
+        "expected_action": "Quest team members vote: pass / fail.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "quest_vote",
+          "self": "role:Merlin(G)",
+          "progress": "quest:0/5 good:0 evil:0",
+          "critical": "leader:p4 team_sz:2 rd:1/5 team:[0, 3]",
+          "objective": "pass_or_fail_quest"
+        }
+      },
+      "raw_next_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 0,
+        "phase_name": "Team Selection",
+        "turn": 1,
+        "round": 0,
+        "leader": 4,
+        "team_size": 3,
+        "quest_results": [
+          true
+        ],
+        "quest_team": [
+          0,
+          3
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s))."
+        ],
+        "last_vote_result": {
+          "outcome": "Success",
+          "num_fails": 0
+        },
+        "active_players": [
+          4
+        ],
+        "expected_action": "Leader proposes a team of 3 (list of player IDs).",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_select",
+          "self": "role:Merlin(G)",
+          "progress": "quest:1/5 good:1 evil:0",
+          "critical": "leader:p4 team_sz:3 rd:1/5 team:[0, 3]",
+          "objective": "propose_team"
+        }
+      },
+      "available_actions": {
+        "type": "quest_vote",
+        "active_players": [
+          0,
+          3
+        ],
+        "choices": [
+          "pass",
+          "fail"
+        ]
+      },
+      "interface": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "num_players": 5
+      },
+      "action_type": "primitive"
+    },
+    {
+      "state": "{\"0\": \"=== Avalon Game — Team Selection ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 4.\\nTeam size required: 3 players.\\n\\nWaiting for Player 4 (quest leader) to propose a team of 3.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"1\": \"=== Avalon Game — Team Selection ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 4.\\nTeam size required: 3 players.\\n\\nWaiting for Player 4 (quest leader) to propose a team of 3.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"2\": \"=== Avalon Game — Team Selection ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 4.\\nTeam size required: 3 players.\\n\\nWaiting for Player 4 (quest leader) to propose a team of 3.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"3\": \"=== Avalon Game — Team Selection ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 4.\\nTeam size required: 3 players.\\n\\nWaiting for Player 4 (quest leader) to propose a team of 3.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"4\": \"=== Avalon Game — Team Selection ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 4.\\nTeam size required: 3 players.\\n\\nYou are the quest leader. Propose a team of 3 players.\\nReply with 3 player IDs (0 to 4), e.g.: \\\"0, 2, 3\\\"\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\"}",
+      "action": "{\"4\": \"0, 3, 4\"}",
+      "reward": 0.0,
+      "next_state": "{\"0\": \"=== Avalon Game — Team Voting ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3, 4].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\", \"1\": \"=== Avalon Game — Team Voting ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3, 4].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\", \"2\": \"=== Avalon Game — Team Voting ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3, 4].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\", \"3\": \"=== Avalon Game — Team Voting ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3, 4].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\", \"4\": \"=== Avalon Game — Team Voting ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3, 4].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\"}",
+      "done": false,
+      "intentions": "Player 4: Quest 1 team [0,3] succeeded with 0 fails, so both 0 and 3 are somewhat more trusted, though one evil could still have passed. As a Servant on Good, optimal play is to include myself plus the prior successful team to maximize chance of another success and signal consistency with the only positive evidence we have. This reveals I trust the successful team, which is generally helpful for Good.",
+      "tasks": "Win a game of Avalon through social deduction, strategic voting, and deception.",
+      "sub_tasks": null,
+      "summary": null,
+      "summary_state": null,
+      "idx": 3,
+      "raw_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 0,
+        "phase_name": "Team Selection",
+        "turn": 1,
+        "round": 0,
+        "leader": 4,
+        "team_size": 3,
+        "quest_results": [
+          true
+        ],
+        "quest_team": [
+          0,
+          3
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s))."
+        ],
+        "last_vote_result": {
+          "outcome": "Success",
+          "num_fails": 0
+        },
+        "active_players": [
+          4
+        ],
+        "expected_action": "Leader proposes a team of 3 (list of player IDs).",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_select",
+          "self": "role:Merlin(G)",
+          "progress": "quest:1/5 good:1 evil:0",
+          "critical": "leader:p4 team_sz:3 rd:1/5 team:[0, 3]",
+          "objective": "propose_team"
+        }
+      },
+      "raw_next_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 1,
+        "phase_name": "Team Voting",
+        "turn": 1,
+        "round": 0,
+        "leader": 0,
+        "team_size": 3,
+        "quest_results": [
+          true
+        ],
+        "quest_team": [
+          0,
+          3,
+          4
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]"
+        ],
+        "last_vote_result": null,
+        "active_players": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "expected_action": "All players vote: approve / reject.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_vote",
+          "self": "role:Merlin(G)",
+          "progress": "quest:1/5 good:1 evil:0",
+          "critical": "leader:p0 team_sz:3 rd:1/5 team:[0, 3, 4]",
+          "objective": "approve_or_reject_team"
+        }
+      },
+      "available_actions": {
+        "type": "team_selection",
+        "active_players": [
+          4
+        ],
+        "team_size": 3,
+        "player_ids": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "interface": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "num_players": 5
+      },
+      "action_type": "primitive"
+    },
+    {
+      "state": "{\"0\": \"=== Avalon Game — Team Voting ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3, 4].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\", \"1\": \"=== Avalon Game — Team Voting ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3, 4].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\", \"2\": \"=== Avalon Game — Team Voting ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3, 4].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\", \"3\": \"=== Avalon Game — Team Voting ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3, 4].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\", \"4\": \"=== Avalon Game — Team Voting ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3, 4].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\"}",
+      "action": "{\"0\": \"approve\", \"1\": \"reject\", \"2\": \"reject\", \"3\": \"approve\", \"4\": \"approve\"}",
+      "reward": 0.0,
+      "next_state": "{\"0\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nYou are on the quest team: [0, 3, 4].\\n\\nVote for the quest outcome: PASS (success) or FAIL (sabotage).\\nReply with: pass / fail\\n(As a Good player, you should vote pass.)\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\", \"1\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest team [0, 3, 4] is voting. You are not on the team.\\nWaiting for quest result.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\", \"2\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest team [0, 3, 4] is voting. You are not on the team.\\nWaiting for quest result.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\", \"3\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nYou are on the quest team: [0, 3, 4].\\n\\nVote for the quest outcome: PASS (success) or FAIL (sabotage).\\nReply with: pass / fail\\n(As a Good player, you should vote pass.)\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\", \"4\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nYou are on the quest team: [0, 3, 4].\\n\\nVote for the quest outcome: PASS (success) or FAIL (sabotage).\\nReply with: pass / fail\\n(As a Good player, you should vote pass.)\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\"}",
+      "done": false,
+      "intentions": "Player 0: I am Merlin and know players 1 and 2 are evil. The proposed team is 0,3,4, which contains none of the known evil players and keeps player 0 and 3 from the successful first quest while adding 4, who is currently unconfirmed but preferable to including known evil. In team voting, good should approve teams that exclude known evil, and approving does not reveal too much beyond supporting a strong good-leaning team.\nPlayer 1: I know 2 is my evil teammate, so 0/3/4 are all good. Last quest succeeded with 0 and 3, confirming no evil on that 2-person team. Current phase is team voting; as evil, I want to reject an all-good team that is likely to succeed and give Good a 2-0 lead. My vote reveals little since a reject on a strong-looking team can be rationalized, and stopping this team helps Evil more than blending in with an approve.\nPlayer 2: I am Evil Assassin with teammate 1. Team [0,3,4] contains no evil players, so if approved it is very likely to succeed and move Good to 2 successes. As Evil, optimal play is to reject clean good teams, especially after [0,3] already succeeded and these players will look trusted. Rejecting gives little extra info because evil commonly opposes strong good teams; approving would help Good too much.\nPlayer 3: Quest 1 team [0,3] succeeded, so 0 and 3 look somewhat good, though a single success doesn't clear 0 completely. Player 4 now adds themself to that successful pair; with little evidence against 4, this is a reasonable exploratory team for quest 2. As a Good Servant in team voting, I want to approve solid teams that include a prior success core rather than reject without cause. Approving reveals I'm comfortable building from a successful team, which is fine for Good.\nPlayer 4: Players 0 and 3 were on the successful first quest, which weakly suggests both could be good, though one evil could have passed. As a Servant, I want to approve teams that keep successful members and add myself for more good control. Team [0,3,4] is a strong low-risk follow-up from the prior success. Approving reveals little beyond consistency with backing a successful team, which helps good more than evil here.",
+      "tasks": "Win a game of Avalon through social deduction, strategic voting, and deception.",
+      "sub_tasks": null,
+      "summary": null,
+      "summary_state": null,
+      "idx": 4,
+      "raw_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 1,
+        "phase_name": "Team Voting",
+        "turn": 1,
+        "round": 0,
+        "leader": 0,
+        "team_size": 3,
+        "quest_results": [
+          true
+        ],
+        "quest_team": [
+          0,
+          3,
+          4
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]"
+        ],
+        "last_vote_result": null,
+        "active_players": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "expected_action": "All players vote: approve / reject.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_vote",
+          "self": "role:Merlin(G)",
+          "progress": "quest:1/5 good:1 evil:0",
+          "critical": "leader:p0 team_sz:3 rd:1/5 team:[0, 3, 4]",
+          "objective": "approve_or_reject_team"
+        }
+      },
+      "raw_next_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 2,
+        "phase_name": "Quest Voting",
+        "turn": 1,
+        "round": 0,
+        "leader": 0,
+        "team_size": 3,
+        "quest_results": [
+          true
+        ],
+        "quest_team": [
+          0,
+          3,
+          4
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject)."
+        ],
+        "last_vote_result": {
+          "outcome": "Approved",
+          "votes": {
+            "0": "approve",
+            "1": "reject",
+            "2": "reject",
+            "3": "approve",
+            "4": "approve"
+          }
+        },
+        "active_players": [
+          0,
+          3,
+          4
+        ],
+        "expected_action": "Quest team members vote: pass / fail.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "quest_vote",
+          "self": "role:Merlin(G)",
+          "progress": "quest:1/5 good:1 evil:0",
+          "critical": "leader:p0 team_sz:3 rd:1/5 team:[0, 3, 4]",
+          "objective": "pass_or_fail_quest"
+        }
+      },
+      "available_actions": {
+        "type": "team_vote",
+        "active_players": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "choices": [
+          "approve",
+          "reject"
+        ]
+      },
+      "interface": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "num_players": 5
+      },
+      "action_type": "primitive"
+    },
+    {
+      "state": "{\"0\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nYou are on the quest team: [0, 3, 4].\\n\\nVote for the quest outcome: PASS (success) or FAIL (sabotage).\\nReply with: pass / fail\\n(As a Good player, you should vote pass.)\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\", \"1\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest team [0, 3, 4] is voting. You are not on the team.\\nWaiting for quest result.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\", \"2\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest team [0, 3, 4] is voting. You are not on the team.\\nWaiting for quest result.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\", \"3\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nYou are on the quest team: [0, 3, 4].\\n\\nVote for the quest outcome: PASS (success) or FAIL (sabotage).\\nReply with: pass / fail\\n(As a Good player, you should vote pass.)\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\", \"4\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success] (Good 1 - Evil 0).\\nCurrent quest: 2 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nYou are on the quest team: [0, 3, 4].\\n\\nVote for the quest outcome: PASS (success) or FAIL (sabotage).\\nReply with: pass / fail\\n(As a Good player, you should vote pass.)\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\"}",
+      "action": "{\"0\": \"pass\", \"3\": \"pass\", \"4\": \"pass\"}",
+      "reward": 0.0,
+      "next_state": "{\"0\": \"=== Avalon Game — Team Selection ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 0.\\nTeam size required: 2 players.\\n\\nYou are the quest leader. Propose a team of 2 players.\\nReply with 2 player IDs (0 to 4), e.g.: \\\"0, 2, 3\\\"\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"1\": \"=== Avalon Game — Team Selection ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 0.\\nTeam size required: 2 players.\\n\\nWaiting for Player 0 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"2\": \"=== Avalon Game — Team Selection ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 0.\\nTeam size required: 2 players.\\n\\nWaiting for Player 0 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"3\": \"=== Avalon Game — Team Selection ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 0.\\nTeam size required: 2 players.\\n\\nWaiting for Player 0 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"4\": \"=== Avalon Game — Team Selection ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 0.\\nTeam size required: 2 players.\\n\\nWaiting for Player 0 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\"}",
+      "done": false,
+      "intentions": "Player 0: I am Merlin and know players 1 and 2 are evil. As a good player on the quest team during quest voting, the optimal play is always to support the mission with pass. Failing would directly harm good and reveal impossible behavior for my alignment.\nPlayer 3: I am a Good Servant on the quest team, so I should always vote pass. Prior info: quest 1 team [0,3] succeeded with 0 fails, which weakly suggests 0 and I are good; players 1 and 2 rejected the current team while 4 approved and is on it, but that's not enough to conclude roles. In quest voting, as Good, failing would only hurt my team and create false information. Passing reveals consistency with being Good and preserves the successful momentum.\nPlayer 4: I am Good Servant on the quest team during Quest Voting. Good players should always submit pass. The prior quest with [0,3] succeeded, which gives slight positive evidence on 0 and 3 but not certainty. My action should reveal nothing harmful and helps Good by ensuring no sabotage from my seat.",
+      "tasks": "Win a game of Avalon through social deduction, strategic voting, and deception.",
+      "sub_tasks": null,
+      "summary": null,
+      "summary_state": null,
+      "idx": 5,
+      "raw_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 2,
+        "phase_name": "Quest Voting",
+        "turn": 1,
+        "round": 0,
+        "leader": 0,
+        "team_size": 3,
+        "quest_results": [
+          true
+        ],
+        "quest_team": [
+          0,
+          3,
+          4
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject)."
+        ],
+        "last_vote_result": {
+          "outcome": "Approved",
+          "votes": {
+            "0": "approve",
+            "1": "reject",
+            "2": "reject",
+            "3": "approve",
+            "4": "approve"
+          }
+        },
+        "active_players": [
+          0,
+          3,
+          4
+        ],
+        "expected_action": "Quest team members vote: pass / fail.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "quest_vote",
+          "self": "role:Merlin(G)",
+          "progress": "quest:1/5 good:1 evil:0",
+          "critical": "leader:p0 team_sz:3 rd:1/5 team:[0, 3, 4]",
+          "objective": "pass_or_fail_quest"
+        }
+      },
+      "raw_next_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 0,
+        "phase_name": "Team Selection",
+        "turn": 2,
+        "round": 0,
+        "leader": 0,
+        "team_size": 2,
+        "quest_results": [
+          true,
+          true
+        ],
+        "quest_team": [
+          0,
+          3,
+          4
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s))."
+        ],
+        "last_vote_result": {
+          "outcome": "Success",
+          "num_fails": 0
+        },
+        "active_players": [
+          0
+        ],
+        "expected_action": "Leader proposes a team of 2 (list of player IDs).",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_select",
+          "self": "role:Merlin(G)",
+          "progress": "quest:2/5 good:2 evil:0",
+          "critical": "leader:p0 team_sz:2 rd:1/5 team:[0, 3, 4]",
+          "objective": "propose_team"
+        }
+      },
+      "available_actions": {
+        "type": "quest_vote",
+        "active_players": [
+          0,
+          3,
+          4
+        ],
+        "choices": [
+          "pass",
+          "fail"
+        ]
+      },
+      "interface": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "num_players": 5
+      },
+      "action_type": "primitive"
+    },
+    {
+      "state": "{\"0\": \"=== Avalon Game — Team Selection ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 0.\\nTeam size required: 2 players.\\n\\nYou are the quest leader. Propose a team of 2 players.\\nReply with 2 player IDs (0 to 4), e.g.: \\\"0, 2, 3\\\"\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"1\": \"=== Avalon Game — Team Selection ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 0.\\nTeam size required: 2 players.\\n\\nWaiting for Player 0 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"2\": \"=== Avalon Game — Team Selection ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 0.\\nTeam size required: 2 players.\\n\\nWaiting for Player 0 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"3\": \"=== Avalon Game — Team Selection ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 0.\\nTeam size required: 2 players.\\n\\nWaiting for Player 0 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"4\": \"=== Avalon Game — Team Selection ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 0.\\nTeam size required: 2 players.\\n\\nWaiting for Player 0 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\"}",
+      "action": "{\"0\": \"0, 3\"}",
+      "reward": 0.0,
+      "next_state": "{\"0\": \"=== Avalon Game — Team Voting ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\", \"1\": \"=== Avalon Game — Team Voting ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\", \"2\": \"=== Avalon Game — Team Voting ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\", \"3\": \"=== Avalon Game — Team Voting ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\", \"4\": \"=== Avalon Game — Team Voting ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\"}",
+      "done": false,
+      "intentions": "Player 0: I am Merlin and know 1 and 2 are evil; 3 and 4 are therefore the safest picks besides me. Both prior successful quests included 0 and 3, and quest 2 also included 4, so 0 and 3 is the strongest confirmed-good-looking team. As leader on quest 3 with team size 2, I should propose an all-good team while avoiding making my Merlin knowledge too obvious. Repeating 0 and 3 is fully consistent with public results and minimizes risk.",
+      "tasks": "Win a game of Avalon through social deduction, strategic voting, and deception.",
+      "sub_tasks": null,
+      "summary": null,
+      "summary_state": null,
+      "idx": 6,
+      "raw_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 0,
+        "phase_name": "Team Selection",
+        "turn": 2,
+        "round": 0,
+        "leader": 0,
+        "team_size": 2,
+        "quest_results": [
+          true,
+          true
+        ],
+        "quest_team": [
+          0,
+          3,
+          4
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s))."
+        ],
+        "last_vote_result": {
+          "outcome": "Success",
+          "num_fails": 0
+        },
+        "active_players": [
+          0
+        ],
+        "expected_action": "Leader proposes a team of 2 (list of player IDs).",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_select",
+          "self": "role:Merlin(G)",
+          "progress": "quest:2/5 good:2 evil:0",
+          "critical": "leader:p0 team_sz:2 rd:1/5 team:[0, 3, 4]",
+          "objective": "propose_team"
+        }
+      },
+      "raw_next_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 1,
+        "phase_name": "Team Voting",
+        "turn": 2,
+        "round": 0,
+        "leader": 1,
+        "team_size": 2,
+        "quest_results": [
+          true,
+          true
+        ],
+        "quest_team": [
+          0,
+          3
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 0 proposed team: [0, 3]"
+        ],
+        "last_vote_result": null,
+        "active_players": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "expected_action": "All players vote: approve / reject.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_vote",
+          "self": "role:Merlin(G)",
+          "progress": "quest:2/5 good:2 evil:0",
+          "critical": "leader:p1 team_sz:2 rd:1/5 team:[0, 3]",
+          "objective": "approve_or_reject_team"
+        }
+      },
+      "available_actions": {
+        "type": "team_selection",
+        "active_players": [
+          0
+        ],
+        "team_size": 2,
+        "player_ids": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "interface": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "num_players": 5
+      },
+      "action_type": "primitive"
+    },
+    {
+      "state": "{\"0\": \"=== Avalon Game — Team Voting ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\", \"1\": \"=== Avalon Game — Team Voting ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\", \"2\": \"=== Avalon Game — Team Voting ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\", \"3\": \"=== Avalon Game — Team Voting ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\", \"4\": \"=== Avalon Game — Team Voting ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\"}",
+      "action": "{\"0\": \"approve\", \"1\": \"reject\", \"2\": \"reject\", \"3\": \"approve\", \"4\": \"reject\"}",
+      "reward": 0.0,
+      "next_state": "{\"0\": \"=== Avalon Game — Team Selection ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 1.\\nTeam size required: 2 players.\\n\\nWaiting for Player 1 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'reject'}.\", \"1\": \"=== Avalon Game — Team Selection ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 1.\\nTeam size required: 2 players.\\n\\nYou are the quest leader. Propose a team of 2 players.\\nReply with 2 player IDs (0 to 4), e.g.: \\\"0, 2, 3\\\"\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'reject'}.\", \"2\": \"=== Avalon Game — Team Selection ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 1.\\nTeam size required: 2 players.\\n\\nWaiting for Player 1 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'reject'}.\", \"3\": \"=== Avalon Game — Team Selection ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 1.\\nTeam size required: 2 players.\\n\\nWaiting for Player 1 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'reject'}.\", \"4\": \"=== Avalon Game — Team Selection ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 1.\\nTeam size required: 2 players.\\n\\nWaiting for Player 1 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'reject'}.\"}",
+      "done": false,
+      "intentions": "Player 0: I know players 1 and 2 are Evil, while 3 and 4 are not seen as Evil from Merlin perspective. Both prior successful teams included 0 and 3, with [0,3,4] also succeeding, so [0,3] is a very strong clean team for quest 3. As Good Merlin, optimal play is to approve a highly trusted team that excludes known Evil. Approving reveals little beyond consistency with wanting proven-good teams, and helps secure a likely third success.\nPlayer 1: I know player 2 is my evil teammate, and neither 0 nor 3 is on my evil team, so this proposed team [0,3] is all-good from my perspective and very likely to succeed again. As evil on quest 3 with good already up 2-0, the optimal play is to stop a clean good team from being approved if possible, so I should vote reject. My reject gives little away because some good players should also be suspicious of a repeated 2-person core being proposed for quest 3; approving would help good lock in a likely success.\nPlayer 2: I know player 1 is my evil teammate, so this proposed team [0,3] contains no evil players and would likely succeed again, moving Good to 3-0. With two clean successes already involving 0 and 3 repeatedly, they look trusted by the table; approving this only strengthens Good. As evil in team voting, optimal play is to reject any all-good team when possible, especially on quest 3. My reject gives little extra information since evil can plausibly object to repeated exclusion or to an uninformative 2-person team.\nPlayer 3: I’m Good and only know public info. Teams [0,3] and [0,3,4] both succeeded with 0 fails, so 0, 3, and likely 4 look relatively good; 1 and 2 are less tested. Current phase is team voting on quest 3. Proposed team [0,3] repeats two players from prior successes but omits a third member on a 3-player quest, which is invalid/suspicious under normal Avalon structure, but given the prompt asks only approve/reject, the safest public-info choice is to approve a team centered on proven successful players. Approving reveals consistency with trusting successful teams and does not significantly hurt Good.\nPlayer 4: Two successful quests give strongest trust to players 0, 3, and me (4), since [0,3] succeeded and [0,3,4] also succeeded with zero fails. As a Good Servant, optimal play is to reject this 2-player team for quest 3 because quest 3 should have 3 members; the proposed [0,3] omits me from the fully cleared trio and is not a valid/optimal continuation from the available trusted pool. Rejecting signals preference for the all-success core [0,3,4] and avoids endorsing a narrower team when we already have a better proven option.",
+      "tasks": "Win a game of Avalon through social deduction, strategic voting, and deception.",
+      "sub_tasks": null,
+      "summary": null,
+      "summary_state": null,
+      "idx": 7,
+      "raw_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 1,
+        "phase_name": "Team Voting",
+        "turn": 2,
+        "round": 0,
+        "leader": 1,
+        "team_size": 2,
+        "quest_results": [
+          true,
+          true
+        ],
+        "quest_team": [
+          0,
+          3
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 0 proposed team: [0, 3]"
+        ],
+        "last_vote_result": null,
+        "active_players": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "expected_action": "All players vote: approve / reject.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_vote",
+          "self": "role:Merlin(G)",
+          "progress": "quest:2/5 good:2 evil:0",
+          "critical": "leader:p1 team_sz:2 rd:1/5 team:[0, 3]",
+          "objective": "approve_or_reject_team"
+        }
+      },
+      "raw_next_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 0,
+        "phase_name": "Team Selection",
+        "turn": 2,
+        "round": 1,
+        "leader": 1,
+        "team_size": 2,
+        "quest_results": [
+          true,
+          true
+        ],
+        "quest_team": [
+          0,
+          3
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 0 proposed team: [0, 3]",
+          "Team vote: Rejected (2 approve, 3 reject)."
+        ],
+        "last_vote_result": {
+          "outcome": "Rejected",
+          "votes": {
+            "0": "approve",
+            "1": "reject",
+            "2": "reject",
+            "3": "approve",
+            "4": "reject"
+          }
+        },
+        "active_players": [
+          1
+        ],
+        "expected_action": "Leader proposes a team of 2 (list of player IDs).",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_select",
+          "self": "role:Merlin(G)",
+          "progress": "quest:2/5 good:2 evil:0",
+          "critical": "leader:p1 team_sz:2 rd:2/5 team:[0, 3]",
+          "objective": "propose_team"
+        }
+      },
+      "available_actions": {
+        "type": "team_vote",
+        "active_players": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "choices": [
+          "approve",
+          "reject"
+        ]
+      },
+      "interface": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "num_players": 5
+      },
+      "action_type": "primitive"
+    },
+    {
+      "state": "{\"0\": \"=== Avalon Game — Team Selection ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 1.\\nTeam size required: 2 players.\\n\\nWaiting for Player 1 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'reject'}.\", \"1\": \"=== Avalon Game — Team Selection ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 1.\\nTeam size required: 2 players.\\n\\nYou are the quest leader. Propose a team of 2 players.\\nReply with 2 player IDs (0 to 4), e.g.: \\\"0, 2, 3\\\"\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'reject'}.\", \"2\": \"=== Avalon Game — Team Selection ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 1.\\nTeam size required: 2 players.\\n\\nWaiting for Player 1 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'reject'}.\", \"3\": \"=== Avalon Game — Team Selection ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 1.\\nTeam size required: 2 players.\\n\\nWaiting for Player 1 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'reject'}.\", \"4\": \"=== Avalon Game — Team Selection ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 1.\\nTeam size required: 2 players.\\n\\nWaiting for Player 1 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'reject'}.\"}",
+      "action": "{\"1\": \"0, 2\"}",
+      "reward": 0.0,
+      "next_state": "{\"0\": \"=== Avalon Game — Team Voting ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 2].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\", \"1\": \"=== Avalon Game — Team Voting ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 2].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\", \"2\": \"=== Avalon Game — Team Voting ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 2].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\", \"3\": \"=== Avalon Game — Team Voting ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 2].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\", \"4\": \"=== Avalon Game — Team Voting ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 2].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\"}",
+      "done": false,
+      "intentions": "Player 1: I am Minion with teammate 2. Quests 1 and 2 succeeded with teams [0,3] and [0,3,4], so at least one of 0/3/4 is likely good; 2 has avoided suspicion so far. As evil leader on quest 3, I want to place at least one evil on the team while making the proposal look plausible enough to pass. Repeating trusted player 0 with hidden evil 2 is a strong compromise: 0 has quest success credibility, and 2 can sabotage if approved. This reveals little beyond mild suspicion on 2 if the quest fails, but evil needs a fail now to get back into the game.",
+      "tasks": "Win a game of Avalon through social deduction, strategic voting, and deception.",
+      "sub_tasks": null,
+      "summary": null,
+      "summary_state": null,
+      "idx": 8,
+      "raw_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 0,
+        "phase_name": "Team Selection",
+        "turn": 2,
+        "round": 1,
+        "leader": 1,
+        "team_size": 2,
+        "quest_results": [
+          true,
+          true
+        ],
+        "quest_team": [
+          0,
+          3
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 0 proposed team: [0, 3]",
+          "Team vote: Rejected (2 approve, 3 reject)."
+        ],
+        "last_vote_result": {
+          "outcome": "Rejected",
+          "votes": {
+            "0": "approve",
+            "1": "reject",
+            "2": "reject",
+            "3": "approve",
+            "4": "reject"
+          }
+        },
+        "active_players": [
+          1
+        ],
+        "expected_action": "Leader proposes a team of 2 (list of player IDs).",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_select",
+          "self": "role:Merlin(G)",
+          "progress": "quest:2/5 good:2 evil:0",
+          "critical": "leader:p1 team_sz:2 rd:2/5 team:[0, 3]",
+          "objective": "propose_team"
+        }
+      },
+      "raw_next_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 1,
+        "phase_name": "Team Voting",
+        "turn": 2,
+        "round": 1,
+        "leader": 2,
+        "team_size": 2,
+        "quest_results": [
+          true,
+          true
+        ],
+        "quest_team": [
+          0,
+          2
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 0 proposed team: [0, 3]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 1 proposed team: [0, 2]"
+        ],
+        "last_vote_result": null,
+        "active_players": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "expected_action": "All players vote: approve / reject.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_vote",
+          "self": "role:Merlin(G)",
+          "progress": "quest:2/5 good:2 evil:0",
+          "critical": "leader:p2 team_sz:2 rd:2/5 team:[0, 2]",
+          "objective": "approve_or_reject_team"
+        }
+      },
+      "available_actions": {
+        "type": "team_selection",
+        "active_players": [
+          1
+        ],
+        "team_size": 2,
+        "player_ids": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "interface": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "num_players": 5
+      },
+      "action_type": "primitive"
+    },
+    {
+      "state": "{\"0\": \"=== Avalon Game — Team Voting ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 2].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\", \"1\": \"=== Avalon Game — Team Voting ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 2].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\", \"2\": \"=== Avalon Game — Team Voting ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 2].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\", \"3\": \"=== Avalon Game — Team Voting ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 2].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\", \"4\": \"=== Avalon Game — Team Voting ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 2 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 2].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\"}",
+      "action": "{\"0\": \"reject\", \"1\": \"approve\", \"2\": \"approve\", \"3\": \"reject\", \"4\": \"reject\"}",
+      "reward": 0.0,
+      "next_state": "{\"0\": \"=== Avalon Game — Team Selection ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 2.\\nTeam size required: 2 players.\\n\\nWaiting for Player 2 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'reject', 1: 'approve', 2: 'approve', 3: 'reject', 4: 'reject'}.\", \"1\": \"=== Avalon Game — Team Selection ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 2.\\nTeam size required: 2 players.\\n\\nWaiting for Player 2 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'reject', 1: 'approve', 2: 'approve', 3: 'reject', 4: 'reject'}.\", \"2\": \"=== Avalon Game — Team Selection ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 2.\\nTeam size required: 2 players.\\n\\nYou are the quest leader. Propose a team of 2 players.\\nReply with 2 player IDs (0 to 4), e.g.: \\\"0, 2, 3\\\"\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'reject', 1: 'approve', 2: 'approve', 3: 'reject', 4: 'reject'}.\", \"3\": \"=== Avalon Game — Team Selection ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 2.\\nTeam size required: 2 players.\\n\\nWaiting for Player 2 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'reject', 1: 'approve', 2: 'approve', 3: 'reject', 4: 'reject'}.\", \"4\": \"=== Avalon Game — Team Selection ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 2.\\nTeam size required: 2 players.\\n\\nWaiting for Player 2 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'reject', 1: 'approve', 2: 'approve', 3: 'reject', 4: 'reject'}.\"}",
+      "done": false,
+      "intentions": "Player 0: I am Merlin and know player 2 is evil. The proposed team [0,2] includes a known evil, so as Good I should reject to avoid handing Evil a fail opportunity on quest 3. Rejecting also aligns with prior successful info from teams [0,3] and [0,3,4], and does not reveal extra information beyond normal skepticism of a bad team.\nPlayer 1: I know player 2 is evil with me. Team [0,2] includes one evil and excludes the highly trusted pair around 3/4; previous successful teams [0,3] and [0,3,4] make 0 and 3 look good, and likely 4 as well. In team voting as evil down 0-2, the optimal play is to approve a team containing my teammate so evil has a chance to fail quest 3 and avoid going to match point for good. Approving also looks consistent with being leader of this proposal and does not reveal extra information beyond supporting a plausible team.\nPlayer 2: I know player 1 is evil with me, and this proposed team [0,2] contains exactly one evil (me). Two prior quests succeeded with teams [0,3] and [0,3,4], so 0/3/4 look relatively good; player 1 was not on those teams. As evil on quest 3, we need to start creating failures, but in voting I should consider whether approving helps us. Approving puts me on a 2-person team where I can fail and make the game 2-1, which is strong for evil. My vote reveals little because evil can plausibly approve a team including themselves, and good player 1 as proposer may also be read in multiple ways. Best play is to approve and then likely fail if the team goes.\nPlayer 3: Two successful quests involved player 0 and me (3), so both 0 and 3 look relatively good. Quest 2 with team 0,3,4 also succeeded, which mildly clears 4 or suggests evils avoided failing, but 2 and 1 are less tested. On quest 3 with a 2-person team, a single fail would lose it, so as Good I should prefer the strongest-cleared pair. Proposed team 0,2 drops me for largely untested 2, which is riskier than necessary after two clean successes with 0,3. Rejecting signals preference for proven-good teams and avoids giving an unvetted player a chance to sabotage.\nPlayer 4: Two successful quests so far: [0,3] succeeded and [0,3,4] succeeded with no fails, which strongly suggests 0,3,4 are good. Player 2 is less confirmed, and swapping out confirmed 3 for untested 2 on quest 3 adds unnecessary risk when Good is up 2-0. As a Servant, optimal play is to reject teams that exclude stronger confirmed goods in favor of less-cleared players. My vote signals preference for consistency with proven success and may help avoid giving evil an opening.",
+      "tasks": "Win a game of Avalon through social deduction, strategic voting, and deception.",
+      "sub_tasks": null,
+      "summary": null,
+      "summary_state": null,
+      "idx": 9,
+      "raw_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 1,
+        "phase_name": "Team Voting",
+        "turn": 2,
+        "round": 1,
+        "leader": 2,
+        "team_size": 2,
+        "quest_results": [
+          true,
+          true
+        ],
+        "quest_team": [
+          0,
+          2
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 0 proposed team: [0, 3]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 1 proposed team: [0, 2]"
+        ],
+        "last_vote_result": null,
+        "active_players": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "expected_action": "All players vote: approve / reject.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_vote",
+          "self": "role:Merlin(G)",
+          "progress": "quest:2/5 good:2 evil:0",
+          "critical": "leader:p2 team_sz:2 rd:2/5 team:[0, 2]",
+          "objective": "approve_or_reject_team"
+        }
+      },
+      "raw_next_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 0,
+        "phase_name": "Team Selection",
+        "turn": 2,
+        "round": 2,
+        "leader": 2,
+        "team_size": 2,
+        "quest_results": [
+          true,
+          true
+        ],
+        "quest_team": [
+          0,
+          2
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 0 proposed team: [0, 3]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 1 proposed team: [0, 2]",
+          "Team vote: Rejected (2 approve, 3 reject)."
+        ],
+        "last_vote_result": {
+          "outcome": "Rejected",
+          "votes": {
+            "0": "reject",
+            "1": "approve",
+            "2": "approve",
+            "3": "reject",
+            "4": "reject"
+          }
+        },
+        "active_players": [
+          2
+        ],
+        "expected_action": "Leader proposes a team of 2 (list of player IDs).",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_select",
+          "self": "role:Merlin(G)",
+          "progress": "quest:2/5 good:2 evil:0",
+          "critical": "leader:p2 team_sz:2 rd:3/5 team:[0, 2]",
+          "objective": "propose_team"
+        }
+      },
+      "available_actions": {
+        "type": "team_vote",
+        "active_players": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "choices": [
+          "approve",
+          "reject"
+        ]
+      },
+      "interface": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "num_players": 5
+      },
+      "action_type": "primitive"
+    },
+    {
+      "state": "{\"0\": \"=== Avalon Game — Team Selection ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 2.\\nTeam size required: 2 players.\\n\\nWaiting for Player 2 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'reject', 1: 'approve', 2: 'approve', 3: 'reject', 4: 'reject'}.\", \"1\": \"=== Avalon Game — Team Selection ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 2.\\nTeam size required: 2 players.\\n\\nWaiting for Player 2 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'reject', 1: 'approve', 2: 'approve', 3: 'reject', 4: 'reject'}.\", \"2\": \"=== Avalon Game — Team Selection ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 2.\\nTeam size required: 2 players.\\n\\nYou are the quest leader. Propose a team of 2 players.\\nReply with 2 player IDs (0 to 4), e.g.: \\\"0, 2, 3\\\"\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'reject', 1: 'approve', 2: 'approve', 3: 'reject', 4: 'reject'}.\", \"3\": \"=== Avalon Game — Team Selection ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 2.\\nTeam size required: 2 players.\\n\\nWaiting for Player 2 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'reject', 1: 'approve', 2: 'approve', 3: 'reject', 4: 'reject'}.\", \"4\": \"=== Avalon Game — Team Selection ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest leader: Player 2.\\nTeam size required: 2 players.\\n\\nWaiting for Player 2 (quest leader) to propose a team of 2.\\nYou may state your opinion or remain silent.\\n\\n--- Recent Messages ---\\nPlayer 3 proposed team: [0, 3]\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\n\\nLast vote result: Rejected.\\nVotes: {0: 'reject', 1: 'approve', 2: 'approve', 3: 'reject', 4: 'reject'}.\"}",
+      "action": "{\"2\": \"0, 3\"}",
+      "reward": 0.0,
+      "next_state": "{\"0\": \"=== Avalon Game — Team Voting ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\", \"1\": \"=== Avalon Game — Team Voting ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\", \"2\": \"=== Avalon Game — Team Voting ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\", \"3\": \"=== Avalon Game — Team Voting ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\", \"4\": \"=== Avalon Game — Team Voting ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\"}",
+      "done": false,
+      "intentions": "Player 2: I know player 1 is my evil teammate. Quests 1 and 2 succeeded with teams [0,3] and [0,3,4], so 0/3/4 are being read as good by the table; at least one of them is likely Merlin/Percival candidates later. As evil leader on quest 3, optimal play is to propose a team that can plausibly pass while advancing evil chances. Since both recent suspiciously rejected teams included me or my teammate, the table currently dislikes 1 and 2. A team of 0 and 3 is the most approved-looking team and excludes evil, helping us preserve cover and push the game toward later assassination. Proposing 1 with me likely gets rejected. Information-wise, mirroring the trusted team makes me look cooperative and avoids outing the evil pair further.",
+      "tasks": "Win a game of Avalon through social deduction, strategic voting, and deception.",
+      "sub_tasks": null,
+      "summary": null,
+      "summary_state": null,
+      "idx": 10,
+      "raw_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 0,
+        "phase_name": "Team Selection",
+        "turn": 2,
+        "round": 2,
+        "leader": 2,
+        "team_size": 2,
+        "quest_results": [
+          true,
+          true
+        ],
+        "quest_team": [
+          0,
+          2
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 0 proposed team: [0, 3]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 1 proposed team: [0, 2]",
+          "Team vote: Rejected (2 approve, 3 reject)."
+        ],
+        "last_vote_result": {
+          "outcome": "Rejected",
+          "votes": {
+            "0": "reject",
+            "1": "approve",
+            "2": "approve",
+            "3": "reject",
+            "4": "reject"
+          }
+        },
+        "active_players": [
+          2
+        ],
+        "expected_action": "Leader proposes a team of 2 (list of player IDs).",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_select",
+          "self": "role:Merlin(G)",
+          "progress": "quest:2/5 good:2 evil:0",
+          "critical": "leader:p2 team_sz:2 rd:3/5 team:[0, 2]",
+          "objective": "propose_team"
+        }
+      },
+      "raw_next_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 1,
+        "phase_name": "Team Voting",
+        "turn": 2,
+        "round": 2,
+        "leader": 3,
+        "team_size": 2,
+        "quest_results": [
+          true,
+          true
+        ],
+        "quest_team": [
+          0,
+          3
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 0 proposed team: [0, 3]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 1 proposed team: [0, 2]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 2 proposed team: [0, 3]"
+        ],
+        "last_vote_result": null,
+        "active_players": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "expected_action": "All players vote: approve / reject.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_vote",
+          "self": "role:Merlin(G)",
+          "progress": "quest:2/5 good:2 evil:0",
+          "critical": "leader:p3 team_sz:2 rd:3/5 team:[0, 3]",
+          "objective": "approve_or_reject_team"
+        }
+      },
+      "available_actions": {
+        "type": "team_selection",
+        "active_players": [
+          2
+        ],
+        "team_size": 2,
+        "player_ids": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "interface": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "num_players": 5
+      },
+      "action_type": "primitive"
+    },
+    {
+      "state": "{\"0\": \"=== Avalon Game — Team Voting ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\", \"1\": \"=== Avalon Game — Team Voting ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\", \"2\": \"=== Avalon Game — Team Voting ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\", \"3\": \"=== Avalon Game — Team Voting ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\", \"4\": \"=== Avalon Game — Team Voting ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 3 of 5 (if 5 rejections, team auto-passes).\\n\\nProposed team: [0, 3].\\n\\nVote to APPROVE or REJECT this team.\\nReply with: approve / reject\\n\\n--- Recent Messages ---\\nTeam vote: Approved (4 approve, 1 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\"}",
+      "action": "{\"0\": \"approve\", \"1\": \"reject\", \"2\": \"reject\", \"3\": \"approve\", \"4\": \"approve\"}",
+      "reward": 0.0,
+      "next_state": "{\"0\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nYou are on the quest team: [0, 3].\\n\\nVote for the quest outcome: PASS (success) or FAIL (sabotage).\\nReply with: pass / fail\\n(As a Good player, you should vote pass.)\\n\\n--- Recent Messages ---\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\", \"1\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest team [0, 3] is voting. You are not on the team.\\nWaiting for quest result.\\n\\n--- Recent Messages ---\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\", \"2\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest team [0, 3] is voting. You are not on the team.\\nWaiting for quest result.\\n\\n--- Recent Messages ---\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\", \"3\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nYou are on the quest team: [0, 3].\\n\\nVote for the quest outcome: PASS (success) or FAIL (sabotage).\\nReply with: pass / fail\\n(As a Good player, you should vote pass.)\\n\\n--- Recent Messages ---\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\", \"4\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest team [0, 3] is voting. You are not on the team.\\nWaiting for quest result.\\n\\n--- Recent Messages ---\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\"}",
+      "done": false,
+      "intentions": "Player 0: I am Merlin and know 1 and 2 are Evil. The proposed team [0,3] excludes known Evil players and matches the strongest Good core from two successful quests: [0,3,4] succeeded and [0,3] succeeded. In team voting, approving a clean team that can win quest 3 is optimal for Good. My vote reveals little since both Good and Evil may vote variably, but approving helps secure a likely successful mission and potential immediate 3-0 lead.\nPlayer 1: I know player 2 is evil with me, while 0/3/4 are good or Merlin/Percival. Both successful quests used teams with 0 and 3, so this proposed team [0,3] looks highly good-coded. As evil in team voting on quest 3, I want to prevent a likely-successful team from going. My vote reveals little because rejecting a 2-person team after two successes is plausible, and stopping this team helps evil more than blending in with an approve.\nPlayer 2: I know Player 1 is my evil teammate. Quests 1 and 2 both succeeded with teams [0,3,4] and [0,3], so 0 and 3 look strongly good-coded, though either could be evil avoiding suspicion. This current phase is team voting on my proposed team [0,3]. As evil and down 0-2, I want quest 3 to fail eventually, but this team excludes both evils, so if approved it almost certainly succeeds and gives Good the game. Rejecting is optimal. My vote against my own team is somewhat suspicious, but preventing an all-good team from going is more important, and mixed voting histories can be rationalized.\nPlayer 3: I’m Good with limited info. Team [0,3] has already succeeded twice with zero fails, making both 0 and 3 the strongest trusted pair available. On quest 3 in 5-player Avalon, sending the proven successful pair is optimal for Good and gives Evil little room to hide. Approving reveals I value established success over speculative reads, which helps my team more than it helps Evil.\nPlayer 4: I’m Good with only two successful quests so far. Team [0,3,4] succeeded with no fails, so 0 and 3 look relatively trustworthy; team [0,3] also succeeded. This proposed team [0,3] repeats the exact successful duo from quest 2, which is strong evidence for approval. As a Servant, optimal play is to approve highly proven teams and avoid introducing uncertainty. Approving reveals I favor consistency with successful information, which helps Good more than Evil here.",
+      "tasks": "Win a game of Avalon through social deduction, strategic voting, and deception.",
+      "sub_tasks": null,
+      "summary": null,
+      "summary_state": null,
+      "idx": 11,
+      "raw_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 1,
+        "phase_name": "Team Voting",
+        "turn": 2,
+        "round": 2,
+        "leader": 3,
+        "team_size": 2,
+        "quest_results": [
+          true,
+          true
+        ],
+        "quest_team": [
+          0,
+          3
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 0 proposed team: [0, 3]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 1 proposed team: [0, 2]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 2 proposed team: [0, 3]"
+        ],
+        "last_vote_result": null,
+        "active_players": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "expected_action": "All players vote: approve / reject.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "team_vote",
+          "self": "role:Merlin(G)",
+          "progress": "quest:2/5 good:2 evil:0",
+          "critical": "leader:p3 team_sz:2 rd:3/5 team:[0, 3]",
+          "objective": "approve_or_reject_team"
+        }
+      },
+      "raw_next_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 2,
+        "phase_name": "Quest Voting",
+        "turn": 2,
+        "round": 0,
+        "leader": 3,
+        "team_size": 2,
+        "quest_results": [
+          true,
+          true
+        ],
+        "quest_team": [
+          0,
+          3
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 0 proposed team: [0, 3]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 1 proposed team: [0, 2]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 2 proposed team: [0, 3]",
+          "Team vote: Approved (3 approve, 2 reject)."
+        ],
+        "last_vote_result": {
+          "outcome": "Approved",
+          "votes": {
+            "0": "approve",
+            "1": "reject",
+            "2": "reject",
+            "3": "approve",
+            "4": "approve"
+          }
+        },
+        "active_players": [
+          0,
+          3
+        ],
+        "expected_action": "Quest team members vote: pass / fail.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "quest_vote",
+          "self": "role:Merlin(G)",
+          "progress": "quest:2/5 good:2 evil:0",
+          "critical": "leader:p3 team_sz:2 rd:1/5 team:[0, 3]",
+          "objective": "pass_or_fail_quest"
+        }
+      },
+      "available_actions": {
+        "type": "team_vote",
+        "active_players": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "choices": [
+          "approve",
+          "reject"
+        ]
+      },
+      "interface": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "num_players": 5
+      },
+      "action_type": "primitive"
+    },
+    {
+      "state": "{\"0\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nYou are on the quest team: [0, 3].\\n\\nVote for the quest outcome: PASS (success) or FAIL (sabotage).\\nReply with: pass / fail\\n(As a Good player, you should vote pass.)\\n\\n--- Recent Messages ---\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\", \"1\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest team [0, 3] is voting. You are not on the team.\\nWaiting for quest result.\\n\\n--- Recent Messages ---\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\", \"2\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest team [0, 3] is voting. You are not on the team.\\nWaiting for quest result.\\n\\n--- Recent Messages ---\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\", \"3\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nYou are on the quest team: [0, 3].\\n\\nVote for the quest outcome: PASS (success) or FAIL (sabotage).\\nReply with: pass / fail\\n(As a Good player, you should vote pass.)\\n\\n--- Recent Messages ---\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\", \"4\": \"=== Avalon Game — Quest Voting ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success] (Good 2 - Evil 0).\\nCurrent quest: 3 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nQuest team [0, 3] is voting. You are not on the team.\\nWaiting for quest result.\\n\\n--- Recent Messages ---\\nQuest succeeded (0 fail vote(s)).\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\n\\nLast vote result: Approved.\\nVotes: {0: 'approve', 1: 'reject', 2: 'reject', 3: 'approve', 4: 'approve'}.\"}",
+      "action": "{\"0\": \"pass\", \"3\": \"pass\"}",
+      "reward": 0.0,
+      "next_state": "{\"0\": \"=== Avalon Game — Assassination ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success, Success, Success] (Good 3 - Evil 0).\\nCurrent quest: 4 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nGood has won 3 quests. The Assassin is choosing a target...\\nWaiting for assassination result.\\n\\n--- Recent Messages ---\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"1\": \"=== Avalon Game — Assassination ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success, Success, Success] (Good 3 - Evil 0).\\nCurrent quest: 4 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nGood has won 3 quests. The Assassin is choosing a target...\\nWaiting for assassination result.\\n\\n--- Recent Messages ---\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"2\": \"=== Avalon Game — Assassination ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success, Success, Success] (Good 3 - Evil 0).\\nCurrent quest: 4 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nGood has won 3 quests, but you are the Assassin!\\nChoose a player to assassinate (0 to 4). If you pick Merlin, Evil wins!\\nReply with a player ID, e.g.: \\\"2\\\"\\n\\n--- Recent Messages ---\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"3\": \"=== Avalon Game — Assassination ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success, Success] (Good 3 - Evil 0).\\nCurrent quest: 4 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nGood has won 3 quests. The Assassin is choosing a target...\\nWaiting for assassination result.\\n\\n--- Recent Messages ---\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"4\": \"=== Avalon Game — Assassination ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success, Success] (Good 3 - Evil 0).\\nCurrent quest: 4 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nGood has won 3 quests. The Assassin is choosing a target...\\nWaiting for assassination result.\\n\\n--- Recent Messages ---\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\"}",
+      "done": false,
+      "intentions": "Player 0: I am Merlin and know 1 and 2 are Evil. On quest voting as a Good player on team [0,3], optimal play is to support the quest with pass. Failing is impossible for Good and would only hurt my team; passing reveals no extra role information beyond normal quest outcome.\nPlayer 3: I am a Good Servant on the quest team during quest voting. Good players should always pass; failing would falsely sabotage our own team and reveal impossible behavior. The two prior quests succeeded, and this action should provide no harmful extra information beyond confirming standard Good play.",
+      "tasks": "Win a game of Avalon through social deduction, strategic voting, and deception.",
+      "sub_tasks": null,
+      "summary": null,
+      "summary_state": null,
+      "idx": 12,
+      "raw_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 2,
+        "phase_name": "Quest Voting",
+        "turn": 2,
+        "round": 0,
+        "leader": 3,
+        "team_size": 2,
+        "quest_results": [
+          true,
+          true
+        ],
+        "quest_team": [
+          0,
+          3
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 0 proposed team: [0, 3]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 1 proposed team: [0, 2]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 2 proposed team: [0, 3]",
+          "Team vote: Approved (3 approve, 2 reject)."
+        ],
+        "last_vote_result": {
+          "outcome": "Approved",
+          "votes": {
+            "0": "approve",
+            "1": "reject",
+            "2": "reject",
+            "3": "approve",
+            "4": "approve"
+          }
+        },
+        "active_players": [
+          0,
+          3
+        ],
+        "expected_action": "Quest team members vote: pass / fail.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "quest_vote",
+          "self": "role:Merlin(G)",
+          "progress": "quest:2/5 good:2 evil:0",
+          "critical": "leader:p3 team_sz:2 rd:1/5 team:[0, 3]",
+          "objective": "pass_or_fail_quest"
+        }
+      },
+      "raw_next_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 3,
+        "phase_name": "Assassination",
+        "turn": 3,
+        "round": 0,
+        "leader": 3,
+        "team_size": 3,
+        "quest_results": [
+          true,
+          true,
+          true
+        ],
+        "quest_team": [
+          0,
+          3
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 0 proposed team: [0, 3]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 1 proposed team: [0, 2]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 2 proposed team: [0, 3]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s))."
+        ],
+        "last_vote_result": {
+          "outcome": "Success",
+          "num_fails": 0
+        },
+        "active_players": [
+          2
+        ],
+        "expected_action": "Assassin chooses a target player ID.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "assassination",
+          "self": "role:Merlin(G)",
+          "progress": "quest:3/5 good:3 evil:0",
+          "critical": "leader:p3 team_sz:3 rd:1/5 team:[0, 3]",
+          "objective": "choose_assassination_target"
+        }
+      },
+      "available_actions": {
+        "type": "quest_vote",
+        "active_players": [
+          0,
+          3
+        ],
+        "choices": [
+          "pass",
+          "fail"
+        ]
+      },
+      "interface": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "num_players": 5
+      },
+      "action_type": "primitive"
+    },
+    {
+      "state": "{\"0\": \"=== Avalon Game — Assassination ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success, Success, Success] (Good 3 - Evil 0).\\nCurrent quest: 4 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nGood has won 3 quests. The Assassin is choosing a target...\\nWaiting for assassination result.\\n\\n--- Recent Messages ---\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"1\": \"=== Avalon Game — Assassination ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success, Success, Success] (Good 3 - Evil 0).\\nCurrent quest: 4 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nGood has won 3 quests. The Assassin is choosing a target...\\nWaiting for assassination result.\\n\\n--- Recent Messages ---\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"2\": \"=== Avalon Game — Assassination ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success, Success, Success] (Good 3 - Evil 0).\\nCurrent quest: 4 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nGood has won 3 quests, but you are the Assassin!\\nChoose a player to assassinate (0 to 4). If you pick Merlin, Evil wins!\\nReply with a player ID, e.g.: \\\"2\\\"\\n\\n--- Recent Messages ---\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"3\": \"=== Avalon Game — Assassination ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success, Success] (Good 3 - Evil 0).\\nCurrent quest: 4 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nGood has won 3 quests. The Assassin is choosing a target...\\nWaiting for assassination result.\\n\\n--- Recent Messages ---\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\", \"4\": \"=== Avalon Game — Assassination ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success, Success] (Good 3 - Evil 0).\\nCurrent quest: 4 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nGood has won 3 quests. The Assassin is choosing a target...\\nWaiting for assassination result.\\n\\n--- Recent Messages ---\\nPlayer 4 proposed team: [0, 3, 4]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\n\\nLast vote result: Success.\"}",
+      "action": "{\"2\": \"4\"}",
+      "reward": 3.0,
+      "next_state": "{\"0\": \"=== Avalon Game — Assassination ===\\nYou are Player 0 (of 5 players).\\nYour role: Merlin (Good side).\\nYou can see that players [1, 2] are Evil (Mordred is hidden from you).\\n\\nQuest results so far: [Success, Success, Success] (Good 3 - Evil 0).\\nCurrent quest: 4 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nGood has won 3 quests. The Assassin is choosing a target...\\nWaiting for assassination result.\\n\\n--- Recent Messages ---\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nAssassin (Player 2) targeted Player 4. Good wins!\\n\\nLast vote result: Success.\", \"1\": \"=== Avalon Game — Assassination ===\\nYou are Player 1 (of 5 players).\\nYour role: Minion (Evil side).\\nYour Evil teammates (visible to you): [2].\\n\\nQuest results so far: [Success, Success, Success] (Good 3 - Evil 0).\\nCurrent quest: 4 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nGood has won 3 quests. The Assassin is choosing a target...\\nWaiting for assassination result.\\n\\n--- Recent Messages ---\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nAssassin (Player 2) targeted Player 4. Good wins!\\n\\nLast vote result: Success.\", \"2\": \"=== Avalon Game — Assassination ===\\nYou are Player 2 (of 5 players).\\nYour role: Assassin (Evil side).\\nYour Evil teammates (visible to you): [1].\\n\\nQuest results so far: [Success, Success, Success] (Good 3 - Evil 0).\\nCurrent quest: 4 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nGood has won 3 quests, but you are the Assassin!\\nChoose a player to assassinate (0 to 4). If you pick Merlin, Evil wins!\\nReply with a player ID, e.g.: \\\"2\\\"\\n\\n--- Recent Messages ---\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nAssassin (Player 2) targeted Player 4. Good wins!\\n\\nLast vote result: Success.\", \"3\": \"=== Avalon Game — Assassination ===\\nYou are Player 3 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success, Success] (Good 3 - Evil 0).\\nCurrent quest: 4 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nGood has won 3 quests. The Assassin is choosing a target...\\nWaiting for assassination result.\\n\\n--- Recent Messages ---\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nAssassin (Player 2) targeted Player 4. Good wins!\\n\\nLast vote result: Success.\", \"4\": \"=== Avalon Game — Assassination ===\\nYou are Player 4 (of 5 players).\\nYour role: Servant (Good side).\\n\\nQuest results so far: [Success, Success, Success] (Good 3 - Evil 0).\\nCurrent quest: 4 of 5.\\nCurrent round: 1 of 5 (if 5 rejections, team auto-passes).\\n\\nGood has won 3 quests. The Assassin is choosing a target...\\nWaiting for assassination result.\\n\\n--- Recent Messages ---\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nPlayer 0 proposed team: [0, 3]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 1 proposed team: [0, 2]\\nTeam vote: Rejected (2 approve, 3 reject).\\nPlayer 2 proposed team: [0, 3]\\nTeam vote: Approved (3 approve, 2 reject).\\nQuest succeeded (0 fail vote(s)).\\nAssassin (Player 2) targeted Player 4. Good wins!\\n\\nLast vote result: Success.\"}",
+      "done": true,
+      "intentions": "Player 2: I am Evil Assassin with teammate 1. Since all three successful quests had 0 fails, Merlin likely pushed to exclude suspicious players 1 and me from teams. Successful teams prominently featured 0 and 3 together, with 4 on the 3-person success. Player 4 proposed [0,3,4], which looks like a likely all-good team; 4 may be Merlin or just a good player following reads. Player 0 repeatedly included 3, and player 2 (me) also proposed [0,3] to blend in. For assassination, optimal play is to target the player most likely to be Merlin based on steering good teams away from evil. Among 0,3,4, player 4 had the clearest confident correct proposal of the winning 3-person team, so 4 is the best Merlin guess. This reveals little now; maximizing evil win chance matters most.",
+      "tasks": "Win a game of Avalon through social deduction, strategic voting, and deception.",
+      "sub_tasks": null,
+      "summary": null,
+      "summary_state": null,
+      "idx": 13,
+      "raw_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 3,
+        "phase_name": "Assassination",
+        "turn": 3,
+        "round": 0,
+        "leader": 3,
+        "team_size": 3,
+        "quest_results": [
+          true,
+          true,
+          true
+        ],
+        "quest_team": [
+          0,
+          3
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": false,
+        "good_victory": null,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 0 proposed team: [0, 3]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 1 proposed team: [0, 2]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 2 proposed team: [0, 3]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s))."
+        ],
+        "last_vote_result": {
+          "outcome": "Success",
+          "num_fails": 0
+        },
+        "active_players": [
+          2
+        ],
+        "expected_action": "Assassin chooses a target player ID.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "assassination",
+          "self": "role:Merlin(G)",
+          "progress": "quest:3/5 good:3 evil:0",
+          "critical": "leader:p3 team_sz:3 rd:1/5 team:[0, 3]",
+          "objective": "choose_assassination_target"
+        }
+      },
+      "raw_next_state": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "phase": 3,
+        "phase_name": "Assassination",
+        "turn": 3,
+        "round": 0,
+        "leader": 3,
+        "team_size": 3,
+        "quest_results": [
+          true,
+          true,
+          true
+        ],
+        "quest_team": [
+          0,
+          3
+        ],
+        "roles": [
+          {
+            "player_id": 0,
+            "role_id": 0,
+            "role_name": "Merlin",
+            "is_good": true
+          },
+          {
+            "player_id": 1,
+            "role_id": 6,
+            "role_name": "Minion",
+            "is_good": false
+          },
+          {
+            "player_id": 2,
+            "role_id": 7,
+            "role_name": "Assassin",
+            "is_good": false
+          },
+          {
+            "player_id": 3,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          },
+          {
+            "player_id": 4,
+            "role_id": 5,
+            "role_name": "Servant",
+            "is_good": true
+          }
+        ],
+        "done": true,
+        "good_victory": true,
+        "num_players": 5,
+        "discussion_log": [
+          "Player 3 proposed team: [0, 3]",
+          "Team vote: Approved (4 approve, 1 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 4 proposed team: [0, 3, 4]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Player 0 proposed team: [0, 3]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 1 proposed team: [0, 2]",
+          "Team vote: Rejected (2 approve, 3 reject).",
+          "Player 2 proposed team: [0, 3]",
+          "Team vote: Approved (3 approve, 2 reject).",
+          "Quest succeeded (0 fail vote(s)).",
+          "Assassin (Player 2) targeted Player 4. Good wins!"
+        ],
+        "last_vote_result": {
+          "outcome": "Success",
+          "num_fails": 0
+        },
+        "active_players": [],
+        "expected_action": "Game over.",
+        "structured_state": {
+          "game": "avalon",
+          "phase": "assassination",
+          "self": "role:Merlin(G)",
+          "progress": "quest:3/5 good:3 evil:0",
+          "critical": "leader:p3 team_sz:3 rd:1/5 team:[0, 3]",
+          "objective": "choose_assassination_target"
+        }
+      },
+      "available_actions": {
+        "type": "assassination",
+        "active_players": [
+          2
+        ],
+        "targets": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "interface": {
+        "env_name": "avalon",
+        "game_name": "avalon",
+        "num_players": 5
+      },
+      "action_type": "primitive"
+    }
+  ],
+  "task": "Win a game of Avalon through social deduction, strategic voting, and deception.",
+  "outcome": true,
+  "summary": null,
+  "metadata": {
+    "game": "avalon",
+    "steps": 14,
+    "total_reward": 3.0,
+    "terminated": true,
+    "truncated": false,
+    "model": "gpt-5.4",
+    "agent_type": "gpt54_base",
+    "num_players": 5,
+    "seed": 45,
+    "good_victory": true,
+    "episode_index": 3
+  }
+}

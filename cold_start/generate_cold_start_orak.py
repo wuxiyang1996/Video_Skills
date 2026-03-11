@@ -43,8 +43,10 @@ import re
 import sys
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
+from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
@@ -378,14 +380,25 @@ def run_orak_episode(
         exp.raw_state = obs
         exp.raw_next_state = next_obs
         exp.available_actions = list(action_names)
-        exp.interface = {"env_name": "orak", "game_name": game_name}
+
+        step_info = next_info if isinstance(next_info, dict) else {}
+        exp.interface = {
+            "env_name": "orak",
+            "game_name": game_name,
+            "step": step_count,
+            "terminated": terminated,
+            "truncated": truncated,
+            "score": step_info.get("score"),
+            "cumulative_reward": total_reward,
+        }
         experiences.append(exp)
 
         if verbose:
             act_short = str(action)[:60]
             reason_short = (reasoning[:80] + "...") if reasoning and len(reasoning) > 80 else reasoning
+            term_label = "TERM" if terminated else ("TRUNC" if truncated else "")
             print(f"  step {step_count}: action={act_short}, reward={reward:.3f}, "
-                  f"cum={total_reward:.3f}, reason={reason_short}")
+                  f"cum={total_reward:.3f}, {term_label} reason={reason_short}")
 
         obs = next_obs
         step_count += 1
@@ -469,6 +482,32 @@ def save_game_summary(
     return summary
 
 
+def _save_episode_result(
+    episode: Episode,
+    stats: Dict[str, Any],
+    ep_idx: int,
+    game_dir: Path,
+    jsonl_path: Path,
+    episode_buffer: Episode_Buffer,
+    io_lock: Lock,
+    label: bool = False,
+    label_model: str = "gpt-5-mini",
+):
+    """Save a completed episode to disk (thread-safe)."""
+    if label and label_trajectory is not None:
+        episode = label_trajectory(episode, label_model)
+
+    ep_data = episode.to_dict()
+    ep_data["metadata"] = stats
+    ep_path = game_dir / f"episode_{ep_idx:03d}.json"
+
+    with io_lock:
+        episode_buffer.add_episode(episode)
+        with open(ep_path, "w", encoding="utf-8") as f:
+            json.dump(ep_data, f, indent=2, ensure_ascii=False, default=str)
+        save_episode_jsonl(episode, jsonl_path, stats)
+
+
 def run_game_rollouts(
     game_name: str,
     args: argparse.Namespace,
@@ -494,46 +533,94 @@ def run_game_rollouts(
     all_stats: List[Dict[str, Any]] = []
     t0 = time.time()
 
-    for ep_idx in range(start_idx, args.episodes):
+    workers = getattr(args, "workers", 1) or 1
+    io_lock = Lock()
+
+    if workers > 1:
+        # ── Parallel episode execution ──────────────────────────────────
         display = ORAK_COLD_START_GAMES[game_name]["display_name"]
-        print(f"\n  [{display}] Episode {ep_idx + 1}/{args.episodes}")
+        remaining = list(range(start_idx, args.episodes))
+        print(f"\n  Running {len(remaining)} episodes with {workers} parallel workers ...")
 
-        try:
-            episode, stats = run_orak_episode(
-                game_name=game_name,
-                model=args.model,
-                max_steps=max_steps,
-                temperature=args.temperature,
-                verbose=args.verbose,
-            )
-            stats["episode_index"] = ep_idx
-            print(f"    Steps: {stats['steps']}, Reward: {stats['total_reward']:.3f}")
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures: Dict[Any, int] = {}
+            for ep_idx in remaining:
+                future = executor.submit(
+                    run_orak_episode,
+                    game_name=game_name,
+                    model=args.model,
+                    max_steps=max_steps,
+                    temperature=args.temperature,
+                    verbose=args.verbose,
+                )
+                futures[future] = ep_idx
 
-            if not args.no_label and label_trajectory is not None:
-                episode = label_trajectory(episode, args.label_model)
+            for future in as_completed(futures):
+                ep_idx = futures[future]
+                try:
+                    episode, stats = future.result()
+                    stats["episode_index"] = ep_idx
+                    print(f"  [{display}] Episode {ep_idx + 1}/{args.episodes} done — "
+                          f"Steps: {stats['steps']}, Reward: {stats['total_reward']:.3f}")
+                    _save_episode_result(
+                        episode, stats, ep_idx, game_dir, jsonl_path,
+                        episode_buffer, io_lock,
+                        label=not args.no_label,
+                        label_model=getattr(args, "label_model", "gpt-5-mini"),
+                    )
+                    all_stats.append(stats)
+                except Exception as e:
+                    print(f"  [{display}] Episode {ep_idx + 1}/{args.episodes} FAILED: {e}")
+                    traceback.print_exc()
+                    all_stats.append({
+                        "game": game_name,
+                        "episode_index": ep_idx,
+                        "error": str(e),
+                        "steps": 0,
+                        "total_reward": 0.0,
+                    })
+    else:
+        # ── Sequential episode execution (original) ────────────────────
+        for ep_idx in range(start_idx, args.episodes):
+            display = ORAK_COLD_START_GAMES[game_name]["display_name"]
+            print(f"\n  [{display}] Episode {ep_idx + 1}/{args.episodes}")
 
-            episode_buffer.add_episode(episode)
-            all_stats.append(stats)
+            try:
+                episode, stats = run_orak_episode(
+                    game_name=game_name,
+                    model=args.model,
+                    max_steps=max_steps,
+                    temperature=args.temperature,
+                    verbose=args.verbose,
+                )
+                stats["episode_index"] = ep_idx
+                print(f"    Steps: {stats['steps']}, Reward: {stats['total_reward']:.3f}")
 
-            ep_data = episode.to_dict()
-            ep_data["metadata"] = stats
-            ep_path = game_dir / f"episode_{ep_idx:03d}.json"
-            with open(ep_path, "w", encoding="utf-8") as f:
-                json.dump(ep_data, f, indent=2, ensure_ascii=False, default=str)
+                if not args.no_label and label_trajectory is not None:
+                    episode = label_trajectory(episode, args.label_model)
 
-            save_episode_jsonl(episode, jsonl_path, stats)
+                episode_buffer.add_episode(episode)
+                all_stats.append(stats)
 
-        except Exception as e:
-            print(f"    [ERROR] Episode {ep_idx + 1} failed: {e}")
-            traceback.print_exc()
-            all_stats.append({
-                "game": game_name,
-                "episode_index": ep_idx,
-                "error": str(e),
-                "steps": 0,
-                "total_reward": 0.0,
-            })
-            continue
+                ep_data = episode.to_dict()
+                ep_data["metadata"] = stats
+                ep_path = game_dir / f"episode_{ep_idx:03d}.json"
+                with open(ep_path, "w", encoding="utf-8") as f:
+                    json.dump(ep_data, f, indent=2, ensure_ascii=False, default=str)
+
+                save_episode_jsonl(episode, jsonl_path, stats)
+
+            except Exception as e:
+                print(f"    [ERROR] Episode {ep_idx + 1} failed: {e}")
+                traceback.print_exc()
+                all_stats.append({
+                    "game": game_name,
+                    "episode_index": ep_idx,
+                    "error": str(e),
+                    "steps": 0,
+                    "total_reward": 0.0,
+                })
+                continue
 
     elapsed = time.time() - t0
 
@@ -585,6 +672,9 @@ Examples:
                         help="Model for labeling (default: gpt-5-mini)")
     parser.add_argument("--resume", action="store_true",
                         help="Resume interrupted run (skip completed episodes)")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Parallel episode workers (default: 1). "
+                             "Each worker runs its own SC2 instance.")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Print step-by-step details")
     parser.add_argument("--output_dir", type=str, default=None,
@@ -619,6 +709,7 @@ Examples:
     print(f"  Max steps:   {args.max_steps or 'per-game default'}")
     print(f"  Model:       {args.model}")
     print(f"  Temperature: {args.temperature}")
+    print(f"  Workers:     {args.workers}")
     print(f"  Labeling:    {not args.no_label}")
     print(f"  Resume:      {args.resume}")
     print(f"  Output:      {output_dir}")

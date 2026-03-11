@@ -44,6 +44,7 @@ import re
 import sys
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -111,13 +112,11 @@ EVOLVER_GAMES: Dict[str, Dict[str, Any]] = {
     "avalon": {
         "env_class": AvalonNLWrapper,
         "task": "Win a game of Avalon through social deduction, strategic voting, and deception.",
-        "default_max_steps": 50,
         "env_kwargs": {"num_players": 5},
     },
     "diplomacy": {
         "env_class": DiplomacyNLWrapper,
         "task": "Gain the most supply centres in Diplomacy through strategic orders and alliances.",
-        "default_max_steps": 20,
         "env_kwargs": {},
     },
 }
@@ -230,12 +229,21 @@ def _build_diplomacy_cot_tools() -> list:
 # GPT-5.4 agent helpers
 # ---------------------------------------------------------------------------
 
-def _make_client() -> Tuple[Any, bool]:
-    """Return (openai.OpenAI client, use_router_flag)."""
-    use_router = bool(open_router_api_key and open_router_api_key.strip())
-    if use_router:
-        return openai.OpenAI(base_url=OPENROUTER_BASE, api_key=open_router_api_key.strip()), True
-    return openai.OpenAI(api_key=openai_api_key), False
+_SHARED_CLIENT: Optional[Any] = None
+_SHARED_USE_ROUTER: Optional[bool] = None
+
+
+def _get_client() -> Tuple[Any, bool]:
+    """Return a shared (openai.OpenAI client, use_router_flag).  Thread-safe for reads."""
+    global _SHARED_CLIENT, _SHARED_USE_ROUTER
+    if _SHARED_CLIENT is None:
+        use_router = bool(open_router_api_key and open_router_api_key.strip())
+        if use_router:
+            _SHARED_CLIENT = openai.OpenAI(base_url=OPENROUTER_BASE, api_key=open_router_api_key.strip())
+        else:
+            _SHARED_CLIENT = openai.OpenAI(api_key=openai_api_key)
+        _SHARED_USE_ROUTER = use_router
+    return _SHARED_CLIENT, _SHARED_USE_ROUTER
 
 
 def _effective_model(model: str, use_router: bool) -> str:
@@ -255,7 +263,7 @@ def _call_gpt54(
     """Call GPT-5.4 with function calling. Returns parsed tool-call args dict."""
     if openai is None:
         return {}
-    client, use_router = _make_client()
+    client, use_router = _get_client()
     eff_model = _effective_model(model, use_router)
 
     try:
@@ -333,11 +341,14 @@ def run_avalon_episode(
     num_players: int = 5,
     seed: int = 42,
     model: str = MODEL_GPT54,
-    max_steps: int = 50,
     temperature: float = 0.4,
     verbose: bool = False,
 ) -> Tuple[Episode, Dict[str, Any]]:
-    """Run one Avalon episode with all players controlled by GPT-5.4."""
+    """Run one Avalon episode with all players controlled by GPT-5.4.
+
+    The loop runs until the engine's natural end condition fires
+    (3 quest failures → Evil wins, or assassination resolves after 3 successes).
+    """
     if AvalonNLWrapper is None:
         raise ImportError("AvalonNLWrapper not available. Check AgentEvolver install.")
 
@@ -349,26 +360,33 @@ def run_avalon_episode(
     total_reward = 0.0
     step_count = 0
 
-    while not env.done and step_count < max_steps:
+    while not env.done:
         active = info.get("active_players", [])
         actions: Dict[int, Any] = {}
         step_reasonings: List[str] = []
 
-        for pid in active:
-            state_nl = obs.get(pid, "")
-            if not state_nl:
-                continue
-            action, reasoning = avalon_agent_action(
-                state_nl=state_nl,
-                model=model,
-                temperature=temperature,
-            )
-            actions[pid] = action
-            if reasoning:
-                step_reasonings.append(f"Player {pid}: {reasoning}")
-            if verbose:
-                short = (reasoning[:80] + "...") if reasoning and len(reasoning) > 80 else reasoning
-                print(f"  Player {pid} action={action!r}  reason={short}")
+        players_to_query = [
+            (pid, obs.get(pid, "")) for pid in active if obs.get(pid, "")
+        ]
+
+        with ThreadPoolExecutor(max_workers=len(players_to_query) or 1) as pool:
+            futures = {
+                pool.submit(avalon_agent_action, state_nl, model, temperature): pid
+                for pid, state_nl in players_to_query
+            }
+            for future in as_completed(futures):
+                pid = futures[future]
+                try:
+                    action, reasoning = future.result()
+                except Exception as exc:
+                    print(f"    [WARN] Player {pid} agent call failed ({exc})")
+                    action, reasoning = "wait", None
+                actions[pid] = action
+                if reasoning:
+                    step_reasonings.append(f"Player {pid}: {reasoning}")
+                if verbose:
+                    short = (reasoning[:80] + "...") if reasoning and len(reasoning) > 80 else reasoning
+                    print(f"  Player {pid} action={action!r}  reason={short}")
 
         next_obs, rewards, terminated, truncated, next_info = env.step(actions)
         done = terminated or truncated
@@ -378,7 +396,34 @@ def run_avalon_episode(
 
         combined_reasoning = "\n".join(step_reasonings) if step_reasonings else None
 
-        avalon_actions = ["approve", "reject", "pass", "fail", "wait"] + [str(i) for i in range(num_players)]
+        phase_id = info.get("phase", 0)
+        if phase_id == 0:
+            avail_actions = {
+                "type": "team_selection",
+                "active_players": list(active),
+                "team_size": info.get("team_size", 0),
+                "player_ids": list(range(num_players)),
+            }
+        elif phase_id == 1:
+            avail_actions = {
+                "type": "team_vote",
+                "active_players": list(active),
+                "choices": ["approve", "reject"],
+            }
+        elif phase_id == 2:
+            avail_actions = {
+                "type": "quest_vote",
+                "active_players": list(active),
+                "choices": ["pass", "fail"],
+            }
+        elif phase_id == 3:
+            avail_actions = {
+                "type": "assassination",
+                "active_players": list(active),
+                "targets": list(range(num_players)),
+            }
+        else:
+            avail_actions = {"type": "unknown", "active_players": list(active)}
 
         exp = Experience(
             state=json.dumps({str(k): v for k, v in obs.items()}, ensure_ascii=False, default=str),
@@ -393,9 +438,9 @@ def run_avalon_episode(
         )
         exp.idx = step_count
         exp.action_type = "primitive"
-        exp.raw_state = {str(k): v for k, v in obs.items()}
-        exp.raw_next_state = {str(k): v for k, v in next_obs.items()} if isinstance(next_obs, dict) else str(next_obs)
-        exp.available_actions = avalon_actions
+        exp.raw_state = info
+        exp.raw_next_state = next_info
+        exp.available_actions = avail_actions
         exp.interface = {"env_name": "avalon", "game_name": "avalon", "num_players": num_players}
         experiences.append(exp)
 
@@ -426,7 +471,7 @@ def run_avalon_episode(
         "steps": step_count,
         "total_reward": total_reward,
         "terminated": env_done,
-        "truncated": step_count >= max_steps and not env_done,
+        "truncated": False,
         "model": model,
         "agent_type": "gpt54_base",
         "num_players": num_players,
@@ -436,43 +481,61 @@ def run_avalon_episode(
     return episode, stats
 
 
+DIPLOMACY_MAX_PHASES = 20  # matches DiplomacyConfig.max_phases
+
+
 def run_diplomacy_episode(
     seed: int = 42,
     model: str = MODEL_GPT54,
-    max_steps: int = 20,
     temperature: float = 0.4,
     verbose: bool = False,
 ) -> Tuple[Episode, Dict[str, Any]]:
-    """Run one Diplomacy episode with all powers controlled by GPT-5.4."""
+    """Run one Diplomacy episode with all powers controlled by GPT-5.4.
+
+    The loop runs until the wrapper's natural end condition fires
+    (solo victory via game.is_game_done, or phases_processed >= DIPLOMACY_MAX_PHASES
+     matching DiplomacyConfig.max_phases = 20).
+    """
     if DiplomacyNLWrapper is None:
         raise ImportError("DiplomacyNLWrapper not available. Check AI_Diplomacy install.")
 
     task = EVOLVER_GAMES["diplomacy"]["task"]
-    env = DiplomacyNLWrapper(seed=seed)
+    env = DiplomacyNLWrapper(seed=seed, max_phases=DIPLOMACY_MAX_PHASES)
     obs, info = env.reset()
 
     experiences: List[Experience] = []
     total_reward = 0.0
     step_count = 0
 
-    while not env.done and step_count < max_steps:
+    while not env.done:
         actions: Dict[str, Union[List[str], str]] = {}
         step_reasonings: List[str] = []
 
-        for power_name, state_nl in obs.items():
-            if not state_nl:
-                continue
-            orders, reasoning = diplomacy_agent_action(
-                state_nl=state_nl,
-                model=model,
-                temperature=temperature,
-            )
-            actions[power_name] = orders
-            if reasoning:
-                step_reasonings.append(f"{power_name}: {reasoning}")
-            if verbose:
-                preview = orders[:3]
-                print(f"  {power_name}: {len(orders)} orders, e.g. {preview}")
+        active_powers = info.get("active_powers", {})
+
+        powers_to_query = [
+            (pname, obs[pname]) for pname in obs
+            if obs.get(pname) and pname in active_powers
+        ]
+
+        with ThreadPoolExecutor(max_workers=len(powers_to_query) or 1) as pool:
+            futures = {
+                pool.submit(diplomacy_agent_action, state_nl, model, temperature): pname
+                for pname, state_nl in powers_to_query
+            }
+            for future in as_completed(futures):
+                power_name = futures[future]
+                try:
+                    orders, reasoning = future.result()
+                except Exception as exc:
+                    print(f"    [WARN] {power_name} agent call failed ({exc})")
+                    orders, reasoning = [], None
+                actions[power_name] = orders
+                if reasoning:
+                    step_reasonings.append(f"{power_name}: {reasoning}")
+                if verbose:
+                    preview = orders[:3]
+                    print(f"  {power_name}: {len(orders)} orders, e.g. {preview}")
 
         next_obs, rewards, terminated, truncated, next_info = env.step(actions)
         done = terminated or truncated
@@ -481,8 +544,6 @@ def run_diplomacy_episode(
         total_reward += reward_val
 
         combined_reasoning = "\n".join(step_reasonings) if step_reasonings else None
-
-        diplomacy_actions = ["Hold", "Move", "Support hold", "Support move", "Convoy", "Retreat", "Build", "Disband"]
 
         exp = Experience(
             state=json.dumps(dict(obs), ensure_ascii=False, default=str),
@@ -497,9 +558,9 @@ def run_diplomacy_episode(
         )
         exp.idx = step_count
         exp.action_type = "primitive"
-        exp.raw_state = dict(obs)
-        exp.raw_next_state = dict(next_obs) if isinstance(next_obs, dict) else str(next_obs)
-        exp.available_actions = diplomacy_actions
+        exp.raw_state = _sanitize_keys(info)
+        exp.raw_next_state = _sanitize_keys(next_info)
+        exp.available_actions = _sanitize_keys(info.get("possible_orders", {}))
         exp.interface = {"env_name": "diplomacy", "game_name": "diplomacy"}
         experiences.append(exp)
 
@@ -524,17 +585,18 @@ def run_diplomacy_episode(
 
     final_rewards = {}
     if isinstance(rewards, dict):
-        final_rewards = {k: float(v) for k, v in rewards.items()}
+        final_rewards = {str(k): float(v) for k, v in rewards.items()}
 
     stats = {
         "game": "diplomacy",
         "steps": step_count,
         "total_reward": total_reward,
         "terminated": terminated,
-        "truncated": step_count >= max_steps and not terminated,
+        "truncated": truncated,
         "model": model,
         "agent_type": "gpt54_base",
         "seed": seed,
+        "max_phases": DIPLOMACY_MAX_PHASES,
         "final_sc_rewards": final_rewards,
     }
     return episode, stats
@@ -544,6 +606,16 @@ def run_diplomacy_episode(
 # Batch rollout helpers (same structure as generate_cold_start_gpt54)
 # ---------------------------------------------------------------------------
 
+def _sanitize_keys(obj: Any) -> Any:
+    """Recursively convert all dict keys to plain ``str`` so ``json.dump`` never
+    chokes on engine-internal key types (e.g. diplomacy's ``StringComparator``)."""
+    if isinstance(obj, dict):
+        return {str(k): _sanitize_keys(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_keys(v) for v in obj]
+    return obj
+
+
 def count_existing_episodes(game_dir: Path) -> int:
     if not game_dir.exists():
         return 0
@@ -551,7 +623,7 @@ def count_existing_episodes(game_dir: Path) -> int:
 
 
 def save_episode_jsonl(episode: Episode, jsonl_path: Path, stats: Dict[str, Any]):
-    record = episode.to_dict()
+    record = _sanitize_keys(episode.to_dict())
     record["rollout_metadata"] = stats
     with open(jsonl_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
@@ -571,7 +643,7 @@ def save_game_summary(
         "agent_type": "gpt54_base",
         "total_episodes": len(all_stats),
         "target_episodes": args.episodes,
-        "max_steps": args.max_steps,
+        "end_condition": "natural",
         "labeled": not args.no_label,
         "elapsed_seconds": elapsed,
         "episode_stats": all_stats,
@@ -623,7 +695,6 @@ def run_game_rollouts(
                     num_players=args.num_players,
                     seed=seed,
                     model=args.model,
-                    max_steps=args.max_steps,
                     temperature=args.temperature,
                     verbose=args.verbose,
                 )
@@ -631,7 +702,6 @@ def run_game_rollouts(
                 episode, stats = run_diplomacy_episode(
                     seed=seed,
                     model=args.model,
-                    max_steps=args.max_steps,
                     temperature=args.temperature,
                     verbose=args.verbose,
                 )
@@ -648,7 +718,7 @@ def run_game_rollouts(
             episode_buffer.add_episode(episode)
             all_stats.append(stats)
 
-            ep_data = episode.to_dict()
+            ep_data = _sanitize_keys(episode.to_dict())
             ep_data["metadata"] = stats
             ep_path = game_dir / f"episode_{ep_idx:03d}.json"
             with open(ep_path, "w", encoding="utf-8") as f:
@@ -692,8 +762,6 @@ def main():
                         help="Games to generate rollouts for (default: all)")
     parser.add_argument("--episodes", type=int, default=20,
                         help="Number of episodes per game (default: 20)")
-    parser.add_argument("--max_steps", type=int, default=50,
-                        help="Max steps (phases) per episode")
     parser.add_argument("--model", type=str, default=MODEL_GPT54,
                         help=f"LLM model for the agent (default: {MODEL_GPT54})")
     parser.add_argument("--temperature", type=float, default=0.4,
@@ -757,7 +825,7 @@ def main():
     if skipped_games:
         print(f"  Skipped:     {', '.join(skipped_games)}")
     print(f"  Episodes:    {args.episodes} per game")
-    print(f"  Max steps:   {args.max_steps}")
+    print(f"  End cond:    natural (avalon=engine done, diplomacy=max_phases {DIPLOMACY_MAX_PHASES})")
     print(f"  Model:       {args.model}")
     print(f"  Temperature: {args.temperature}")
     print(f"  Labeling:    {not args.no_label} (label model: {args.label_model})")
@@ -786,7 +854,7 @@ def main():
         "model": args.model,
         "agent_type": "gpt54_base",
         "episodes_per_game": args.episodes,
-        "max_steps": args.max_steps,
+        "end_condition": "natural",
         "temperature": args.temperature,
         "labeled": not args.no_label,
         "label_model": args.label_model,

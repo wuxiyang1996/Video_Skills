@@ -4,51 +4,52 @@ Generate initial trajectory data and skill seeds for the Game-AI-Agent system.
 
 ## Scope: Environments and Games We Use
 
-We only run the **4 games** supported by our evaluation stack (see [evaluate_gamingagent/README.md](../evaluate_gamingagent/README.md)):
+We have **three** cold-start generators covering **8 games** across three environment stacks:
 
-| # | Game | Actions |
-|---|------|---------|
-| 1 | **2048** | `up`, `down`, `left`, `right` |
-| 2 | **Sokoban** | `up`, `down`, `left`, `right` |
-| 3 | **Candy Crush** | coordinate swaps, e.g. `((0,5),(1,5))` |
-| 4 | **Tetris** | `move_left`, `move_right`, `rotate_cw`, `rotate_ccw`, `hard_drop`, `soft_drop` |
+### 1. LMGame-Bench (`generate_cold_start_gpt54.py`)
 
-### End conditions and max turns (how many steps per episode)
+| # | Game | Registry Key | Actions |
+|---|------|--------------|---------|
+| 1 | **2048** | `twenty_forty_eight` | `up`, `down`, `left`, `right` |
+| 2 | **Sokoban** | `sokoban` | `up`, `down`, `left`, `right` |
+| 3 | **Candy Crush** | `candy_crush` | coordinate swaps, e.g. `((0,5),(1,5))` |
+| 4 | **Tetris** | `tetris` | `move_left`, `move_right`, `rotate_cw`, `rotate_ccw`, `hard_drop`, `soft_drop` |
 
-| Game | Evaluation max steps | Cold-start default | Natural end |
-|------|---------------------|--------------------|-------------|
-| **2048** | 200 | 200 (natural end) | No valid moves (game over), or reach 2048 tile; also terminates after 10 steps with no board change. |
-| **Sokoban** | 100 | 200 (natural end) | All boxes on targets (win); or env `max_steps_episode` (200 in config); or 5 steps with no change. |
-| **Candy Crush** | 50 | 50 (natural end) | Run out of moves (`num_moves` = 50 in env config). |
-| **Tetris** | 200 | 200 (natural end) | Stack reaches top (game over); or 30 steps with no change. |
+### 2. AgentEvolver (`generate_cold_start_evolver.py`)
 
-- **Evaluation** limits come from [evaluate_gamingagent/game_configs.py](../evaluate_gamingagent/game_configs.py) (`max_steps` per game). The wrapper truncates the episode when `step_count >= max_steps` even if the game has not ended.
-- **Cold-start** runs until **natural end** by default: per-game limits are defined in `generate_cold_start.py` (`COLD_START_MAX_STEPS_NATURAL_END`). Use `--max_steps N` to cap episodes at N steps instead.
+| # | Game | Registry Key | Actions |
+|---|------|--------------|---------|
+| 5 | **Avalon** | `avalon` | team proposals, approve/reject votes, pass/fail, assassination target |
+| 6 | **Diplomacy** | `diplomacy` | unit orders (move, hold, support, convoy, retreat, build, disband) |
 
-The environments available to us are:
+### 3. Orak (`generate_cold_start_orak.py`)
 
-- **[evaluate_gamingagent](../evaluate_gamingagent/)** — LMGame-Bench (the 4 games above)
+| # | Game | Registry Key | Actions |
+|---|------|--------------|---------|
+| 7 | **Super Mario** | `super_mario` | `Jump Level : 0` … `6` |
+| 8 | **StarCraft II** | `star_craft` | 5 macro actions per step (e.g. `TRAIN ZEALOT`) |
 
-- **[evaluation_evolver](../evaluation_evolver/)** — AgentEvolver; we run **two** envs:
+Other envs and games (e.g. Doom, Pokemon Red, Super Mario Bros, Ace Attorney, 1942, Tic-Tac-Toe, Texas Hold'em from the full LMGame-Bench set) are **not available** in our setup.
 
-| # | Env | Actions |
-|---|-----|---------|
-| 1 | **Avalon** | social deduction (phases/turns) |
-| 2 | **Diplomacy** | negotiation (phases/turns) |
+### End conditions (how episodes terminate)
 
-- **[evaluate_orak](../evaluate_orak/)** — Orak; we run **two** envs:
+All cold-start generators use the **natural end condition** of each game engine. Episodes are never cut short by an artificial step cap.
 
-| # | Env | Actions |
-|---|-----|---------|
-| 1 | **Super Mario** | `Jump Level : 0` … `6` |
-| 2 | **StarCraft II** | 5 macro actions per step (e.g. `TRAIN ZEALOT`) |
-
-Other envs and games (e.g. Doom, Pokemon Red, Super Mario Bros, Ace Attorney, 1942, Tic-Tac-Toe, Texas Hold'em from the full LMGame-Bench set) are **not available** in our setup due to complexity and environment availability.
+| Game | Natural end condition | Source |
+|------|----------------------|--------|
+| **2048** | No valid moves (game over), or reach 2048 tile; also terminates after 10 steps with no board change. | GamingAgent env |
+| **Sokoban** | All boxes on targets (win); or env `max_steps_episode` (200); or 5 steps with no change. | GamingAgent env |
+| **Candy Crush** | Run out of moves (`num_moves` = 50 in env config). | GamingAgent env |
+| **Tetris** | Stack reaches top (game over); or 30 steps with no change. | GamingAgent env |
+| **Avalon** | 3 quest failures (Evil wins) or assassination resolves after 3 quest successes. Always finite. | `AvalonGameEnvironment.done` |
+| **Diplomacy** | Solo victory (`game.is_game_done`) or 20 phases elapsed (`DiplomacyConfig.max_phases = 20`). | `DiplomacyNLWrapper.done` |
+| **Super Mario** | Level complete or game over; capped at 100 steps. | Orak env |
+| **StarCraft II** | Game victory/defeat; capped at 1000 steps. | Orak env |
 
 ## Goal
 
-1. **Prompt decision agents** (VLMDecisionAgent or dummy language agent) powered by GPT-5-mini to generate unlabeled trajectories from game environments.
-2. **Label trajectories** with GPT-5-mini to produce initial seeds for the skill database (summaries, intentions, sub-task labels).
+1. **Prompt decision agents** powered by GPT-5.4 (or GPT-5-mini) to generate unlabeled trajectories from game environments.
+2. **Label trajectories** (optional) with GPT-5-mini to produce initial seeds for the skill database (summaries, intentions, sub-task labels).
 
 ## Setup
 
@@ -66,13 +67,12 @@ cd /path/to/Game-AI-Agent
 export PYTHONPATH="$(pwd):$(pwd)/../GamingAgent:$PYTHONPATH"
 ```
 
-## Batch Rollouts (100 per game)
+## LMGame-Bench Rollouts (games 1-4)
 
-The primary workflow generates 100 rollout episodes per game, with output formatted
-for direct ingestion by the co-evolution framework (skill pipeline + trainer).
+### Batch rollouts (100 per game)
 
 ```bash
-# All available games, 100 episodes each (default)
+# All 4 games, 100 episodes each (default)
 python cold_start/run_100_rollouts.py
 
 # Specific games only
@@ -91,47 +91,114 @@ python cold_start/run_100_rollouts.py --resume
 python cold_start/run_100_rollouts.py --no_label
 ```
 
-### Per-game GPT-5.4 rollouts (configurable episodes)
-
-To run each game separately and set how many episodes to gather per game, use the shell script (from **Game-AI-Agent** root):
+### Per-game GPT-5.4 rollouts
 
 ```bash
 # All 4 games, 50 episodes each (run until natural end per game)
 bash cold_start/run_coldstart_gpt54_per_game.sh --episodes 50
 
-# All 4 games, 100 episodes each (default)
-bash cold_start/run_coldstart_gpt54_per_game.sh --episodes 100
-
 # Only 2048 and Tetris, 20 episodes each
 bash cold_start/run_coldstart_gpt54_per_game.sh --episodes 20 twenty_forty_eight tetris
 
-# One game only, custom episodes
+# One game only
 bash cold_start/run_coldstart_gpt54_per_game.sh --episodes 30 candy_crush
 
 # With resume and no labeling
 bash cold_start/run_coldstart_gpt54_per_game.sh --episodes 100 --resume --no_label
 ```
 
-Output: `cold_start/output/gpt54/<game_name>/` (episode_*.json, rollouts.jsonl, episode_buffer.json).
+Output: `cold_start/output/gpt54/<game_name>/`
 
-### Output (cold_start/output/)
+### Single-game generation
+
+```bash
+python cold_start/generate_cold_start.py \
+    --game twenty_forty_eight --episodes 3 --max_steps 50 --model gpt-5-mini
+
+# VLM decision agent
+python cold_start/generate_cold_start.py \
+    --game twenty_forty_eight --agent_type vlm --episodes 3 --max_steps 50
+
+# All games
+python cold_start/generate_cold_start.py --all_games --episodes 3 --max_steps 50
+```
+
+Output: `cold_start/data/<game_name>/`
+
+## AgentEvolver Rollouts — Avalon & Diplomacy (games 5-6)
+
+Both games always run to their **natural end condition**. There is no `--max_steps` flag; the engines themselves decide when a game is over:
+
+- **Avalon**: the `AvalonGameEnvironment` sets `done=True` when 3 quests fail (Evil wins) or the assassination phase resolves (after 3 quest successes). This matches `AvalonGame.run()` which loops on `while not self.env.done`.
+- **Diplomacy**: the `DiplomacyNLWrapper` sets `done=True` when `game.is_game_done` (solo victory / draw) or `phases_processed >= 20` (matching `DiplomacyConfig.max_phases`). This matches `DiplomacyGame.run()` which loops on `while not self.game.is_game_done and phases_processed < self.config.max_phases`.
+
+Per-power/per-player API calls within each phase are parallelized for speed.
+
+```bash
+# Both games, 20 episodes each (default)
+bash cold_start/run_coldstart_evolver.sh
+
+# Quick test
+bash cold_start/run_coldstart_evolver.sh --episodes 5
+
+# Avalon only
+bash cold_start/run_coldstart_evolver.sh --games avalon
+
+# Diplomacy only, 60 episodes
+bash cold_start/run_coldstart_evolver.sh --episodes 60 --games diplomacy
+
+# Resume interrupted run
+bash cold_start/run_coldstart_evolver.sh --resume
+
+# With labeling (default skips labeling)
+bash cold_start/run_coldstart_evolver.sh --episodes 20
+```
+
+Or call the Python script directly:
+
+```bash
+python cold_start/generate_cold_start_evolver.py --games avalon --episodes 10
+python cold_start/generate_cold_start_evolver.py --games diplomacy --episodes 5 -v
+python cold_start/generate_cold_start_evolver.py --resume
+```
+
+Output: `cold_start/output/gpt54_evolver/<game_name>/`
+
+## Orak Rollouts — Super Mario & StarCraft II (games 7-8)
+
+Each Orak game needs its own conda environment.
+
+```bash
+# --- Super Mario ---
+source evaluate_orak/setup_orak_mario.sh
+python cold_start/generate_cold_start_orak.py --games super_mario --episodes 10
+# or:
+bash cold_start/run_coldstart_orak_mario.sh --episodes 10
+
+# --- StarCraft II ---
+source evaluate_orak/setup_orak_sc2.sh
+python cold_start/generate_cold_start_orak.py --games star_craft --episodes 5
+# or:
+bash cold_start/run_coldstart_orak_sc2.sh --episodes 5
+```
+
+Output: `cold_start/output/gpt54_orak/<game_name>/`
+
+## Output Structure
+
+All generators produce the same directory layout per game:
 
 ```
-cold_start/output/
-├── batch_rollout_summary.json          # Master run summary
-├── twenty_forty_eight/
-│   ├── episode_000.json ... episode_099.json   # Individual episodes
-│   ├── episode_buffer.json                      # Episode_Buffer (loadable)
-│   ├── rollouts.jsonl                           # JSONL: one Episode per line
-│   └── rollout_summary.json                     # Per-game stats
-├── sokoban/
-│   └── ...
-├── candy_crush/
-│   └── ...
-├── tetris/
-│   └── ...
-└── ... (all available games)
+cold_start/output/<suite>/<game_name>/
+├── episode_000.json ... episode_NNN.json   # Individual episodes
+├── episode_buffer.json                      # Episode_Buffer (loadable)
+├── rollouts.jsonl                           # JSONL: one Episode per line
+└── rollout_summary.json                     # Per-game stats
 ```
+
+Suites: `gpt54/` (LMGame-Bench), `gpt54_evolver/` (Avalon/Diplomacy), `gpt54_orak/` (Mario/StarCraft).
+
+A `batch_rollout_summary.json` sits at the suite root with cross-game stats.
 
 ### Loading Rollouts into the Co-Evolution Framework
 
@@ -146,7 +213,7 @@ from cold_start.load_rollouts import (
 # --- Skill pipeline ingestion ---
 from skill_agents.pipeline import SkillBankAgent
 
-episodes = load_episodes_from_jsonl("cold_start/output/tetris/rollouts.jsonl")
+episodes = load_episodes_from_jsonl("cold_start/output/gpt54/tetris/rollouts.jsonl")
 agent = SkillBankAgent(bank_path="skills/bank.jsonl")
 agent.ingest_episodes(episodes)
 agent.run_until_stable(max_iterations=3)
@@ -158,60 +225,82 @@ records = episodes_to_rollout_records(episodes)
 trajectories = ingest_rollouts(records)
 
 # --- Load all games at once ---
-all_rollouts = load_all_game_rollouts("cold_start/output")
+all_rollouts = load_all_game_rollouts("cold_start/output/gpt54")
 for game_name, episodes in all_rollouts.items():
     print(f"{game_name}: {len(episodes)} episodes")
 ```
 
-## Single-Game Generation (generate_cold_start.py)
-
-For smaller-scale generation or single-game runs:
-
-```bash
-# Generate cold-start data for 2048 (3 episodes, 50 steps, GPT-5-mini)
-python cold_start/generate_cold_start.py \
-    --game twenty_forty_eight \
-    --episodes 3 --max_steps 50 --model gpt-5-mini
-
-# Use VLM decision agent
-python cold_start/generate_cold_start.py \
-    --game twenty_forty_eight \
-    --agent_type vlm --episodes 3 --max_steps 50
-
-# Generate for all available games
-python cold_start/generate_cold_start.py --all_games --episodes 3 --max_steps 50
-
-# Skip trajectory labeling
-python cold_start/generate_cold_start.py \
-    --game twenty_forty_eight --episodes 5 --max_steps 50 --no_label
-```
-
-Output goes to `cold_start/data/<game_name>/` by default.
-
-## Available Games (In Scope)
-
-Cold-start generation targets only the 4 games we run (see Scope above):
-
-| Game | Registry Key | Description |
-|------|-------------|-------------|
-| 2048 | `twenty_forty_eight` | Tile merging puzzle |
-| Sokoban | `sokoban` | Box-pushing puzzle |
-| Candy Crush | `candy_crush` | Match-3 tile puzzle |
-| Tetris | `tetris` | Falling block puzzle |
-
-Other games (Doom, Pokemon Red, Super Mario Bros, Ace Attorney, 1942, Tic-Tac-Toe, Texas Hold'em) are not available in our environment and are out of scope for this cold-start pipeline.
-
 ## Agent Types
 
-- **`dummy`** (default): Uses `language_agent_action` with GPT function calling. Simpler, single-turn action selection per step.
-- **`vlm`**: Uses `run_episode_vlm_agent()` which returns `Episode` objects with fully-populated Experience fields (`summary_state`, `intentions`, `sub_tasks`, `reward_details`, `action_type`). These can be fed directly into the skill pipeline.
+- **`dummy`** (default for LMGame-Bench): Uses `language_agent_action` with GPT function calling. Single-turn action selection per step.
+- **`vlm`** (LMGame-Bench only): Uses `run_episode_vlm_agent()` which returns `Episode` objects with fully-populated Experience fields (`summary_state`, `intentions`, `sub_tasks`, `reward_details`, `action_type`).
+- **GPT-5.4 function-calling** (Evolver & Orak): Each active player/power is queried with a system prompt and structured tool call (`choose_action` / `submit_orders`). Chain-of-thought reasoning is stored in the `intentions` field.
+
+## Design Notes
+
+### Natural end conditions (Evolver games)
+
+Both Avalon and Diplomacy always run to their engine's natural end condition. No
+artificial `--max_steps` cap is applied in the episode loop (`while not env.done`).
+This ensures cold-start data matches how the games actually play in AgentEvolver's
+`AvalonGame.run()` (`while not self.env.done`) and `DiplomacyGame.run()`
+(`while not self.game.is_game_done and phases_processed < self.config.max_phases`).
+
+### Diplomacy 20-phase limit
+
+The base `diplomacy` library (from
+[AI_Diplomacy](https://github.com/GoodStartLabs/AI_Diplomacy)) has no phase
+limit -- games run until solo victory (18 supply centers) or draw, which rarely
+happens with LLM agents. AI_Diplomacy itself uses `--max_year` (typically 1910,
+~50 phases). AgentEvolver adds `max_phases=20` in `DiplomacyConfig` for
+tractable rollouts. We use 20 for cold-start, training, and evaluation:
+
+- Phases 1-20 (years 1901-1904) contain the richest strategic diversity:
+  openings, alliance formation, first betrayals, early expansion.
+- More episodes at 20 phases produces better seed skills than fewer episodes at
+  50 phases for the same API budget -- breadth of experience beats depth.
+- Training and evaluation both use 20 phases; matching this avoids distribution
+  shift where the agent learns late-game stalemate tactics it never encounters
+  during eval.
+
+### Parallelized API calls
+
+Per-power (Diplomacy, 7 concurrent) and per-player (Avalon, up to 5 concurrent)
+LLM calls are parallelized within each phase via `ThreadPoolExecutor`. A shared
+OpenAI client singleton avoids redundant TCP/TLS handshakes. This yields ~7x
+speedup for Diplomacy episodes.
+
+### StringComparator serialization fix
+
+The diplomacy engine uses `StringComparator` objects as dict keys internally
+(for locations, power names, etc.). Python's `json.dump` rejects non-`str` keys
+even with `default=str` (which only handles values). A `_sanitize_keys()` helper
+recursively converts all dict keys to plain `str` before serialization.
+
+## Change Log (generate_cold_start_evolver.py)
+
+Changes from the original codebase:
+
+- Removed artificial `--max_steps` loop guard from both `run_avalon_episode()`
+  and `run_diplomacy_episode()`; loops now use `while not env.done` only.
+- Added `DIPLOMACY_MAX_PHASES = 20` constant, passed to
+  `DiplomacyNLWrapper(max_phases=...)` to match `DiplomacyConfig.max_phases`.
+- Parallelized per-agent API calls in both episode runners using
+  `ThreadPoolExecutor` + `as_completed`.
+- Replaced per-call `_make_client()` with shared singleton `_get_client()`.
+- Added `_sanitize_keys()` to fix `StringComparator` JSON serialization bug in
+  Diplomacy episodes.
+- Removed `--max_steps` CLI argument and `default_max_steps` from
+  `EVOLVER_GAMES` registry.
+- Updated `run_coldstart_evolver.sh` to remove hardcoded `--max_steps 50`
+  default.
 
 ## Output Format
 
 Each episode JSON contains:
 - `episode_id` — Unique UUID
-- `env_name` — Platform name (`"gamingagent"`)
-- `game_name` — Specific game (e.g. `"tetris"`, `"sokoban"`)
+- `env_name` — Platform name (`"gamingagent"`, `"avalon"`, `"diplomacy"`, etc.)
+- `game_name` — Specific game (e.g. `"tetris"`, `"avalon"`, `"super_mario"`)
 - `experiences` — List of Experience objects:
   - `state`, `action`, `reward`, `next_state`, `done`
   - `intentions`, `tasks`, `sub_tasks`
@@ -228,3 +317,70 @@ This format is directly compatible with:
 - `Episode.from_dict()` / `Episode_Buffer.load_from_json()` for data loading
 - `SkillBankAgent.ingest_episodes()` for skill pipeline ingestion
 - `episodes_to_rollout_records()` → `ingest_rollouts()` for trainer ingestion
+
+## Orak End-Condition & Recording Audit (2026-03-11)
+
+### What was verified
+
+We traced the full end-condition flow for both Orak games against the
+`orak-2025-starter-kit` and the `Orak` source repo to confirm that the
+cold-start generator uses the **natural termination conditions** of each
+underlying game engine -- not an artificial step cap.
+
+| Game | Natural end condition | How it propagates |
+|------|----------------------|-------------------|
+| **Super Mario** | `gym_super_mario_bros` sets `done=True` on death, timer expiry, or flag reached. | `gym env.step()` → `SuperMarioEnv.step()` → `evaluate()` → `OrakNLWrapper.step()` returns `terminated=True`. |
+| **StarCraft II** | python-sc2 `run_game()` finishes with Victory / Defeat / Tie. `sc2_run_game()` sets `transaction['done']=True`. | `action_step()` → `step()` → `evaluate()` → `OrakNLWrapper.step()` returns `terminated=True`. |
+
+The wrapper's `max_steps` (Mario=100, SC2=1000, matching the starter kit's
+`MAX_STEPS`) acts only as a safety-net truncation. It sets `truncated=True`
+(never `terminated`) and only fires when the game hasn't already ended
+naturally (line 316-317 of `orak_nl_wrapper.py`).
+
+### What was changed in `generate_cold_start_orak.py`
+
+Each `Experience.interface` dict now records the termination details
+separately so downstream training code can distinguish natural game-over
+from step-limit truncation:
+
+```python
+exp.interface = {
+    "env_name": "orak",
+    "game_name": game_name,
+    "step": step_count,
+    "terminated": terminated,   # natural game-end (death, victory, flag, etc.)
+    "truncated": truncated,     # hit max_steps safety limit
+    "score": step_info.get("score"),  # evaluate() result (x_pos for Mario, "Victory"/"Defeat" for SC2)
+    "cumulative_reward": total_reward,
+}
+```
+
+Previously `Experience.done` was `terminated or truncated` with no way to
+tell them apart. `done` is still set to `terminated or truncated` for
+backward compatibility, but the interface dict now carries the full picture.
+
+The verbose output also prints `TERM` or `TRUNC` labels per step for easier
+debugging.
+
+### What was already correct (no change needed)
+
+- **State recording**: `exp.state` / `exp.raw_state` = NL observation from `obs2text()`.
+- **Available actions**: `exp.available_actions` = full action name list from the env.
+- **Agent action taken**: `exp.action` = exact string chosen by GPT-5.4.
+- **Agent reasoning**: `exp.intentions` = chain-of-thought from the GPT tool call.
+- **Shell scripts**: `run_coldstart_orak_mario.sh` (max_steps=100) and
+  `run_coldstart_orak_sc2.sh` (max_steps=1000) match the starter kit's
+  `MAX_STEPS` dict exactly.
+
+### Gathering 60 rollouts
+
+```bash
+# Super Mario (from Game-AI-Agent dir, orak-mario conda env)
+bash cold_start/run_coldstart_orak_mario.sh --episodes 60 --max_steps 100 --no_label --resume -v
+
+# StarCraft II (from Game-AI-Agent dir, orak-sc2 conda env)
+bash cold_start/run_coldstart_orak_sc2.sh --episodes 60 --max_steps 1000 --no_label --resume -v
+```
+
+Run separately (each activates its own conda env). `--resume` makes
+interrupted runs idempotent.

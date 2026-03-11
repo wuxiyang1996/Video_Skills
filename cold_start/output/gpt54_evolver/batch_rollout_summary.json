@@ -1,0 +1,454 @@
+{
+  "timestamp": "2026-03-11T09:45:41.861744",
+  "model": "gpt-5.4",
+  "agent_type": "gpt54_base",
+  "episodes_per_game": 60,
+  "max_steps": 50,
+  "temperature": 0.4,
+  "labeled": false,
+  "label_model": "gpt-5-mini",
+  "total_elapsed_seconds": 0.017489194869995117,
+  "games_completed": [
+    "diplomacy"
+  ],
+  "games_skipped": [],
+  "per_game_summaries": [
+    {
+      "game": "diplomacy",
+      "timestamp": "2026-03-11T09:45:41.861344",
+      "model": "gpt-5.4",
+      "agent_type": "gpt54_base",
+      "total_episodes": 60,
+      "target_episodes": 60,
+      "max_steps": 50,
+      "labeled": false,
+      "elapsed_seconds": 0.016822099685668945,
+      "episode_stats": [
+        {
+          "game": "diplomacy",
+          "episode_index": 0,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 1,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 2,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 3,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 4,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 5,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 6,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 7,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 8,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 9,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 10,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 11,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 12,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 13,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 14,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 15,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 16,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 17,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 18,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 19,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 20,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 21,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 22,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 23,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 24,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 25,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 26,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 27,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 28,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 29,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 30,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 31,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 32,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 33,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 34,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 35,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 36,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 37,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 38,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 39,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 40,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 41,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 42,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 43,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 44,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 45,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 46,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 47,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 48,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 49,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 50,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 51,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 52,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 53,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 54,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 55,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 56,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 57,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 58,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        },
+        {
+          "game": "diplomacy",
+          "episode_index": 59,
+          "error": "Cannot import diplomacy.Game. Either install the diplomacy package (pip install diplomacy>=1.1.2) or use the local AI_Diplomacy copy: run from codebase root so AI_Diplomacy is on PYTHONPATH, and install AI_Diplomacy dependencies (e.g. pip install coloredlogs; see AI_Diplomacy/). Original error: No module named 'diplomacy'",
+          "steps": 0,
+          "total_reward": 0.0
+        }
+      ],
+      "mean_reward": 0.0,
+      "mean_steps": 0.0,
+      "max_reward": 0.0,
+      "min_reward": 0.0
+    }
+  ]
+}

@@ -126,11 +126,14 @@ echo "================================================================"
 echo ""
 
 # ── Run rollouts ───────────────────────────────────────────────────────────
-# Defaults: --episodes 20 --max_steps 50 --model gpt-5.4 --no_label --resume
+# Defaults: --episodes 20 --model gpt-5.4 --no_label --resume
+# Both games use their natural end conditions (no artificial max_steps cap):
+#   avalon:    engine.done (3 quest fails or assassination resolves)
+#   diplomacy: game.is_game_done or phases >= 20 (DiplomacyConfig.max_phases)
 EXTRA_ARGS=("$@")
 
 if [ ${#EXTRA_ARGS[@]} -eq 0 ]; then
-    EXTRA_ARGS=(--episodes 20 --max_steps 50 --model gpt-5.4 --no_label --resume)
+    EXTRA_ARGS=(--episodes 20 --model gpt-5.4 --no_label --resume)
 fi
 
 python3 "${SCRIPT_DIR}/generate_cold_start_evolver.py" "${EXTRA_ARGS[@]}"
