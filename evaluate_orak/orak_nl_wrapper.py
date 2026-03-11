@@ -23,6 +23,7 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import sys
@@ -30,6 +31,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _CODEBASE_ROOT = _SCRIPT_DIR.parent
@@ -43,6 +45,17 @@ _ORAK_MCP_AGENTS = _ORAK_SRC / "mcp_agent_client"
 for _p in [str(_ORAK_SRC), str(_ORAK_MCP_GAMES)]:
     if Path(_p).exists() and _p not in sys.path:
         sys.path.insert(0, _p)
+
+
+@contextlib.contextmanager
+def _orak_cwd():
+    """Temporarily chdir to the Orak repo root for games that use relative paths."""
+    prev = os.getcwd()
+    try:
+        os.chdir(str(_ORAK_REPO))
+        yield
+    finally:
+        os.chdir(prev)
 
 
 def _cfg_path(game: str) -> str:
@@ -67,7 +80,7 @@ ORAK_GAMES: Dict[str, Dict[str, Any]] = {
     # ── Action ──────────────────────────────────────────────────────────
     "super_mario": {
         "config_yaml": _cfg_path("super_mario"),
-        "action_names": [f"Jump Level : {i}" for i in range(7)],
+        "action_names": [f"Jump Level: {i}" for i in range(7)],
         "task": "Advance Mario as far right as possible. Score = x_pos / 3161 * 100.",
         "genre": "action",
     },
@@ -227,20 +240,22 @@ class OrakNLWrapper:
         self._step_count = 0
         self._last_reward = None
 
-        # Orak BaseEnv uses initial_obs() rather than Gymnasium's reset()
-        if hasattr(self._env, "initial_obs"):
-            obs_obj = self._env.initial_obs()
-        else:
-            kw = {}
-            if seed is not None:
-                kw["seed"] = seed
-            if options is not None:
-                kw["options"] = options
-            obs_obj = self._env.reset(**kw) if kw else self._env.reset()
-            if isinstance(obs_obj, tuple):
-                obs_obj = obs_obj[0]
+        with _orak_cwd():
+            # Orak BaseEnv uses initial_obs() rather than Gymnasium's reset()
+            if hasattr(self._env, "initial_obs"):
+                obs_obj = self._env.initial_obs()
+            else:
+                kw = {}
+                if seed is not None:
+                    kw["seed"] = seed
+                if options is not None:
+                    kw["options"] = options
+                obs_obj = self._env.reset(**kw) if kw else self._env.reset()
+                if isinstance(obs_obj, tuple):
+                    obs_obj = obs_obj[0]
 
-        obs_text = _obs_to_text(obs_obj, self._env)
+            obs_text = _obs_to_text(obs_obj, self._env)
+
         nl = self._format_obs(obs_text)
 
         game_info = {}
@@ -262,14 +277,18 @@ class OrakNLWrapper:
         action: Union[str, int],
     ) -> Tuple[str, float, bool, bool, Dict[str, Any]]:
         action_str = str(action).strip()
-        action_obj = self._env.text2action(action_str)
 
-        result = self._env.step(action_obj)
-        obs_obj, reward_raw, terminated, truncated, step_info = (
-            result[0], result[1], result[2], result[3], result[4]
-        )
+        with _orak_cwd():
+            action_obj = self._env.text2action(action_str)
 
-        score, done = self._env.evaluate(obs_obj)
+            result = self._env.step(action_obj)
+            obs_obj, reward_raw, terminated, truncated, step_info = (
+                result[0], result[1], result[2], result[3], result[4]
+            )
+
+            score, done = self._env.evaluate(obs_obj)
+            obs_text = _obs_to_text(obs_obj, self._env)
+
         reward = float(score) if score else float(reward_raw or 0)
 
         self._step_count += 1
@@ -278,7 +297,6 @@ class OrakNLWrapper:
         if self._step_count >= self._max_steps and not (terminated or truncated):
             truncated = True
 
-        obs_text = _obs_to_text(obs_obj, self._env)
         nl = self._format_obs(obs_text)
 
         game_info = {}

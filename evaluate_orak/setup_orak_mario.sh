@@ -20,7 +20,15 @@ conda activate orak-mario
 
 export PYTHONPATH="${CODEBASE_ROOT}:${ORAK_SRC}:${PYTHONPATH:-}"
 export SDL_VIDEODRIVER=dummy
-export DISPLAY=
+
+# nes_py/pyglet needs a display; start Xvfb if none exists
+if [ -z "${DISPLAY:-}" ]; then
+    if ! pgrep -x Xvfb >/dev/null 2>&1; then
+        Xvfb :99 -screen 0 1024x768x24 &>/dev/null &
+        sleep 0.5
+    fi
+    export DISPLAY=:99
+fi
 
 echo "=== orak-mario environment ==="
 echo "  Python:     $(python --version)"
