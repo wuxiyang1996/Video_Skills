@@ -375,6 +375,10 @@ def run_orak_episode(
         )
         exp.idx = step_count
         exp.action_type = "primitive"
+        exp.raw_state = obs
+        exp.raw_next_state = next_obs
+        exp.available_actions = list(action_names)
+        exp.interface = {"env_name": "orak", "game_name": game_name}
         experiences.append(exp)
 
         if verbose:

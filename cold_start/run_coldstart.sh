@@ -94,7 +94,7 @@ echo ""
 
 # ── Run rollouts ───────────────────────────────────────────────────────────
 # Pass all CLI arguments through to the Python script.
-# Defaults: --episodes 100 --max_steps 50 --model gpt-5-mini --no_label --resume
+# Defaults: --episodes 100 (no --max_steps: run until natural end per game) --model gpt-5-mini --no_label --resume
 #
 # The Python script handles:
 #   - Per-game output directories under cold_start/output/
@@ -106,7 +106,7 @@ EXTRA_ARGS=("$@")
 
 # If the user passed no arguments at all, apply sensible defaults
 if [ ${#EXTRA_ARGS[@]} -eq 0 ]; then
-    EXTRA_ARGS=(--episodes 100 --max_steps 50 --model gpt-5-mini --no_label --resume)
+    EXTRA_ARGS=(--episodes 100 --model gpt-5-mini --no_label --resume)
 fi
 
 python3 "${SCRIPT_DIR}/run_100_rollouts.py" "${EXTRA_ARGS[@]}"

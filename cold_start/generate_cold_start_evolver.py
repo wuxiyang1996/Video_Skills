@@ -378,6 +378,8 @@ def run_avalon_episode(
 
         combined_reasoning = "\n".join(step_reasonings) if step_reasonings else None
 
+        avalon_actions = ["approve", "reject", "pass", "fail", "wait"] + [str(i) for i in range(num_players)]
+
         exp = Experience(
             state=json.dumps({str(k): v for k, v in obs.items()}, ensure_ascii=False, default=str),
             action=json.dumps({str(k): v for k, v in actions.items()}, ensure_ascii=False, default=str),
@@ -391,6 +393,10 @@ def run_avalon_episode(
         )
         exp.idx = step_count
         exp.action_type = "primitive"
+        exp.raw_state = {str(k): v for k, v in obs.items()}
+        exp.raw_next_state = {str(k): v for k, v in next_obs.items()} if isinstance(next_obs, dict) else str(next_obs)
+        exp.available_actions = avalon_actions
+        exp.interface = {"env_name": "avalon", "game_name": "avalon", "num_players": num_players}
         experiences.append(exp)
 
         if verbose:
@@ -476,6 +482,8 @@ def run_diplomacy_episode(
 
         combined_reasoning = "\n".join(step_reasonings) if step_reasonings else None
 
+        diplomacy_actions = ["Hold", "Move", "Support hold", "Support move", "Convoy", "Retreat", "Build", "Disband"]
+
         exp = Experience(
             state=json.dumps(dict(obs), ensure_ascii=False, default=str),
             action=json.dumps(dict(actions), ensure_ascii=False, default=str),
@@ -489,6 +497,10 @@ def run_diplomacy_episode(
         )
         exp.idx = step_count
         exp.action_type = "primitive"
+        exp.raw_state = dict(obs)
+        exp.raw_next_state = dict(next_obs) if isinstance(next_obs, dict) else str(next_obs)
+        exp.available_actions = diplomacy_actions
+        exp.interface = {"env_name": "diplomacy", "game_name": "diplomacy"}
         experiences.append(exp)
 
         if verbose:

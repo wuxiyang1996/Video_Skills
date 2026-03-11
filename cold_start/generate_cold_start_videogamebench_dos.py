@@ -220,6 +220,10 @@ async def run_one_episode_dos(
                 tasks=task,
             )
             exp.idx = step_count
+            exp.raw_state = obs_nl
+            exp.raw_next_state = next_obs_nl
+            exp.available_actions = list(VIDEOGAMEBENCH_DOS_VALID_KEYS)
+            exp.interface = {"env_name": "videogamebench_dos", "game_name": game_name}
             experiences.append(exp)
 
             total_reward += reward

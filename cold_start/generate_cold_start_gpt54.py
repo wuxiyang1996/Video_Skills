@@ -1,4 +1,4 @@
-gt#!/usr/bin/env python
+#!/usr/bin/env python
 """
 Cold-start base agent using GPT-5.4 for LM-Game Bench (GamingAgent).
 
@@ -63,6 +63,7 @@ from data_structure.experience import Experience, Episode, Episode_Buffer
 from cold_start.generate_cold_start import (
     GAME_REGISTRY,
     ColdStartEnvWrapper,
+    get_cold_start_max_steps,
     label_trajectory,
 )
 
@@ -229,11 +230,13 @@ def gpt54_agent_action(
 
         content = msg.content or ""
         extracted = _extract_action(content, action_names)
-        return (extracted or action_names[0]), None
+        if extracted:
+            return extracted, None
+        return (action_names[0] if action_names else "stay"), None
 
     except Exception as exc:
         print(f"    [WARN] GPT-5.4 call failed ({exc}), using fallback")
-        return action_names[0] if action_names else "stay", None
+        return (action_names[0] if action_names else "stay"), None
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +256,8 @@ def run_gpt54_episode(
     action_names = GAME_REGISTRY[game_name]["action_names"]
 
     obs, info = env.reset()
+    raw_obs = info.get("raw_obs")
+    curr_available_actions = info.get("available_actions") or action_names
     experiences: List[Experience] = []
     total_reward = 0.0
     step_count = 0
@@ -260,16 +265,18 @@ def run_gpt54_episode(
     truncated = False
 
     while step_count < max_steps:
-        prompt_state = obs + f"\n\nValid actions: {', '.join(action_names)}. Choose one."
+        step_actions = curr_available_actions if curr_available_actions else action_names
+        prompt_state = obs + f"\n\nValid actions: {', '.join(step_actions)}. Choose one."
 
         action, reasoning = gpt54_agent_action(
             state_nl=prompt_state,
-            action_names=action_names,
+            action_names=step_actions,
             model=model,
             temperature=temperature,
         )
 
         next_obs, reward, terminated, truncated, next_info = env.step(action)
+        next_raw_obs = next_info.get("raw_obs")
         done = terminated or truncated
         total_reward += reward
 
@@ -284,6 +291,10 @@ def run_gpt54_episode(
         )
         exp.idx = step_count
         exp.action_type = "primitive"
+        exp.raw_state = str(raw_obs) if raw_obs is not None else None
+        exp.raw_next_state = str(next_raw_obs) if next_raw_obs is not None else None
+        exp.available_actions = list(step_actions) if step_actions else None
+        exp.interface = {"env_name": "gamingagent", "game_name": game_name}
         experiences.append(exp)
 
         if verbose:
@@ -292,6 +303,8 @@ def run_gpt54_episode(
                   f"cum={total_reward:.2f}, reason={reason_short}")
 
         obs = next_obs
+        raw_obs = next_raw_obs
+        curr_available_actions = next_info.get("available_actions") or action_names
         step_count += 1
 
         if done:
@@ -340,6 +353,7 @@ def save_game_summary(
     all_stats: List[Dict[str, Any]],
     elapsed: float,
     args: argparse.Namespace,
+    max_steps_used: Optional[int] = None,
 ) -> Dict[str, Any]:
     summary: Dict[str, Any] = {
         "game": game_name,
@@ -348,7 +362,7 @@ def save_game_summary(
         "agent_type": "gpt54_base",
         "total_episodes": len(all_stats),
         "target_episodes": args.episodes,
-        "max_steps": args.max_steps,
+        "max_steps": max_steps_used if max_steps_used is not None else args.max_steps,
         "labeled": not args.no_label,
         "elapsed_seconds": elapsed,
         "episode_stats": all_stats,
@@ -386,6 +400,8 @@ def run_game_rollouts(
         if start_idx > 0:
             print(f"  [RESUME] {game_name}: resuming from episode {start_idx}")
 
+    effective_max_steps = args.max_steps if args.max_steps is not None else get_cold_start_max_steps(game_name)
+
     episode_buffer = Episode_Buffer(buffer_size=args.episodes + 10)
     all_stats: List[Dict[str, Any]] = []
     t0 = time.time()
@@ -394,12 +410,12 @@ def run_game_rollouts(
         print(f"\n  [{game_name}] Episode {ep_idx + 1}/{args.episodes}")
 
         try:
-            env = ColdStartEnvWrapper(game_name, max_steps=args.max_steps)
+            env = ColdStartEnvWrapper(game_name, max_steps=effective_max_steps)
             episode, stats = run_gpt54_episode(
                 env=env,
                 game_name=game_name,
                 model=args.model,
-                max_steps=args.max_steps,
+                max_steps=effective_max_steps,
                 temperature=args.temperature,
                 verbose=args.verbose,
             )
@@ -440,7 +456,7 @@ def run_game_rollouts(
     episode_buffer.save_to_json(str(buffer_path))
     print(f"\n  Saved {len(episode_buffer)} episodes to {buffer_path}")
 
-    summary = save_game_summary(game_name, game_dir, all_stats, elapsed, args)
+    summary = save_game_summary(game_name, game_dir, all_stats, elapsed, args, max_steps_used=effective_max_steps)
     return summary
 
 
@@ -457,8 +473,8 @@ def main():
                         help="Games to generate rollouts for (default: all available)")
     parser.add_argument("--episodes", type=int, default=100,
                         help="Number of episodes per game (default: 100)")
-    parser.add_argument("--max_steps", type=int, default=50,
-                        help="Max steps per episode")
+    parser.add_argument("--max_steps", type=int, default=None,
+                        help="Max steps per episode (default: per-game natural end)")
     parser.add_argument("--model", type=str, default=MODEL_GPT54,
                         help=f"LLM model for the agent (default: {MODEL_GPT54})")
     parser.add_argument("--temperature", type=float, default=0.4,
@@ -522,7 +538,7 @@ def main():
     if skipped_games:
         print(f"  Skipped:     {', '.join(skipped_games)}")
     print(f"  Episodes:    {args.episodes} per game")
-    print(f"  Max steps:   {args.max_steps}")
+    print(f"  Max steps:   {'per-game (natural end)' if args.max_steps is None else args.max_steps}")
     print(f"  Model:       {args.model}")
     print(f"  Temperature: {args.temperature}")
     print(f"  Labeling:    {not args.no_label} (label model: {args.label_model})")
@@ -548,7 +564,7 @@ def main():
         "model": args.model,
         "agent_type": "gpt54_base",
         "episodes_per_game": args.episodes,
-        "max_steps": args.max_steps,
+        "max_steps": args.max_steps,  # None means per-game natural end
         "temperature": args.temperature,
         "labeled": not args.no_label,
         "label_model": args.label_model,

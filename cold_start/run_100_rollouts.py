@@ -74,6 +74,7 @@ from decision_agents.dummy_agent import (
 from cold_start.generate_cold_start import (
     GAME_REGISTRY,
     ColdStartEnvWrapper,
+    get_cold_start_max_steps,
     run_dummy_agent_episode,
     run_vlm_agent_episode,
     label_trajectory,
@@ -103,6 +104,7 @@ def save_game_summary(
     all_stats: List[Dict[str, Any]],
     elapsed: float,
     args: argparse.Namespace,
+    max_steps_used: Optional[int] = None,
 ):
     """Save per-game rollout summary."""
     summary = {
@@ -112,7 +114,7 @@ def save_game_summary(
         "agent_type": args.agent_type,
         "total_episodes": len(all_stats),
         "target_episodes": args.episodes,
-        "max_steps": args.max_steps,
+        "max_steps": max_steps_used if max_steps_used is not None else args.max_steps,
         "labeled": not args.no_label,
         "elapsed_seconds": elapsed,
         "episode_stats": all_stats,
@@ -155,16 +157,18 @@ def run_game_rollouts(
     all_stats: List[Dict[str, Any]] = []
     t0 = time.time()
 
+    effective_max_steps = args.max_steps if args.max_steps is not None else get_cold_start_max_steps(game_name)
+
     for ep_idx in range(start_idx, args.episodes):
         print(f"\n  [{game_name}] Episode {ep_idx + 1}/{args.episodes}")
 
         try:
-            env = ColdStartEnvWrapper(game_name, max_steps=args.max_steps)
+            env = ColdStartEnvWrapper(game_name, max_steps=effective_max_steps)
             episode, stats = run_fn(
                 env=env,
                 game_name=game_name,
                 model=args.model,
-                max_steps=args.max_steps,
+                max_steps=effective_max_steps,
                 verbose=args.verbose,
             )
             env.close()
@@ -204,7 +208,7 @@ def run_game_rollouts(
     episode_buffer.save_to_json(str(buffer_path))
     print(f"\n  Saved {len(episode_buffer)} episodes to {buffer_path}")
 
-    summary = save_game_summary(game_name, game_dir, all_stats, elapsed, args)
+    summary = save_game_summary(game_name, game_dir, all_stats, elapsed, args, max_steps_used=effective_max_steps)
     return summary
 
 
@@ -217,8 +221,8 @@ def main():
                         help="Games to generate rollouts for (default: all available)")
     parser.add_argument("--episodes", type=int, default=100,
                         help="Number of episodes per game (default: 100)")
-    parser.add_argument("--max_steps", type=int, default=50,
-                        help="Max steps per episode")
+    parser.add_argument("--max_steps", type=int, default=None,
+                        help="Max steps per episode (default: per-game natural end)")
     parser.add_argument("--model", type=str, default="gpt-5-mini",
                         help="LLM model for agent and labeling")
     parser.add_argument("--agent_type", type=str, default="dummy",
@@ -279,7 +283,7 @@ def main():
     if skipped_games:
         print(f"  Skipped:    {', '.join(skipped_games)}")
     print(f"  Episodes:   {args.episodes} per game")
-    print(f"  Max steps:  {args.max_steps}")
+    print(f"  Max steps:  {'per-game (natural end)' if args.max_steps is None else args.max_steps}")
     print(f"  Model:      {args.model}")
     print(f"  Agent:      {args.agent_type}")
     print(f"  Labeling:   {not args.no_label}")
@@ -305,7 +309,7 @@ def main():
         "model": args.model,
         "agent_type": args.agent_type,
         "episodes_per_game": args.episodes,
-        "max_steps": args.max_steps,
+        "max_steps": args.max_steps,  # None means per-game natural end
         "labeled": not args.no_label,
         "total_elapsed_seconds": overall_elapsed,
         "games_completed": [g for g in available_games],

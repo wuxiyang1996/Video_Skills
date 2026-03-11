@@ -29,6 +29,19 @@ LMGame-Bench contains **11 games** across 3 categories. **6 are included** in th
 | Ace Attorney | Requires GBA ROM via `stable-retro` |
 | 1942 | Requires NES ROM via `stable-retro` |
 
+## Scope of This Wrapper
+
+Due to environment complexity and availability constraints, this wrapper currently targets only the **4 custom-category games**:
+
+| # | Game | Actions |
+|---|------|---------|
+| 1 | **2048** | `up`, `down`, `left`, `right` |
+| 2 | **Sokoban** | `up`, `down`, `left`, `right` |
+| 3 | **Candy Crush** | coordinate swaps, e.g. `((0,5),(1,5))` |
+| 4 | **Tetris** | `move_left`, `move_right`, `rotate_cw`, `rotate_ccw`, `hard_drop`, `soft_drop` |
+
+These four games are fully self-contained (no ROMs, no external assets) and expose deterministic, text-representable state, making them straightforward to integrate into training and evaluation pipelines. The remaining games are either excluded entirely (ROM dependencies) or deferred (PettingZoo multi-agent environments) and may be added in future iterations.
+
 ## Module Structure
 
 ```

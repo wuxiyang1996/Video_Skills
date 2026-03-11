@@ -69,62 +69,38 @@ from decision_agents.dummy_agent import (
 from decision_agents.reward_func import RewardConfig, RewardResult
 
 # ---------------------------------------------------------------------------
-# GamingAgent environment imports
+# GamingAgent environment imports: LAZY to avoid loading retro/pyglet (X11) when
+# only running custom games (2048, Sokoban, Candy Crush, Tetris) on headless servers.
 # ---------------------------------------------------------------------------
-try:
-    from gamingagent.envs.custom_01_2048.twentyFortyEightEnv import TwentyFortyEightEnv
-except ImportError:
-    TwentyFortyEightEnv = None
+import importlib
 
-try:
-    from gamingagent.envs.custom_02_sokoban.sokobanEnv import SokobanEnv
-except ImportError:
-    SokobanEnv = None
+_ENV_IMPORT_MAP = {
+    "twenty_forty_eight": ("gamingagent.envs.custom_01_2048.twentyFortyEightEnv", "TwentyFortyEightEnv"),
+    "sokoban": ("gamingagent.envs.custom_02_sokoban.sokobanEnv", "SokobanEnv"),
+    "candy_crush": ("gamingagent.envs.custom_03_candy_crush.candyCrushEnv", "CandyCrushEnv"),
+    "tetris": ("gamingagent.envs.custom_04_tetris.tetrisEnv", "TetrisEnv"),
+    "doom": ("gamingagent.envs.custom_05_doom.doomEnv", "DoomEnvWrapper"),
+    "pokemon_red": ("gamingagent.envs.custom_06_pokemon_red.pokemonRedEnv", "PokemonRedEnv"),
+    "super_mario_bros": ("gamingagent.envs.retro_01_super_mario_bros.superMarioBrosEnv", "SuperMarioBrosEnv"),
+    "ace_attorney": ("gamingagent.envs.retro_02_ace_attorney.aceAttorneyEnv", "AceAttorneyEnv"),
+    "nineteen_forty_two": ("gamingagent.envs.retro_03_1942.NineteenFortyTwo_env", "NineteenFortyTwoEnv"),
+    "tic_tac_toe": ("gamingagent.envs.zoo_01_tictactoe.TicTacToeEnv", "SingleTicTacToeEnv"),
+    "texas_holdem": ("gamingagent.envs.zoo_02_texasholdem.TexasHoldemEnv", "SingleTexasHoldemEnv"),
+}
 
-try:
-    from gamingagent.envs.custom_03_candy_crush.candyCrushEnv import CandyCrushEnv
-except ImportError:
-    CandyCrushEnv = None
 
-try:
-    from gamingagent.envs.custom_04_tetris.tetrisEnv import TetrisEnv
-except ImportError:
-    TetrisEnv = None
+def _get_env_class(game_name: str):
+    """Lazy-load the env class for a game (avoids importing retro/pyglet until needed)."""
+    entry = _ENV_IMPORT_MAP.get(game_name)
+    if not entry:
+        return None
+    mod_path, cls_name = entry
+    try:
+        mod = importlib.import_module(mod_path)
+        return getattr(mod, cls_name)
+    except Exception:
+        return None
 
-try:
-    from gamingagent.envs.custom_05_doom.doomEnv import DoomEnvWrapper as DoomEnv
-except ImportError:
-    DoomEnv = None
-
-try:
-    from gamingagent.envs.custom_06_pokemon_red.pokemonRedEnv import PokemonRedEnv
-except ImportError:
-    PokemonRedEnv = None
-
-try:
-    from gamingagent.envs.retro_01_super_mario_bros.superMarioBrosEnv import SuperMarioBrosEnv
-except ImportError:
-    SuperMarioBrosEnv = None
-
-try:
-    from gamingagent.envs.retro_02_ace_attorney.aceAttorneyEnv import AceAttorneyEnv
-except ImportError:
-    AceAttorneyEnv = None
-
-try:
-    from gamingagent.envs.retro_03_1942.NineteenFortyTwo_env import NineteenFortyTwoEnv
-except ImportError:
-    NineteenFortyTwoEnv = None
-
-try:
-    from gamingagent.envs.zoo_01_tictactoe.TicTacToeEnv import SingleTicTacToeEnv
-except ImportError:
-    SingleTicTacToeEnv = None
-
-try:
-    from gamingagent.envs.zoo_02_texasholdem.TexasHoldemEnv import SingleTexasHoldemEnv
-except ImportError:
-    SingleTexasHoldemEnv = None
 
 # ---------------------------------------------------------------------------
 # Orak benchmark (krafton-ai/Orak) game environment imports
@@ -220,79 +196,80 @@ def _ace_attorney_kwargs(cache_dir: str, config_path: str) -> Dict[str, Any]:
     )
 
 
+# "lazy" = load env class on first use (avoids importing retro/pyglet on headless servers)
 GAME_REGISTRY: Dict[str, Dict[str, Any]] = {
     "twenty_forty_eight": {
-        "env_class": TwentyFortyEightEnv,
+        "env_class": "lazy",
         "config_path": _config_path("custom_01_2048"),
         "action_names": ["up", "down", "left", "right"],
         "task": "Achieve the highest possible tile in 2048 by merging tiles strategically.",
         "init_kwargs": _adapter_kwargs,
     },
     "sokoban": {
-        "env_class": SokobanEnv,
+        "env_class": "lazy",
         "config_path": _config_path("custom_02_sokoban"),
         "action_names": ["up", "down", "left", "right", "push up", "push down", "push left", "push right", "no_op"],
         "task": "Push all boxes onto goal positions in the Sokoban puzzle.",
         "init_kwargs": _adapter_kwargs,
     },
     "candy_crush": {
-        "env_class": CandyCrushEnv,
+        "env_class": "lazy",
         "config_path": _config_path("custom_03_candy_crush"),
         "action_names": [],  # dynamic: swap(row1,col1,row2,col2) on 8x8 board
         "task": "Match three or more candies in a row/column to clear the board and maximize score.",
         "init_kwargs": _candy_crush_kwargs,
     },
     "tetris": {
-        "env_class": TetrisEnv,
+        "env_class": "lazy",
         "config_path": _config_path("custom_04_tetris"),
         "action_names": ["no_op", "left", "right", "rotate_left", "rotate_right", "soft_drop", "hard_drop"],
         "task": "Clear as many lines as possible in Tetris by placing tetrominoes strategically.",
         "init_kwargs": _adapter_kwargs,
     },
     "doom": {
-        "env_class": DoomEnv,
+        "env_class": "lazy",
         "config_path": _config_path("custom_05_doom"),
         "action_names": ["move_left", "move_right", "attack"],
         "task": "Survive and defeat enemies in Doom by shooting and dodging.",
         "init_kwargs": _doom_kwargs,
     },
     "pokemon_red": {
-        "env_class": PokemonRedEnv,
+        "env_class": "lazy",
         "config_path": _config_path("custom_06_pokemon_red"),
         "action_names": ["a", "b", "start", "select", "up", "down", "left", "right"],
         "task": "Progress through Pokemon Red by exploring, battling, and catching Pokemon.",
         "init_kwargs": _pokemon_red_kwargs,
     },
     "super_mario_bros": {
-        "env_class": SuperMarioBrosEnv,
+        "env_class": "lazy",
         "config_path": _config_path("retro_01_super_mario_bros"),
         "action_names": ["noop", "right", "right_a", "right_b", "right_a_b", "a", "b", "left", "left_a", "left_b", "left_a_b", "down", "up"],
         "task": "Complete levels in Super Mario Bros by running, jumping, and avoiding enemies.",
         "init_kwargs": _retro_kwargs("super_mario_bros"),
     },
     "ace_attorney": {
-        "env_class": AceAttorneyEnv,
+        "env_class": "lazy",
         "config_path": _config_path("retro_02_ace_attorney"),
         "action_names": ["a", "b", "l", "r", "up", "down", "left", "right", "no_op"],
         "task": "Solve cases in Ace Attorney by investigating evidence and cross-examining witnesses.",
         "init_kwargs": _ace_attorney_kwargs,
     },
     "nineteen_forty_two": {
-        "env_class": NineteenFortyTwoEnv,
+        "env_class": "lazy",
         "config_path": _config_path("retro_03_1942"),
         "action_names": ["noop", "right", "right_b", "a", "b", "left", "left_b", "down", "up"],
         "task": "Survive waves of enemy aircraft in 1942 by dodging and shooting.",
         "init_kwargs": _retro_kwargs("nineteen_forty_two"),
     },
     "tic_tac_toe": {
-        "env_class": SingleTicTacToeEnv,
+        "env_class": "lazy",
         "config_path": _config_path("zoo_01_tictactoe"),
         "action_names": ["place 0", "place 1", "place 2", "place 3", "place 4", "place 5", "place 6", "place 7", "place 8"],
         "task": "Win at Tic-Tac-Toe by placing marks to get three in a row.",
         "init_kwargs": _adapter_kwargs,
     },
     "texas_holdem": {
-        "env_class": SingleTexasHoldemEnv,
+        "env_class": "lazy",
         "config_path": _config_path("zoo_02_texasholdem"),
         "action_names": ["call", "raise", "fold", "check"],
         "task": "Win at Texas Hold'em poker by making optimal betting decisions.",
@@ -417,6 +394,22 @@ GAME_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
 }
 
+# Max steps per game so cold-start runs until natural end (no truncation before win/lose).
+# Used when --max_steps is not passed in run_100_rollouts.py and generate_cold_start_gpt54.py.
+COLD_START_MAX_STEPS_NATURAL_END: Dict[str, int] = {
+    "twenty_forty_eight": 200,
+    "sokoban": 200,
+    "candy_crush": 50,
+    "tetris": 200,
+}
+
+
+def get_cold_start_max_steps(game_name: str, override: Optional[int] = None) -> int:
+    """Return max_steps for cold-start: override if set, else per-game natural-end limit."""
+    if override is not None:
+        return override
+    return COLD_START_MAX_STEPS_NATURAL_END.get(game_name, 200)
+
 
 # ---------------------------------------------------------------------------
 # Lightweight NL wrapper for GamingAgent envs
@@ -450,19 +443,45 @@ class ColdStartEnvWrapper:
             os.makedirs(cache_dir, exist_ok=True)
             kwargs_fn = reg.get("init_kwargs", _adapter_kwargs)
             env_kwargs = kwargs_fn(cache_dir, reg["config_path"])
-            self._env = reg["env_class"](**env_kwargs)
+            env_class = reg["env_class"]
+            if env_class == "lazy":
+                env_class = _get_env_class(game_name)
+                if env_class is None:
+                    raise ValueError(f"Game '{game_name}' env could not be imported.")
+            self._env = env_class(**env_kwargs)
+
+        self._dynamic_actions = False
+        self._env_action_idx_to_str: Dict[int, str] = {}
+        if not self._action_names and hasattr(self._env, 'env_action_idx_to_move') and self._env.env_action_idx_to_move:
+            self._dynamic_actions = True
+            self._env_action_idx_to_str = dict(self._env.env_action_idx_to_move)
+            self._action_names = list(self._env_action_idx_to_str.values())
+
+    def _effective_action_strs(self, info: Dict[str, Any]) -> List[str]:
+        """Convert effective_actions (int indices) from env info to action strings."""
+        if not self._dynamic_actions:
+            return self._action_names
+        eff_indices = info.get("effective_actions", [])
+        if not eff_indices:
+            return self._action_names
+        eff_strs = [self._env_action_idx_to_str[i] for i in eff_indices if i in self._env_action_idx_to_str]
+        return eff_strs if eff_strs else self._action_names
 
     def reset(self, seed=None, options=None) -> Tuple[str, Dict[str, Any]]:
         if self._is_orak:
             text, info = self._orak_wrapper.reset(seed=seed)
             self._step_count = 0
             info["game"] = "orak"
+            info["raw_obs"] = text
+            info["available_actions"] = self._action_names
             return text, info
 
         obs, info = self._env.reset(seed=seed)
         self._step_count = 0
         text = self._obs_to_text(obs)
+        info["raw_obs"] = obs
         info["action_names"] = self._action_names
+        info["available_actions"] = self._effective_action_strs(info)
         info["game"] = GAME_GAMINGAGENT
         info["env_name"] = "gamingagent"
         info["game_name"] = self._game_name
@@ -475,6 +494,8 @@ class ColdStartEnvWrapper:
             self._step_count += 1
             info["game"] = "orak"
             info["perf_score"] = info.get("score", 0.0)
+            info["raw_obs"] = text
+            info["available_actions"] = self._action_names
             return text, reward, terminated, truncated, info
 
         action_str = str(action).strip() if action is not None else ""
@@ -485,7 +506,9 @@ class ColdStartEnvWrapper:
         if self._step_count >= self._max_steps:
             truncated = True
         text = self._obs_to_text(obs)
+        info["raw_obs"] = obs
         info["action_names"] = self._action_names
+        info["available_actions"] = self._effective_action_strs(info)
         info["game"] = GAME_GAMINGAGENT
         info["env_name"] = "gamingagent"
         info["game_name"] = self._game_name
@@ -538,29 +561,33 @@ def run_dummy_agent_episode(
     action_names = GAME_REGISTRY[game_name]["action_names"]
 
     obs, info = env.reset()
+    raw_obs = info.get("raw_obs")
+    curr_available_actions = info.get("available_actions") or action_names
     experiences: List[Experience] = []
     total_reward = 0.0
     step_count = 0
 
     while step_count < max_steps:
+        step_actions = curr_available_actions if curr_available_actions else action_names
         action = language_agent_action(
-            state_nl=obs + f"\n\nValid actions: {', '.join(action_names)}. Choose one.",
+            state_nl=obs + f"\n\nValid actions: {', '.join(step_actions)}. Choose one.",
             game=GAME_GAMINGAGENT,
             model=model,
             use_function_call=True,
             temperature=0.3,
         )
 
-        if action_names and str(action) not in action_names:
-            lower_map = {a.lower(): a for a in action_names}
+        if step_actions and str(action) not in step_actions:
+            lower_map = {a.lower(): a for a in step_actions}
             canonical = lower_map.get(str(action).lower().strip())
             if canonical:
                 action = canonical
             else:
                 import random
-                action = random.choice(action_names)
+                action = random.choice(step_actions)
 
         next_obs, reward, terminated, truncated, next_info = env.step(action)
+        next_raw_obs = next_info.get("raw_obs")
         done = terminated or truncated
         total_reward += reward
 
@@ -573,12 +600,18 @@ def run_dummy_agent_episode(
             tasks=task,
         )
         exp.idx = step_count
+        exp.raw_state = str(raw_obs) if raw_obs is not None else None
+        exp.raw_next_state = str(next_raw_obs) if next_raw_obs is not None else None
+        exp.available_actions = list(step_actions) if step_actions else None
+        exp.interface = {"env_name": "gamingagent", "game_name": game_name}
         experiences.append(exp)
 
         if verbose:
             print(f"  step {step_count}: action={action}, reward={reward:.2f}, cum={total_reward:.2f}")
 
         obs = next_obs
+        raw_obs = next_raw_obs
+        curr_available_actions = next_info.get("available_actions") or action_names
         info = next_info
         step_count += 1
 

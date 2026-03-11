@@ -94,11 +94,11 @@ echo "================================================================"
 echo ""
 
 # ── Run rollouts ───────────────────────────────────────────────────────────
-# Defaults: --episodes 100 --max_steps 50 --model gpt-5.4 --no_label --resume
+# Defaults: --episodes 100 (no --max_steps: run until natural end per game) --model gpt-5.4 --no_label --resume
 EXTRA_ARGS=("$@")
 
 if [ ${#EXTRA_ARGS[@]} -eq 0 ]; then
-    EXTRA_ARGS=(--episodes 100 --max_steps 50 --model gpt-5.4 --no_label --resume)
+    EXTRA_ARGS=(--episodes 100 --model gpt-5.4 --no_label --resume)
 fi
 
 python3 "${SCRIPT_DIR}/generate_cold_start_gpt54.py" "${EXTRA_ARGS[@]}"

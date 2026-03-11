@@ -2,6 +2,49 @@
 
 Generate initial trajectory data and skill seeds for the Game-AI-Agent system.
 
+## Scope: Environments and Games We Use
+
+We only run the **4 games** supported by our evaluation stack (see [evaluate_gamingagent/README.md](../evaluate_gamingagent/README.md)):
+
+| # | Game | Actions |
+|---|------|---------|
+| 1 | **2048** | `up`, `down`, `left`, `right` |
+| 2 | **Sokoban** | `up`, `down`, `left`, `right` |
+| 3 | **Candy Crush** | coordinate swaps, e.g. `((0,5),(1,5))` |
+| 4 | **Tetris** | `move_left`, `move_right`, `rotate_cw`, `rotate_ccw`, `hard_drop`, `soft_drop` |
+
+### End conditions and max turns (how many steps per episode)
+
+| Game | Evaluation max steps | Cold-start default | Natural end |
+|------|---------------------|--------------------|-------------|
+| **2048** | 200 | 200 (natural end) | No valid moves (game over), or reach 2048 tile; also terminates after 10 steps with no board change. |
+| **Sokoban** | 100 | 200 (natural end) | All boxes on targets (win); or env `max_steps_episode` (200 in config); or 5 steps with no change. |
+| **Candy Crush** | 50 | 50 (natural end) | Run out of moves (`num_moves` = 50 in env config). |
+| **Tetris** | 200 | 200 (natural end) | Stack reaches top (game over); or 30 steps with no change. |
+
+- **Evaluation** limits come from [evaluate_gamingagent/game_configs.py](../evaluate_gamingagent/game_configs.py) (`max_steps` per game). The wrapper truncates the episode when `step_count >= max_steps` even if the game has not ended.
+- **Cold-start** runs until **natural end** by default: per-game limits are defined in `generate_cold_start.py` (`COLD_START_MAX_STEPS_NATURAL_END`). Use `--max_steps N` to cap episodes at N steps instead.
+
+The environments available to us are:
+
+- **[evaluate_gamingagent](../evaluate_gamingagent/)** — LMGame-Bench (the 4 games above)
+
+- **[evaluation_evolver](../evaluation_evolver/)** — AgentEvolver; we run **two** envs:
+
+| # | Env | Actions |
+|---|-----|---------|
+| 1 | **Avalon** | social deduction (phases/turns) |
+| 2 | **Diplomacy** | negotiation (phases/turns) |
+
+- **[evaluate_orak](../evaluate_orak/)** — Orak; we run **two** envs:
+
+| # | Env | Actions |
+|---|-----|---------|
+| 1 | **Super Mario** | `Jump Level : 0` … `6` |
+| 2 | **StarCraft II** | 5 macro actions per step (e.g. `TRAIN ZEALOT`) |
+
+Other envs and games (e.g. Doom, Pokemon Red, Super Mario Bros, Ace Attorney, 1942, Tic-Tac-Toe, Texas Hold'em from the full LMGame-Bench set) are **not available** in our setup due to complexity and environment availability.
+
 ## Goal
 
 1. **Prompt decision agents** (VLMDecisionAgent or dummy language agent) powered by GPT-5-mini to generate unlabeled trajectories from game environments.
@@ -47,6 +90,29 @@ python cold_start/run_100_rollouts.py --resume
 # Skip labeling for faster generation
 python cold_start/run_100_rollouts.py --no_label
 ```
+
+### Per-game GPT-5.4 rollouts (configurable episodes)
+
+To run each game separately and set how many episodes to gather per game, use the shell script (from **Game-AI-Agent** root):
+
+```bash
+# All 4 games, 50 episodes each (run until natural end per game)
+bash cold_start/run_coldstart_gpt54_per_game.sh --episodes 50
+
+# All 4 games, 100 episodes each (default)
+bash cold_start/run_coldstart_gpt54_per_game.sh --episodes 100
+
+# Only 2048 and Tetris, 20 episodes each
+bash cold_start/run_coldstart_gpt54_per_game.sh --episodes 20 twenty_forty_eight tetris
+
+# One game only, custom episodes
+bash cold_start/run_coldstart_gpt54_per_game.sh --episodes 30 candy_crush
+
+# With resume and no labeling
+bash cold_start/run_coldstart_gpt54_per_game.sh --episodes 100 --resume --no_label
+```
+
+Output: `cold_start/output/gpt54/<game_name>/` (episode_*.json, rollouts.jsonl, episode_buffer.json).
 
 ### Output (cold_start/output/)
 
@@ -122,7 +188,9 @@ python cold_start/generate_cold_start.py \
 
 Output goes to `cold_start/data/<game_name>/` by default.
 
-## Available Games
+## Available Games (In Scope)
+
+Cold-start generation targets only the 4 games we run (see Scope above):
 
 | Game | Registry Key | Description |
 |------|-------------|-------------|
@@ -130,16 +198,8 @@ Output goes to `cold_start/data/<game_name>/` by default.
 | Sokoban | `sokoban` | Box-pushing puzzle |
 | Candy Crush | `candy_crush` | Match-3 tile puzzle |
 | Tetris | `tetris` | Falling block puzzle |
-| Doom | `doom` | FPS shooting |
-| Pokemon Red | `pokemon_red` | RPG exploration (needs ROM) |
-| Super Mario Bros | `super_mario_bros` | Platformer (needs retro ROM) |
-| Ace Attorney | `ace_attorney` | Investigation/dialogue (needs retro ROM) |
-| 1942 | `nineteen_forty_two` | Vertical shooter (needs retro ROM) |
-| Tic-Tac-Toe | `tic_tac_toe` | Classic board game |
-| Texas Hold'em | `texas_holdem` | Poker card game |
 
-Games requiring ROMs or special setup will be automatically skipped if their
-environment classes are not importable.
+Other games (Doom, Pokemon Red, Super Mario Bros, Ace Attorney, 1942, Tic-Tac-Toe, Texas Hold'em) are not available in our environment and are out of scope for this cold-start pipeline.
 
 ## Agent Types
 

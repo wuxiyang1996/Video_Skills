@@ -11,7 +11,7 @@
 from __future__ import annotations  # Enable postponed evaluation of annotations
 
 import uuid
-from typing import List, Optional, TYPE_CHECKING
+from typing import Any, List, Optional, TYPE_CHECKING
 from API_func import ask_model
 import random
 import json
@@ -37,6 +37,18 @@ class Experience:
         # Optional fields, could be filled in the experience generation process.
         # Index of the experience in the episode.
         self.idx = None
+
+        # Raw environment state before any text/NL conversion.
+        # Preserves the original observation returned by env.reset()/env.step().
+        self.raw_state: Optional[Any] = None
+        self.raw_next_state: Optional[Any] = None
+
+        # Valid actions available at this step (list of action name strings).
+        self.available_actions: Optional[List[str]] = None
+
+        # Evaluation interface: holds evaluation function configs, criteria,
+        # and results from external evaluators for this experience.
+        self.interface: Optional[dict] = None
 
         # Optional, but required in our design. Could be remove in the baselines.
         # Involving the intentions and tasks generation process, also the sub-task labelings.
@@ -124,6 +136,14 @@ class Experience:
             "summary_state": self.summary_state,
             "idx": self.idx,
         }
+        if self.raw_state is not None:
+            d["raw_state"] = self.raw_state
+        if self.raw_next_state is not None:
+            d["raw_next_state"] = self.raw_next_state
+        if self.available_actions is not None:
+            d["available_actions"] = self.available_actions
+        if self.interface is not None:
+            d["interface"] = self.interface
         if self.reward_details is not None:
             d["reward_details"] = self.reward_details
         if self.action_type is not None:
@@ -146,6 +166,10 @@ class Experience:
         exp.summary = d.get("summary")
         exp.summary_state = d.get("summary_state")
         exp.idx = d.get("idx")
+        exp.raw_state = d.get("raw_state")
+        exp.raw_next_state = d.get("raw_next_state")
+        exp.available_actions = d.get("available_actions")
+        exp.interface = d.get("interface")
         exp.reward_details = d.get("reward_details")
         exp.action_type = d.get("action_type")
         return exp
