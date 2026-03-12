@@ -1,0 +1,8 @@
+{
+  "game": "sokoban",
+  "model": "gpt-5.4",
+  "timestamp": "2026-03-12T10:55:53.684354",
+  "episodes_labeled": 1,
+  "skills_extracted": 9,
+  "elapsed_seconds": 127.71098065376282
+}

@@ -1,0 +1,127 @@
+{
+  "game": "tetris",
+  "model": "gpt-5.4",
+  "timestamp": "2026-03-12T10:58:40.643685",
+  "n_skills": 7,
+  "skills": [
+    {
+      "skill_id": "skill_tetris_clear_0",
+      "name": "Seal and Flatten",
+      "summary": "game=tetris | skill=Seal and Flatten | effects=clear_completed | context=use on tag_clear turns to drop into center-right gaps, seal holes, avoid overhangs, and flatten the stack for smooth follow-ups",
+      "description": "Place the current piece to complete one or more full rows, clearing them and leaving the surface flatter. Use it whenever you can remove lines without creating overhangs or new holes, especially early",
+      "tag": "CLEAR",
+      "eff_add": [
+        "clear_completed"
+      ],
+      "eff_del": [],
+      "eff_event": [
+        "tag_clear"
+      ],
+      "n_instances": 11,
+      "total_steps": 31,
+      "version": 1
+    },
+    {
+      "skill_id": "skill_tetris_defend_1",
+      "name": "Tuck L Left",
+      "summary": "game=tetris | skill=Tuck L Left | effects=defend_completed | context=use on defend when an L piece can fill the left or left-center valley/cavity to avoid new holes, reduce existing holes, and stabilize the stack",
+      "description": "Rotate and slide the L piece left to tuck it under an overhang, plugging a left-side cavity without raising the stack. Use it in midgame defense when the board has left-facing gaps and you need to red",
+      "tag": "DEFEND",
+      "eff_add": [
+        "defend_completed"
+      ],
+      "eff_del": [],
+      "eff_event": [
+        "tag_defend"
+      ],
+      "n_instances": 1,
+      "total_steps": 3,
+      "version": 1
+    },
+    {
+      "skill_id": "skill_tetris_navigate_2",
+      "name": "Fill S Gap",
+      "summary": "game=tetris | skill=Fill S Gap | effects=navigate_completed | context=[NAVIGATE] Drop S into columns 3-5 gap quickly to preserve flexibility for T,Z,I,J",
+      "description": "Fill S Gap means guiding an S piece into a stepped notch—two adjacent cells offset by one row—to seal a small zigzag cavity. Use it when your stack leaves that exact S-shaped opening, especially in mi",
+      "tag": "NAVIGATE",
+      "eff_add": [
+        "navigate_completed"
+      ],
+      "eff_del": [],
+      "eff_event": [
+        "tag_navigate"
+      ],
+      "n_instances": 1,
+      "total_steps": 1,
+      "version": 1
+    },
+    {
+      "skill_id": "skill_tetris_optimize_3",
+      "name": "Smooth the Surface",
+      "summary": "game=tetris | skill=Smooth the Surface | effects=flatten contour, reduce holes, avoid overhangs, preserve flexibility | context=use when placing J/S/T to fill valleys or cavities, smooth center or side surfaces, and keep wells and future piece options open",
+      "description": "Flatten uneven columns by placing pieces to fill dips and reduce jagged height differences, even if it doesn’t clear lines immediately. Use it in midgame when the stack is moderate and holes exist, so",
+      "tag": "OPTIMIZE",
+      "eff_add": [
+        "optimize_completed"
+      ],
+      "eff_del": [],
+      "eff_event": [
+        "tag_optimize"
+      ],
+      "n_instances": 3,
+      "total_steps": 18,
+      "version": 1
+    },
+    {
+      "skill_id": "skill_tetris_position_4",
+      "name": "Place for flatness",
+      "summary": "game=tetris | skill=Place for flatness | effects=position_completed | context=use when positioning pieces to flatten the center or left-center surface, fill notches/valleys, avoid creating holes, and preserve flexible future clears",
+      "description": "Place pieces to keep the surface as flat and even as possible, avoiding tall spikes or deep wells. Use this on routine placements in Tetris, especially early or when no line clear/setup is available, ",
+      "tag": "POSITION",
+      "eff_add": [
+        "position_completed"
+      ],
+      "eff_del": [],
+      "eff_event": [
+        "tag_position"
+      ],
+      "n_instances": 5,
+      "total_steps": 11,
+      "version": 1
+    },
+    {
+      "skill_id": "skill_tetris_setup_5",
+      "name": "Keep Stack Low",
+      "summary": "game=tetris | skill=Keep Stack Low | effects=setup_completed | context=setup phase; place L/S/O flat and tuck T into left or left-center notch to smooth the surface, preserve the I slot, and stay flexible for upcoming pieces like O, I, S, L, T, Z",
+      "description": "In Tetris, keep the stack flat and low by placing early pieces to fill shallow gaps instead of building towers. Use this in the opening and whenever the board is clean to preserve space and flexibilit",
+      "tag": "SETUP",
+      "eff_add": [
+        "setup_completed"
+      ],
+      "eff_del": [],
+      "eff_event": [
+        "tag_setup"
+      ],
+      "n_instances": 2,
+      "total_steps": 11,
+      "version": 1
+    },
+    {
+      "skill_id": "skill_tetris_survive_6",
+      "name": "Stabilize the Stack",
+      "summary": "game=tetris | skill=stabilize the stack | effects=survive_completed, tag_survive | context=use when survival is priority; place pieces flat or vertically to avoid overhangs, limit new holes, preserve I/T access, cap dangerous columns, and prevent topping out",
+      "description": "Use this when the stack is getting messy or hole-filled: place pieces to flatten peaks, cap exposed cavities, and preserve a clean vertical well for future I-pieces. Prioritize safe, low-risk placemen",
+      "tag": "SURVIVE",
+      "eff_add": [
+        "survive_completed"
+      ],
+      "eff_del": [],
+      "eff_event": [
+        "tag_survive"
+      ],
+      "n_instances": 6,
+      "total_steps": 11,
+      "version": 1
+    }
+  ]
+}

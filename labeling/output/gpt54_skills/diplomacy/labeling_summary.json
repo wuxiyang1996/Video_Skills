@@ -1,0 +1,8 @@
+{
+  "game": "diplomacy",
+  "model": "gpt-5.4",
+  "timestamp": "2026-03-12T10:44:38.135365",
+  "episodes_labeled": 1,
+  "skills_extracted": 5,
+  "elapsed_seconds": 47.81521248817444
+}

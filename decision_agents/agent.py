@@ -1,6 +1,7 @@
-# VLM decision-making agent: Observe → Decide → Act → Reward → Repeat.
-# Uses tools: take_action, get_state_summary, get_intention, query_skill, query_memory, reward.
-# Two-turn micro-loop: (1) take_action → (2) reward  per timestep.
+# VLM decision-making agent: Summary → (Retrieve) → Act → Update Intention → Reward → Repeat.
+# Tools: take_action, get_state_summary, get_intention, query_skill, query_memory, reward.
+# Required each step: get_state_summary (before action), take_action, get_intention (after action), reward.
+# Optional (better to have): query_skill, query_memory (at most one per step when allowed).
 # See .cursor/rules/vlm-decision-agent.mdc and VLM_AGENT_SPEC.md for the full spec.
 
 from __future__ import annotations
@@ -158,8 +159,8 @@ class VLMDecisionAgent:
 
         # Budget: can we call retrieval this step?
         can_retrieve = s.steps_since_retrieval >= self.retrieval_budget_n or s.stuck_counter >= 3
-        # Per step: at most one non-action tool unless stuck
-        allow_non_action = (last_tool_name == TOOL_TAKE_ACTION) or (s.stuck_counter >= 2)
+        # Only query_skill and query_memory are optional; allow them when retrieval is allowed
+        allow_non_action = can_retrieve
 
         prompt = (
             "You are a VLM decision-making agent. Output exactly ONE tool call at a time.\n\n"
@@ -167,15 +168,18 @@ class VLMDecisionAgent:
             "- take_action: execute one environment action (primitive or QUERY_MEM/QUERY_SKILL/CALL_SKILL). "
             "Args: {\"action\": \"<valid_action>\"}\n"
             "- reward: compute reward signals for the last transition (call ONCE right after take_action). Args: {}\n"
-            "- get_state_summary: get a compact key=value state summary (e.g. game=tetris | stack_h=8 | holes=3). Args: {}\n"
-            "- get_intention: infer/refresh current [TAG] subgoal (e.g. [CLEAR] Reduce holes before stack overflows). Args: {}\n"
+            "- get_state_summary: (called by system each step) key=value state summary.\n"
+            "- get_intention: (called by system each step) [TAG] subgoal phrase.\n"
             "- query_skill: retrieve a procedure from the skill bank. Args: {\"key\": \"<scene, objective, entities, failure_mode>\"}\n"
             "- query_memory: retrieve similar past experiences (returns key=value summaries). "
             "Args: {\"key\": \"<scene, objective, entities>\"}\n\n"
-            "Two-turn micro-loop per timestep:\n"
-            "  1) Choose ONE action → take_action(...)\n"
-            "  2) Immediately call reward() once for logging/training.\n"
-            "You may call at most ONE non-action tool (get_state_summary/get_intention) BEFORE take_action.\n"
+            "Per-step loop:\n"
+            "  1) State summary is computed by the system (you see it in internal state).\n"
+            "  2) Optionally call at most ONE retrieval tool (query_skill or query_memory) when allowed — better to have.\n"
+            "  3) Then take_action(...) — required. You have intention, summary, and retrieved skill/memory in context.\n"
+            "  4) Intention is updated by the system after your action (reflects what happened).\n"
+            "  5) Reward is computed by the runner.\n"
+            "Only query_skill and query_memory are optional; get_state_summary, get_intention, take_action, and reward are required each step.\n"
             "Never call query_skill and query_memory in the same timestep.\n"
             "Retrieval-as-action: QUERY_MEM/QUERY_SKILL have negative cost; use only when benefit > cost.\n"
             "CALL_SKILL has small overhead; avoid frequent switching.\n"
@@ -183,8 +187,8 @@ class VLMDecisionAgent:
         )
         if not can_retrieve:
             prompt += "Do NOT use query_skill or query_memory this step (budget).\n"
-        if not allow_non_action and last_tool_name != TOOL_TAKE_ACTION:
-            prompt += "You must use take_action this step (no extra non-action tools).\n"
+        if not allow_non_action:
+            prompt += "You must use take_action this step.\n"
 
         prompt += "\nValid actions for take_action: " + ", ".join(valid_actions) + "\n\n"
         prompt += "Skill bank:\n" + skill_text + "\n\n"
@@ -438,10 +442,12 @@ def run_episode_vlm_agent(
     verbose: bool = False,
 ) -> Episode:
     """
-    Run one episode with the two-turn micro-loop per timestep:
-      1) (optional) get_state_summary / get_intention
-      2) take_action  (exactly one env action)
-      3) reward       (compute r_env, r_follow, r_cost, r_total)
+    Run one episode with the per-step loop:
+      1) get_state_summary  (required; runner calls it before action)
+      2) optional query_skill / query_memory  (retrieval, better to have)
+      3) take_action  (agent has intention + summary + retrieved skill/memory)
+      4) get_intention  (required; runner updates intention after observing action result)
+      5) reward  (compute r_env, r_follow, r_cost, r_total)
 
     Returns an Episode (data_structure format) with:
       - Experience objects per step, fully populated (state, action, reward,
@@ -474,22 +480,30 @@ def run_episode_vlm_agent(
     experiences: List[Experience] = []
 
     while step_count < max_steps:
-        # ── Phase A: optional non-action tool (get_state_summary / get_intention) ──
+        # ── Phase A: get_state_summary (required, before action) ──
+        summary_result = run_tool(
+            TOOL_GET_STATE_SUMMARY, {}, agent, observation, info, env=None
+        )
+        agent.update_from_tool_result(
+            TOOL_GET_STATE_SUMMARY, summary_result, observation, info.get("game")
+        )
+        last_tool_name = TOOL_GET_STATE_SUMMARY
+        last_tool_result = summary_result
+
+        # ── Phase B: optional retrieval (query_skill or query_memory) ──
         out = agent.step(observation, info, last_tool_name, last_tool_result)
         tool_name = out.get("tool", TOOL_TAKE_ACTION)
         tool_args = out.get("args") or {}
 
         if tool_name not in (TOOL_TAKE_ACTION, TOOL_REWARD):
-            result = run_tool(tool_name, tool_args, agent, observation, info, env=None)
-            agent.update_from_tool_result(tool_name, result, observation, info.get("game"))
-            last_tool_name = tool_name
-            last_tool_result = result
-            if tool_name == TOOL_GET_STATE_SUMMARY:
-                agent.state.last_state_summary = str(result)[:HARD_SUMMARY_CHAR_LIMIT]
-            # Re-query agent for the actual action after the non-action tool.
-            out = agent.step(observation, info, last_tool_name, last_tool_result)
-            tool_name = out.get("tool", TOOL_TAKE_ACTION)
-            tool_args = out.get("args") or {}
+            if tool_name in (TOOL_QUERY_SKILL, TOOL_QUERY_MEMORY):
+                result = run_tool(tool_name, tool_args, agent, observation, info, env=None)
+                agent.update_from_tool_result(tool_name, result, observation, info.get("game"))
+                last_tool_name = tool_name
+                last_tool_result = result
+                out = agent.step(observation, info, last_tool_name, last_tool_result)
+                tool_name = out.get("tool", TOOL_TAKE_ACTION)
+                tool_args = out.get("args") or {}
             if tool_name not in (TOOL_TAKE_ACTION,):
                 tool_name = TOOL_TAKE_ACTION
                 tool_args = {"action": _default_action(info.get("game") or detect_game(observation))}
@@ -499,12 +513,11 @@ def run_episode_vlm_agent(
         pre_action_intention = agent.state.current_intention or ""
         pre_action_skill = agent.state.active_skill_id
 
-        # ── Phase B: take_action ──
+        # ── Phase C: take_action (agent has: intention from prev step, fresh summary, retrieved skill/memory) ──
         action = tool_args.get("action")
         if action is None:
             action = _default_action(info.get("game") or detect_game(observation))
 
-        # Classify action type for reward cost computation.
         action_type = "primitive"
         action_str = str(action).upper() if action else ""
         if "QUERY_MEM" in action_str:
@@ -533,7 +546,21 @@ def run_episode_vlm_agent(
             info.get("game"),
         )
 
-        # ── Phase C: reward (two-turn micro-loop, step 2) ──
+        # Resolve next observation
+        if is_multi:
+            next_observation = str(next_obs.get(list(next_obs.keys())[0], "")) if next_obs else ""
+        else:
+            next_observation = str(next_obs) if next_obs else ""
+
+        # ── Phase D: update intention (required, after action — reflects what happened) ──
+        intention_result = run_tool(
+            TOOL_GET_INTENTION, {}, agent, next_observation, dict(next_info or {}), env=None
+        )
+        agent.update_from_tool_result(
+            TOOL_GET_INTENTION, intention_result, next_observation, info.get("game")
+        )
+
+        # ── Phase E: reward (required, after action) ──
         env_reward = float(reward) if not isinstance(reward, dict) else sum(reward.values())
         rr = run_tool(
             TOOL_REWARD,
@@ -545,12 +572,6 @@ def run_episode_vlm_agent(
         )
         agent.update_from_tool_result(TOOL_REWARD, rr, observation, info.get("game"))
         rr_dict = rr.to_dict() if isinstance(rr, RewardResult) else {"r_env": env_reward}
-
-        # Resolve next observation
-        if is_multi:
-            next_observation = str(next_obs.get(list(next_obs.keys())[0], "")) if next_obs else ""
-        else:
-            next_observation = str(next_obs) if next_obs else ""
 
         # ── Build Experience with all fields populated ──
         exp = Experience(

@@ -380,15 +380,17 @@ action = language_agent_action(
 
 ---
 
-## Two-turn micro-loop (protocol)
+## Per-step loop (protocol)
 
 Every timestep the runner executes:
 
-1. **(Optional)** One non-action tool: `get_state_summary` (returns `key=value` facts) or `get_intention` (returns `[TAG] subgoal phrase`).
-2. **`take_action`** — exactly one environment action.
-3. **`reward`** — compute `(r_env, r_follow, r_cost, r_total)` for logging/training.
+1. **`get_state_summary`** — required; runner computes it before action (returns `key=value` facts).
+2. **(Optional)** At most one of **`query_skill`** or **`query_memory`** — better to have when retrieval is allowed (budget-limited).
+3. **`take_action`** — required; exactly one environment action. Agent has intention (from previous step), fresh state summary, and any retrieved skill/memory in context.
+4. **`get_intention`** — required; runner updates intention after observing action result (returns `[TAG] subgoal phrase`).
+5. **`reward`** — required; compute `(r_env, r_follow, r_cost, r_total)` for logging/training.
 
-Retrieval (`query_skill` / `query_memory`) is budget-limited to once every N steps (default 10) unless the agent is stuck. Never call both in the same timestep.
+Only **`query_skill`** and **`query_memory`** are optional (but better to have). The others are necessary each env step. Retrieval is budget-limited to once every N steps (default 10) unless the agent is stuck. Never call both retrieval tools in the same timestep.
 
 ### Format consistency
 

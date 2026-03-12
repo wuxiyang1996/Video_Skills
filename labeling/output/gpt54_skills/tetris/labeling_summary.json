@@ -1,0 +1,8 @@
+{
+  "game": "tetris",
+  "model": "gpt-5.4",
+  "timestamp": "2026-03-12T10:58:40.643554",
+  "episodes_labeled": 1,
+  "skills_extracted": 7,
+  "elapsed_seconds": 115.17139267921448
+}

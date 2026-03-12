@@ -4,6 +4,13 @@ This folder contains code and scripts for annotating cold-start episode
 trajectories with concise labels suitable for RAG retrieval, the manager
 agent, and downstream skill extraction.
 
+There are **two pipelines** available:
+
+| Script | Purpose |
+|--------|---------|
+| `label_episodes_gpt54.py` | **Labels only** — annotates episodes with `summary_state`, `summary`, `intentions` (leaves `skills` null). |
+| `label_and_extract_skills_gpt54.py` | **Labels + Skills** — same annotations **plus** full skill extraction via the `SkillBankAgent` pipeline. Populates `skills` with named, RAG-optimised skill assignments. |
+
 ## What Gets Labeled
 
 For **each experience step** in an episode:
@@ -13,7 +20,7 @@ For **each experience step** in an episode:
 | `summary_state` | `key=value \| key=value` | No | Deterministic, game-aware structured facts. Optimised for RAG embedding retrieval. |
 | `summary`       | `summary_state \| note=<strategic note>` | Yes (≤25 tokens) | Same facts as `summary_state` plus a short LLM-generated threat/opportunity note grounded in what changed since the previous step. |
 | `intentions`    | `[TAG] subgoal phrase` | Yes (≤40 tokens) | Tagged subgoal with delta-aware tag evolution. Tag shifts when the game situation changes significantly. |
-| `skills`        | `null` | — | Renamed from `sub_tasks`. Populated by the skill pipeline downstream. |
+| `skills`        | `{skill_id, skill_name, skill_summary, ...}` or `null` | Yes (when using skill extraction) | Skill assignment from the SkillBankAgent pipeline. Contains RAG-friendly summaries, effects contracts, and segment boundaries. Null when using labels-only pipeline. |
 
 ### Subgoal Tags
 
@@ -109,13 +116,17 @@ step 49/50 (endgame — final move):
 
 ## Files
 
-| File                      | Purpose |
-|---------------------------|---------|
-| `label_episodes_gpt54.py` | Main labeling script. Reads episode JSONs, calls GPT-5.4, writes labeled output. |
-| `run_labeling.sh`         | Convenience shell wrapper (sets PYTHONPATH, runs the script). |
-| `readme.md`               | This file. |
+| File                                   | Purpose |
+|----------------------------------------|---------|
+| `label_episodes_gpt54.py`             | Labels-only script. Reads episode JSONs, calls GPT-5.4, writes labeled output with `skills=null`. |
+| `label_and_extract_skills_gpt54.py`   | **Full pipeline**: labels + skill extraction via `SkillBankAgent`. Populates the `skills` field with RAG-friendly skill assignments. |
+| `run_labeling.sh`                      | Shell wrapper for `label_episodes_gpt54.py`. |
+| `run_skill_labeling.sh`               | Shell wrapper for `label_and_extract_skills_gpt54.py`. |
+| `readme.md`                            | This file. |
 
-## Usage
+---
+
+## Usage — Labels Only (`label_episodes_gpt54.py`)
 
 ```bash
 # From Game-AI-Agent root
@@ -144,13 +155,41 @@ python labeling/label_episodes_gpt54.py --in_place
 bash labeling/run_labeling.sh --games tetris -v
 ```
 
+## Usage — Labels + Skill Extraction (`label_and_extract_skills_gpt54.py`)
+
+```bash
+# Full pipeline: label episodes AND extract skills for all games
+python labeling/label_and_extract_skills_gpt54.py
+
+# Specific game(s)
+python labeling/label_and_extract_skills_gpt54.py --games tetris candy_crush
+
+# Dry run (preview first episode)
+python labeling/label_and_extract_skills_gpt54.py --dry_run --games tetris
+
+# One rollout per game (quick test)
+python labeling/label_and_extract_skills_gpt54.py --one_per_game -v
+
+# Skip labeling (use already-labeled episodes for skill extraction only)
+python labeling/label_and_extract_skills_gpt54.py --skip_labeling --labeled_dir labeling/output/gpt54
+
+# Labels only, skip skill extraction (equivalent to label_episodes_gpt54.py)
+python labeling/label_and_extract_skills_gpt54.py --skip_skills
+
+# Or use the shell wrapper:
+bash labeling/run_skill_labeling.sh --games tetris -v
+bash labeling/run_skill_labeling.sh --skip_labeling --labeled_dir labeling/output/gpt54
+```
+
 ## CLI Options
+
+### Common Options (both scripts)
 
 | Flag              | Default                           | Description |
 |-------------------|-----------------------------------|-------------|
 | `--input_dir`     | `cold_start/output/gpt54`        | Input directory with `<game>/episode_*.json` |
 | `--input_file`    | —                                 | Label a single file instead of scanning a directory |
-| `--output_dir`    | `labeling/output/gpt54`          | Output directory for labeled episodes |
+| `--output_dir`    | `labeling/output/gpt54` or `gpt54_skills` | Output directory for labeled episodes |
 | `--games`         | all found                         | Filter to specific game(s) |
 | `--model`         | `gpt-5.4`                        | LLM model for labeling |
 | `--max_episodes`  | all                               | Cap episodes per game |
@@ -161,12 +200,23 @@ bash labeling/run_labeling.sh --games tetris -v
 | `--dry_run`       | off                               | Preview without saving |
 | `--verbose / -v`  | off                               | Print per-step details |
 
+### Skill Extraction Options (`label_and_extract_skills_gpt54.py` only)
+
+| Flag                | Default | Description |
+|---------------------|---------|-------------|
+| `--skip_labeling`   | off     | Skip Phase 1; use pre-labeled episodes |
+| `--labeled_dir`     | —       | Path to pre-labeled episodes (for `--skip_labeling`) |
+| `--skip_skills`     | off     | Skip Phase 2; run labels only (like `label_episodes_gpt54.py`) |
+| `--skip_archetypes` | off     | Skip Phase 3; skip cross-game archetype aggregation |
+
 ## Output Structure
+
+### Labels Only (`labeling/output/gpt54/`)
 
 ```
 labeling/output/gpt54/
 ├── tetris/
-│   ├── episode_000.json          # labeled episode
+│   ├── episode_000.json          # labeled episode (skills=null)
 │   ├── episode_001.json
 │   └── labeling_summary.json     # per-game stats
 ├── candy_crush/
@@ -174,7 +224,186 @@ labeling/output/gpt54/
 └── labeling_batch_summary.json   # overall run stats
 ```
 
-## Architecture
+### Labels + Skills (`labeling/output/gpt54_skills/`)
+
+```
+labeling/output/gpt54_skills/
+├── tetris/
+│   ├── episode_000.json          # labeled episode with skills populated
+│   ├── episode_001.json
+│   ├── labeling_summary.json     # per-game stats (includes skill counts)
+│   ├── skill_bank.jsonl          # persistent skill bank (contracts)
+│   ├── skill_catalog.json        # RAG-friendly skill catalog (per-game)
+│   └── reports/                  # skill extraction diagnostics
+├── candy_crush/
+│   └── ...
+├── skill_archetypes.json         # cross-game archetype aggregation
+├── skill_rag_index.json          # flat RAG index (archetypes + all instances)
+├── labeling_batch_summary.json   # overall run stats
+└── skill_catalog_all.json        # combined per-game catalog
+```
+
+## Skill Extraction Pipeline
+
+The `label_and_extract_skills_gpt54.py` script runs four phases:
+
+```
+Phase 1 — Annotation (same as label_episodes_gpt54.py)
+  └─ for each step:
+       ├─ summary_state = build_rag_summary()       # deterministic
+       ├─ summary = summary_state + LLM note         # 1 LLM call
+       └─ intentions = [TAG] phrase                   # 1 LLM call
+
+Phase 2 — Skill Extraction (per game, via SkillBankAgent)
+  ├─ Stage 1: Boundary proposal (predicate flips, events, change-points)
+  ├─ Stage 2: Skill decoding (preference-learned scorer + Viterbi DP)
+  ├─ Stage 3: Contract learning (eff_add / eff_del / eff_event)
+  ├─ Materialize NEW: promote __NEW__ segments to named skills
+  ├─ GPT-5.4 naming: generate skill_name + RAG summary per skill
+  └─ Annotate: populate skills field on each experience
+
+Phase 3 — Cross-Game Archetype Aggregation (runs after all games)
+  ├─ Group skills by dominant SUBGOAL_TAG across all games
+  ├─ GPT-5.4: generate archetype name, description, transfer summary
+  ├─ skill_archetypes.json         # archetype → game instances
+  └─ skill_rag_index.json          # flat index for vector store
+
+Phase 4 — Persistence
+  ├─ <game>/skill_bank.jsonl       # per-game JSONL skill bank
+  ├─ <game>/skill_catalog.json     # per-game RAG catalog
+  ├─ skill_catalog_all.json        # combined per-game catalog
+  └─ labeling_batch_summary.json   # run statistics
+```
+
+### Skill Field Format
+
+When skill extraction is enabled, each experience gets a `skills` dict:
+
+```json
+{
+  "skill_id": "S_new_1741779200_0",
+  "skill_name": "Clear Bottom Rows",
+  "skill_summary": "game=tetris | skill=clear_bottom | effects=rows_cleared,stack_lowered | context=when holes accumulate in bottom rows",
+  "description": "Targets bottom-row line clears in Tetris when holes accumulate below row 10. Use when stack height exceeds 12 and holes concentrate in the lower half.",
+  "segment_start": 30,
+  "segment_end": 45,
+  "eff_add": ["rows_cleared", "stack_lowered"],
+  "eff_del": ["holes_bottom"],
+  "eff_event": ["line_clear"]
+}
+```
+
+### Skill Catalog (for RAG)
+
+The `skill_catalog.json` is designed for easy ingestion into a vector store:
+
+```json
+{
+  "game": "tetris",
+  "model": "gpt-5.4",
+  "n_skills": 5,
+  "skills": [
+    {
+      "skill_id": "S_new_1741779200_0",
+      "name": "Clear Bottom Rows",
+      "summary": "game=tetris | skill=clear_bottom | effects=rows_cleared,stack_lowered | context=holes in lower half",
+      "description": "Targets bottom-row line clears when holes accumulate below row 10.",
+      "eff_add": ["rows_cleared", "stack_lowered"],
+      "eff_del": ["holes_bottom"],
+      "eff_event": ["line_clear"],
+      "n_instances": 12,
+      "version": 1
+    }
+  ]
+}
+```
+
+Each skill's `summary` field uses the same `key=value` format as `summary_state`,
+optimised for RAG embedding retrieval. The `description` field provides natural
+language for human readability and broader semantic matching.
+
+### Cross-Game Archetypes (`skill_archetypes.json`)
+
+Skills are aggregated across games by their dominant `SUBGOAL_TAG`. Each
+archetype represents an abstract strategic pattern with game-specific instances:
+
+```json
+{
+  "n_archetypes": 8,
+  "n_total_skills": 23,
+  "n_games": 4,
+  "archetypes": [
+    {
+      "archetype_id": "archetype_survive",
+      "tag": "SURVIVE",
+      "name": "Emergency Resource Recovery",
+      "description": "Emergency pattern triggered when a critical resource is nearly depleted. Prioritises immediate relief over long-term optimisation.",
+      "transfer_summary": "archetype=survive | pattern=emergency_recovery | trigger=resource_critical | strategy=prioritize_immediate_relief | games=tetris,2048,candy_crush",
+      "games": ["tetris", "2048", "candy_crush"],
+      "n_skills": 5,
+      "instances": [
+        {
+          "game": "tetris",
+          "skill_id": "S_new_...",
+          "skill_name": "Clear Bottom Rows",
+          "summary": "game=tetris | skill=clear_bottom | effects=rows_cleared,stack_lowered",
+          "description": "Targets bottom-row line clears when holes accumulate."
+        },
+        {
+          "game": "2048",
+          "skill_id": "S_new_...",
+          "skill_name": "Emergency Merge",
+          "summary": "game=2048 | skill=emergency_merge | effects=space_created",
+          "description": "Force merges to create space when board is nearly full."
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Key design**: Per-game skill banks stay isolated (game-specific predicates don't
+mix). Archetypes are a **read-only overlay** that groups skills by strategic intent
+for cross-game transfer during RAG retrieval.
+
+### RAG Index (`skill_rag_index.json`)
+
+A flat list of entries ready for vector-store ingestion. Contains two entry types:
+
+- **`archetype`**: cross-game pattern with `transfer_summary` for retrieval
+- **`skill_instance`**: game-specific skill linked to its parent archetype
+
+```json
+{
+  "n_entries": 31,
+  "entries": [
+    {
+      "id": "archetype_survive",
+      "type": "archetype",
+      "tag": "SURVIVE",
+      "name": "Emergency Resource Recovery",
+      "text": "archetype=survive | pattern=emergency_recovery | trigger=resource_critical | strategy=prioritize_immediate_relief | games=tetris,2048,candy_crush",
+      "description": "Emergency pattern triggered when a critical resource is nearly depleted.",
+      "games": ["tetris", "2048", "candy_crush"]
+    },
+    {
+      "id": "archetype_survive_tetris_S_new_...",
+      "type": "skill_instance",
+      "tag": "SURVIVE",
+      "archetype": "archetype_survive",
+      "game": "tetris",
+      "name": "Clear Bottom Rows",
+      "text": "game=tetris | skill=clear_bottom | effects=rows_cleared,stack_lowered",
+      "description": "Targets bottom-row line clears when holes accumulate."
+    }
+  ]
+}
+```
+
+Use the `text` field as the embedding content and `type` field to filter
+between archetypes (cross-game patterns) and instances (game-specific skills).
+
+## Architecture — Labels Only
 
 ```
 label_episode()
@@ -193,6 +422,39 @@ label_episode()
             └─ tag shifts when situation changes significantly
 ```
 
+## Architecture — Labels + Skill Extraction
+
+```
+main()
+  ├─ Phase 1: label_episode()                        # per game, per episode
+  │    └─ (same as labels-only architecture above)
+  │
+  ├─ Phase 2: extract_skills_for_game()              # per game
+  │    ├─ _dict_to_episode()                         # convert JSON → Episode objects
+  │    ├─ SkillBankAgent.segment_episode()            # Stage 1+2 per episode
+  │    │    ├─ boundary_proposal (Stage 1)            # candidate cut points
+  │    │    └─ infer_segmentation (Stage 2)           # preference-learned decoding
+  │    ├─ SkillBankAgent.run_contract_learning()      # Stage 3 effects contracts
+  │    ├─ SkillBankAgent.materialize_new_skills()     # promote __NEW__ → named skills
+  │    ├─ _generate_skill_name()                      # GPT-5.4 name + RAG summary
+  │    ├─ _generate_skill_description()               # GPT-5.4 description
+  │    └─ annotate_episodes_with_skills()             # populate skills field
+  │
+  ├─ Phase 3: aggregate_cross_game_archetypes()      # runs AFTER all games
+  │    ├─ _extract_dominant_tag()                     # classify by SUBGOAL_TAG
+  │    ├─ Group skills by tag across games            # SURVIVE, CLEAR, etc.
+  │    ├─ GPT-5.4: archetype name + transfer summary  # cross-game RAG text
+  │    ├─ skill_archetypes.json                       # structured archetypes
+  │    └─ skill_rag_index.json                        # flat vector-store index
+  │
+  └─ Phase 4: save outputs
+       ├─ <game>/episode_NNN.json (with skills)
+       ├─ <game>/skill_bank.jsonl
+       ├─ <game>/skill_catalog.json
+       ├─ skill_catalog_all.json
+       └─ labeling_batch_summary.json
+```
+
 ## Pipeline Integration
 
 The labeled episodes follow the same `Episode` / `Experience` schema from
@@ -202,13 +464,71 @@ The labeled episodes follow the same `Episode` / `Experience` schema from
 from data_structure.experience import Episode
 import json
 
-with open("labeling/output/gpt54/tetris/episode_000.json") as f:
+# Load labeled episode (with or without skills)
+with open("labeling/output/gpt54_skills/tetris/episode_000.json") as f:
     ep = Episode.from_dict(json.load(f))
 
 for exp in ep.experiences:
     print(exp.summary_state)  # structured key=value facts for RAG
     print(exp.summary)        # summary_state + strategic note
     print(exp.intentions)     # [TAG] subgoal phrase
+    print(exp.skills)         # skill assignment dict (or None)
+```
+
+### Loading the Skill Catalog for RAG
+
+```python
+import json
+
+with open("labeling/output/gpt54_skills/tetris/skill_catalog.json") as f:
+    catalog = json.load(f)
+
+for skill in catalog["skills"]:
+    # Index these into your vector store
+    print(skill["skill_id"], skill["name"])
+    print(f"  summary: {skill['summary']}")
+    print(f"  description: {skill['description']}")
+```
+
+### Loading Archetypes for Cross-Game RAG
+
+```python
+import json
+
+# Load the flat RAG index — ready for vector store ingestion
+with open("labeling/output/gpt54_skills/skill_rag_index.json") as f:
+    index = json.load(f)
+
+for entry in index["entries"]:
+    if entry["type"] == "archetype":
+        # Cross-game pattern — embed entry["text"] for broad retrieval
+        print(f"[ARCHETYPE] {entry['name']}: {entry['text']}")
+    else:
+        # Game-specific instance — embed for precise in-game retrieval
+        print(f"  [{entry['game']}] {entry['name']}: {entry['text']}")
+
+# Or load the structured archetypes for programmatic access
+with open("labeling/output/gpt54_skills/skill_archetypes.json") as f:
+    archetypes = json.load(f)
+
+for arch in archetypes["archetypes"]:
+    print(f"\n[{arch['tag']}] {arch['name']} — {arch['n_games']} games, {arch['n_skills']} skills")
+    for inst in arch["instances"]:
+        print(f"  {inst['game']}: {inst['skill_name']}")
+```
+
+### Using with SkillBankAgent
+
+```python
+from skill_agents.pipeline import SkillBankAgent, PipelineConfig
+from skill_agents.skill_bank.bank import SkillBankMVP
+
+# Load the extracted skill bank
+bank = SkillBankMVP(path="labeling/output/gpt54_skills/tetris/skill_bank.jsonl")
+bank.load()
+
+agent = SkillBankAgent(bank=bank)
+result = agent.query_skill("clear bottom rows to reduce holes")
 ```
 
 ## Functions Used from `decision_agents`
@@ -223,3 +543,14 @@ for exp in ep.experiences:
 | `strip_think_tags()` | `agent_helper.py` | Strip `<think>` blocks from reasoning model output |
 | `SUBGOAL_TAGS` | `agent_helper.py` | Canonical list of 13 subgoal tag categories |
 | `HARD_SUMMARY_CHAR_LIMIT` | `agent_helper.py` | Maximum character limit for summary strings |
+
+## Functions Used from `skill_agents`
+
+| Function / Class | Source | Role in Skill Extraction |
+|-----------------|--------|--------------------------|
+| `SkillBankAgent` | `skill_agents/pipeline.py` | Orchestrates the full skill extraction pipeline (Stages 1–4) |
+| `PipelineConfig` | `skill_agents/pipeline.py` | Configuration for all pipeline stages |
+| `SkillBankMVP` | `skill_agents/skill_bank/bank.py` | Persistent effects-only contract storage (JSONL) |
+| `SkillEffectsContract` | `skill_agents/stage3_mvp/schemas.py` | Per-skill effects contract (eff_add, eff_del, eff_event) |
+| `SegmentRecord` | `skill_agents/stage3_mvp/schemas.py` | Enriched segment with predicate summaries and effects |
+| `SkillQueryEngine` | `skill_agents/query.py` | RAG-based skill retrieval and selection |

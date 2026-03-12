@@ -1,0 +1,93 @@
+{
+  "game": "twenty_forty_eight",
+  "model": "gpt-5.4",
+  "timestamp": "2026-03-12T11:00:40.855587",
+  "n_skills": 5,
+  "skills": [
+    {
+      "skill_id": "skill_twenty_forty_eight_clear_0",
+      "name": "Clear Safely",
+      "summary": "game=twenty_forty_eight | skill=Clear Safely | effects=clear_completed | context=use when needing to open space with safe merges while preserving the anchored high tile and keeping rows flexible",
+      "description": "Use this when the board is mostly stable and your highest tile is anchored in a corner: make the safe sweep move that clears a matched pair without breaking your snake/monotonic order. It opens space ",
+      "tag": "CLEAR",
+      "eff_add": [
+        "clear_completed"
+      ],
+      "eff_del": [],
+      "eff_event": [
+        "tag_clear"
+      ],
+      "n_instances": 8,
+      "total_steps": 8,
+      "version": 1
+    },
+    {
+      "skill_id": "skill_twenty_forty_eight_merge_1",
+      "name": "Merge Matching Tiles",
+      "summary": "game=twenty_forty_eight | skill=Merge Matching Tiles | effects=merge_completed, tag_merge | context=use when adjacent equal tiles can be combined while keeping the board consolidated around an anchored corner tile",
+      "description": "Slide the board so two tiles with the same number collide and combine into one higher-value tile, like 2+2=4. Use this whenever matching tiles can merge, especially early on to create space and grow y",
+      "tag": "MERGE",
+      "eff_add": [
+        "merge_completed"
+      ],
+      "eff_del": [],
+      "eff_event": [
+        "tag_merge"
+      ],
+      "n_instances": 32,
+      "total_steps": 117,
+      "version": 1
+    },
+    {
+      "skill_id": "skill_twenty_forty_eight_position_2",
+      "name": "Anchor High Tile",
+      "summary": "game=twenty_forty_eight | skill=Anchor High Tile | effects=position_completed | context=use when positioning to keep the largest tile fixed in a corner, shift left to preserve open space, align small equal tiles, and set up safe early merges",
+      "description": "Keep your highest tile locked in one corner (usually a bottom corner) and avoid moves that pull it away. Use this from the opening onward so lower tiles can stack beside it in descending order for saf",
+      "tag": "POSITION",
+      "eff_add": [
+        "position_completed"
+      ],
+      "eff_del": [],
+      "eff_event": [
+        "tag_position"
+      ],
+      "n_instances": 16,
+      "total_steps": 18,
+      "version": 1
+    },
+    {
+      "skill_id": "skill_twenty_forty_eight_setup_3",
+      "name": "Stabilize Corner Stack",
+      "summary": "game=twenty_forty_eight | skill=Stabilize Corner Stack | effects=setup_completed | context=use during setup to keep the highest tile cornered, preserve empty cells, compress safely, and align near-term merges without breaking the anchor",
+      "description": "Keep your highest tile locked in a corner and build a descending row/column next to it (e.g., 32-16-8-4), using only the two “safe” directions that preserve that corner. Use this once your corner is e",
+      "tag": "SETUP",
+      "eff_add": [
+        "setup_completed"
+      ],
+      "eff_del": [],
+      "eff_event": [
+        "tag_setup"
+      ],
+      "n_instances": 4,
+      "total_steps": 4,
+      "version": 1
+    },
+    {
+      "skill_id": "skill_twenty_forty_eight_survive_4",
+      "name": "Preserve Anchor Space",
+      "summary": "game=twenty_forty_eight | skill=Preserve Anchor Space | effects=survive_completed | context=use when board space is tight to keep the highest tile anchored in a corner, preserve empty cells near it, and force safe merges to avoid lockup",
+      "description": "Keep one corner as your permanent home for the largest tile and preserve an adjacent empty “anchor” cell so the top row/column stays stable. Use this in mid-to-late game, especially when the board is ",
+      "tag": "SURVIVE",
+      "eff_add": [
+        "survive_completed"
+      ],
+      "eff_del": [],
+      "eff_event": [
+        "tag_survive"
+      ],
+      "n_instances": 5,
+      "total_steps": 5,
+      "version": 1
+    }
+  ]
+}

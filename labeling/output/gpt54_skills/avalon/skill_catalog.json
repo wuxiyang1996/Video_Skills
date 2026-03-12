@@ -1,0 +1,76 @@
+{
+  "game": "avalon",
+  "model": "gpt-5.4",
+  "timestamp": "2026-03-12T10:43:00.204701",
+  "n_skills": 4,
+  "skills": [
+    {
+      "skill_id": "skill_avalon_clear_0",
+      "name": "Read Team Motives",
+      "summary": "game=avalon | skill=Read Team Motives | effects=clear_completed | context=use when tag_clear events require inferring Player 0 alignment from opening proposals, quest team choices, approval votes, and inconsistent supporters to confirm trustworthy teams",
+      "description": "Notice who consistently proposes or supports teams that give their side the best odds, especially around early Quest 1 and after mission results. Use this to infer hidden loyalties by comparing stated",
+      "tag": "CLEAR",
+      "eff_add": [
+        "clear_completed"
+      ],
+      "eff_del": [],
+      "eff_event": [
+        "tag_clear"
+      ],
+      "n_instances": 3,
+      "total_steps": 5,
+      "version": 1
+    },
+    {
+      "skill_id": "skill_avalon_defend_1",
+      "name": "Challenge Team Approval",
+      "summary": "game=avalon | skill=Challenge Team Approval | effects=defend_completed | context=use on tag_defend to reject a risky quest-four team by questioning inconsistent approvers and protecting the loyal majority",
+      "description": "Challenge a proposed team approval when the lineup includes players with suspicious voting or quest histories, especially in late-game quests where one fail can decide the match. Use it as a Servant t",
+      "tag": "DEFEND",
+      "eff_add": [
+        "defend_completed"
+      ],
+      "eff_del": [],
+      "eff_event": [
+        "tag_defend"
+      ],
+      "n_instances": 1,
+      "total_steps": 4,
+      "version": 1
+    },
+    {
+      "skill_id": "skill_avalon_position_2",
+      "name": "Assess Team Alignment",
+      "summary": "game=avalon | skill=Assess Team Alignment | effects=position_completed | context=use on tag_position to evaluate quest-two team proposals, read alignment from approvals, and shape a trusted quest-three team toward reliable allies",
+      "description": "Judge whether proposed teammates are likely all on the same side by comparing their votes, mission outcomes, and consistency with prior claims. Use it before approving teams in opening and midgame rou",
+      "tag": "POSITION",
+      "eff_add": [
+        "position_completed"
+      ],
+      "eff_del": [],
+      "eff_event": [
+        "tag_position"
+      ],
+      "n_instances": 2,
+      "total_steps": 3,
+      "version": 1
+    },
+    {
+      "skill_id": "skill_avalon_setup_3",
+      "name": "Read Opening Proposal",
+      "summary": "game=avalon | skill=read opening proposal | effects=setup_completed | context=use during tag_setup to interpret Player 2's initial team [2,0] for alignment and intent signals",
+      "description": "Reads the very first team proposal of the game to spot early signals: who is being trusted, excluded, or trying to control the narrative. Use it in Avalon’s opening round, before any quest results exi",
+      "tag": "SETUP",
+      "eff_add": [
+        "setup_completed"
+      ],
+      "eff_del": [],
+      "eff_event": [
+        "tag_setup"
+      ],
+      "n_instances": 1,
+      "total_steps": 1,
+      "version": 1
+    }
+  ]
+}

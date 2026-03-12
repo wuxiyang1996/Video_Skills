@@ -1,0 +1,57 @@
+{
+  "timestamp": "2026-03-12T11:01:20.043096",
+  "model": "gpt-5.4",
+  "total_elapsed_seconds": 1135.0647795200348,
+  "total_skills_extracted": 48,
+  "total_archetypes": 13,
+  "per_game": [
+    {
+      "game": "avalon",
+      "episodes_labeled": 1,
+      "skills_extracted": 4,
+      "elapsed_seconds": 35.22623014450073
+    },
+    {
+      "game": "candy_crush",
+      "episodes_labeled": 1,
+      "skills_extracted": 4,
+      "elapsed_seconds": 50.11498188972473
+    },
+    {
+      "game": "diplomacy",
+      "episodes_labeled": 1,
+      "skills_extracted": 5,
+      "elapsed_seconds": 47.81521248817444
+    },
+    {
+      "game": "pokemon_red",
+      "episodes_labeled": 1,
+      "skills_extracted": 9,
+      "elapsed_seconds": 547.8361735343933
+    },
+    {
+      "game": "sokoban",
+      "episodes_labeled": 1,
+      "skills_extracted": 9,
+      "elapsed_seconds": 127.71098065376282
+    },
+    {
+      "game": "super_mario",
+      "episodes_labeled": 1,
+      "skills_extracted": 5,
+      "elapsed_seconds": 51.78710722923279
+    },
+    {
+      "game": "tetris",
+      "episodes_labeled": 1,
+      "skills_extracted": 7,
+      "elapsed_seconds": 115.17139267921448
+    },
+    {
+      "game": "twenty_forty_eight",
+      "episodes_labeled": 1,
+      "skills_extracted": 5,
+      "elapsed_seconds": 120.21155142784119
+    }
+  ]
+}
