@@ -78,6 +78,7 @@ from decision_agents.agent_helper import (
     get_state_summary,
     infer_intention,
     strip_think_tags,
+    build_rag_summary,
     HARD_SUMMARY_CHAR_LIMIT,
 )
 from decision_agents.dummy_agent import (
@@ -180,8 +181,8 @@ QWEN_SYSTEM_PROMPT = (
     "You are an expert game-playing agent powered by Qwen3-14B.\n"
     "You receive a textual description of the current game state and must choose exactly one action.\n\n"
     "Before choosing, briefly reason about:\n"
-    "1. Key elements of the current state.\n"
-    "2. What your immediate sub-goal should be.\n"
+    "1. Key elements of the current state (key=value facts).\n"
+    "2. Your immediate [TAG] sub-goal (e.g. [MERGE] Combine tiles, [CLEAR] Remove rows, [SURVIVE] Avoid loss).\n"
     "3. Which valid action best achieves that sub-goal.\n\n"
     "Output format (strict):\n"
     "REASONING: <1-2 sentences of chain-of-thought>\n"
@@ -200,7 +201,7 @@ QWEN_AVALON_SYSTEM = (
     "You receive the current game state for a specific player and must choose an action.\n\n"
     "Before choosing, briefly reason about:\n"
     "1. What you know about other players' roles based on observations so far.\n"
-    "2. The current phase and what the optimal play is for your role/alignment.\n"
+    "2. Your immediate [TAG] sub-goal (e.g. [ATTACK] Sabotage quest, [DEFEND] Protect team, [EXPLORE] Identify evil).\n"
     "3. What information your action reveals and whether that helps or hurts your team.\n\n"
     "Phase actions:\n"
     "- Team Selection (leader): comma-separated player IDs, e.g. '0, 2, 3'\n"
@@ -223,8 +224,8 @@ QWEN_DIPLOMACY_SYSTEM = (
     "You are an expert Diplomacy player powered by Qwen3-14B.\n"
     "You control one power and must issue orders for your units this phase.\n\n"
     "Before choosing, briefly reason about:\n"
-    "1. Your current territorial position and supply-centre count.\n"
-    "2. Which neighbours are threats vs potential allies.\n"
+    "1. Your current territorial position and supply-centre count (key=value facts).\n"
+    "2. Your [TAG] sub-goal (e.g. [ATTACK] Capture SER, [DEFEND] Hold BUD, [POSITION] Ally with France).\n"
     "3. Whether to attack, defend, or support, and which borders matter most.\n\n"
     "Order formats:\n"
     "  Hold:         A PAR H\n"
@@ -250,8 +251,8 @@ QWEN_ORAK_SYSTEM = (
     "You are an expert game-playing agent powered by Qwen3-14B.\n"
     "You receive a textual description of the current game state and must choose exactly one action.\n\n"
     "Before choosing, briefly reason about:\n"
-    "1. Key elements of the current state.\n"
-    "2. What your immediate sub-goal should be.\n"
+    "1. Key elements of the current state (key=value facts).\n"
+    "2. Your immediate [TAG] sub-goal (e.g. [NAVIGATE] Reach flag, [COLLECT] Get coin, [SURVIVE] Avoid enemy).\n"
     "3. Which valid action best achieves that sub-goal.\n\n"
     "Output format (strict):\n"
     "REASONING: <1-2 sentences of chain-of-thought>\n"
@@ -537,23 +538,30 @@ def run_qwen3_episode(
         exp.available_actions = list(step_actions) if step_actions else None
         exp.interface = {"env_name": "gamingagent", "game_name": game}
 
-        # --- Generate experience summary using the SAME Qwen3 model ---
+        # --- Generate experience summary: key=value facts + strategic note ---
         if ask_model is not None:
             try:
+                ss = exp.summary_state or ""
                 summary_prompt = (
-                    "Summarize this game step concisely (1-2 sentences). "
-                    f"State: {obs_nl[:800]}\n"
+                    "Compress this game step into a short strategic note (max 10 words). "
+                    "Focus on the key threat or opportunity.\n"
+                    f"Facts: {ss}\n"
                     f"Action: {action}\n"
-                    f"Next state: {next_obs_nl[:800]}"
+                    f"State: {obs_nl[:600]}\n"
+                    "Note:"
                 )
-                raw_summary = ask_model(
+                raw_note = ask_model(
                     summary_prompt, model=model,
-                    temperature=0.2, max_tokens=600,
+                    temperature=0.2, max_tokens=40,
                 )
-                if raw_summary and not raw_summary.startswith("Error"):
-                    exp.summary = strip_think_tags(raw_summary) or raw_summary
+                if raw_note and not raw_note.startswith("Error"):
+                    note = strip_think_tags(raw_note) or raw_note
+                    note = note.split("\n")[0].strip().strip('"').strip("'")[:80]
+                    exp.summary = f"{ss} | note={note}"[:HARD_SUMMARY_CHAR_LIMIT] if ss else note
+                else:
+                    exp.summary = ss or None
             except Exception:
-                pass
+                exp.summary = exp.summary_state or None
 
         experiences.append(exp)
 
@@ -719,21 +727,28 @@ def run_qwen3_sokoban_episode(
 
         if ask_model is not None:
             try:
+                ss = exp.summary_state or ""
                 grid_ctx = info.get("grid_string", obs_nl[:600])
                 summary_prompt = (
-                    "Summarize this Sokoban step concisely (1-2 sentences). "
+                    "Compress this Sokoban step into a short strategic note (max 10 words). "
+                    "Focus on the key threat or opportunity.\n"
+                    f"Facts: {ss}\n"
                     f"Board:\n{grid_ctx}\n"
                     f"Action: {action}\n"
-                    f"Reward: {reward}"
+                    "Note:"
                 )
-                raw_summary = ask_model(
+                raw_note = ask_model(
                     summary_prompt, model=model,
-                    temperature=0.2, max_tokens=600,
+                    temperature=0.2, max_tokens=40,
                 )
-                if raw_summary and not raw_summary.startswith("Error"):
-                    exp.summary = strip_think_tags(raw_summary) or raw_summary
+                if raw_note and not raw_note.startswith("Error"):
+                    note = strip_think_tags(raw_note) or raw_note
+                    note = note.split("\n")[0].strip().strip('"').strip("'")[:80]
+                    exp.summary = f"{ss} | note={note}"[:HARD_SUMMARY_CHAR_LIMIT] if ss else note
+                else:
+                    exp.summary = ss or None
             except Exception:
-                pass
+                exp.summary = exp.summary_state or None
 
         experiences.append(exp)
 
@@ -887,21 +902,27 @@ def run_qwen3_avalon_episode(
 
         if ask_model is not None:
             try:
+                ss = exp.summary_state or ""
                 obs_preview = next(iter(obs.values()), "")[:600] if isinstance(obs, dict) else str(obs)[:600]
                 summary_prompt = (
-                    "Summarize this Avalon game step concisely (1-2 sentences). "
+                    "Compress this Avalon step into a short strategic note (max 10 words). "
+                    "Focus on the key information revealed or threat.\n"
+                    f"Facts: {ss}\n"
                     f"State: {obs_preview}\n"
-                    f"Actions: {json.dumps({str(k): v for k, v in actions.items()}, default=str)[:400]}\n"
-                    f"Reward: {reward_val}"
+                    "Note:"
                 )
-                raw_summary = ask_model(
+                raw_note = ask_model(
                     summary_prompt, model=model,
-                    temperature=0.2, max_tokens=600,
+                    temperature=0.2, max_tokens=40,
                 )
-                if raw_summary and not raw_summary.startswith("Error"):
-                    exp.summary = strip_think_tags(raw_summary) or raw_summary
+                if raw_note and not raw_note.startswith("Error"):
+                    note = strip_think_tags(raw_note) or raw_note
+                    note = note.split("\n")[0].strip().strip('"').strip("'")[:80]
+                    exp.summary = f"{ss} | note={note}"[:HARD_SUMMARY_CHAR_LIMIT] if ss else note
+                else:
+                    exp.summary = ss or None
             except Exception:
-                pass
+                exp.summary = exp.summary_state or None
 
         experiences.append(exp)
 
@@ -1073,31 +1094,34 @@ def run_qwen3_diplomacy_episode(
         exp.summary_state = state_summary if state_summary else None
         exp.interface = {"env_name": "diplomacy", "game_name": "diplomacy"}
 
-        # Experience summary — Diplomacy-aware prompt focusing on what changed
+        # Experience summary — Diplomacy-aware note focusing on what changed
         if ask_model is not None:
             try:
+                ss = exp.summary_state or ""
                 my_orders = actions.get(primary_power, [])
                 orders_str = "; ".join(my_orders) if isinstance(my_orders, list) else str(my_orders)
-                phase_hist = info.get("phase_history", [])
-                last_result = phase_hist[-1] if phase_hist else ""
 
                 summary_prompt = (
-                    f"Summarize this Diplomacy turn concisely (1-2 sentences). "
-                    f"Focus on what CHANGED — territory gains/losses, key order outcomes, and threats.\n"
+                    f"Compress this Diplomacy turn into a short strategic note (max 10 words) "
+                    f"for {primary_power}. Focus on what CHANGED — territory gains/losses or threats.\n"
+                    f"Facts: {ss}\n"
                     f"Phase: {phase_before}\n"
-                    f"Power perspective: {primary_power}\n"
-                    f"{primary_power} orders: {orders_str[:300]}\n"
+                    f"Orders: {orders_str[:300]}\n"
                     f"SC changes: {sc_delta_str or 'none'}\n"
-                    f"Phase result: {last_result[:200]}"
+                    "Note:"
                 )
-                raw_summary = ask_model(
+                raw_note = ask_model(
                     summary_prompt, model=model,
-                    temperature=0.2, max_tokens=300,
+                    temperature=0.2, max_tokens=40,
                 )
-                if raw_summary and not raw_summary.startswith("Error"):
-                    exp.summary = strip_think_tags(raw_summary) or raw_summary
+                if raw_note and not raw_note.startswith("Error"):
+                    note = strip_think_tags(raw_note) or raw_note
+                    note = note.split("\n")[0].strip().strip('"').strip("'")[:80]
+                    exp.summary = f"{ss} | note={note}"[:HARD_SUMMARY_CHAR_LIMIT] if ss else note
+                else:
+                    exp.summary = ss or None
             except Exception:
-                pass
+                exp.summary = exp.summary_state or None
 
         experiences.append(exp)
 
@@ -1240,18 +1264,25 @@ def run_qwen3_orak_episode(
 
         if ask_model is not None:
             try:
+                ss = exp.summary_state or ""
                 summary_prompt = (
-                    f"Summarize this {game} game step concisely (1-2 sentences). "
-                    f"State: {obs[:600]}\n"
+                    f"Compress this {game} step into a short strategic note (max 10 words). "
+                    "Focus on the key threat or opportunity.\n"
+                    f"Facts: {ss}\n"
                     f"Action: {action}\n"
-                    f"Next state: {next_obs[:600]}"
+                    f"State: {obs[:600]}\n"
+                    "Note:"
                 )
-                raw_summary = ask_model(
+                raw_note = ask_model(
                     summary_prompt, model=model,
-                    temperature=0.2, max_tokens=600,
+                    temperature=0.2, max_tokens=40,
                 )
-                if raw_summary and not raw_summary.startswith("Error"):
-                    exp.summary = strip_think_tags(raw_summary) or raw_summary
+                if raw_note and not raw_note.startswith("Error"):
+                    note = strip_think_tags(raw_note) or raw_note
+                    note = note.split("\n")[0].strip().strip('"').strip("'")[:80]
+                    exp.summary = f"{ss} | note={note}"[:HARD_SUMMARY_CHAR_LIMIT] if ss else note
+                else:
+                    exp.summary = ss or None
             except Exception:
                 pass
 

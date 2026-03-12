@@ -4,14 +4,24 @@ Label cold-start episode trajectories using GPT-5.4.
 
 Reads existing episode JSON files and generates concise per-step annotations:
 
-  - summary_state : compact state summary optimised for RAG retrieval
-  - summary       : identical to summary_state
-  - intentions    : concise reasoning (1-2 sentences) for the action taken
+  - summary_state : compact key=value facts (deterministic, no LLM)
+        e.g. game=tetris | phase=midgame | step=50/86 | stack_h=14 | holes=32
+  - summary       : summary_state + LLM strategic note (delta-aware)
+        e.g. ...holes=32 | note=Sharp hole spike; avoid covering center wells.
+  - intentions    : [TAG] subgoal phrase via LLM (delta + urgency aware)
+        e.g. [CLEAR] Place S flat to reduce holes and set up line clears
   - skills        : renamed from sub_tasks (null — populated downstream)
 
-The labeling pipeline reuses deterministic helpers from
-``decision_agents.agent_helper`` (compact_text_observation, get_state_summary,
-infer_intention) and refines them through GPT-5.4 for conciseness.
+The labeling pipeline uses game-aware deterministic extractors from
+``decision_agents.agent_helper`` (build_rag_summary, extract_game_facts)
+and adds lightweight LLM enrichment (~25 tokens for note, ~40 for intention).
+
+Key mechanisms for step-to-step differentiation:
+  - State delta: ``_compute_state_delta`` feeds the LLM a compact diff
+    (e.g. ``holes:10->32``) so notes and tags reflect what changed.
+  - Urgency detection: ``_detect_urgency`` triggers on absolute-value
+    thresholds (e.g. Tetris holes>25) so tags shift to [SURVIVE]/[CLEAR]
+    even when per-step deltas are small.
 
 Output structure (labeling/output/gpt54/<game_name>/):
   - episode_NNN.json        Labeled episode (original + new fields)
@@ -43,6 +53,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -111,6 +122,111 @@ SUMMARY_CHAR_BUDGET = 200
 SUMMARY_PROSE_WORD_BUDGET = 30
 INTENTION_WORD_BUDGET = 15
 
+_SUBGOAL_TAG_SET = frozenset(SUBGOAL_TAGS)
+
+_TAG_ALIASES: Dict[str, str] = {
+    "PLACE": "SETUP", "DROP": "EXECUTE", "MOVE": "NAVIGATE",
+    "SWAP": "EXECUTE", "PUSH": "NAVIGATE", "JUMP": "NAVIGATE",
+    "MATCH": "CLEAR", "PLAN": "SETUP", "ARRANGE": "SETUP",
+    "ROTATE": "SETUP", "ORGANIZE": "OPTIMIZE", "SCORE": "EXECUTE",
+    "PROTECT": "DEFEND", "GRAB": "COLLECT", "FLEE": "SURVIVE",
+    "RUN": "NAVIGATE", "CREATE": "BUILD", "FIND": "EXPLORE",
+    "FIX": "OPTIMIZE", "ALIGN": "POSITION", "TARGET": "ATTACK",
+    "SECURE": "DEFEND", "EXPAND": "ATTACK", "RETREAT": "DEFEND",
+}
+
+_TAG_RE = re.compile(r"\[(\w+)\]\s*")
+
+
+def _normalize_intention(raw: str) -> str:
+    """Ensure intention has a valid ``[TAG] phrase`` format."""
+    raw = raw.split("\n")[0].strip().strip('"').strip("'")
+    if not raw.startswith("["):
+        return f"[EXECUTE] {raw}"
+    m = _TAG_RE.match(raw)
+    if not m:
+        return f"[EXECUTE] {raw}"
+    tag = m.group(1).upper()
+    rest = raw[m.end():].strip()
+    if tag not in _SUBGOAL_TAG_SET:
+        tag = _TAG_ALIASES.get(tag, "EXECUTE")
+    return f"[{tag}] {rest}" if rest else f"[{tag}]"
+
+
+def _compute_state_delta(prev_ss: str, curr_ss: str) -> str:
+    """Return a compact string of key changes between two ``summary_state`` values.
+
+    Example return: ``stack_h:0->8, holes:0->10, piece:L->S``
+    Only value-bearing fields that actually changed are included; meta keys
+    like ``game``, ``step``, ``phase`` are skipped.
+    """
+    if not prev_ss or not curr_ss:
+        return ""
+
+    def _parse(ss: str) -> Dict[str, str]:
+        d: Dict[str, str] = {}
+        for seg in ss.split(" | "):
+            if "=" in seg:
+                k, v = seg.split("=", 1)
+                d[k.strip()] = v.strip()
+        return d
+
+    skip = {"game", "step", "phase"}
+    p, c = _parse(prev_ss), _parse(curr_ss)
+    changes: List[str] = []
+    for k, v in c.items():
+        if k in skip:
+            continue
+        pv = p.get(k)
+        if pv is not None and pv != v:
+            changes.append(f"{k}:{pv}->{v}")
+    return ", ".join(changes[:5])
+
+
+def _detect_urgency(summary_state: str, game_name: str) -> str:
+    """Return a short urgency warning when absolute state values are critical.
+
+    Complements ``_compute_state_delta`` (relative change) by catching
+    situations where per-step deltas are small but the cumulative state is
+    dangerous (e.g. Tetris with 40 holes and stack_h=16).
+    """
+
+    def _val(key: str) -> Optional[float]:
+        for seg in summary_state.split(" | "):
+            seg = seg.strip()
+            if seg.startswith(f"{key}="):
+                try:
+                    return float(seg.split("=", 1)[1].split(",")[0])
+                except (ValueError, IndexError):
+                    return None
+        return None
+
+    gn = game_name.lower()
+    warnings: List[str] = []
+
+    if gn == "tetris":
+        h = _val("holes")
+        sh = _val("stack_h")
+        if h is not None and h > 25:
+            warnings.append("severe holes—prioritise CLEAR or SURVIVE")
+        if sh is not None and sh > 14:
+            warnings.append("stack near ceiling—SURVIVE")
+    elif gn in ("2048", "twenty_forty_eight"):
+        e = _val("empty")
+        if e is not None and e < 3:
+            warnings.append("board nearly full—must MERGE now")
+    elif "candy" in gn:
+        m = _val("moves")
+        if m is not None and m < 5:
+            warnings.append("very few moves left—maximise every action")
+    elif "mario" in gn:
+        t = _val("time")
+        if t is not None and t < 50:
+            warnings.append("time running out—NAVIGATE quickly")
+
+    return "; ".join(warnings)
+
+
 # ---------------------------------------------------------------------------
 # GPT-5.4 chat helper (function-calling style for structured output)
 # ---------------------------------------------------------------------------
@@ -165,80 +281,124 @@ def generate_intention(
     action: str,
     original_reasoning: Optional[str] = None,
     game_name: str = "",
+    summary_state: str = "",
+    prev_intention: str = "",
+    prev_summary_state: str = "",
     model: str = MODEL_GPT54,
 ) -> str:
-    """Produce a ``[TAG] subgoal phrase`` for skill segmentation and indexing.
+    """Produce a ``[TAG] subgoal phrase`` grounded in extracted state facts.
 
     Format: ``[TAG] short phrase`` (max ~15 words).
-    Tags: SETUP, CLEAR, MERGE, ATTACK, DEFEND, NAVIGATE, POSITION,
-    COLLECT, BUILD, SURVIVE, OPTIMIZE, EXPLORE, EXECUTE.
 
-    When the episode already contains verbose reasoning (from cold-start),
-    we condense it; otherwise we infer from state + action.  Output budget
-    is kept very tight (~30 tokens) for 14B-model compatibility.
+    ``summary_state`` anchors the prompt in concrete facts.
+    ``prev_summary_state`` feeds a delta so the LLM sees what changed and can
+    decide whether the subgoal should shift.  ``prev_intention`` provides the
+    baseline — the tag **should** change when the delta is large enough to
+    indicate a genuine strategic shift.
     """
     tags_str = "|".join(SUBGOAL_TAGS)
+    facts_line = f"Facts: {summary_state}\n" if summary_state else ""
+    delta = _compute_state_delta(prev_summary_state, summary_state)
+    delta_line = f"Changed: {delta}\n" if delta else ""
+    urgency = _detect_urgency(summary_state, game_name)
+    urgency_line = f"URGENCY: {urgency}\n" if urgency else ""
+    prev_line = f"Previous subgoal: {prev_intention}\n" if prev_intention else ""
+    shift_hint = (
+        "IMPORTANT: If the situation changed significantly or urgency is high, pick a NEW tag that matches the new priority.\n"
+        if delta or urgency else ""
+    )
 
     if original_reasoning and len(original_reasoning) > 20:
         prompt = (
             f"Condense to [TAG] subgoal phrase (max {INTENTION_WORD_BUDGET} words).\n"
             f"Tags: {tags_str}\n"
+            f"{facts_line}"
+            f"{delta_line}"
+            f"{urgency_line}"
+            f"{prev_line}"
+            f"{shift_hint}"
             f"Reasoning: {original_reasoning[:300]}\n"
             f"Reply ONLY: [TAG] phrase\n"
-            f"Example: [SETUP] Build flat stack for line clears\n"
+            f"Examples:\n"
+            f"  [CLEAR] Place S flat to reduce holes and set up line clears\n"
+            f"  [SURVIVE] Place Z vertically to avoid overhangs and prevent topping out\n"
+            f"  [MERGE] Merge left for space while keeping the 64 anchored\n"
             f"Subgoal:"
         )
     else:
         game_label = game_name.replace("_", " ") if game_name else "game"
         compact = compact_text_observation(state, max_chars=200)
-        state_text = compact if compact else state[:1000]
+        state_text = compact if compact else state[:800]
         prompt = (
             f"{game_label}. Action: {action}\n"
             f"State: {state_text}\n"
-            f"What multi-step subgoal? Reply ONLY: [TAG] phrase "
+            f"{facts_line}"
+            f"{delta_line}"
+            f"{urgency_line}"
+            f"{prev_line}"
+            f"{shift_hint}"
+            f"What subgoal? Reply ONLY: [TAG] phrase "
             f"(max {INTENTION_WORD_BUDGET} words)\n"
             f"Tags: {tags_str}\n"
-            f"Example: [MERGE] Combine 4-tiles toward corner anchor\n"
+            f"Examples:\n"
+            f"  [SETUP] Consolidate tiles toward one side for an early merge\n"
+            f"  [ATTACK] Swap for an immediate match and better cascade potential\n"
+            f"  [SURVIVE] Merge vertical 2s now to create space and survive\n"
             f"Subgoal:"
         )
 
     result = _ask_gpt54(prompt, model=model, max_tokens=40)
     if result:
-        cleaned = result.split("\n")[0].strip().strip('"').strip("'")
-        if not cleaned.startswith("["):
-            cleaned = "[EXECUTE] " + cleaned
-        return cleaned[:150]
+        return _normalize_intention(result)[:150]
 
     fallback = infer_intention(state, game=game_name, model=model)
     if fallback:
-        return f"[EXECUTE] {fallback}"
+        return _normalize_intention(f"[EXECUTE] {fallback}")[:150]
     return f"[EXECUTE] {action}"
 
 
 def generate_summary_prose(
     state: str,
     game_name: str = "",
+    summary_state: str = "",
+    prev_summary_state: str = "",
     model: str = MODEL_GPT54,
 ) -> str:
-    """Produce a 1-sentence prose summary for the LLM teacher and human review.
+    """Produce ``summary = summary_state + | note=<strategic assessment>``.
 
-    Budget: max 30 words.  This is the only LLM call for the summary path;
-    ``summary_state`` is fully deterministic.
+    The deterministic ``summary_state`` facts are always present so key info
+    is never lost across steps.  The LLM only adds a short strategic note
+    (threat / opportunity, ~10 words) — very cheap output budget.
+
+    ``prev_summary_state`` feeds a delta line (e.g. ``holes:10->32``) so the
+    note focuses on what actually changed rather than repeating generic advice.
     """
-    compact = compact_text_observation(state, max_chars=250)
-    state_text = compact if compact else state[:1500]
+    if not summary_state:
+        summary_state = generate_summary_state(state, game_name)
+
+    compact = compact_text_observation(state, max_chars=200)
+    state_text = compact if compact else state[:1000]
     game_label = game_name.replace("_", " ") if game_name else "game"
 
+    delta = _compute_state_delta(prev_summary_state, summary_state)
+    delta_line = f"Changed since last step: {delta}\n" if delta else ""
+
     prompt = (
-        f"{game_label} state: {state_text}\n"
-        f"Summarize in 1 sentence (max {SUMMARY_PROSE_WORD_BUDGET} words). "
-        f"Include: key position, score, main threat or opportunity."
+        f"{game_label}: {state_text}\n"
+        f"{delta_line}"
+        f"Key strategic note about the current threat or opportunity "
+        f"(max 10 words, be specific to what changed).\n"
+        f"Examples: \"Sharp hole spike; avoid covering center wells.\" / "
+        f"\"No empty cells; next move must create one.\"\n"
+        f"Note:"
     )
 
-    result = _ask_gpt54(prompt, model=model, max_tokens=60)
-    if result:
-        return result[:HARD_SUMMARY_CHAR_LIMIT]
-    return (compact or state[:SUMMARY_CHAR_BUDGET])[:HARD_SUMMARY_CHAR_LIMIT]
+    note = _ask_gpt54(prompt, model=model, max_tokens=25)
+    if note:
+        note = note.split("\n")[0].strip().strip('"').strip("'")
+        note = note[:80]
+        return f"{summary_state} | note={note}"[:HARD_SUMMARY_CHAR_LIMIT]
+    return summary_state[:HARD_SUMMARY_CHAR_LIMIT]
 
 
 # ---------------------------------------------------------------------------
@@ -252,17 +412,22 @@ def label_experience(
     delay: float = 0.0,
     step_idx: int = -1,
     total_steps: int = -1,
+    prev_intention: str = "",
+    prev_summary_state: str = "",
 ) -> Dict[str, Any]:
     """Label a single experience dict in-place and return it.
 
-    Produces three complementary fields:
+    Produces three complementary fields whose key facts are identical:
 
     * ``summary_state`` — compact ``key=value`` string (deterministic, no LLM)
       optimised for RAG embedding retrieval.
-    * ``summary`` — concise prose sentence via LLM, for the LLM teacher /
-      human review.
-    * ``intentions`` — ``[TAG] subgoal phrase`` via LLM, for skill
-      segmentation predicates and skill-bank indexing.
+    * ``summary`` — ``summary_state | note=<strategic assessment>``; same
+      facts plus a short LLM-generated note grounded in **what changed** since
+      the previous step so every note is unique and specific.
+    * ``intentions`` — ``[TAG] subgoal phrase`` via LLM, grounded in the
+      ``summary_state`` facts and a state-delta from the previous step.
+      The tag is encouraged to shift when the delta indicates a genuine
+      strategic change (e.g. rising holes → ``[SURVIVE]``).
     """
     state = exp.get("state", "")
     action = exp.get("action", "")
@@ -280,18 +445,26 @@ def label_experience(
     )
     exp["summary_state"] = summary_state
 
-    # --- summary (concise prose, 1 LLM call) ---
-    summary = generate_summary_prose(state, game_name=game_name, model=model)
+    # --- summary (summary_state + delta-aware strategic note, 1 LLM call) ---
+    summary = generate_summary_prose(
+        state, game_name=game_name,
+        summary_state=summary_state,
+        prev_summary_state=prev_summary_state,
+        model=model,
+    )
     exp["summary"] = summary
 
     if delay > 0:
         time.sleep(delay)
 
-    # --- intention ([TAG] subgoal phrase, 1 LLM call) ---
+    # --- intention ([TAG] subgoal, delta-aware + prev step, 1 LLM call) ---
     intention = generate_intention(
         state, action,
         original_reasoning=original_reasoning,
         game_name=game_name,
+        summary_state=summary_state,
+        prev_intention=prev_intention,
+        prev_summary_state=prev_summary_state,
         model=model,
     )
     exp["intentions"] = intention
@@ -321,12 +494,18 @@ def label_episode(
     experiences = episode_data.get("experiences", [])
     n = len(experiences)
 
+    prev_intention = ""
+    prev_summary_state = ""
     for i, exp in enumerate(experiences):
         try:
             label_experience(
                 exp, game_name=game_name, model=model, delay=delay,
                 step_idx=i, total_steps=n,
+                prev_intention=prev_intention,
+                prev_summary_state=prev_summary_state,
             )
+            prev_intention = exp.get("intentions", "")
+            prev_summary_state = exp.get("summary_state", "")
             if verbose:
                 ss = (exp["summary_state"][:60] + "...") if len(exp.get("summary_state", "")) > 60 else exp.get("summary_state", "")
                 it = (exp["intentions"][:60] + "...") if len(exp.get("intentions", "")) > 60 else exp.get("intentions", "")

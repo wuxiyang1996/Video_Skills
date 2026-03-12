@@ -167,10 +167,11 @@ class VLMDecisionAgent:
             "- take_action: execute one environment action (primitive or QUERY_MEM/QUERY_SKILL/CALL_SKILL). "
             "Args: {\"action\": \"<valid_action>\"}\n"
             "- reward: compute reward signals for the last transition (call ONCE right after take_action). Args: {}\n"
-            "- get_state_summary: get a short text summary of the scene. Args: {}\n"
-            "- get_intention: infer/refresh current objective. Args: {}\n"
+            "- get_state_summary: get a compact key=value state summary (e.g. game=tetris | stack_h=8 | holes=3). Args: {}\n"
+            "- get_intention: infer/refresh current [TAG] subgoal (e.g. [CLEAR] Reduce holes before stack overflows). Args: {}\n"
             "- query_skill: retrieve a procedure from the skill bank. Args: {\"key\": \"<scene, objective, entities, failure_mode>\"}\n"
-            "- query_memory: retrieve similar past experiences. Args: {\"key\": \"<scene, objective, entities>\"}\n\n"
+            "- query_memory: retrieve similar past experiences (returns key=value summaries). "
+            "Args: {\"key\": \"<scene, objective, entities>\"}\n\n"
             "Two-turn micro-loop per timestep:\n"
             "  1) Choose ONE action → take_action(...)\n"
             "  2) Immediately call reward() once for logging/training.\n"
@@ -191,7 +192,7 @@ class VLMDecisionAgent:
         prompt += "Current observation:\n" + (observation[:3000] if observation else "(none)") + "\n\n"
 
         prompt += "Your internal state:\n"
-        prompt += "- intention: " + (s.current_intention or "(none)") + "\n"
+        prompt += "- intention ([TAG] subgoal): " + (s.current_intention or "(none)") + "\n"
         prompt += "- progress_notes: " + " | ".join(s.progress_notes[-MAX_PROGRESS_NOTES:]) or "(none)" + "\n"
         prompt += "- last_actions: " + ", ".join(str(a) for a in s.last_actions[-MAX_LAST_ACTIONS:]) or "(none)" + "\n"
         prompt += "- stuck_counter: " + str(s.stuck_counter) + "\n"
@@ -199,7 +200,7 @@ class VLMDecisionAgent:
         if s.last_reward:
             prompt += "- last_reward: " + repr(s.last_reward) + "\n"
         if s.last_state_summary:
-            prompt += "- last_state_summary: " + s.last_state_summary[:400] + "\n"
+            prompt += "- state_summary (key=value): " + s.last_state_summary[:400] + "\n"
 
         if last_tool_name:
             prompt += "\nLast tool called: " + last_tool_name + "\n"

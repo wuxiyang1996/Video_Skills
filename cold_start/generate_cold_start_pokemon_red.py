@@ -24,7 +24,8 @@ Usage (from Game-AI-Agent root):
     export OPENROUTER_API_KEY="sk-or-..."
     export PYTHONPATH="$(pwd):$(pwd)/../GamingAgent:$(pwd)/../Orak/src:$PYTHONPATH"
 
-    python cold_start/generate_cold_start_pokemon_red.py --episodes 3 --verbose --no_label
+    python cold_start/generate_cold_start_pokemon_red.py --episodes 3 --verbose
+    # Add --label to label trajectories (labeling is in labeling/ folder)
 """
 
 from __future__ import annotations
@@ -569,7 +570,7 @@ def execute_action(action_str: str, toolset: PokemonToolset,
 def run_pokemon_episode(
     rom_path: str,
     model: str = MODEL_GPT54,
-    max_steps: int = 500,
+    max_steps: int = 200,
     temperature: float = 0.4,
     reflect_every: int = 5,
     verbose: bool = False,
@@ -830,7 +831,7 @@ def run_all_episodes(args, output_dir: Path) -> Dict:
                   f"Location: {stats.get('final_location', '?')}, "
                   f"Score: {stats.get('final_score', '?')}")
 
-            if not args.no_label:
+            if args.label and not args.no_label:
                 episode = label_trajectory(episode, args.label_model)
 
             episode_buffer.add_episode(episode)
@@ -863,7 +864,7 @@ def run_all_episodes(args, output_dir: Path) -> Dict:
         "total_episodes": len(all_stats),
         "target_episodes": args.episodes,
         "max_steps": effective_max_steps,
-        "labeled": not args.no_label,
+        "labeled": args.label and not args.no_label,
         "elapsed_seconds": elapsed,
         "episode_stats": all_stats,
     }
@@ -902,7 +903,10 @@ def main():
     parser.add_argument("--model", type=str, default=MODEL_GPT54)
     parser.add_argument("--temperature", type=float, default=0.4)
     parser.add_argument("--reflect_every", type=int, default=5)
-    parser.add_argument("--no_label", action="store_true")
+    parser.add_argument("--label", action="store_true",
+                        help="Label trajectories with LLM (default: off; use labeling/ for that)")
+    parser.add_argument("--no_label", action="store_true",
+                        help="Skip labeling (default: no labeling)")
     parser.add_argument("--label_model", type=str, default="gpt-5-mini")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--verbose", "-v", action="store_true")
@@ -957,6 +961,7 @@ def main():
     print(f"  Reflect every:   {args.reflect_every}")
     print(f"  No-progress cap: {NO_PROGRESS_THRESHOLD}")
     print(f"  Fast mode:       {args.fast}")
+    print(f"  Labeling:        {args.label and not args.no_label}")
     print(f"  Output:          {output_dir}")
     print("=" * 72)
     print()

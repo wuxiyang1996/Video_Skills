@@ -7,7 +7,7 @@ VLM decision-making agent that plays video games step-by-step using a **two-turn
 | File | What it does |
 |------|-------------|
 | `agent.py` | `VLMDecisionAgent` class, `run_tool()`, `run_episode_vlm_agent()` |
-| `agent_helper.py` | `get_state_summary()`, `compact_structured_state()`, `compact_text_observation()`, `infer_intention()`, `EpisodicMemoryStore`, `skill_bank_to_text()` |
+| `agent_helper.py` | `get_state_summary()`, `build_rag_summary()`, `extract_game_facts()`, `infer_intention()`, `EpisodicMemoryStore`, `skill_bank_to_text()`, `SUBGOAL_TAGS` |
 | `reward_func.py` | `RewardConfig`, `RewardResult`, `RewardComputer`, `compute_reward()` |
 | `dummy_agent.py` | Baseline `language_agent_action()` + game detection + action extraction |
 | `__init__.py` | Re-exports everything above |
@@ -39,8 +39,8 @@ print(episode.experiences[-1].done)               # whether episode terminated
 
 # Each Experience has rich fields populated from agent state:
 exp = episode.experiences[0]
-print(exp.summary_state)   # from get_state_summary tool
-print(exp.intentions)      # from get_intention tool
+print(exp.summary_state)   # key=value format, e.g. "game=tetris | phase=midgame | stack_h=14 | holes=32"
+print(exp.intentions)      # [TAG] phrase, e.g. "[CLEAR] Reduce holes before stack overflows"
 print(exp.sub_tasks)       # active skill ID being followed
 print(exp.reward_details)  # full reward breakdown dict
 
@@ -200,9 +200,40 @@ the `run_tool(TOOL_GET_STATE_SUMMARY, ...)` call site automatically consumes.
 | `DEFAULT_SUMMARY_CHAR_BUDGET` | 400 | Default budget for all summaries |
 | `HARD_SUMMARY_CHAR_LIMIT` | 400 | Absolute upper bound; never exceeded |
 
+### `build_rag_summary(state, game_name, *, step_idx, total_steps, reward, max_chars)`
+
+Fully deterministic (no LLM) `key=value` summary optimised for RAG embedding
+retrieval. Combines game-aware fact extraction with phase estimation and reward.
+
+```python
+from decision_agents.agent_helper import build_rag_summary
+
+summary = build_rag_summary(
+    state_text,
+    game_name="tetris",
+    step_idx=50,
+    total_steps=86,
+    reward=1.0,
+)
+# → "game=tetris | phase=midgame | step=50/86 | stack_h=14 | holes=32 | next=T,Z,I,J | level=1 | reward=+1"
+```
+
+Uses `extract_game_facts()` internally — game-specific parsers for Tetris
+(stack_h, holes, piece, next), 2048 (highest, empty, tiles, merges), Candy
+Crush (score, moves, pairs), Sokoban (boxes, goals, worker), Super Mario
+(x_pos, y_pos, coins, time), Avalon (phase, role, quest), and Diplomacy
+(phase, power, centers, units).
+
 ### `infer_intention(summary_or_observation, game=None, model=None, context=None)`
 
-Returns a short phrase (< 15 words) describing the agent's current subgoal.
+Returns a `[TAG] subgoal phrase` (≤15 words) describing the agent's current
+subgoal, using the same format as the labeling pipeline. The tag is one of 13
+canonical categories used for skill segmentation and RAG retrieval:
+
+```
+SETUP | CLEAR | MERGE | ATTACK | DEFEND | NAVIGATE | POSITION |
+COLLECT | BUILD | SURVIVE | OPTIMIZE | EXPLORE | EXECUTE
+```
 
 ```python
 from decision_agents import infer_intention
@@ -215,7 +246,15 @@ intention = infer_intention(
         "task": "deliver 3 soups",
     },
 )
-# e.g. "Deliver onion to pot and start cooking"
+# e.g. "[NAVIGATE] Deliver onion to pot and start cooking"
+
+# With game-specific context:
+intention = infer_intention(
+    "game=tetris | stack_h=15 | holes=42",
+    game="gamingagent",
+    model="gpt-5.4",
+)
+# e.g. "[SURVIVE] Place Z vertically to avoid overhangs and prevent topping out"
 ```
 
 ### `EpisodicMemoryStore`
@@ -223,6 +262,10 @@ intention = infer_intention(
 RAG-embedding retrieval memory for the `query_memory` tool.  When an
 embedder is supplied (or auto-loaded from `rag/`), memories are embedded
 on `add` and queries use cosine similarity blended with keyword overlap.
+
+Keyword scoring splits on `=|:,;/` in addition to whitespace, so
+`key=value` summaries tokenise correctly (e.g. `game=tetris` matches
+queries for both "game" and "tetris").
 
 ```python
 from decision_agents import EpisodicMemoryStore
@@ -234,16 +277,16 @@ mem = EpisodicMemoryStore(
     embedding_weight=0.7,           # 70% embedding, 30% keyword overlap
 )
 
-# Add entries (automatically embedded)
+# Add entries with key=value summaries (automatically embedded)
 mem.add_experience(
-    state_summary="corridor, low HP, sniper on balcony",
+    state_summary="game=fps | hp=20 | pos=corridor | threat=sniper_balcony",
     action="take cover behind pillar",
-    next_state_summary="behind pillar, safe, HP still low",
+    next_state_summary="game=fps | hp=20 | pos=behind_pillar | threat=sniper_balcony",
     done=False,
 )
 
 # Query — uses cosine similarity + keyword overlap
-results = mem.query("corridor, low HP, sniper, need cover", k=3)
+results = mem.query("game=fps | hp=low | threat=sniper", k=3)
 # returns list of dicts: [{key, summary, action, outcome, ...}, ...]
 ```
 
@@ -341,8 +384,19 @@ action = language_agent_action(
 
 Every timestep the runner executes:
 
-1. **(Optional)** One non-action tool: `get_state_summary` or `get_intention`.
+1. **(Optional)** One non-action tool: `get_state_summary` (returns `key=value` facts) or `get_intention` (returns `[TAG] subgoal phrase`).
 2. **`take_action`** — exactly one environment action.
 3. **`reward`** — compute `(r_env, r_follow, r_cost, r_total)` for logging/training.
 
 Retrieval (`query_skill` / `query_memory`) is budget-limited to once every N steps (default 10) unless the agent is stuck. Never call both in the same timestep.
+
+### Format consistency
+
+The agent prompt explicitly labels both formats so Qwen agents learn them:
+- **Intention**: `"intention ([TAG] subgoal): [CLEAR] Reduce holes before stack overflows"`
+- **State summary**: `"state_summary (key=value): game=tetris | phase=endgame | stack_h=15 | holes=42"`
+- **Memory results**: returned as key=value summaries from `EpisodicMemoryStore`
+
+This matches the labeling pipeline in `labeling/label_episodes_gpt54.py`, ensuring
+cold-start data and runtime data share identical formats for RAG retrieval and
+skill extraction.

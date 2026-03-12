@@ -472,9 +472,12 @@ def _extract_generic_facts(state: str) -> Dict[str, str]:
 _GAME_EXTRACTORS: Dict[str, Any] = {
     "tetris": _extract_tetris_facts,
     "candy_crush": _extract_candy_crush_facts,
+    "candy": _extract_candy_crush_facts,
     "twenty_forty_eight": _extract_2048_facts,
+    "2048": _extract_2048_facts,
     "sokoban": _extract_sokoban_facts,
     "super_mario": _extract_mario_facts,
+    "mario": _extract_mario_facts,
     "avalon": _extract_avalon_facts,
     "diplomacy": _extract_diplomacy_facts,
 }
@@ -652,16 +655,45 @@ def strip_think_tags(text: str) -> str:
 # Intention inference
 # ---------------------------------------------------------------------------
 
+_INTENTION_TAG_RE = re.compile(r"\[(\w+)\]\s*")
+_INTENTION_TAG_SET = frozenset(SUBGOAL_TAGS)
+_INTENTION_TAG_ALIASES: Dict[str, str] = {
+    "PLACE": "SETUP", "DROP": "EXECUTE", "MOVE": "NAVIGATE",
+    "RETREAT": "DEFEND", "ADVANCE": "ATTACK", "GATHER": "COLLECT",
+    "CRAFT": "BUILD", "PLAN": "SETUP", "SCORE": "ATTACK",
+    "CONSOLIDATE": "POSITION", "FLEE": "SURVIVE",
+}
+
+
+def _normalize_intention_tag(raw: str) -> str:
+    """Ensure intention has a valid ``[TAG] phrase`` format."""
+    raw = raw.split("\n")[0].strip().strip('"').strip("'")
+    if not raw.startswith("["):
+        return f"[EXECUTE] {raw}"
+    m = _INTENTION_TAG_RE.match(raw)
+    if not m:
+        return f"[EXECUTE] {raw}"
+    tag = m.group(1).upper()
+    rest = raw[m.end():].strip()
+    if tag not in _INTENTION_TAG_SET:
+        tag = _INTENTION_TAG_ALIASES.get(tag, "EXECUTE")
+    return f"[{tag}] {rest}" if rest else f"[{tag}]"
+
+
 def infer_intention(
     summary_or_observation: str,
     game: Optional[str] = None,
     model: Optional[str] = None,
     context: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Infer a concise intention phrase (subgoal) from a state summary.
+    """Infer a concise ``[TAG] subgoal phrase`` from a state summary.
 
-    Returns a short phrase (<=12 words) suitable for skill-bank indexing,
-    decision-making context, and trajectory annotation.
+    Returns a tagged phrase (<=15 words) in the same format used by the
+    labeling pipeline, suitable for skill-bank indexing, decision-making
+    context, and trajectory annotation.
+
+    Tags: SETUP | CLEAR | MERGE | ATTACK | DEFEND | NAVIGATE | POSITION |
+          COLLECT | BUILD | SURVIVE | OPTIMIZE | EXPLORE | EXECUTE
 
     *context* may include: ``last_actions``, ``task``, ``progress_notes``,
     ``power_name``, ``phase``, ``sc_delta``.
@@ -672,6 +704,7 @@ def infer_intention(
         return ""
 
     ctx = context or {}
+    tags_str = "|".join(SUBGOAL_TAGS)
 
     if game == "diplomacy":
         prompt = _build_diplomacy_intention_prompt(summary_or_observation, ctx)
@@ -683,11 +716,14 @@ def infer_intention(
             extra += "\nTask: " + str(ctx["task"])
         prompt = (
             "State:\n" + summary_or_observation[:2000] + extra + "\n\n"
-            "Reply with ONLY a short phrase (max 12 words) describing the agent's "
-            "immediate subgoal. No explanation. No reasoning. Just the phrase.\n"
-            "Good examples: 'merge 4s into 8 toward top-left', "
-            "'clear bottom rows for space', 'push box onto goal tile'\n"
-            "Intention:"
+            f"Reply with ONLY a [TAG] subgoal phrase (max 12 words).\n"
+            f"Tags: {tags_str}\n"
+            "Examples:\n"
+            "  [MERGE] Combine 4-tiles toward top-left corner\n"
+            "  [CLEAR] Clear bottom rows to create space\n"
+            "  [NAVIGATE] Push box onto goal tile\n"
+            "  [SURVIVE] Avoid topping out by clearing lines now\n"
+            "Subgoal:"
         )
 
     out = ask_model(prompt, model=model or "gpt-4o-mini", temperature=0.2, max_tokens=200)
@@ -699,14 +735,13 @@ def infer_intention(
         return ""
 
     cleaned = cleaned.split("\n")[0].strip().strip('"').strip("'").strip()
-    # Strip power-name prefixes like "GERMANY:" that leak through
     cleaned = re.sub(r"^[A-Z]{3,}:\s*", "", cleaned)
 
     words = cleaned.split()
     if len(words) > 15:
         cleaned = " ".join(words[:15])
 
-    return cleaned[:120]
+    return _normalize_intention_tag(cleaned)[:150]
 
 
 def _build_diplomacy_intention_prompt(
@@ -730,14 +765,17 @@ def _build_diplomacy_intention_prompt(
         recent = ctx["last_actions"][-3:]
         parts.append("\nRecent orders: " + " | ".join(str(a) for a in recent))
 
+    tags_str = "|".join(SUBGOAL_TAGS)
     parts.append(
-        "\n\nReply with ONLY a short phrase (max 12 words) stating YOUR immediate "
-        "strategic subgoal as " + (power or "this power") + ". "
+        f"\n\nReply with ONLY a [TAG] subgoal phrase (max 12 words) as {power or 'this power'}.\n"
+        f"Tags: {tags_str}\n"
         "Focus on territorial objectives, not descriptions of the board.\n"
-        "Good examples: 'capture SER and RUM via BUL support', "
-        "'defend BUD against Russian advance from GAL', "
-        "'convoy army to TUN via ION', 'ally with France against Germany'\n"
-        "Intention:"
+        "Examples:\n"
+        "  [ATTACK] Capture SER and RUM via BUL support\n"
+        "  [DEFEND] Hold BUD against Russian advance from GAL\n"
+        "  [NAVIGATE] Convoy army to TUN via ION\n"
+        "  [POSITION] Ally with France against Germany\n"
+        "Subgoal:"
     )
     return "".join(parts)
 

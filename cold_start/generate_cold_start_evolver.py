@@ -644,7 +644,7 @@ def save_game_summary(
         "total_episodes": len(all_stats),
         "target_episodes": args.episodes,
         "end_condition": "natural",
-        "labeled": not args.no_label,
+        "labeled": args.label and not args.no_label,
         "elapsed_seconds": elapsed,
         "episode_stats": all_stats,
     }
@@ -712,7 +712,7 @@ def run_game_rollouts(
             stats["episode_index"] = ep_idx
             print(f"    Steps: {stats['steps']}, Reward: {stats['total_reward']:.2f}")
 
-            if not args.no_label:
+            if args.label and not args.no_label:
                 episode = label_trajectory(episode, args.label_model)
 
             episode_buffer.add_episode(episode)
@@ -766,6 +766,8 @@ def main():
                         help=f"LLM model for the agent (default: {MODEL_GPT54})")
     parser.add_argument("--temperature", type=float, default=0.4,
                         help="Sampling temperature (default: 0.4)")
+    parser.add_argument("--label", action="store_true",
+                        help="Label trajectories with LLM (default: off; use labeling/ for that)")
     parser.add_argument("--no_label", action="store_true",
                         help="Skip trajectory labeling")
     parser.add_argument("--label_model", type=str, default="gpt-5-mini",
@@ -828,7 +830,7 @@ def main():
     print(f"  End cond:    natural (avalon=engine done, diplomacy=max_phases {DIPLOMACY_MAX_PHASES})")
     print(f"  Model:       {args.model}")
     print(f"  Temperature: {args.temperature}")
-    print(f"  Labeling:    {not args.no_label} (label model: {args.label_model})")
+    print(f"  Labeling:    {args.label and not args.no_label} (label model: {args.label_model})")
     print(f"  Resume:      {args.resume}")
     print(f"  Seed:        {args.seed}")
     if "avalon" in available_games:
@@ -856,7 +858,7 @@ def main():
         "episodes_per_game": args.episodes,
         "end_condition": "natural",
         "temperature": args.temperature,
-        "labeled": not args.no_label,
+        "labeled": args.label and not args.no_label,
         "label_model": args.label_model,
         "total_elapsed_seconds": overall_elapsed,
         "games_completed": list(available_games),

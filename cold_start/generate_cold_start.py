@@ -403,7 +403,7 @@ COLD_START_MAX_STEPS_NATURAL_END: Dict[str, int] = {
     "sokoban": 200,
     "candy_crush": 50,
     "tetris": 200,
-    "pokemon_red": 500,
+    "pokemon_red": 200,  # align with orak-2025-starter-kit & Orak benchmark
 }
 
 
@@ -743,10 +743,10 @@ def main():
     parser.add_argument("--agent_type", type=str, default="dummy",
                         choices=["dummy", "vlm"],
                         help="Agent type: 'dummy' (language_agent_action) or 'vlm' (VLMDecisionAgent)")
-    parser.add_argument("--label", action="store_true", default=True,
-                        help="Label trajectories with LLM after generation")
+    parser.add_argument("--label", action="store_true",
+                        help="Label trajectories with LLM after generation (default: off; use labeling/ for that)")
     parser.add_argument("--no_label", action="store_true",
-                        help="Skip trajectory labeling")
+                        help="Skip trajectory labeling (default: no labeling)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Print step-by-step details")
     parser.add_argument("--output_dir", type=str, default=None,
@@ -786,7 +786,7 @@ def main():
     print(f"  Max steps:  {args.max_steps}")
     print(f"  Model:      {args.model}")
     print(f"  Agent:      {args.agent_type}")
-    print(f"  Labeling:   {not args.no_label}")
+    print(f"  Labeling:   {args.label and not args.no_label}")
     print(f"  Output:     {output_dir}")
     print("=" * 78)
 
@@ -820,7 +820,7 @@ def main():
 
                 print(f"    Steps: {stats['steps']}, Reward: {stats['total_reward']:.2f}")
 
-                if not args.no_label:
+                if args.label and not args.no_label:
                     episode = label_trajectory(episode, args.model)
 
                 episode_buffer.add_episode(episode)
@@ -854,7 +854,7 @@ def main():
         "games": available_games,
         "episodes_per_game": args.episodes,
         "max_steps": args.max_steps,
-        "labeled": not args.no_label,
+        "labeled": args.label and not args.no_label,
         "elapsed_seconds": elapsed,
         "episode_stats": all_stats,
     }

@@ -24,7 +24,7 @@ This repository provides a framework for enhancing agentic decision-making in mu
 
 - **🎮 Decision Agent** — [decision_agents/](decision_agents/): VLM step-by-step play with a **two-turn micro-loop** per timestep: `take_action` (primitives or `QUERY_MEM` / `QUERY_SKILL` / `CALL_SKILL`) → `reward`. Uses a skill bank (from skill_agents) for retrieval; `QUERY_SKILL(key)` returns a micro_plan and contract.
   - **Core**: [agent.py](decision_agents/agent.py) — `VLMDecisionAgent`, `run_tool()`, `run_episode_vlm_agent()`; [dummy_agent.py](decision_agents/dummy_agent.py) — game detection, action extraction.
-  - **Helpers**: [agent_helper.py](decision_agents/agent_helper.py) — `get_state_summary()`, `compact_structured_state()`, `compact_text_observation()`, `infer_intention()`, `EpisodicMemoryStore` (RAG-backed memory), `skill_bank_to_text()`, `query_skill_bank()`.
+  - **Helpers**: [agent_helper.py](decision_agents/agent_helper.py) — `get_state_summary()`, `build_rag_summary()`, `extract_game_facts()`, `infer_intention()` (returns `[TAG] phrase`), `EpisodicMemoryStore` (RAG-backed memory with `key=value` keyword splitting), `skill_bank_to_text()`, `query_skill_bank()`, `SUBGOAL_TAGS`.
   - **Reward**: [reward_func.py](decision_agents/reward_func.py) — `RewardConfig`, `RewardComputer`; **r_total** = r_env + w_follow×r_follow + r_cost (query_mem_cost, query_skill_cost, call_skill_cost, skill_switch_cost).
   - **Tools**: `take_action`, `reward`, `get_state_summary`, `get_intention`, `query_skill`, `query_memory`. See [decision_agents/README.md](decision_agents/README.md).
 
@@ -101,8 +101,9 @@ The **decision_agents** (VLM decision-making agent) and **skill_agents** (Skill 
 │   │  env_name + game_name │  back  │  versioned, queryable │                 │
 │   │  Experience per step: │        │                      │                 │
 │   │  state, action, reward│        │                      │                 │
-│   │  summary_state,       │        │                      │                 │
-│   │  intentions, sub_tasks│        │                      │                 │
+│   │  summary_state (k=v), │        │                      │                 │
+│   │  intentions ([TAG]),  │        │                      │                 │
+│   │  sub_tasks            │        │                      │                 │
 │   └──────────────────────┘         └──────────────────────┘                 │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -140,12 +141,12 @@ Both agents gracefully degrade to keyword-only retrieval if the RAG module or mo
 2. **Play**  
    Run the VLM agent with that bank — returns an `Episode` directly:  
    `episode = run_episode_vlm_agent(env, agent=VLMDecisionAgent(skill_bank=skill_agent), task="...", ...)`.  
-   Each `Experience` in the episode has `summary_state`, `intentions`, `sub_tasks`, and `reward_details` populated from agent internal state — no post-hoc conversion needed.
+   Each `Experience` in the episode has `summary_state` (key=value facts), `intentions` ([TAG] phrase), `sub_tasks`, and `reward_details` populated from agent internal state — no post-hoc conversion needed.
 
 3. **Feed back**  
    Ingest the episode directly into the skill pipeline:  
    `skill_agent.ingest_episodes([episode])` then optionally `skill_agent.run_until_stable()`.  
-   The skill agents read `summary_state`/`intentions`/`sub_tasks` from each Experience for boundary proposal and segmentation.
+   The skill agents read `summary_state` (key=value for observations), `intentions` ([TAG] phrase for predicates/skill boundaries), and `sub_tasks` from each Experience for boundary proposal and segmentation.
 
 4. **Repeat**  
    The bank improves (new skills from `__NEW__`, splits/merges/refinements), so the next run has better `query_skill` results and reward shaping.
@@ -179,22 +180,31 @@ This part defines how **experiences**, **episodes**, and **sub-task (skill)** se
 
 - **Data structure details** (class definitions, buffers, serialization) are in **[data_structure/](data_structure/)**, in particular [data_structure/experience.py](data_structure/experience.py) and [data_structure/helper.py](data_structure/helper.py).
 - **Usage** — how episodes and experiences are produced and consumed:
-  - **[decision_agents/](decision_agents/)**: `run_episode_vlm_agent()` directly returns an `Episode` with fully-populated `Experience` objects (`summary_state`, `intentions`, `sub_tasks`, `reward_details` filled from agent internal state during rollout). No separate conversion step needed.
-  - **[skill_agents/](skill_agents/)**: consumes `Episode` (list of `Experience`) for boundary proposal and segmentation; reads `summary_state`/`summary`/`state` for observations, `sub_tasks`/`intentions`/`done` for predicates. Produces `SubTask_Experience` segments and skill labels. See [skill_agents/infer_segmentation/episode_adapter.py](skill_agents/infer_segmentation/episode_adapter.py), [skill_agents/boundary_proposal/](skill_agents/boundary_proposal/), and [skill_agents/README.md](skill_agents/README.md).
+  - **[decision_agents/](decision_agents/)**: `run_episode_vlm_agent()` directly returns an `Episode` with fully-populated `Experience` objects (`summary_state` as key=value, `intentions` as [TAG] phrase, `sub_tasks`, `reward_details` filled from agent internal state during rollout). No separate conversion step needed.
+  - **[labeling/](labeling/)**: `label_episodes_gpt54.py` annotates cold-start episodes with the same formats — `summary_state` (deterministic key=value), `summary` (key=value + delta-aware note), `intentions` ([TAG] phrase with urgency detection). See [labeling/readme.md](labeling/readme.md).
+  - **[skill_agents/](skill_agents/)**: consumes `Episode` (list of `Experience`) for boundary proposal and segmentation; reads `summary_state` (key=value for observations), `intentions` ([TAG] phrase for predicates/skill boundaries). Produces `SubTask_Experience` segments and skill labels. See [skill_agents/infer_segmentation/episode_adapter.py](skill_agents/infer_segmentation/episode_adapter.py), [skill_agents/boundary_proposal/](skill_agents/boundary_proposal/), and [skill_agents/README.md](skill_agents/README.md).
 
 ## Experience
 
-Same as in standard RL: **state, action, intention, reward, next state, done**. Implemented in [data_structure/experience.py](data_structure/experience.py) as `Experience` with required fields plus optional: **intentions**, **tasks**, **sub_tasks**, **summary**, **summary_state**, **idx**, **sub_task_done**, **reward_details**, **action_type**. Long-term goal and short-term goal can be filled as needed. A field for experience value is left for prioritized replay. The **summary** (and **summary_state**) support RAG and embedding-based retrieval. The **reward_details** dict stores per-step reward breakdown (`r_env`, `r_follow`, `r_cost`, `r_total`) from the VLM decision agent. The **action_type** classifies each step as `"primitive"`, `"QUERY_MEM"`, `"QUERY_SKILL"`, or `"CALL_SKILL"`. Depending on the environment, not all fields are provided; the actual state used by LLM agents is often a **summary of the state**, which also serves as context for RAG retrieval.
+Same as in standard RL: **state, action, intention, reward, next state, done**. Implemented in [data_structure/experience.py](data_structure/experience.py) as `Experience` with required fields plus optional: **intentions**, **tasks**, **sub_tasks**, **summary**, **summary_state**, **idx**, **sub_task_done**, **reward_details**, **action_type**. Long-term goal and short-term goal can be filled as needed. A field for experience value is left for prioritized replay.
+
+Key fields use structured formats for RAG and downstream consumption:
+
+- **`summary_state`**: Compact `key=value` facts (e.g. `game=tetris | phase=midgame | stack_h=14 | holes=32`). Deterministic — produced by `build_rag_summary()` with game-aware fact extractors (0 LLM tokens). Optimised for embedding retrieval and keyword matching.
+- **`summary`**: `summary_state | note=<strategic note>` — same deterministic facts plus a short LLM-generated threat/opportunity note (≤10 words). The note is delta-aware (reflects what changed since the previous step).
+- **`intentions`**: `[TAG] subgoal phrase` (e.g. `[CLEAR] Reduce holes before stack overflows`). Uses 13 canonical tags (SETUP, CLEAR, MERGE, ATTACK, DEFEND, NAVIGATE, POSITION, COLLECT, BUILD, SURVIVE, OPTIMIZE, EXPLORE, EXECUTE) for skill segmentation and RAG retrieval.
+
+The **reward_details** dict stores per-step reward breakdown (`r_env`, `r_follow`, `r_cost`, `r_total`) from the VLM decision agent. The **action_type** classifies each step as `"primitive"`, `"QUERY_MEM"`, `"QUERY_SKILL"`, or `"CALL_SKILL"`. Depending on the environment, not all fields are provided; the actual state used by LLM agents is the **summary_state** (structured key=value), which also serves as context for RAG retrieval.
 
 `run_episode_vlm_agent()` now populates Experience fields directly from agent internal state during the rollout:
 
-| Experience field | Source |
-|---|---|
-| `summary_state` | `agent.state.last_state_summary` (from `get_state_summary` tool) |
-| `intentions` | `agent.state.current_intention` (from `get_intention` tool) |
-| `sub_tasks` | `agent.state.active_skill_id` (current skill being followed) |
-| `reward_details` | Full reward breakdown dict from `RewardComputer` |
-| `action_type` | Classified from action string: `"primitive"`, `"QUERY_MEM"`, `"QUERY_SKILL"`, `"CALL_SKILL"` |
+| Experience field | Source | Format |
+|---|---|---|
+| `summary_state` | `agent.state.last_state_summary` (from `get_state_summary` tool) | `key=value \| key=value` (e.g. `game=tetris \| stack_h=14 \| holes=32`) |
+| `intentions` | `agent.state.current_intention` (from `get_intention` tool) | `[TAG] phrase` (e.g. `[CLEAR] Reduce holes before stack overflows`) |
+| `sub_tasks` | `agent.state.active_skill_id` (current skill being followed) | Skill ID string or `null` |
+| `reward_details` | Full reward breakdown dict from `RewardComputer` | `{r_env, r_follow, r_cost, r_total}` |
+| `action_type` | Classified from action string | `"primitive"`, `"QUERY_MEM"`, `"QUERY_SKILL"`, `"CALL_SKILL"` |
 
 This means skill agents can directly consume VLM agent rollouts — no conversion or post-hoc labeling needed for the fields that `_extract_obs_actions()` and `_extract_predicates()` read.
 
@@ -243,7 +253,7 @@ All live in [data_structure/experience.py](data_structure/experience.py).
 3. **[Done]** (N/A) Hooks for experience quality evaluation and prioritized replay; optional auto-ranking inside the experience buffer.  
    Not required. Existing support is sufficient: [ReplayBuffer](trainer/decision/replay_buffer.py) has priority-weighted sampling and a value field for replay. No plans for explicit quality hooks or auto-ranking in [Episode_Buffer](data_structure/experience.py) / [Experience_Replay_Buffer](data_structure/experience.py).
 4. **[Done]** Experience summary generation when missing; experience embedding code for RAG and experience query.  
-   *Done:* [Experience.generate_summary](data_structure/experience.py) / `generate_summary_state`; [get_state_summary](decision_agents/agent_helper.py); [EpisodicMemoryStore](decision_agents/agent_helper.py) (RAG-backed memory query); [SkillQueryEngine](skill_agents/query.py) (RAG-backed skill query). Episode_Buffer.get_episode_summary is keyword-only (no embedding).
+   *Done:* [Experience.generate_summary](data_structure/experience.py) (produces `summary_state | note=<note>`) / `generate_summary_state` (tries `build_rag_summary()` first for deterministic key=value, then LLM fallback) / `generate_intentions` (produces `[TAG] phrase` via `infer_intention()`); [get_state_summary](decision_agents/agent_helper.py); [EpisodicMemoryStore](decision_agents/agent_helper.py) (RAG-backed memory query with key=value keyword splitting); [SkillQueryEngine](skill_agents/query.py) (RAG-backed skill query). Episode_Buffer.get_episode_summary is keyword-only (no embedding).
 
 ---
 
@@ -261,7 +271,7 @@ The [skill_agents](skill_agents/) module implements this via the **SkillBankAgen
 
 | Step | Implementation | Notes |
 |------|----------------|--------|
-| **Input format** | [Episode](data_structure/experience) with `experiences` (state/action/reward/done, etc.) and `task`. Per-step state can be `state`, `summary_state`, or `summary`; optional `sub_tasks` / `intentions` for pseudo-labels. | Experience clean-up / formulation can feed into this; intention inference (e.g. from [decision_agents](decision_agents/)) can add pseudo intention over the trajectory. |
+| **Input format** | [Episode](data_structure/experience) with `experiences` (state/action/reward/done, etc.) and `task`. Per-step state: `summary_state` (key=value, preferred), `summary` (key=value + note), or `state` (raw); `intentions` as `[TAG] phrase` for skill boundary predicates. | Experience clean-up / formulation can feed into this; `infer_intention()` and `build_rag_summary()` from [decision_agents](decision_agents/) produce structured labels matching the labeling pipeline format. |
 | **Stage 1: Boundary proposal** | [boundary_proposal](skill_agents/boundary_proposal/): extract signals (rule-based per env or **LLM-based** `env_name="llm"`) → propose **candidate cut points** C. Constraints: [merge_radius](skill_agents/pipeline.py) merges nearby candidates (default 5 steps); cuts only at C keep search O(\|C\|²). Optional RAG embedder for embedding change-point scores. | High-recall boundaries; no final segmentation yet. |
 | **Stage 2: Sub-task labeling** | [infer_segmentation](skill_agents/infer_segmentation/): decode over C with a **preference-learned scorer** (LLM provides rankings, not numeric scores). **Candidate options** = `skill_names` (existing bank IDs + `__NEW__`). Constraints: [new_skill_penalty](skill_agents/pipeline.py), [preference_iterations](skill_agents/pipeline.py), [margin_threshold](skill_agents/pipeline.py). Output: [SegmentationResult](skill_agents/infer_segmentation/diagnostics.py) + list of [SubTask_Experience](data_structure/experience) (each segment has a **skill label**). | Task types are constrained to a finite set: existing bank skills or `__NEW__`. LLM is used as a teacher for pairwise preferences; a small scorer is trained (Bradley–Terry) and DP/beam decode produces the labeling. |
 | **Stage 3: Contract learning** | [stage3_mvp](skill_agents/stage3_mvp/): for each non-NEW segment, learn **effects-only contracts** (eff_add, eff_del, eff_event), verify, refine; persist to [SkillBankMVP](skill_agents/skill_bank/bank.py). [eff_freq](skill_agents/pipeline.py), [min_instances_per_skill](skill_agents/pipeline.py). | Converts segments into a finite, queryable skill taxonomy. |
@@ -355,8 +365,8 @@ The **VLM Decision Agent** plays games using a **two-turn micro-loop** per times
 |------|--------|
 | **take_action** | Execute one action: either a **primitive** (move, interact, etc.) or a **retrieval action** — `QUERY_MEM(key)`, `QUERY_SKILL(key)`, `CALL_SKILL(skill_id, params)`. |
 | **reward** | Compute reward for the last transition (r_env, r_follow, r_cost, r_total). Call once right after take_action. |
-| **get_state_summary** | Optional: compact `key=value` state summary (≤ 400 chars). Prefers wrapper-produced structured dict; deterministic compression by default, optional LLM fallback. |
-| **get_intention** | Optional: short phrase for current subgoal; uses last_actions, progress_notes, task. |
+| **get_state_summary** | Optional: compact `key=value` state summary (≤ 400 chars). Uses `build_rag_summary()` with game-aware fact extractors (Tetris holes, 2048 tiles, etc.); deterministic by default, optional LLM fallback. Example: `game=tetris \| phase=midgame \| stack_h=14 \| holes=32`. |
+| **get_intention** | Optional: `[TAG] subgoal phrase` (≤15 words). Tags: SETUP, CLEAR, MERGE, ATTACK, DEFEND, NAVIGATE, POSITION, COLLECT, BUILD, SURVIVE, OPTIMIZE, EXPLORE, EXECUTE. Example: `[CLEAR] Reduce holes before stack overflows`. |
 | **query_skill** | Used when take_action is QUERY_SKILL: retrieve procedures from the skill bank by key. |
 | **query_memory** | Used when take_action is QUERY_MEM: retrieve similar past experiences (EpisodicMemoryStore). |
 
@@ -379,9 +389,11 @@ Defaults: `RewardConfig(w_follow=0.1, query_mem_cost=-0.05, query_skill_cost=-0.
 ### Helpers and integration
 
 - **get_state_summary(observation, structured_state, *, max_chars, ...)** — compact `key=value` state summary (≤ 400 chars). Prefers structured dict from env wrapper; falls back to deterministic text compression. See [decision_agents/README.md](decision_agents/README.md).
+- **build_rag_summary(state, game_name, *, step_idx, total_steps, reward)** — fully deterministic `key=value` summary using game-aware fact extractors (0 LLM tokens). Used by the labeling pipeline.
+- **extract_game_facts(state, game_name)** — game-specific parsers for Tetris (stack_h, holes, piece, next), 2048 (highest, empty, tiles, merges), Candy Crush (score, moves, pairs), Sokoban, Super Mario, Avalon, Diplomacy.
 - **compact_structured_state(dict, max_chars)**, **compact_text_observation(obs, max_chars)** — low-level compressors.
-- **infer_intention(summary, game, model, context)** — subgoal phrase.
-- **EpisodicMemoryStore** — RAG-backed memory; **add_experience()**, **query(key, k)**.
+- **infer_intention(summary, game, model, context)** — `[TAG] subgoal phrase` (e.g. `[CLEAR] Reduce holes before stack overflows`). Uses the same 13 canonical tags as the labeling pipeline.
+- **EpisodicMemoryStore** — RAG-backed memory; **add_experience()**, **query(key, k)**. Keyword scoring splits on `=|:,;/` for correct `key=value` tokenisation.
 - **skill_bank_to_text(bank)**, **query_skill_bank(bank, key, top_k)** — used in prompts and by run_tool(TOOL_QUERY_SKILL).
 - The agent's **skill_bank** can be a **SkillBankMVP** or a **SkillBankAgent**; **run_episode_vlm_agent(env, agent=..., task=..., max_steps=...)** runs the full two-turn loop and returns an **`Episode`** with fully-populated `Experience` objects (including `summary_state`, `intentions`, `sub_tasks`, `reward_details`, `action_type`). The Episode is identified by a triple: `episode_id` (UUID), `env_name` (platform), `game_name` (specific game) — populated automatically from wrapper `info`. Episode metadata contains cumulative_reward, agent_state, done, and step count.
 
@@ -452,7 +464,7 @@ Storage: each episode is one JSON object per line (JSONL) when `save_path` is se
 
 The decision-making agent is expected to support:
 
-1. **Summarize the state** — GPT for training-free, Qwen (or other) for trainable.
+1. **Summarize the state** — deterministic `key=value` via `build_rag_summary()` (game-aware fact extractors, 0 LLM tokens) + optional LLM note. GPT for training-free, Qwen3-14B for trainable.
 2. **Reachable tasks / intention update** — From current state, decide whether to update sub-task or intention.
 3. **(Training-free)** Integrate a RAG module to query relevant experience from the buffer.
 4. **Action generation** — From current state (summary), in-episode history, and (for training-free) retrieved context, output the next action.

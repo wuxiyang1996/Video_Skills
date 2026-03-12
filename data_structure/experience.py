@@ -71,51 +71,102 @@ class Experience:
         # Used by the trainer for reward cost computation and action-type metrics.
         self.action_type: Optional[str] = None
 
-    # Generate the summary of the experience.
-    # The intention of this function is to generate the summmary of the current state and 
     def generate_summary(self):
-        # Generate the summary of the experience.
-        # We mainly focus on the state, action and next state, but exclude the done, which is just a label marking the end of an episode.
+        """Generate ``summary_state | note=<strategic note>`` for this experience.
+
+        Uses ``build_rag_summary`` (deterministic key=value) when available,
+        then asks the LLM for a short strategic note (max 10 words).
+        """
+        ss = self.summary_state
+        if not ss:
+            ss = self.generate_summary_state()
+
+        state_text = (self.state or "")[:800]
         prompt = (
-            f"Generate the summary of the experience. "
-            f"Focusing on the current state over the ego agents' state and other agents' states that prompts the agent to take the actions."
-            f"Capture the key points of the state but make it very concise."
-            f"The state is {self.state}, the action is {self.action}, the next state is {self.next_state}."
-            f"Please include the following information: "
-            f"1. The summary of the state, including the ego agents' state and other agents' states."
-            f"2. The summary of the action. Make it very concise."
-            f"3. The summary of the next state. Focusing on the outcome of the ego agents' action"
+            "Compress this game step into a short strategic note (max 10 words). "
+            "Focus on the key threat or opportunity.\n"
+            f"Facts: {ss}\n"
+            f"Action: {self.action}\n"
+            f"State: {state_text}\n"
+            "Note:"
         )
-        self.summary = ask_model(prompt)
+        raw = ask_model(prompt)
+        if raw and not raw.startswith("Error"):
+            note = raw.split("\n")[0].strip().strip('"').strip("'")[:80]
+            self.summary = f"{ss} | note={note}" if ss else note
+        else:
+            self.summary = ss or ""
         return self.summary
 
     def generate_summary_state(self):
-        # Generate the summary of the state.
+        """Generate a compact ``key=value`` state summary (deterministic preferred).
+
+        Tries ``build_rag_summary`` first (0 LLM tokens), falls back to an LLM
+        call that asks for ``key=value | key=value`` format.
+        """
+        try:
+            from decision_agents.agent_helper import build_rag_summary
+            ss = build_rag_summary(self.state or "")
+            if ss:
+                self.summary_state = ss
+                return self.summary_state
+        except ImportError:
+            pass
+
+        state_text = (self.state or "")[:1500]
         prompt = (
-            f"Generate the summary of the state. "
-            f"Focusing on the current state over the ego agents' state and other agents' states that prompts the agent to take the actions, but exclude the action taken"
-            f"Capture the key points of the state but make it very concise."
-            f"The state is {self.state}. "
+            "Compress this game state into a compact key=value summary. "
+            "Max 200 characters. No prose. "
+            "Format: key=value | key=value | ...\n\n"
+            f"{state_text}"
         )
-        self.summary_state = ask_model(prompt)
+        raw = ask_model(prompt)
+        if raw and not raw.startswith("Error"):
+            self.summary_state = raw.split("\n")[0].strip()[:300]
+        else:
+            self.summary_state = ""
         return self.summary_state
 
-    # Helper to generate intentions for this experience (for experience labeling).
-    # We should have intentions for our own agents.
-    def generate_intentions(self, history: List[Experience]):
-        prev_summary_list = [exp.summary for exp in history]
+    def generate_intentions(self, history: Optional[List["Experience"]] = None):
+        """Generate a ``[TAG] subgoal phrase`` intention for this experience.
+
+        Uses ``infer_intention`` when available, falls back to an LLM prompt
+        that asks for ``[TAG] phrase`` format.
+        """
+        try:
+            from decision_agents.agent_helper import infer_intention
+            obs = self.summary_state or self.state or ""
+            intent = infer_intention(obs)
+            if intent:
+                self.intentions = intent
+                return self.intentions
+        except ImportError:
+            pass
+
+        history = history or []
+        prev_intents = [exp.intentions for exp in history[-3:] if exp.intentions]
+        prev_line = f"Previous: {prev_intents[-1]}\n" if prev_intents else ""
+        state_text = (self.state or "")[:800]
         prompt = (
-            f"Generate the intentions for the experience, while the intentions marks the motivation for agent to take the action and achieve the sub-task. "
-            f"Also, the historical state over the last few steps should be considered. "
-            f"The current state is {self.state}, the current action is {self.action}, the current next state is {self.next_state}, the current sub-task is {self.sub_tasks}. "
-            f"The history is {prev_summary_list}. Given in the time-wise order."
+            "What is the agent's immediate [TAG] subgoal? (max 12 words)\n"
+            "Tags: SETUP|CLEAR|MERGE|ATTACK|DEFEND|NAVIGATE|POSITION|COLLECT|BUILD|SURVIVE|OPTIMIZE|EXPLORE|EXECUTE\n"
+            f"State: {state_text}\n"
+            f"Action: {self.action}\n"
+            f"{prev_line}"
+            "Examples:\n"
+            "  [MERGE] Combine 4-tiles toward top-left corner\n"
+            "  [CLEAR] Clear bottom rows to create space\n"
+            "Subgoal:"
         )
-        self.intentions = ask_model(prompt)
+        raw = ask_model(prompt)
+        if raw and not raw.startswith("Error"):
+            self.intentions = raw.split("\n")[0].strip()[:150]
+        else:
+            self.intentions = f"[EXECUTE] {self.action}"
         return self.intentions
 
-    # Helper function to generate the intentions or summaries if not provided.
-    # For now only use summary, not summary_state.
-    def initialize_intentions_and_summary(self, history: Optional[List[Experience]] = None):
+    def initialize_intentions_and_summary(self, history: Optional[List["Experience"]] = None):
+        """Generate intentions and summary if not already provided."""
         if self.intentions is None:
             self.generate_intentions(history)
         if self.summary is None:

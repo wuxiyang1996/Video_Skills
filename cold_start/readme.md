@@ -55,8 +55,8 @@ All cold-start generators use the **natural end condition** of each game engine.
 
 ## Goal
 
-1. **Prompt decision agents** powered by GPT-5.4 (or GPT-5-mini) to generate unlabeled trajectories from game environments.
-2. **Label trajectories** (optional) with GPT-5-mini to produce initial seeds for the skill database (summaries, intentions, sub-task labels).
+1. **Prompt decision agents** powered by GPT-5.4 (or GPT-5-mini) to generate trajectories from game environments.
+2. **Labeling is off by default**; use the separate `labeling/` folder for that. You can opt in with `--label` to label trajectories with GPT-5-mini (summaries, intentions, sub-task labels).
 
 ## Setup
 
@@ -94,8 +94,8 @@ python cold_start/run_100_rollouts.py --agent_type vlm
 # Resume interrupted run (skips completed episodes)
 python cold_start/run_100_rollouts.py --resume
 
-# Skip labeling for faster generation
-python cold_start/run_100_rollouts.py --no_label
+# Labeling is off by default; use labeling/ for that. To enable here:
+python cold_start/run_100_rollouts.py --label
 ```
 
 ### Per-game GPT-5.4 rollouts
@@ -110,8 +110,8 @@ bash cold_start/run_coldstart_gpt54_per_game.sh --episodes 20 twenty_forty_eight
 # One game only
 bash cold_start/run_coldstart_gpt54_per_game.sh --episodes 30 candy_crush
 
-# With resume and no labeling
-bash cold_start/run_coldstart_gpt54_per_game.sh --episodes 100 --resume --no_label
+# With resume (labeling off by default)
+bash cold_start/run_coldstart_gpt54_per_game.sh --episodes 100 --resume
 ```
 
 Output: `cold_start/output/gpt54/<game_name>/`
@@ -157,8 +157,8 @@ bash cold_start/run_coldstart_evolver.sh --episodes 60 --games diplomacy
 # Resume interrupted run
 bash cold_start/run_coldstart_evolver.sh --resume
 
-# With labeling (default skips labeling)
-bash cold_start/run_coldstart_evolver.sh --episodes 20
+# With labeling (opt-in)
+bash cold_start/run_coldstart_evolver.sh --episodes 20 --label
 ```
 
 Or call the Python script directly:
@@ -196,14 +196,17 @@ Pokemon Red cold-start uses the **Orak** environment and toolset (PyBoy emulator
    - From Orak root: `python3 src/mcp_game_servers/pokemon_red/game/utils/map_preprocess.py` to generate `processed_map/` (and fix case symlinks if needed for Linux).
 
 ```bash
-# From Game-AI-Agent root
-bash cold_start/run_coldstart_pokemon_red.sh --episodes 3 --max_steps 200 --verbose --no_label
+# From Game-AI-Agent root (labeling off by default; use labeling/ for that)
+bash cold_start/run_coldstart_pokemon_red.sh --episodes 3 --max_steps 200 --verbose
 
 # With custom ROM path
-bash cold_start/run_coldstart_pokemon_red.sh --episodes 5 --max_steps 500 --rom_path /path/to/pokemon.gb
+bash cold_start/run_coldstart_pokemon_red.sh --episodes 5 --max_steps 200 --rom_path /path/to/pokemon.gb
 
 # Resume interrupted run
-bash cold_start/run_coldstart_pokemon_red.sh --episodes 10 --resume --no_label
+bash cold_start/run_coldstart_pokemon_red.sh --episodes 10 --resume
+
+# Enable labeling (optional)
+bash cold_start/run_coldstart_pokemon_red.sh --episodes 3 --label
 ```
 
 Output: `cold_start/output/gpt54_pokemon_red/pokemon_red/`
@@ -400,7 +403,7 @@ debugging.
 
 ```bash
 # Super Mario (from Game-AI-Agent dir, orak-mario conda env)
-bash cold_start/run_coldstart_orak_mario.sh --episodes 60 --max_steps 100 --no_label --resume -v
+bash cold_start/run_coldstart_orak_mario.sh --episodes 60 --max_steps 100 --resume -v
 ```
 
 `--resume` makes interrupted runs idempotent.

@@ -15,7 +15,8 @@
 #   bash cold_start/run_coldstart_pokemon_red.sh
 #   bash cold_start/run_coldstart_pokemon_red.sh --episodes 5 --verbose
 #   bash cold_start/run_coldstart_pokemon_red.sh --episodes 20 --resume
-#   bash cold_start/run_coldstart_pokemon_red.sh --episodes 3 --verbose --no_label
+#   bash cold_start/run_coldstart_pokemon_red.sh --episodes 3 --verbose
+#   bash cold_start/run_coldstart_pokemon_red.sh --episodes 3 --label   # enable labeling
 #   bash cold_start/run_coldstart_pokemon_red.sh --episodes 60 --fast   # max speed
 
 set -euo pipefail

@@ -504,7 +504,7 @@ def save_game_summary(
         "total_episodes": len(good),
         "target_episodes": args.episodes,
         "max_steps": args.max_steps,
-        "labeled": not args.no_label,
+        "labeled": args.label and not args.no_label,
         "elapsed_seconds": round(elapsed, 2),
         "episode_stats": all_stats,
     }
@@ -609,7 +609,7 @@ def run_game_rollouts(
                     _save_episode_result(
                         episode, stats, ep_idx, game_dir, jsonl_path,
                         episode_buffer, io_lock,
-                        label=not args.no_label,
+                        label=args.label and not args.no_label,
                         label_model=getattr(args, "label_model", "gpt-5-mini"),
                     )
                     all_stats.append(stats)
@@ -640,7 +640,7 @@ def run_game_rollouts(
                 stats["episode_index"] = ep_idx
                 print(f"    Steps: {stats['steps']}, Reward: {stats['total_reward']:.3f}")
 
-                if not args.no_label and label_trajectory is not None:
+                if args.label and not args.no_label and label_trajectory is not None:
                     episode = label_trajectory(episode, args.label_model)
 
                 episode_buffer.add_episode(episode)
@@ -710,6 +710,8 @@ Examples:
                         help=f"LLM model (default: {MODEL_GPT54})")
     parser.add_argument("--temperature", type=float, default=0.4,
                         help="Sampling temperature (default: 0.4)")
+    parser.add_argument("--label", action="store_true",
+                        help="Label trajectories with LLM (default: off; use labeling/ for that)")
     parser.add_argument("--no_label", action="store_true",
                         help="Skip trajectory labeling")
     parser.add_argument("--label_model", type=str, default="gpt-5-mini",
@@ -729,8 +731,8 @@ Examples:
     output_dir = Path(args.output_dir) if args.output_dir else SCRIPT_DIR / "output" / "gpt54_orak"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if label_trajectory is None and not args.no_label:
-        print("[INFO] label_trajectory not available; running with --no_label")
+    if label_trajectory is None and args.label and not args.no_label:
+        print("[INFO] label_trajectory not available; skipping labeling")
         args.no_label = True
 
     api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
@@ -754,7 +756,7 @@ Examples:
     print(f"  Model:       {args.model}")
     print(f"  Temperature: {args.temperature}")
     print(f"  Workers:     {args.workers}")
-    print(f"  Labeling:    {not args.no_label}")
+    print(f"  Labeling:    {args.label and not args.no_label}")
     print(f"  Resume:      {args.resume}")
     print(f"  Output:      {output_dir}")
     print("=" * 78)
@@ -781,7 +783,7 @@ Examples:
         "episodes_per_game": args.episodes,
         "max_steps": args.max_steps,
         "temperature": args.temperature,
-        "labeled": not args.no_label,
+        "labeled": args.label and not args.no_label,
         "total_elapsed_seconds": round(overall_elapsed, 2),
         "games_completed": requested,
         "per_game_summaries": game_summaries,
