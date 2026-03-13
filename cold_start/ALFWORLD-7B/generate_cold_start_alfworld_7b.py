@@ -46,16 +46,19 @@ import os
 import sys
 import time
 import traceback
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-CODEBASE_ROOT = SCRIPT_DIR.parent
+SCRIPT_DIR = Path(__file__).resolve().parent          # cold_start/ALFWORLD-7B/
+COLD_START_DIR = SCRIPT_DIR.parent                     # cold_start/
+CODEBASE_ROOT = COLD_START_DIR.parent                  # Game-AI-Agent/
 
-if str(CODEBASE_ROOT) not in sys.path:
-    sys.path.insert(0, str(CODEBASE_ROOT))
+for _p in [str(CODEBASE_ROOT), str(SCRIPT_DIR)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from data_structure.experience import Experience, Episode, Episode_Buffer  # type: ignore
 
@@ -178,14 +181,13 @@ class AlfworldPolicy:
         )
         inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
-        with self.model.device, self.model.no_sync() if hasattr(self.model, "no_sync") else nullcontext():  # type: ignore[name-defined]
-            output_ids = self.model.generate(
-                **inputs,
-                max_new_tokens=64,
-                do_sample=True,
-                temperature=self.cfg.temperature,
-                pad_token_id=self.tokenizer.eos_token_id,
-            )[0]
+        output_ids = self.model.generate(
+            **inputs,
+            max_new_tokens=64,
+            do_sample=True,
+            temperature=self.cfg.temperature,
+            pad_token_id=self.tokenizer.eos_token_id,
+        )[0]
 
         full_text = self.tokenizer.decode(output_ids, skip_special_tokens=True)
         generated = full_text[len(prompt) :].strip()
@@ -527,7 +529,7 @@ def main() -> None:
     output_dir = (
         Path(args.output_dir)
         if args.output_dir
-        else SCRIPT_DIR.parent / "output" / suite_name
+        else COLD_START_DIR / "output" / suite_name
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 

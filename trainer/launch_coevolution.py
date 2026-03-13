@@ -219,6 +219,19 @@ def run_coevolution(
 
             em_result = em_trainer.run(trajectories)
 
+            # Protocol update: synthesize/revise protocols from new sub-episodes
+            if em_result.accepted:
+                try:
+                    from skill_agents.pipeline import SkillBankAgent, PipelineConfig
+                    _bank = bank_store.current_bank
+                    _agent = SkillBankAgent(bank=_bank)
+                    n_updated = _agent.update_protocols()
+                    if n_updated:
+                        logger.info("Updated %d protocols after EM round.", n_updated)
+                        _bank.save(bank_io_cfg.get("bank_dir", "runs/skillbank") + "/bank.jsonl")
+                except Exception as exc:
+                    logger.warning("Protocol update failed: %s", exc)
+
             if em_result.accepted:
                 current_bank = bank_store.current_bank
                 train_logger.log_event("bank_update_accepted", {

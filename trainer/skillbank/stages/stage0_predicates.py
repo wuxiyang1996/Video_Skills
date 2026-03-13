@@ -103,6 +103,38 @@ def smooth_predicates(
     return smoothed
 
 
+_INTENTION_TAG_RE = re.compile(r"\[(\w+)\]")
+
+_SUBGOAL_TAGS = (
+    "SETUP", "CLEAR", "MERGE", "ATTACK", "DEFEND",
+    "NAVIGATE", "POSITION", "COLLECT", "BUILD", "SURVIVE",
+    "OPTIMIZE", "EXPLORE", "EXECUTE",
+)
+
+
+def extract_predicates_from_intentions(
+    intentions: Optional[str],
+    tags: tuple = _SUBGOAL_TAGS,
+) -> Dict[str, float]:
+    """Extract one-hot tag predicates from a ``[TAG] phrase`` intention string.
+
+    Returns ``{tag_<lower>: 0.0/1.0}`` dict compatible with the predicate
+    vocabulary used by ``IntentionSignalExtractor``.
+    """
+    preds: Dict[str, float] = {}
+    tag = "UNKNOWN"
+    if intentions:
+        m = _INTENTION_TAG_RE.match(intentions.strip())
+        if m:
+            raw = m.group(1).upper()
+            if raw in tags:
+                tag = raw
+
+    for t in tags:
+        preds[f"tag_{t.lower()}"] = float(t == tag)
+    return preds
+
+
 def enrich_trajectory_predicates(
     trajectory: TrajectoryForEM,
     predicate_vocabulary: Optional[List[str]] = None,
@@ -112,8 +144,9 @@ def enrich_trajectory_predicates(
 ) -> TrajectoryForEM:
     """Enrich a trajectory's frames with extracted/smoothed predicates.
 
-    If frames already have predicates, they are kept. Otherwise, predicates
-    are extracted from observation text.
+    If frames carry ``intentions`` (Strategy C), intention-tag predicates
+    are merged into the predicate dict.  If frames already have predicates,
+    they are kept.  Otherwise, predicates are extracted from observation text.
 
     Returns the trajectory (mutated in place).
     """
@@ -125,6 +158,10 @@ def enrich_trajectory_predicates(
                 frame.observation_text,
                 predicate_vocabulary=predicate_vocabulary,
             )
+        # Merge intention-based tag predicates when intentions are present
+        if getattr(frame, "intentions", None):
+            tag_preds = extract_predicates_from_intentions(frame.intentions)
+            frame.predicates.update(tag_preds)
 
     smoothed = smooth_predicates(trajectory.frames, window=smoothing_window)
     for frame, sp in zip(trajectory.frames, smoothed):

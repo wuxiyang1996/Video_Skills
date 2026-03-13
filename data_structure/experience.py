@@ -356,16 +356,19 @@ class Episode:
         ep.summary = d.get("summary")
         return ep
 
-# The intention of this class is to store the experience of the agent for each sub-task.
-# While the sub-tasks could be taken as a part of the entire episode.
-# Denote that this data structure is used for labeling strategies or tools to complete the sub-task, within a limited length.
-# Please note that this is for training purposes, only update after the current rollout is completed.
+# Data-processing container for a sub-task's experiences.
+# This class holds the actual Experience objects during data labeling, summary
+# generation, and quality assessment.  It is NOT for persistent storage in the
+# skill bank — the skill bank stores only lightweight SubEpisodeRef pointers
+# (see ``to_sub_episode_ref()``).  Call that method after processing to produce
+# the pointer that goes into Skill.sub_episodes.
 class SubTask_Experience:
-    def __init__(self, sub_task: str, final_goal: str, experiences: List[Experience], outcome:Optional[List[Experience]] = None, seg_id: Optional[str] = None):
+    def __init__(self, sub_task: str, final_goal: str, experiences: List[Experience], outcome:Optional[List[Experience]] = None, seg_id: Optional[str] = None,
+                 episode_id: str = "", rollout_source: str = ""):
         # What's this strategy or tool used for.
         self.sub_task = sub_task
         self.final_goal = final_goal
-        # Contents of the sub-task experience.
+        # Contents of the sub-task experience (for processing only, not persisted in skill bank).
         self.sub_task_experience = experiences
 
         # Outcome of the sub-task.
@@ -373,6 +376,10 @@ class SubTask_Experience:
         
         # Link to the corresponding SegmentRecord from the skill pipeline.
         self.seg_id: Optional[str] = seg_id
+
+        # Pointer fields — identify where the rollout data is stored.
+        self.episode_id: str = episode_id
+        self.rollout_source: str = rollout_source
 
         # The summary for query this strategy or tool.
         self.summary = None
@@ -384,6 +391,10 @@ class SubTask_Experience:
 
         # The cumulative reward of the sub-task experience. For the ease to quick retrieval and query.
         self.cumulative_reward = sum(exp.reward for exp in experiences)
+
+        # Quality assessment fields (populated by the skill agent quality pipeline).
+        self.quality_score: float = 0.0
+        self.outcome_classification: str = "partial"  # "success" | "partial" | "failure"
 
     # Helper to generate intentions for this experience (for experience labeling).
     # We should have intentions for our own agents.
@@ -458,7 +469,37 @@ class SubTask_Experience:
         if self.sub_task_label is None:
             self.sub_task_labeling()
         return self.summary, self.outcome_summary, self.sub_task_label
-    
+
+    def _extract_intention_tags(self) -> List[str]:
+        """Extract intention tags from each Experience in this sub-task."""
+        tags = []
+        for exp in self.sub_task_experience:
+            intentions = getattr(exp, "intentions", None)
+            if intentions and isinstance(intentions, str):
+                tag = intentions.strip().split("]")[0].replace("[", "").strip()
+                if tag:
+                    tags.append(tag)
+        return tags
+
+    def to_sub_episode_ref(self):
+        """Produce a lightweight SubEpisodeRef pointer for skill bank storage.
+
+        The actual Experience data stays in this object (or the rollout file);
+        only the pointer + cached summary goes into Skill.sub_episodes.
+        """
+        from skill_agents.stage3_mvp.schemas import SubEpisodeRef
+
+        return SubEpisodeRef(
+            episode_id=self.episode_id,
+            seg_start=0,
+            seg_end=max(0, self.length - 1),
+            rollout_source=self.rollout_source,
+            summary=self.summary or "",
+            intention_tags=self._extract_intention_tags(),
+            outcome=self.outcome_classification,
+            cumulative_reward=self.cumulative_reward,
+            quality_score=self.quality_score,
+        )
 
     def to_dict(self):
         d = {
@@ -466,6 +507,10 @@ class SubTask_Experience:
             "final_goal": self.final_goal,
             "sub_task_experience": [exp.to_dict() for exp in self.sub_task_experience],
             "seg_id": self.seg_id,
+            "episode_id": self.episode_id,
+            "rollout_source": self.rollout_source,
+            "quality_score": self.quality_score,
+            "outcome_classification": self.outcome_classification,
         }
         if self.outcome_experiences is not None:
             d["outcome_experiences"] = [exp.to_dict() for exp in self.outcome_experiences]
@@ -480,13 +525,18 @@ class SubTask_Experience:
         outcome_exps = None
         if d.get("outcome_experiences"):
             outcome_exps = [Experience.from_dict(exp) for exp in d["outcome_experiences"]]
-        return cls(
+        ste = cls(
             sub_task=d["sub_task"],
             final_goal=d["final_goal"],
             experiences=sub_task_exps,
             outcome=outcome_exps,
             seg_id=d.get("seg_id"),
+            episode_id=d.get("episode_id", ""),
+            rollout_source=d.get("rollout_source", ""),
         )
+        ste.quality_score = d.get("quality_score", 0.0)
+        ste.outcome_classification = d.get("outcome_classification", "partial")
+        return ste
 
 # Experience Replay Buffer
 # The intention of this class is to store the experience of the agent for the experience replay.

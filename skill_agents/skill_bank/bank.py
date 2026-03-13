@@ -1,9 +1,13 @@
 """
-Step 6 — Persistent Skill Bank for effects-only contracts (MVP).
+Step 6 — Persistent Skill Bank (MVP).
 
-Stores ``SkillEffectsContract`` and ``VerificationReport`` per skill with
-versioning and JSONL persistence.  Provides a compact summary for debugging
-and downstream integration.
+``_skills: Dict[str, Skill]`` is the **single source of truth**.
+Each ``Skill`` owns its contract, protocol, and sub-episode pointers.
+``get_contract()`` and ``get_report()`` are convenience accessors for
+downstream code that still speaks in contract terms.
+
+Fully backward-compatible with old ``skill_bank.jsonl`` files that only
+contain ``contract`` and ``report`` (auto-migrated to ``Skill`` on load).
 """
 
 from __future__ import annotations
@@ -14,7 +18,9 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from skill_agents.stage3_mvp.schemas import (
+    Skill,
     SkillEffectsContract,
+    SubEpisodeRef,
     VerificationReport,
 )
 
@@ -95,14 +101,15 @@ def _effects_compat_score(
 
 
 class SkillBankMVP:
-    """Persistent skill bank for effects-only contracts.
+    """Persistent skill bank.
 
-    Each skill maps to a ``SkillEffectsContract`` and an optional
-    ``VerificationReport``.  All mutations are logged for reproducibility.
+    ``_skills`` is the single source of truth.  Every skill is a ``Skill``
+    object that owns its ``contract``, ``protocol``, and sub-episode
+    pointers.  ``_reports`` is a side-car kept for verification diagnostics.
     """
 
     def __init__(self, path: Optional[str] = None) -> None:
-        self._contracts: Dict[str, SkillEffectsContract] = {}
+        self._skills: Dict[str, Skill] = {}
         self._reports: Dict[str, VerificationReport] = {}
         self._history: List[dict] = []
         self._path = path
@@ -111,19 +118,24 @@ class SkillBankMVP:
 
     @property
     def skill_ids(self) -> List[str]:
-        return list(self._contracts.keys())
+        return list(self._skills.keys())
 
     def get_contract(self, skill_id: str) -> Optional[SkillEffectsContract]:
-        return self._contracts.get(skill_id)
+        """Convenience accessor — delegates to ``Skill.contract``."""
+        skill = self._skills.get(skill_id)
+        return skill.contract if skill is not None else None
 
     def get_report(self, skill_id: str) -> Optional[VerificationReport]:
         return self._reports.get(skill_id)
 
+    def get_skill(self, skill_id: str) -> Optional[Skill]:
+        return self._skills.get(skill_id)
+
     def has_skill(self, skill_id: str) -> bool:
-        return skill_id in self._contracts
+        return skill_id in self._skills
 
     def __len__(self) -> int:
-        return len(self._contracts)
+        return len(self._skills)
 
     # ── Mutations ────────────────────────────────────────────────────
 
@@ -133,26 +145,90 @@ class SkillBankMVP:
         report: Optional[VerificationReport] = None,
     ) -> None:
         """Store or update a skill's contract and report."""
-        self._contracts[contract.skill_id] = contract
         if report is not None:
             self._reports[contract.skill_id] = report
+        existing = self._skills.get(contract.skill_id)
+        if existing is None:
+            self._skills[contract.skill_id] = Skill.from_contract(contract)
+        else:
+            existing.contract = contract
+            existing.updated_at = time.time()
         self._log("add_or_update", contract.skill_id, contract.version)
 
+    def add_or_update_skill(self, skill: Skill) -> None:
+        """Store or update a full Skill object."""
+        self._skills[skill.skill_id] = skill
+        self._log("add_or_update_skill", skill.skill_id, skill.version)
+
     def remove(self, skill_id: str) -> None:
-        self._contracts.pop(skill_id, None)
+        self._skills.pop(skill_id, None)
         self._reports.pop(skill_id, None)
         self._log("remove", skill_id, -1)
+
+    # ── Sub-episode management ──────────────────────────────────────
+
+    def ingest_sub_episode(self, skill_id: str, sub_ep: SubEpisodeRef) -> bool:
+        """Append a sub-episode reference to an existing skill.
+
+        Returns True if the skill exists, False otherwise.
+        """
+        skill = self._skills.get(skill_id)
+        if skill is None:
+            return False
+        skill.sub_episodes.append(sub_ep)
+        skill.n_instances = len(skill.sub_episodes)
+        skill.updated_at = time.time()
+        if skill.contract:
+            skill.contract.n_instances = skill.n_instances
+        return True
+
+    def drop_sub_episode(self, skill_id: str, episode_id: str, seg_start: int) -> bool:
+        """Remove a specific sub-episode from a skill."""
+        skill = self._skills.get(skill_id)
+        if skill is None:
+            return False
+        before = len(skill.sub_episodes)
+        skill.sub_episodes = [
+            se for se in skill.sub_episodes
+            if not (se.episode_id == episode_id and se.seg_start == seg_start)
+        ]
+        removed = before - len(skill.sub_episodes)
+        if removed > 0:
+            skill.n_instances = len(skill.sub_episodes)
+            skill.updated_at = time.time()
+        return removed > 0
+
+    def get_sub_episodes(self, skill_id: str) -> List[SubEpisodeRef]:
+        """Return sub-episodes for a skill (empty list if not found)."""
+        skill = self._skills.get(skill_id)
+        return list(skill.sub_episodes) if skill else []
+
+    def recompute_stats(self, skill_id: str) -> None:
+        """Recompute n_instances from current sub-episodes."""
+        skill = self._skills.get(skill_id)
+        if skill is None:
+            return
+        skill.n_instances = len(skill.sub_episodes)
+        if skill.contract:
+            skill.contract.n_instances = skill.n_instances
+            skill.contract.updated_at = time.time()
+        skill.updated_at = time.time()
 
     # ── Persistence ─────────────────────────────────────────────────
 
     def save(self, filepath: Optional[str] = None) -> None:
-        """Save bank to JSONL (one contract per line)."""
+        """Save bank to JSONL.
+
+        Each line: ``{"skill": {...}, "report": {...|null}}``.
+        The contract is inside ``skill.contract`` — no separate key.
+        Old-format files (top-level ``"contract"``) are still loadable.
+        """
         path = Path(filepath or self._path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
-            for skill_id, contract in self._contracts.items():
+            for skill_id, skill in self._skills.items():
                 entry = {
-                    "contract": contract.to_dict(),
+                    "skill": skill.to_dict(),
                     "report": (
                         self._reports[skill_id].to_dict()
                         if skill_id in self._reports
@@ -162,11 +238,16 @@ class SkillBankMVP:
                 f.write(json.dumps(entry, default=str) + "\n")
 
     def load(self, filepath: Optional[str] = None) -> None:
-        """Load bank from JSONL."""
+        """Load bank from JSONL (backward-compatible with old format).
+
+        Handles two formats:
+          - New: ``{"skill": {...}, "report": ...}`` (contract inside skill)
+          - Old: ``{"contract": {...}, "report": ..., "skill"?: ...}``
+        """
         path = Path(filepath or self._path)
         if not path.exists():
             return
-        self._contracts.clear()
+        self._skills.clear()
         self._reports.clear()
         with open(path, "r", encoding="utf-8") as f:
             for line in f:
@@ -174,12 +255,23 @@ class SkillBankMVP:
                 if not line:
                     continue
                 entry = json.loads(line)
-                contract = SkillEffectsContract.from_dict(entry["contract"])
-                self._contracts[contract.skill_id] = contract
+
+                if entry.get("skill"):
+                    skill = Skill.from_dict(entry["skill"])
+                    # Old format may have top-level contract that's more recent
+                    if entry.get("contract") and skill.contract is None:
+                        skill.contract = SkillEffectsContract.from_dict(entry["contract"])
+                    self._skills[skill.skill_id] = skill
+                elif entry.get("contract"):
+                    # Legacy format: only contract + report, no Skill wrapper
+                    contract = SkillEffectsContract.from_dict(entry["contract"])
+                    self._skills[contract.skill_id] = Skill.from_contract(contract)
+                else:
+                    continue
+
+                sid = next(reversed(self._skills))
                 if entry.get("report"):
-                    self._reports[contract.skill_id] = VerificationReport.from_dict(
-                        entry["report"]
-                    )
+                    self._reports[sid] = VerificationReport.from_dict(entry["report"])
 
     # ── Stage 2 integration ─────────────────────────────────────────
 
@@ -189,48 +281,59 @@ class SkillBankMVP:
         predicates_start: Optional[dict],
         predicates_end: Optional[dict],
     ) -> float:
-        """Effects-based contract compatibility scorer for ``SegmentScorer``.
-
-        Plug into Stage 2::
-
-            scorer = SegmentScorer(..., compat_fn=bank.compat_fn)
-
-        Scoring logic (effects-only, easy to extend to preconditions later):
-          +1 for each expected eff_add literal observed true at segment end
-          +1 for each expected eff_del literal observed false at segment end
-          -0.5 for each expected eff_add literal *missing* at segment end
-          -1.0 for each *contradictory* effect (eff_add false, eff_del true)
-
-        The raw score is normalized to [-1, +1] by the number of contract
-        literals.  Returns 0.0 when the skill has no contract or no effects.
-        """
-        contract = self._contracts.get(skill)
+        """Effects-based contract compatibility scorer for ``SegmentScorer``."""
+        contract = self.get_contract(skill)
         if contract is None:
             return 0.0
         return _effects_compat_score(contract, predicates_start, predicates_end)
 
     def get_skill_names(self) -> List[str]:
         """Active skill names for Stage 2 pipeline input."""
-        return list(self._contracts.keys())
+        return list(self._skills.keys())
 
     # ── Summary / debug ─────────────────────────────────────────────
 
     def summary(self) -> Dict[str, dict]:
         """Compact per-skill summary for logging / inspection."""
         result: Dict[str, dict] = {}
-        for skill_id, contract in self._contracts.items():
+        for skill_id, skill in self._skills.items():
+            contract = skill.contract
             info: dict = {
-                "version": contract.version,
-                "n_eff_add": len(contract.eff_add),
-                "n_eff_del": len(contract.eff_del),
-                "n_eff_event": len(contract.eff_event),
-                "total_literals": contract.total_literals,
-                "n_instances": contract.n_instances,
+                "version": skill.version,
+                "has_protocol": bool(skill.protocol.steps),
+                "n_sub_episodes": len(skill.sub_episodes),
+                "n_with_summary": sum(
+                    1 for se in skill.sub_episodes if se.summary
+                ),
+                "success_rate": round(skill.success_rate, 3),
+                "retired": skill.retired,
             }
+            if contract is not None:
+                info["n_eff_add"] = len(contract.eff_add)
+                info["n_eff_del"] = len(contract.eff_del)
+                info["n_eff_event"] = len(contract.eff_event)
+                info["total_literals"] = contract.total_literals
+                info["n_instances"] = contract.n_instances
             if skill_id in self._reports:
                 info["pass_rate"] = self._reports[skill_id].overall_pass_rate
             result[skill_id] = info
         return result
+
+    def get_evidence_view(self, skill_id: str) -> Optional[Dict]:
+        """Return the evidence-store view for a skill (pointers + summaries)."""
+        skill = self._skills.get(skill_id)
+        if skill is None:
+            return None
+        return skill.to_evidence_view()
+
+    def get_skills_for_decision_agent(self) -> List[Dict]:
+        """Return decision-agent-safe views of all active skills."""
+        views = []
+        for sid in self.skill_ids:
+            skill = self._skills.get(sid)
+            if skill is not None and not skill.retired:
+                views.append(skill.to_decision_agent_view())
+        return views
 
     # ── History ──────────────────────────────────────────────────────
 

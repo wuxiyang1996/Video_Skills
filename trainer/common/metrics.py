@@ -43,6 +43,9 @@ class RolloutStep:
     active_skill_id: Optional[str] = None
     query_key: Optional[str] = None
 
+    # Strategy C: intention tag from the decision agent (e.g. "[MERGE] combine tiles")
+    intentions: Optional[str] = None
+
     logprob: Optional[float] = None
     value: Optional[float] = None
 

@@ -30,6 +30,7 @@ class TrajectoryFrame:
     embedding: Optional[List[float]] = None
     r_env: float = 0.0
     active_skill_id: Optional[str] = None
+    intentions: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d = self.__dict__.copy()
@@ -102,6 +103,7 @@ def ingest_rollouts(
                 embedding=step.embedding,
                 r_env=step.r_env,
                 active_skill_id=step.active_skill_id,
+                intentions=step.intentions,
             )
             frames.append(frame)
 

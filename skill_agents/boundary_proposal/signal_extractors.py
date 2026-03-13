@@ -391,11 +391,32 @@ class IntentionSignalExtractor(SignalExtractorBase):
     ----------
     tags : tuple[str, ...]
         Canonical tag vocabulary.  Defaults to ``SUBGOAL_TAGS``.
+    consistency_penalty : float
+        Weight for penalizing rapid tag switching (ping-pong).
+    min_segment_length : int
+        Minimum steps between boundaries; switches within this window
+        are penalized.
+    min_skill_length : int
+        Post-processing: segments shorter than this are merged into
+        the longer neighbor.
+    boundary_score_threshold : float
+        Minimum score for a boundary to be included in the event list.
     """
 
-    def __init__(self, tags: tuple = _SUBGOAL_TAGS_DEFAULT):
+    def __init__(
+        self,
+        tags: tuple = _SUBGOAL_TAGS_DEFAULT,
+        consistency_penalty: float = 0.3,
+        min_segment_length: int = 3,
+        min_skill_length: int = 2,
+        boundary_score_threshold: float = 0.3,
+    ):
         self._tags = tags
         self._tag_set = frozenset(tags)
+        self.consistency_penalty = consistency_penalty
+        self.min_segment_length = min_segment_length
+        self.min_skill_length = min_skill_length
+        self.boundary_score_threshold = boundary_score_threshold
 
     def extract_predicates(self, experiences: list) -> List[Optional[dict]]:
         predicates: List[Optional[dict]] = []
@@ -413,22 +434,138 @@ class IntentionSignalExtractor(SignalExtractorBase):
             predicates.append(preds)
         return predicates
 
-    def extract_event_times(self, experiences: list) -> List[int]:
-        events: List[int] = []
-        prev_tag: Optional[str] = None
-        for t, exp in enumerate(experiences):
+    def _extract_tag_sequence(self, experiences: list) -> List[str]:
+        """Extract the tag at each timestep."""
+        tags = []
+        for exp in experiences:
             intent = getattr(exp, "intentions", None) or ""
-            tag = parse_intention_tag(intent, self._tags)
+            tags.append(parse_intention_tag(intent, self._tags))
+        return tags
 
-            if tag != "UNKNOWN" and tag != prev_tag and prev_tag is not None:
-                events.append(t)
-            prev_tag = tag
+    def score_boundary_candidates(self, experiences: list) -> List:
+        """Score each tag-change boundary with the penalty model.
 
+        Returns ``List[ScoredBoundary]`` (imported lazily to avoid circular deps).
+
+        Scoring logic:
+          - base_score = 1.0 for every tag change
+          - ping-pong penalty: if tag[t-1] == tag[t+1] (A->B->A), penalty
+          - rapid-switch penalty: if time since last change < min_segment_length
+          - reward-signal bonus: if reward at boundary is a spike
+          - done bonus: if the experience is a terminal state
+        """
+        from skill_agents.stage3_mvp.schemas import ScoredBoundary
+
+        tag_seq = self._extract_tag_sequence(experiences)
+        T = len(tag_seq)
+        if T < 2:
+            return []
+
+        reward_spikes = set(self.detect_reward_spike_events(experiences))
+
+        scored: List[ScoredBoundary] = []
+        last_change_t = -999
+
+        for t in range(1, T):
+            if tag_seq[t] == tag_seq[t - 1] or tag_seq[t] == "UNKNOWN":
+                continue
+
+            base_score = 1.0
+            time_since_last = t - last_change_t
+
+            is_ping_pong = False
+            if t + 1 < T and tag_seq[t - 1] == tag_seq[t + 1]:
+                is_ping_pong = True
+
+            rapid_switch = 0.0
+            if is_ping_pong:
+                rapid_switch = 1.0
+            elif time_since_last < self.min_segment_length:
+                rapid_switch = 0.5
+
+            penalty = self.consistency_penalty * rapid_switch
+            reward_bonus = 0.3 if t in reward_spikes else 0.0
+            done_bonus = 0.2 if getattr(experiences[t], "done", False) else 0.0
+
+            score = base_score - penalty + reward_bonus + done_bonus
+
+            scored.append(ScoredBoundary(
+                time=t,
+                score=max(0.0, score),
+                tag_before=tag_seq[t - 1],
+                tag_after=tag_seq[t],
+                is_ping_pong=is_ping_pong,
+                time_since_last=time_since_last,
+            ))
+
+            last_change_t = t
+
+        return scored
+
+    def extract_event_times(self, experiences: list) -> List[int]:
+        """Return boundary timesteps, filtered by score threshold.
+
+        Uses ``score_boundary_candidates`` internally and returns only
+        boundaries with score >= ``boundary_score_threshold``.
+        """
+        scored = self.score_boundary_candidates(experiences)
+        events = [
+            sb.time for sb in scored
+            if sb.score >= self.boundary_score_threshold
+        ]
+
+        for t, exp in enumerate(experiences):
             if getattr(exp, "done", False):
                 events.append(t)
 
         events.extend(self.detect_reward_spike_events(experiences))
         return sorted(set(events))
+
+    def extract_event_times_scored(self, experiences: list) -> List:
+        """Return the full ``List[ScoredBoundary]`` for Stage 2 consumption."""
+        return self.score_boundary_candidates(experiences)
+
+    @staticmethod
+    def merge_short_segments(
+        segments: list,
+        min_length: int = 2,
+    ) -> list:
+        """Post-processing: merge segments shorter than *min_length* into
+        the longer adjacent neighbor.
+
+        *segments* is a list of objects with ``.start``, ``.end``, and
+        ``.assigned_skill`` attributes (e.g. ``SegmentDiagnostic``).
+        Returns a new list (does not mutate input).
+        """
+        if not segments or min_length < 2:
+            return list(segments)
+
+        merged = list(segments)
+        changed = True
+        while changed:
+            changed = False
+            new_merged = []
+            i = 0
+            while i < len(merged):
+                seg = merged[i]
+                seg_len = seg.end - seg.start + 1
+                if seg_len < min_length and len(merged) > 1:
+                    left_len = (merged[i - 1].end - merged[i - 1].start + 1) if i > 0 else 0
+                    right_len = (merged[i + 1].end - merged[i + 1].start + 1) if i + 1 < len(merged) else 0
+
+                    if left_len >= right_len and i > 0:
+                        new_merged[-1].end = seg.end
+                        changed = True
+                    elif right_len > 0 and i + 1 < len(merged):
+                        merged[i + 1].start = seg.start
+                        changed = True
+                    else:
+                        new_merged.append(seg)
+                else:
+                    new_merged.append(seg)
+                i += 1
+            merged = new_merged
+        return merged
 
 
 # ---------------------------------------------------------------------------

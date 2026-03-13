@@ -321,8 +321,13 @@ class VLMDecisionAgent:
 
         elif tool_name == TOOL_QUERY_SKILL:
             s.steps_since_retrieval = 0
-            if isinstance(tool_result, dict) and tool_result.get("micro_plan"):
-                s.active_skill_plan = tool_result.get("micro_plan")
+            if isinstance(tool_result, dict):
+                protocol = tool_result.get("protocol", {})
+                micro_plan = tool_result.get("micro_plan")
+                if protocol and protocol.get("steps"):
+                    s.active_skill_plan = [{"action": step} for step in protocol["steps"][:7]]
+                elif micro_plan:
+                    s.active_skill_plan = micro_plan
                 s.active_skill_id = tool_result.get("skill_id")
                 s.skill_step_index = 0
             elif isinstance(tool_result, list):

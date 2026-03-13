@@ -35,11 +35,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-CODEBASE_ROOT = SCRIPT_DIR.parent
+SCRIPT_DIR = Path(__file__).resolve().parent          # cold_start/ALFWORLD-7B/
+COLD_START_DIR = SCRIPT_DIR.parent                     # cold_start/
+CODEBASE_ROOT = COLD_START_DIR.parent                  # Game-AI-Agent/
 GAMINGAGENT_ROOT = CODEBASE_ROOT.parent / "GamingAgent"
 
-for p in [str(CODEBASE_ROOT), str(GAMINGAGENT_ROOT)]:
+for p in [str(CODEBASE_ROOT), str(GAMINGAGENT_ROOT), str(SCRIPT_DIR)]:
     if Path(p).exists() and p not in sys.path:
         sys.path.insert(0, p)
 
@@ -52,10 +53,7 @@ from cold_start.generate_cold_start import (  # type: ignore
     label_trajectory,
 )
 
-from cold_start.ALFWORLD-7B.policy_alfworld7b import (  # type: ignore
-    Alfworld7BConfig,
-    Alfworld7BPolicy,
-)
+from policy_alfworld7b import Alfworld7BConfig, Alfworld7BPolicy  # type: ignore
 
 
 def run_alfworld7b_episode(
@@ -356,7 +354,7 @@ def main() -> None:
     output_dir = (
         Path(args.output_dir)
         if args.output_dir
-        else SCRIPT_DIR.parent / "output" / "alfworld7b_lmgame"
+        else COLD_START_DIR / "output" / f"alfworld7b_{args.checkpoint_type}_lmgame"
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 

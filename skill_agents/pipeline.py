@@ -64,6 +64,12 @@ class PipelineConfig:
     max_queries_per_iter: int = 5
     new_skill_penalty: float = 5.0
 
+    # Boundary scoring (tag-change penalty model)
+    consistency_penalty: float = 0.3
+    min_segment_length: int = 3
+    min_skill_length: int = 2
+    boundary_score_threshold: float = 0.3
+
     # Contract feedback: Stage 3 → Stage 2 closed loop
     contract_feedback_mode: str = "off"  # "off" | "weak" | "strong"
     contract_feedback_strength: float = 0.3
@@ -405,6 +411,146 @@ class SkillBankAgent:
         self._invalidate_query_engine()
         return summary
 
+    # ── Protocol update ────────────────────────────────────────────
+
+    def update_protocols(self) -> int:
+        """Synthesize or update protocols for skills that need it.
+
+        Called after quality check identifies skills with enough high-quality
+        sub-episodes.  Uses LLM to synthesize actionable step-by-step
+        protocols from sub-episode evidence.
+
+        Returns the number of protocols updated.
+        """
+        from skill_agents.stage3_mvp.schemas import Protocol, Skill
+
+        updated = 0
+        for sid in self.bank.skill_ids:
+            skill = self.bank.get_skill(sid)
+            if skill is None or skill.retired:
+                continue
+
+            high_quality = [se for se in skill.sub_episodes if se.quality_score >= 0.6]
+            if len(high_quality) < 3 and skill.protocol.steps:
+                continue
+
+            if len(high_quality) < 3:
+                continue
+
+            protocol = self._synthesize_protocol(skill, high_quality)
+            if protocol is not None:
+                skill.bump_version()
+                skill.protocol = protocol
+                self.bank.add_or_update_skill(skill)
+                updated += 1
+                logger.info(
+                    "Updated protocol for skill %s (v%d, %d steps)",
+                    sid, skill.version, len(protocol.steps),
+                )
+
+        if updated:
+            self._invalidate_query_engine()
+        return updated
+
+    def _synthesize_protocol(
+        self,
+        skill: Skill,
+        high_quality_eps: list,
+    ) -> Optional:
+        """Synthesize a Protocol from high-quality sub-episode pointers.
+
+        Uses sub-episode summaries and intention_tags (cached on the
+        pointers) plus contract effects.  No need to load full rollouts.
+        """
+        from skill_agents.stage3_mvp.schemas import Protocol
+
+        contract = skill.contract
+
+        steps = []
+        preconditions = []
+        success_criteria = []
+
+        # Derive steps from the evidence summaries on the pointers
+        summaries = [se.summary for se in high_quality_eps if se.summary]
+        if summaries:
+            seen = set()
+            for s in summaries:
+                key = s.strip().lower()
+                if key and key not in seen:
+                    seen.add(key)
+                    steps.append(s.strip())
+                if len(steps) >= 5:
+                    break
+
+        # Fall back to contract effects when no summaries are available
+        if not steps and contract:
+            if contract.eff_add:
+                for lit in sorted(contract.eff_add)[:5]:
+                    steps.append(f"Achieve: {lit}")
+                    success_criteria.append(f"{lit} is true")
+            if contract.eff_del:
+                for lit in sorted(contract.eff_del)[:3]:
+                    steps.append(f"Remove: {lit}")
+            if contract.eff_event:
+                for lit in sorted(contract.eff_event)[:3]:
+                    steps.append(f"Trigger: {lit}")
+
+        if not steps:
+            steps = ["Execute skill actions as needed"]
+
+        # Derive expected_tag_pattern from the majority tag set
+        from collections import Counter
+        tag_counter: Counter = Counter()
+        for se in high_quality_eps:
+            tag_counter.update(se.intention_tags)
+        if tag_counter:
+            skill.expected_tag_pattern = [
+                tag for tag, _ in tag_counter.most_common(5)
+            ]
+
+        avg_len = 0
+        if high_quality_eps:
+            lengths = [se.length for se in high_quality_eps]
+            avg_len = sum(lengths) // len(lengths)
+
+        abort_criteria = []
+        if skill.success_rate < 0.5:
+            abort_criteria.append("Abort if no progress after expected duration")
+
+        return Protocol(
+            preconditions=preconditions,
+            steps=steps,
+            success_criteria=success_criteria,
+            abort_criteria=abort_criteria,
+            expected_duration=max(1, avg_len),
+        )
+
+    # ── Stage 4.5: sub-episode quality check ────────────────────────
+
+    def run_sub_episode_quality_check(self) -> List[dict]:
+        """Run quality scoring, drop low-quality sub-episodes, flag
+        skills needing protocol updates, and retire depleted skills.
+
+        Returns list of per-skill quality check results.
+        """
+        from skill_agents.quality.sub_episode_evaluator import run_quality_check_batch
+
+        skills = [
+            self.bank.get_skill(sid)
+            for sid in self.bank.skill_ids
+            if self.bank.get_skill(sid) is not None
+        ]
+        results = run_quality_check_batch(skills)
+
+        for r in results:
+            if r.get("retired"):
+                logger.info("Retiring skill %s after quality check.", r["skill_id"])
+            self.bank.recompute_stats(r["skill_id"])
+
+        if results:
+            self._invalidate_query_engine()
+        return results
+
     # ── Stage 4: bank maintenance ────────────────────────────────────
 
     def run_bank_maintenance(
@@ -642,6 +788,7 @@ class SkillBankAgent:
             if self._all_segments:
                 self.run_contract_learning()
 
+        self.run_sub_episode_quality_check()
         self.run_bank_maintenance()
         n_mat = self.materialize_new_skills()
 

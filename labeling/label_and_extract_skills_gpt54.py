@@ -10,11 +10,14 @@ Extends ``label_episodes_gpt54.py`` by adding a full skill-extraction pass:
     - summary       : summary_state + LLM strategic note (delta-aware)
     - intentions    : [TAG] subgoal phrase via LLM (delta + urgency aware)
 
-  Phase 2 — Skill Extraction  (NEW — uses skill_agents pipeline)
-    - Segmentation  : Stage 1 boundary proposal + Stage 2 skill decoding
-    - Contracts     : Stage 3 effects-only contract learning
-    - Skill naming  : GPT-5.4 generates RAG-friendly name + summary per skill
-    - Annotation    : Each experience gets a ``skills`` dict with:
+  Phase 2 — Skill Extraction  (NEW — uses ALL skill_agents pipeline stages)
+    - Stage 1+2    : Boundary proposal + skill-sequence decoding
+    - Stage 3      : Effects-only contract learning / verify / refine
+    - Stage 4      : Bank maintenance — split, merge, refine skills
+    - Materialize  : Promote __NEW__ clusters to real skills
+    - Evaluation   : Skill quality assessment (coherence, granularity, …)
+    - Skill naming : GPT-5.4 generates RAG-friendly name + summary per skill
+    - Annotation   : Each experience gets a ``skills`` dict with:
         skill_id, skill_name, skill_summary, segment (start/end),
         and effects contract for downstream RAG retrieval.
 
@@ -35,6 +38,7 @@ Output structure (labeling/output/gpt54_skills/):
   - <game_name>/labeling_summary.json Run statistics
   - <game_name>/skill_bank.jsonl      Persistent skill bank (contracts)
   - <game_name>/skill_catalog.json    RAG-friendly skill catalog (per-game)
+  - <game_name>/sub_episodes.json     Multi-step SubTask_Experience instances
   - skill_archetypes.json             Cross-game archetype aggregation
   - skill_rag_index.json              Flat RAG index (archetypes + instances)
   - skill_catalog_all.json            Combined per-game catalog
@@ -55,6 +59,9 @@ Usage (from Game-AI-Agent root):
 
     # One rollout per game (quick test)
     python labeling/label_and_extract_skills_gpt54.py --one_per_game -v
+
+    # Re-segment against seeded bank (second pass with real pipeline)
+    python labeling/label_and_extract_skills_gpt54.py --resegment --one_per_game
 
     # Skip Phase 1 (use already-labeled episodes from labeling/output/gpt54/)
     python labeling/label_and_extract_skills_gpt54.py --skip_labeling --labeled_dir labeling/output/gpt54
@@ -126,6 +133,14 @@ from skill_agents.stage3_mvp.schemas import (
     SegmentRecord,
     SkillEffectsContract,
 )
+from data_structure.experience import SubTask_Experience
+
+try:
+    from skill_agents.infer_segmentation.episode_adapter import (
+        _extract_predicates,
+    )
+except ImportError:
+    _extract_predicates = None
 
 logger = logging.getLogger(__name__)
 
@@ -552,18 +567,103 @@ def _generate_skill_description(
     return f"Skill '{name}' in {game_name}: applies {eff_str[:80]}."
 
 
+def _compute_predicate_effects(
+    predicates: List[Optional[dict]],
+    start: int,
+    end: int,
+    p_thresh: float = 0.5,
+) -> Tuple[set, set, set]:
+    """Derive eff_add / eff_del / eff_event from predicate dicts at segment boundaries.
+
+    Returns (eff_add, eff_del, eff_event).
+    """
+    eff_add: set = set()
+    eff_del: set = set()
+    eff_event: set = set()
+    if not predicates:
+        return eff_add, eff_del, eff_event
+
+    p_start = predicates[start] if start < len(predicates) else None
+    p_end = predicates[min(end - 1, len(predicates) - 1)] if end > 0 else None
+    if p_start is None or p_end is None:
+        return eff_add, eff_del, eff_event
+
+    for k, v in p_end.items():
+        if isinstance(v, (int, float)) and v >= p_thresh:
+            sv = p_start.get(k)
+            if sv is None or (isinstance(sv, (int, float)) and sv < p_thresh):
+                eff_add.add(k)
+
+    for k, v in p_start.items():
+        if isinstance(v, (int, float)) and v >= p_thresh:
+            ev = p_end.get(k)
+            if ev is not None and isinstance(ev, (int, float)) and ev < p_thresh:
+                eff_del.add(k)
+
+    for t in range(start, min(end, len(predicates))):
+        p = predicates[t]
+        if p:
+            for k, v in p.items():
+                if k.startswith("tag_") and isinstance(v, (int, float)) and v >= p_thresh:
+                    eff_event.add(k)
+
+    return eff_add, eff_del, eff_event
+
+
+def _build_sub_episodes_from_tags(
+    tag_segments: List[Dict[str, Any]],
+    episodes: List,
+    game_name: str,
+    outcome_length: int = 5,
+) -> List[SubTask_Experience]:
+    """Build SubTask_Experience objects from intention-tag segments and Episode objects."""
+    sub_episodes: List[SubTask_Experience] = []
+    for seg in tag_segments:
+        ep_idx = seg["ep_idx"]
+        if ep_idx >= len(episodes):
+            continue
+        ep = episodes[ep_idx]
+        exps = ep.experiences
+        start, end = seg["start"], seg["end"]
+        segment_exps = exps[start:end]
+        if not segment_exps:
+            continue
+        outcome_start = end
+        outcome_end = min(end + outcome_length, len(exps))
+        outcome_exps = (
+            exps[outcome_start:outcome_end]
+            if outcome_start < outcome_end
+            else None
+        )
+        seg_id = f"tag_{game_name}_{seg.get('tag', 'UNK')}_{ep_idx}_{start}_{end}"
+        sub_ep = SubTask_Experience(
+            sub_task=seg.get("skill_id", seg.get("tag", "EXECUTE")),
+            final_goal=ep.task,
+            experiences=segment_exps,
+            outcome=outcome_exps,
+            seg_id=seg_id,
+        )
+        sub_episodes.append(sub_ep)
+    return sub_episodes
+
+
 def _intention_based_segmentation(
     episodes_data: List[Dict[str, Any]],
     game_name: str,
+    episodes: Optional[List] = None,
     model: str = MODEL_GPT54,
     verbose: bool = False,
-) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    outcome_length: int = 5,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]], List[SubTask_Experience]]:
     """Fallback segmentation using intention tag transitions.
 
     Groups consecutive steps with the same [TAG] into segments, then asks
     GPT-5.4 to generate skill names and summaries per segment group.
 
-    Returns (segments_list, skill_catalog).
+    When *episodes* (Episode objects) are provided, computes real predicate-based
+    contracts and builds SubTask_Experience objects per segment.
+
+    Returns (segments_list, skill_catalog, sub_episodes).
     """
     # Collect all segments across episodes by grouping on TAG changes
     tag_segments: List[Dict[str, Any]] = []
@@ -620,7 +720,16 @@ def _intention_based_segmentation(
             })
 
     if not tag_segments:
-        return [], {}
+        return [], {}, []
+
+    # Compute predicates per episode for real contracts
+    episode_predicates: Dict[int, List[Optional[dict]]] = {}
+    if episodes and _extract_predicates is not None:
+        for ep_idx, ep in enumerate(episodes):
+            try:
+                episode_predicates[ep_idx] = _extract_predicates(ep.experiences)
+            except Exception:
+                pass
 
     # Group segments by tag to form skill clusters
     by_tag: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
@@ -645,12 +754,41 @@ def _intention_based_segmentation(
             sample_intentions.extend(s["intentions"][:3])
             sample_states.extend(s["states"][:3])
 
-        # Build a lightweight contract from the tag
+        # Compute real predicate-based effects when predicates are available
+        agg_add: Dict[str, int] = defaultdict(int)
+        agg_del: Dict[str, int] = defaultdict(int)
+        agg_event: set = set()
+        n_pred_segs = 0
+        for s in segs:
+            ep_preds = episode_predicates.get(s["ep_idx"])
+            if not ep_preds:
+                continue
+            ea, ed, ee = _compute_predicate_effects(ep_preds, s["start"], s["end"])
+            if ea or ed or ee:
+                n_pred_segs += 1
+                for k in ea:
+                    agg_add[k] += 1
+                for k in ed:
+                    agg_del[k] += 1
+                agg_event |= ee
+
+        min_freq = 0.3
+        real_eff_add: set = set()
+        real_eff_del: set = set()
+        if n_pred_segs > 0:
+            for k, cnt in agg_add.items():
+                if cnt / n_pred_segs >= min_freq:
+                    real_eff_add.add(k)
+            for k, cnt in agg_del.items():
+                if cnt / n_pred_segs >= min_freq:
+                    real_eff_del.add(k)
+
+        has_real_effects = bool(real_eff_add or real_eff_del or agg_event)
         contract = SkillEffectsContract(
             skill_id=skill_id,
-            eff_add={f"{tag.lower()}_completed"},
-            eff_del=set(),
-            eff_event={f"tag_{tag.lower()}"},
+            eff_add=real_eff_add if has_real_effects else {f"{tag.lower()}_completed"},
+            eff_del=real_eff_del,
+            eff_event=agg_event if agg_event else {f"tag_{tag.lower()}"},
             n_instances=len(segs),
         )
 
@@ -688,7 +826,16 @@ def _intention_based_segmentation(
             s["skill_summary"] = rag_summary
             s["description"] = description
 
-    return tag_segments, skill_catalog
+    # Build SubTask_Experience objects from segments
+    sub_episodes: List[SubTask_Experience] = []
+    if episodes:
+        sub_episodes = _build_sub_episodes_from_tags(
+            tag_segments, episodes, game_name, outcome_length=outcome_length,
+        )
+        if verbose:
+            print(f"    Built {len(sub_episodes)} SubTask_Experience objects from tag segments")
+
+    return tag_segments, skill_catalog, sub_episodes
 
 
 def extract_skills_for_game(
@@ -697,15 +844,26 @@ def extract_skills_for_game(
     output_dir: Path,
     model: str = MODEL_GPT54,
     verbose: bool = False,
-) -> Tuple[SkillBankAgent, Dict[str, Dict[str, Any]]]:
+    resegment: bool = False,
+) -> Tuple[SkillBankAgent, Dict[str, Dict[str, Any]], List[SubTask_Experience]]:
     """Run skill extraction on labeled episodes for a single game.
 
-    Uses SkillBankAgent pipeline first. If it produces insufficient skills
-    (common with few episodes), falls back to intention-based segmentation
-    that groups steps by their [TAG] labels.
+    Exercises all SkillBankAgent pipeline stages:
+      Stage 1+2 — Boundary proposal + segmentation (``segment_episode``)
+      Stage 3   — Contract learning / verify / refine (``run_contract_learning``)
+      Stage 4   — Bank maintenance: split / merge / refine (``run_bank_maintenance``)
+      Materialize — Promote ``__NEW__`` clusters (``materialize_new_skills``)
+      Evaluation  — Skill quality assessment (``run_evaluation``)
 
-    Returns (agent, skill_catalog) where skill_catalog maps skill_id
-    to {name, summary, description, contract}.
+    If the pipeline produces insufficient skills (common with few episodes),
+    falls back to intention-based segmentation that groups steps by their
+    [TAG] labels, building proper SubTask_Experience objects and real
+    predicate-based contracts.
+
+    When *resegment* is True, re-runs the real pipeline against the seeded
+    bank for a second pass.
+
+    Returns (agent, skill_catalog, sub_episodes).
     """
     bank_path = str(output_dir / "skill_bank.jsonl")
 
@@ -741,16 +899,18 @@ def extract_skills_for_game(
 
     if not episodes:
         print(f"    [WARN] No episodes to segment for {game_name}")
-        return agent, {}
+        return agent, {}, []
 
     # Try SkillBankAgent pipeline first
+    all_sub_episodes: List[SubTask_Experience] = []
     print(f"    Segmenting {len(episodes)} episode(s) via SkillBankAgent ...")
     for i, ep in enumerate(episodes):
         try:
-            result, sub_episodes = agent.segment_episode(ep, env_name="llm")
+            result, ep_sub_episodes = agent.segment_episode(ep, env_name="llm")
+            all_sub_episodes.extend(ep_sub_episodes)
             n_segs = len(result.segments) if hasattr(result, "segments") else 0
             if verbose:
-                print(f"      Episode {i}: {len(ep.experiences)} steps → {n_segs} segments")
+                print(f"      Episode {i}: {len(ep.experiences)} steps → {n_segs} segments, {len(ep_sub_episodes)} sub-episodes")
         except Exception as exc:
             print(f"      [WARN] Episode {i} segmentation failed: {exc}")
             if verbose:
@@ -760,14 +920,42 @@ def extract_skills_for_game(
     if agent._all_segments:
         try:
             agent.run_contract_learning()
-        except Exception:
-            pass
+        except Exception as exc:
+            if verbose:
+                print(f"      [WARN] Stage 3 contract learning failed: {exc}")
+
+    # Stage 4: bank maintenance (split / merge / refine)
+    if agent._all_segments and len(agent.skill_ids) > 0:
+        try:
+            maint_result = agent.run_bank_maintenance()
+            if verbose:
+                n_s = len(maint_result.split_results) if hasattr(maint_result, "split_results") else 0
+                n_m = len(maint_result.merge_results) if hasattr(maint_result, "merge_results") else 0
+                n_r = len(maint_result.refine_results) if hasattr(maint_result, "refine_results") else 0
+                print(f"      Stage 4 bank maintenance: {n_s} splits, {n_m} merges, {n_r} refines")
+        except Exception as exc:
+            if verbose:
+                print(f"      [WARN] Stage 4 bank maintenance failed: {exc}")
 
     # Materialize NEW skills
     try:
-        agent.materialize_new_skills()
-    except Exception:
-        pass
+        n_materialized = agent.materialize_new_skills()
+        if verbose and n_materialized > 0:
+            print(f"      Materialized {n_materialized} new skill(s)")
+    except Exception as exc:
+        if verbose:
+            print(f"      [WARN] Materialize new skills failed: {exc}")
+
+    # Skill evaluation
+    if len(agent.skill_ids) > 0:
+        try:
+            eval_summary = agent.run_evaluation()
+            if verbose:
+                n_eval = len(eval_summary.skill_reports) if hasattr(eval_summary, "skill_reports") else 0
+                print(f"      Evaluation: {n_eval} skill(s) evaluated")
+        except Exception as exc:
+            if verbose:
+                print(f"      [WARN] Skill evaluation failed: {exc}")
 
     # Check if pipeline produced enough skills
     pipeline_skills = len(agent.skill_ids)
@@ -783,9 +971,11 @@ def extract_skills_for_game(
     skill_catalog: Dict[str, Dict[str, Any]] = {}
 
     if use_intention_fallback:
-        tag_segments, skill_catalog = _intention_based_segmentation(
-            episodes_data, game_name, model=model, verbose=verbose,
+        tag_segments, skill_catalog, fallback_sub_episodes = _intention_based_segmentation(
+            episodes_data, game_name, episodes=episodes,
+            model=model, verbose=verbose,
         )
+        all_sub_episodes = fallback_sub_episodes
 
         # Persist to skill bank for compatibility
         for sid, entry in skill_catalog.items():
@@ -850,13 +1040,79 @@ def extract_skills_for_game(
                 print(f"      Skill {sid}: {name}")
                 print(f"        summary: {rag_summary[:80]}...")
 
+    # ── Optional re-segmentation pass against seeded bank ──
+    if resegment and len(agent.skill_ids) > 0 and episodes:
+        print(f"    Re-segmenting {len(episodes)} episode(s) against seeded bank ({len(agent.skill_ids)} skills) ...")
+        reseg_agent = SkillBankAgent(config=config)
+        reseg_agent.bank = agent.bank
+
+        reseg_sub_episodes: List[SubTask_Experience] = []
+        for i, ep in enumerate(episodes):
+            try:
+                result, ep_sub = reseg_agent.segment_episode(ep, env_name="llm")
+                reseg_sub_episodes.extend(ep_sub)
+                n_segs = len(result.segments) if hasattr(result, "segments") else 0
+                if verbose:
+                    print(f"      Re-seg episode {i}: {len(ep.experiences)} steps → {n_segs} segments, {len(ep_sub)} sub-episodes")
+            except Exception as exc:
+                print(f"      [WARN] Re-seg episode {i} failed: {exc}")
+                if verbose:
+                    traceback.print_exc()
+
+        if reseg_agent._all_segments:
+            try:
+                reseg_agent.run_contract_learning()
+            except Exception as exc:
+                if verbose:
+                    print(f"      [WARN] Re-seg Stage 3 failed: {exc}")
+
+            if len(reseg_agent.skill_ids) > 0:
+                try:
+                    reseg_agent.run_bank_maintenance()
+                except Exception as exc:
+                    if verbose:
+                        print(f"      [WARN] Re-seg Stage 4 failed: {exc}")
+
+            try:
+                reseg_agent.materialize_new_skills()
+            except Exception:
+                pass
+
+            if len(reseg_agent.skill_ids) > 0:
+                try:
+                    reseg_agent.run_evaluation()
+                except Exception:
+                    pass
+
+        if reseg_sub_episodes:
+            all_sub_episodes = reseg_sub_episodes
+            agent = reseg_agent
+            print(f"    Re-segmentation produced {len(reseg_sub_episodes)} sub-episodes, {len(reseg_agent.skill_ids)} skills")
+
     # Save bank
     try:
         agent.save()
     except Exception as exc:
         print(f"    [WARN] Failed to save skill bank: {exc}")
 
-    return agent, skill_catalog
+    # Persist SubTask_Experience objects
+    if all_sub_episodes:
+        sub_ep_path = output_dir / "sub_episodes.json"
+        try:
+            sub_ep_data = {
+                "game": game_name,
+                "model": model,
+                "timestamp": datetime.now().isoformat(),
+                "n_sub_episodes": len(all_sub_episodes),
+                "sub_episodes": [se.to_dict() for se in all_sub_episodes],
+            }
+            with open(sub_ep_path, "w", encoding="utf-8") as f:
+                json.dump(sub_ep_data, f, indent=2, ensure_ascii=False, default=str)
+            print(f"    Sub-episodes ({len(all_sub_episodes)}) → {sub_ep_path}")
+        except Exception as exc:
+            print(f"    [WARN] Failed to save sub_episodes: {exc}")
+
+    return agent, skill_catalog, all_sub_episodes
 
 
 def annotate_episodes_with_skills(
@@ -1266,6 +1522,8 @@ def main():
                         help="Skip Phase 2 (skill extraction)")
     parser.add_argument("--skip_archetypes", action="store_true",
                         help="Skip Phase 3 (cross-game archetype aggregation)")
+    parser.add_argument("--resegment", action="store_true",
+                        help="Re-run pipeline against seeded bank (doubles LLM cost)")
 
     args = parser.parse_args()
 
@@ -1331,6 +1589,7 @@ def main():
     print(f"  Phase 1:       {'SKIP' if args.skip_labeling else 'label (summary, intention)'}")
     print(f"  Phase 2:       {'SKIP' if args.skip_skills else 'segment + extract skills'}")
     print(f"  Phase 3:       {'SKIP' if args.skip_archetypes else 'cross-game archetype aggregation'}")
+    print(f"  Re-segment:    {args.resegment}")
     print(f"  Delay:         {args.delay}s between calls")
     print(f"  Dry run:       {args.dry_run}")
     print("=" * 78)
@@ -1415,11 +1674,12 @@ def main():
             print(f"\n  Phase 2: Skill extraction for {game} ...")
             t0 = time.time()
             try:
-                agent, skill_catalog = extract_skills_for_game(
+                agent, skill_catalog, sub_episodes = extract_skills_for_game(
                     game_episodes_data, game,
                     output_dir=game_out_dir,
                     model=args.model,
                     verbose=args.verbose,
+                    resegment=args.resegment,
                 )
                 annotate_episodes_with_skills(
                     game_episodes_data, agent, skill_catalog,
@@ -1427,7 +1687,8 @@ def main():
                 )
                 elapsed = time.time() - t0
                 n_skills = len(skill_catalog)
-                print(f"    Extracted {n_skills} skill(s) in {elapsed:.1f}s")
+                n_sub = len(sub_episodes)
+                print(f"    Extracted {n_skills} skill(s), {n_sub} sub-episode(s) in {elapsed:.1f}s")
                 all_catalogs[game] = skill_catalog
             except Exception as exc:
                 print(f"    [ERROR] Skill extraction failed: {exc}")

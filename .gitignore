@@ -8,3 +8,11 @@ __pycache__/
 
 # Training / co-evolution outputs (checkpoints, rollouts, logs)
 runs/
+
+# Run logs, screenshots, and eval output (do not commit)
+orak_logs/
+output/
+**/orak_logs/
+**/output/
+**/qwen_skills/
+**/Qwen3-14B/

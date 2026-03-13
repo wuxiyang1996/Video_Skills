@@ -1,17 +1,24 @@
 """
 Data schemas for Stage 3 MVP: effects-only contracts.
 
-Three core types:
+Core types:
   - ``SegmentRecord``: enriched segment with booleanized predicates and effects.
   - ``SkillEffectsContract``: eff_add / eff_del / eff_event contract per skill.
   - ``VerificationReport``: per-skill pass rates and failure diagnostics.
+  - ``SubEpisodeRef``: lightweight pointer to a stored rollout segment + cached summary.
+  - ``Protocol``: actionable step-by-step guidance for the decision agent.
+  - ``ScoredBoundary``: boundary candidate with penalty-based confidence score.
+  - ``Skill``: two-part stored concept:
+      Part 1 (Protocol Store) — queried by the decision agent.
+      Part 2 (Evidence Store) — sub-episode pointers managed by the skill agent.
 """
 
 from __future__ import annotations
 
 import time
+import uuid
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 
 @dataclass
@@ -175,3 +182,346 @@ class VerificationReport:
     @classmethod
     def from_dict(cls, d: dict) -> VerificationReport:
         return cls(**d)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# New schema types for the Skill Architecture Redesign
+# ─────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class SubEpisodeRef:
+    """Lightweight pointer to a stored rollout segment that evidences a skill.
+
+    This is **not** a data container — it carries no actual ``Experience``
+    objects.  The real rollout data lives in the episode/rollout storage
+    (``Episode_Buffer``, rollout JSONL files, etc.).  This ref is just an
+    index into that storage plus cached metadata so the skill agent can
+    reason about quality without loading the full trajectory.
+
+    Stored inside ``Skill.sub_episodes`` (evidence store) — never exposed
+    to the decision agent.
+
+    Fields
+    ------
+    Pointer:
+        episode_id, seg_start, seg_end — locate the segment in rollout storage.
+        rollout_source — path/key to the rollout file or buffer that holds the
+            actual Experience data (e.g. "rollouts/ep_001.json").
+
+    Cached summary (produced once during data processing):
+        summary — one-sentence description of what happened in this segment.
+        intention_tags — tag sequence observed (e.g. ["MERGE", "MERGE", "POSITION"]).
+
+    Quality metadata (updated by the skill agent quality pipeline):
+        outcome, cumulative_reward, quality_score.
+    """
+
+    # ── Pointer ──────────────────────────────────────────────────────
+    episode_id: str = ""
+    seg_start: int = 0
+    seg_end: int = 0
+    rollout_source: str = ""
+
+    # ── Cached summary ───────────────────────────────────────────────
+    summary: str = ""
+    intention_tags: List[str] = field(default_factory=list)
+
+    # ── Quality metadata ─────────────────────────────────────────────
+    outcome: str = "partial"  # "success" | "partial" | "failure"
+    cumulative_reward: float = 0.0
+    quality_score: float = 0.0
+    added_at: float = field(default_factory=time.time)
+
+    @property
+    def length(self) -> int:
+        return self.seg_end - self.seg_start + 1
+
+    def to_dict(self) -> dict:
+        return {
+            "episode_id": self.episode_id,
+            "seg_start": self.seg_start,
+            "seg_end": self.seg_end,
+            "rollout_source": self.rollout_source,
+            "summary": self.summary,
+            "intention_tags": self.intention_tags,
+            "outcome": self.outcome,
+            "cumulative_reward": self.cumulative_reward,
+            "quality_score": self.quality_score,
+            "added_at": self.added_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> SubEpisodeRef:
+        return cls(
+            episode_id=d.get("episode_id", ""),
+            seg_start=d.get("seg_start", 0),
+            seg_end=d.get("seg_end", 0),
+            rollout_source=d.get("rollout_source", ""),
+            summary=d.get("summary", ""),
+            intention_tags=d.get("intention_tags", []),
+            outcome=d.get("outcome", "partial"),
+            cumulative_reward=d.get("cumulative_reward", 0.0),
+            quality_score=d.get("quality_score", 0.0),
+            added_at=d.get("added_at", 0.0),
+        )
+
+
+@dataclass
+class Protocol:
+    """Actionable decision guidance that the decision agent follows.
+
+    Contains preconditions (when to invoke), ordered steps, success/abort
+    criteria, and expected duration.  Updated when new high-quality
+    sub-episodes provide better strategies.
+    """
+
+    preconditions: List[str] = field(default_factory=list)
+    steps: List[str] = field(default_factory=list)
+    success_criteria: List[str] = field(default_factory=list)
+    abort_criteria: List[str] = field(default_factory=list)
+    expected_duration: int = 10
+
+    def to_dict(self) -> dict:
+        return {
+            "preconditions": self.preconditions,
+            "steps": self.steps,
+            "success_criteria": self.success_criteria,
+            "abort_criteria": self.abort_criteria,
+            "expected_duration": self.expected_duration,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Protocol:
+        if not d:
+            return cls()
+        return cls(
+            preconditions=d.get("preconditions", []),
+            steps=d.get("steps", []),
+            success_criteria=d.get("success_criteria", []),
+            abort_criteria=d.get("abort_criteria", []),
+            expected_duration=d.get("expected_duration", 10),
+        )
+
+
+@dataclass
+class ScoredBoundary:
+    """Boundary candidate with penalty-based confidence score.
+
+    Returned by ``IntentionSignalExtractor.score_boundary_candidates()``
+    instead of flat timestep lists.  Stage 2 uses ``score`` as a prior
+    in the segmentation decode.
+    """
+
+    time: int = 0
+    score: float = 1.0
+    tag_before: str = ""
+    tag_after: str = ""
+    is_ping_pong: bool = False
+    time_since_last: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "time": self.time,
+            "score": self.score,
+            "tag_before": self.tag_before,
+            "tag_after": self.tag_after,
+            "is_ping_pong": self.is_ping_pong,
+            "time_since_last": self.time_since_last,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ScoredBoundary:
+        return cls(
+            time=d.get("time", 0),
+            score=d.get("score", 1.0),
+            tag_before=d.get("tag_before", ""),
+            tag_after=d.get("tag_after", ""),
+            is_ping_pong=d.get("is_ping_pong", False),
+            time_since_last=d.get("time_since_last", 0),
+        )
+
+
+@dataclass
+class Skill:
+    """Strategic concept stored as two disjoint parts.
+
+    **Part 1 — Protocol Store** (queried by the decision agent):
+        name, strategic_description, tags, protocol, confidence.
+        Accessed via ``to_decision_agent_view()``.
+        Contains everything the decision agent needs to decide whether and
+        how to execute this skill.  No raw trajectory data.
+
+    **Part 2 — Evidence Store** (managed by the skill agent):
+        sub_episodes — list of ``SubEpisodeRef`` pointers into rollout
+        storage + cached summaries.  The actual ``Experience`` data lives
+        in episode buffers / rollout files; sub_episodes are lightweight
+        pointers with summary text so the skill agent can reason about
+        quality, aggregate evidence, and update the protocol without
+        loading full trajectories.
+
+    The ``contract`` (eff_add/eff_del/eff_event) bridges both parts:
+    it's derived from evidence and consumed by the protocol update loop.
+
+    Backward compatible: old ``skill_bank.jsonl`` files that only have
+    ``contract`` are loadable as ``Skill`` objects with empty ``protocol``
+    and ``sub_episodes``.
+    """
+
+    skill_id: str = ""
+    version: int = 1
+
+    # ═══════════════════════════════════════════════════════════════
+    # Part 1 — Protocol Store (decision agent queries this)
+    # ═══════════════════════════════════════════════════════════════
+    name: str = ""
+    strategic_description: str = ""
+    tags: List[str] = field(default_factory=list)
+    protocol: Protocol = field(default_factory=Protocol)
+
+    # ═══════════════════════════════════════════════════════════════
+    # Part 2 — Evidence Store (skill agent manages this)
+    #   sub_episodes: pointers to stored rollouts + summaries
+    #   contract: effects derived from evidence
+    # ═══════════════════════════════════════════════════════════════
+    contract: Optional[SkillEffectsContract] = None
+    sub_episodes: List[SubEpisodeRef] = field(default_factory=list)
+    expected_tag_pattern: List[str] = field(default_factory=list)
+
+    # Protocol version history for rollback
+    protocol_history: List[Dict[str, Any]] = field(default_factory=list)
+
+    # Metadata
+    n_instances: int = 0
+    retired: bool = False
+    created_at: float = field(default_factory=time.time)
+    updated_at: float = field(default_factory=time.time)
+
+    # ── Version management ───────────────────────────────────────
+
+    def bump_version(self) -> None:
+        if self.protocol.steps:
+            self.protocol_history.append({
+                "version": self.version,
+                "protocol": self.protocol.to_dict(),
+                "timestamp": time.time(),
+            })
+            if len(self.protocol_history) > 5:
+                self.protocol_history = self.protocol_history[-5:]
+        self.version += 1
+        self.updated_at = time.time()
+
+    # ── Evidence statistics ──────────────────────────────────────
+
+    @property
+    def success_rate(self) -> float:
+        if not self.sub_episodes:
+            return 0.0
+        successes = sum(1 for se in self.sub_episodes if se.outcome == "success")
+        return successes / len(self.sub_episodes)
+
+    @property
+    def confidence(self) -> float:
+        """Confidence based on instance count and success rate."""
+        if self.n_instances == 0:
+            return 0.0
+        evidence_factor = min(1.0, self.n_instances / 10.0)
+        return evidence_factor * self.success_rate
+
+    @property
+    def evidence_summaries(self) -> List[str]:
+        """Collect summaries from all sub-episode refs (for skill agent reasoning)."""
+        return [se.summary for se in self.sub_episodes if se.summary]
+
+    # ── Views ────────────────────────────────────────────────────
+
+    def to_decision_agent_view(self) -> Dict[str, Any]:
+        """Part 1 only: protocol + metadata the decision agent needs.
+
+        Never includes sub-episodes, raw contract internals, or rollout
+        pointers.
+        """
+        return {
+            "skill_id": self.skill_id,
+            "name": self.name,
+            "strategic_description": self.strategic_description,
+            "protocol": self.protocol.to_dict(),
+            "confidence": round(self.confidence, 3),
+            "expected_duration": self.protocol.expected_duration,
+            "tags": self.tags,
+        }
+
+    def to_evidence_view(self) -> Dict[str, Any]:
+        """Part 2 only: evidence pointers + summaries for the skill agent.
+
+        Includes sub-episode refs (with summaries and quality scores) but
+        not the actual Experience data (that lives in rollout storage).
+        """
+        return {
+            "skill_id": self.skill_id,
+            "n_instances": self.n_instances,
+            "success_rate": round(self.success_rate, 3),
+            "sub_episodes": [se.to_dict() for se in self.sub_episodes],
+            "evidence_summaries": self.evidence_summaries,
+            "expected_tag_pattern": self.expected_tag_pattern,
+            "retired": self.retired,
+        }
+
+    # ── Serialization ────────────────────────────────────────────
+
+    def to_dict(self) -> dict:
+        return {
+            "skill_id": self.skill_id,
+            "version": self.version,
+            "name": self.name,
+            "strategic_description": self.strategic_description,
+            "tags": self.tags,
+            "protocol": self.protocol.to_dict(),
+            "contract": self.contract.to_dict() if self.contract else None,
+            "sub_episodes": [se.to_dict() for se in self.sub_episodes],
+            "expected_tag_pattern": self.expected_tag_pattern,
+            "protocol_history": self.protocol_history,
+            "n_instances": self.n_instances,
+            "retired": self.retired,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Skill:
+        contract_data = d.get("contract")
+        contract = SkillEffectsContract.from_dict(contract_data) if contract_data else None
+
+        sub_eps = [SubEpisodeRef.from_dict(se) for se in d.get("sub_episodes", [])]
+        protocol = Protocol.from_dict(d.get("protocol", {}))
+
+        return cls(
+            skill_id=d.get("skill_id", ""),
+            version=d.get("version", 1),
+            name=d.get("name", ""),
+            strategic_description=d.get("strategic_description", ""),
+            tags=d.get("tags", []),
+            protocol=protocol,
+            contract=contract,
+            sub_episodes=sub_eps,
+            expected_tag_pattern=d.get("expected_tag_pattern", []),
+            protocol_history=d.get("protocol_history", []),
+            n_instances=d.get("n_instances", 0),
+            retired=d.get("retired", False),
+            created_at=d.get("created_at", 0.0),
+            updated_at=d.get("updated_at", 0.0),
+        )
+
+    @classmethod
+    def from_contract(cls, contract: SkillEffectsContract) -> Skill:
+        """Wrap an existing SkillEffectsContract as a Skill (migration helper)."""
+        return cls(
+            skill_id=contract.skill_id,
+            version=contract.version,
+            name=contract.name or "",
+            strategic_description=contract.description or "",
+            contract=contract,
+            n_instances=contract.n_instances,
+            created_at=contract.created_at,
+            updated_at=contract.updated_at,
+        )

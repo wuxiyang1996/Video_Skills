@@ -73,13 +73,32 @@ def _contract_summary(c: SkillEffectsContract) -> Dict[str, Any]:
     }
 
 
-def _skill_description(sid: str, c: Optional[SkillEffectsContract]) -> str:
-    """Build a textual description of a skill for embedding."""
+def _skill_description(
+    sid: str,
+    c: Optional[SkillEffectsContract],
+    skill: Optional[Any] = None,
+) -> str:
+    """Build a textual description of a skill for embedding.
+
+    When a ``Skill`` wrapper is available, includes strategic_description
+    and protocol preconditions for richer semantic matching.
+    """
     parts = [sid.replace("_", " ")]
+    if skill is not None:
+        if getattr(skill, "name", None):
+            parts.append(skill.name)
+        if getattr(skill, "strategic_description", None):
+            parts.append(skill.strategic_description)
+        protocol = getattr(skill, "protocol", None)
+        if protocol is not None:
+            for pc in getattr(protocol, "preconditions", [])[:5]:
+                parts.append(pc)
+            for step in getattr(protocol, "steps", [])[:3]:
+                parts.append(step)
     if c is not None:
-        if getattr(c, "name", None):
+        if getattr(c, "name", None) and not (skill and getattr(skill, "name", None)):
             parts.append(c.name)
-        if getattr(c, "description", None):
+        if getattr(c, "description", None) and not (skill and getattr(skill, "strategic_description", None)):
             parts.append(c.description)
         for lit in sorted(c.eff_add or set()):
             parts.append(lit)
@@ -171,13 +190,18 @@ class SkillQueryEngine:
         self._id_tokens: Dict[str, Set[str]] = {}
         self._effect_tokens: Dict[str, Set[str]] = {}
         self._effect_sets: Dict[str, Set[str]] = {}
+        self._strategic_tokens: Dict[str, Set[str]] = {}
 
         descs: List[str] = []
         self._skill_id_order = list(self._bank.skill_ids)
 
+        has_get_skill = hasattr(self._bank, "get_skill")
+
         for sid in self._skill_id_order:
             self._id_tokens[sid] = _tokenize(sid)
             c = self._bank.get_contract(sid)
+            skill = self._bank.get_skill(sid) if has_get_skill else None
+
             if c is not None:
                 eff = _effect_set_for_contract(c)
                 self._effect_sets[sid] = eff
@@ -187,7 +211,16 @@ class SkillQueryEngine:
             else:
                 self._effect_sets[sid] = set()
                 self._effect_tokens[sid] = set()
-            descs.append(_skill_description(sid, c))
+
+            strat_text = ""
+            if skill is not None:
+                strat_text = " ".join(filter(None, [
+                    getattr(skill, "name", ""),
+                    getattr(skill, "strategic_description", ""),
+                ]))
+            self._strategic_tokens[sid] = _tokenize(strat_text) if strat_text else set()
+
+            descs.append(_skill_description(sid, c, skill))
 
         if self._embedder is not None and descs:
             try:
@@ -220,7 +253,11 @@ class SkillQueryEngine:
     # ── Retrieval relevance (internal) ───────────────────────────────
 
     def _compute_relevance(self, query: str) -> Dict[str, float]:
-        """Compute retrieval relevance for all skills given a query."""
+        """Compute retrieval relevance for all skills given a query.
+
+        Incorporates strategic_description and protocol precondition tokens
+        when available for richer semantic matching.
+        """
         q_tokens = _tokenize(query)
         emb_scores = self._embedding_scores(query)
         w = self._embedding_weight if emb_scores is not None else 0.0
@@ -229,7 +266,9 @@ class SkillQueryEngine:
         for i, sid in enumerate(self._skill_id_order):
             id_score = _jaccard(q_tokens, self._id_tokens.get(sid, set()))
             eff_score = _jaccard(q_tokens, self._effect_tokens.get(sid, set()))
-            kw_score = 0.6 * id_score + 0.4 * eff_score
+            strat_score = _jaccard(q_tokens, self._strategic_tokens.get(sid, set()))
+            # Blend: strategic > id > effects
+            kw_score = 0.35 * strat_score + 0.35 * id_score + 0.30 * eff_score
             emb = float(emb_scores[i]) if emb_scores is not None else 0.0
             scores[sid] = w * emb + (1.0 - w) * kw_score
         return scores
@@ -334,6 +373,19 @@ class SkillQueryEngine:
             c = self._bank.get_contract(sid)
             r = self._bank.get_report(sid)
 
+            # Build micro_plan from protocol steps when available
+            has_get_skill = hasattr(self._bank, "get_skill")
+            skill = self._bank.get_skill(sid) if has_get_skill else None
+            if skill is not None and skill.protocol.steps:
+                micro_plan = [{"action": step} for step in skill.protocol.steps[:7]]
+            elif c:
+                micro_plan = [
+                    {"action": None, "effect": lit}
+                    for lit in sorted(c.eff_add or set())[:7]
+                ]
+            else:
+                micro_plan = []
+
             result = SkillSelectionResult(
                 skill_id=sid,
                 relevance=rel,
@@ -345,10 +397,7 @@ class SkillQueryEngine:
                 matched_effects=matched,
                 missing_effects=missing,
                 contract=_contract_summary(c) if c else {},
-                micro_plan=[
-                    {"action": None, "effect": lit}
-                    for lit in sorted(c.eff_add or set())[:7]
-                ] if c else [],
+                micro_plan=micro_plan,
             )
             results.append(result)
 
