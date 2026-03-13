@@ -917,17 +917,14 @@ class EpisodicMemoryStore:
 # ---------------------------------------------------------------------------
 
 def skill_bank_to_text(skill_bank: Any) -> str:
-    """Format skill bank for inclusion in agent prompt.
+    """Format skill bank as selectable options for the agent prompt.
 
-    Prefers protocol-based view (strategic description + protocol preview)
-    when ``Skill`` objects are available.  Falls back to effect summary
-    for backward compatibility with old-style banks.
-
-    skill_bank can be SkillBankMVP, SkillBankAgent, or any object with
-    .skill_ids and .get_contract(skill_id).
+    Each skill shows its name, what it does, when to use it, and confidence.
+    Designed so the agent can pick a skill via select_skill by referencing
+    the description.
     """
     if skill_bank is None:
-        return "(no skill bank)"
+        return "(no skill bank — act without skills)"
 
     bank = getattr(skill_bank, "bank", skill_bank)
 
@@ -936,86 +933,139 @@ def skill_bank_to_text(skill_bank: Any) -> str:
     except AttributeError:
         return "(no skill bank)"
     if not ids:
-        return "(empty skill bank)"
+        return "(empty skill bank — no learned skills yet)"
 
     has_get_skill = hasattr(bank, "get_skill")
 
-    lines = [f"Available skills ({len(ids)}):"]
-    for sid in ids[:15]:
+    lines = [f"{len(ids)} skills available (use select_skill to activate one):"]
+    for idx, sid in enumerate(ids[:15]):
         try:
             skill = bank.get_skill(sid) if has_get_skill else None
             if skill is not None and (skill.strategic_description or skill.protocol.steps):
                 name = skill.name or sid
-                desc = skill.strategic_description[:80] if skill.strategic_description else ""
+                desc = skill.strategic_description[:90] if skill.strategic_description else ""
                 confidence = f"{skill.confidence:.0%}" if skill.n_instances > 0 else "?"
                 dur = skill.protocol.expected_duration
-                parts = [name]
+                parts = [f"[{sid}] {name}"]
                 if desc:
-                    parts.append(f"— {desc}")
-                parts.append(f"(confidence: {confidence}, ~{dur} steps)")
-                lines.append(f"  [{sid}] {' '.join(parts)}")
+                    parts[0] += f" — {desc}"
+                parts.append(f"    confidence={confidence}, ~{dur} steps")
+                if skill.protocol.preconditions:
+                    parts.append(f"    when: {'; '.join(skill.protocol.preconditions[:2])}")
+                eh = getattr(skill, "execution_hint", None)
+                if eh is not None and eh.termination_cues:
+                    parts.append(f"    done: {'; '.join(eh.termination_cues[:2])}")
+                elif skill.protocol.success_criteria:
+                    parts.append(f"    done: {'; '.join(skill.protocol.success_criteria[:2])}")
+                lines.append("\n".join(parts))
             else:
                 c = bank.get_contract(sid)
                 if c is not None:
                     add = getattr(c, "eff_add", set()) or set()
                     dele = getattr(c, "eff_del", set()) or set()
-                    add_preview = ", ".join(sorted(add)[:3])
-                    parts = [f"add({len(add)})", f"del({len(dele)})"]
-                    if add_preview:
-                        parts.append(f"e.g. {add_preview}")
+                    name = getattr(c, "name", None) or sid
+                    effects = []
+                    if add:
+                        effects.append("+" + ", +".join(sorted(add)[:3]))
+                    if dele:
+                        effects.append("-" + ", -".join(sorted(dele)[:2]))
+                    eff_str = "; ".join(effects) if effects else "?"
                     r = bank.get_report(sid) if hasattr(bank, "get_report") else None
-                    if r is not None:
-                        parts.append(f"pass={r.overall_pass_rate:.0%}")
-                    lines.append(f"  - {sid}: {', '.join(parts)}")
+                    pr = f" pass={r.overall_pass_rate:.0%}" if r else ""
+                    lines.append(f"  [{sid}] {name}: effects=[{eff_str}]{pr}")
                 else:
-                    lines.append(f"  - {sid}")
+                    lines.append(f"  [{sid}]")
         except Exception:
-            lines.append(f"  - {sid}")
+            lines.append(f"  [{sid}]")
     return "\n".join(lines)
 
 
-def query_skill_bank(skill_bank: Any, key: str, top_k: int = 1) -> Dict[str, Any]:
-    """Query the skill bank and return a result compatible with the QUERY_SKILL tool.
+def select_skill_from_bank(
+    skill_bank: Any,
+    key: str,
+    current_state: Optional[Dict[str, Any]] = None,
+    memory: Optional[Any] = None,
+    top_k: int = 1,
+) -> Dict[str, Any]:
+    """Select a skill from the bank with full structured guidance.
 
-    Prefers returning protocol-based guidance (preconditions, steps,
-    success/abort criteria) when ``Skill`` objects with protocols are
-    available.  Falls back to effect-based micro_plan for backward compat.
+    This is the single protocol to query prior rollouts, experience, and
+    skill plans.  Uses state-aware selection when current_state is provided.
 
-    Supports SkillBankAgent (rich query), SkillQueryEngine, and plain
-    SkillBankMVP (fallback to name matching).
-
-    Returns ``{"skill_id": str|None, "protocol": dict, "micro_plan": list[dict], ...}``.
+    Returns a structured guidance dict with:
+    - skill_id, skill_name, why_selected
+    - protocol (steps, preconditions, success_criteria, abort_criteria)
+    - execution_hint, termination_hint, failure_modes
+    - expected_effects, applicability_score, confidence
+    - micro_plan (fallback action sequence)
+    - relevant_memory (from episodic memory, if available)
     """
-    if skill_bank is None:
-        return {"skill_id": None, "micro_plan": [], "protocol": {}}
+    empty_result: Dict[str, Any] = {
+        "skill_id": None,
+        "skill_name": "",
+        "why_selected": "no skills available",
+        "protocol": {},
+        "micro_plan": [],
+        "execution_hint": "",
+        "termination_hint": "",
+        "failure_modes": [],
+        "expected_effects": [],
+        "relevant_memory": [],
+    }
 
-    # SkillBankAgent has .query_skill()
-    if hasattr(skill_bank, "query_skill"):
-        results = skill_bank.query_skill(key, top_k=top_k)
+    if skill_bank is None:
+        return empty_result
+
+    # ── Try SkillBankAgent.select_skill() — the richest path ──
+    if hasattr(skill_bank, "select_skill"):
+        results = skill_bank.select_skill(
+            key,
+            current_state=current_state,
+            current_predicates=current_state,
+            top_k=top_k,
+        )
         if results:
             best = results[0]
-            result = {
-                "skill_id": best.get("skill_id"),
-                "micro_plan": best.get("micro_plan", []) or [{"action": "proceed"}],
-                "contract": best.get("contract", {}),
-            }
-            # Attach protocol if available
-            result["protocol"] = _get_protocol_for_skill(skill_bank, best.get("skill_id"))
-            return result
-        return {"skill_id": None, "micro_plan": [], "protocol": {}}
+            protocol = _get_protocol_for_skill(skill_bank, best.get("skill_id"))
+            best["protocol"] = protocol or best.get("protocol", {})
+            best.setdefault("relevant_memory", _query_memory_for_skill(memory, key))
+            return best
 
-    # SkillQueryEngine
+    # ── Try SkillBankAgent.query_skill() with state ──
+    if hasattr(skill_bank, "query_skill"):
+        results = skill_bank.query_skill(
+            key,
+            current_state=current_state,
+            current_predicates=current_state,
+            top_k=top_k,
+        )
+        if results:
+            best = results[0]
+            protocol = _get_protocol_for_skill(skill_bank, best.get("skill_id"))
+            result = dict(best)
+            result["protocol"] = protocol or result.get("protocol", {})
+            result.setdefault("relevant_memory", _query_memory_for_skill(memory, key))
+            return result
+
+    # ── Try SkillQueryEngine directly ──
     if hasattr(skill_bank, "query_for_decision_agent"):
-        result = skill_bank.query_for_decision_agent(key, top_k=top_k)
-        result.setdefault("protocol", _get_protocol_for_skill(skill_bank, result.get("skill_id")))
+        result = skill_bank.query_for_decision_agent(
+            key,
+            current_state=current_state,
+            current_predicates=current_state,
+            top_k=top_k,
+        )
+        protocol = _get_protocol_for_skill(skill_bank, result.get("skill_id"))
+        result["protocol"] = protocol or result.get("protocol", {})
+        result.setdefault("relevant_memory", _query_memory_for_skill(memory, key))
         return result
 
-    # Fallback: plain SkillBankMVP or similar — name match
+    # ── Fallback: plain SkillBankMVP — name match ──
     bank = getattr(skill_bank, "bank", skill_bank)
     try:
         ids = list(bank.skill_ids)
     except AttributeError:
-        return {"skill_id": None, "micro_plan": [], "protocol": {}}
+        return empty_result
 
     key_lower = key.lower()
     skill_id = None
@@ -1037,26 +1087,52 @@ def query_skill_bank(skill_bank: Any, key: str, top_k: int = 1) -> Dict[str, Any
     if skill_id is None and ids:
         skill_id = ids[0]
 
-    if skill_id:
-        protocol = _get_protocol_for_skill(bank, skill_id)
-        if protocol and protocol.get("steps"):
-            steps = [{"action": s} for s in protocol["steps"][:7]]
-            return {
-                "skill_id": skill_id,
-                "micro_plan": steps,
-                "protocol": protocol,
-            }
+    if not skill_id:
+        return empty_result
+
+    protocol = _get_protocol_for_skill(bank, skill_id)
+    skill_obj = bank.get_skill(skill_id) if has_get_skill else None
+    skill_name = ""
+    execution_hint = ""
+    if skill_obj:
+        skill_name = skill_obj.name or skill_id
+        execution_hint = skill_obj.strategic_description or ""
+        eh = getattr(skill_obj, "execution_hint", None)
+        if eh is not None and eh.execution_description:
+            execution_hint = eh.execution_description
+
+    if protocol and protocol.get("steps"):
+        steps = [{"action": s} for s in protocol["steps"][:7]]
+    else:
         c = bank.get_contract(skill_id) if hasattr(bank, "get_contract") else None
         if c:
             add_set = getattr(c, "eff_add", set()) or set()
             steps = [{"action": None, "effect": lit} for lit in sorted(add_set)[:5]]
-            return {
-                "skill_id": skill_id,
-                "micro_plan": steps or [{"action": "proceed"}],
-                "protocol": protocol or {},
-            }
+        else:
+            steps = [{"action": "proceed"}]
 
-    return {"skill_id": None, "micro_plan": [], "protocol": {}}
+    return {
+        "skill_id": skill_id,
+        "skill_name": skill_name,
+        "why_selected": f"best match for '{key}'",
+        "protocol": protocol,
+        "micro_plan": steps,
+        "execution_hint": execution_hint,
+        "termination_hint": "",
+        "failure_modes": [],
+        "expected_effects": [],
+        "relevant_memory": _query_memory_for_skill(memory, key),
+    }
+
+
+def _query_memory_for_skill(memory: Optional[Any], key: str) -> List[Dict[str, Any]]:
+    """Query episodic memory for experiences relevant to the skill key."""
+    if memory is None or not key:
+        return []
+    try:
+        return memory.query(key, k=2)
+    except Exception:
+        return []
 
 
 def _get_protocol_for_skill(skill_bank: Any, skill_id: Optional[str]) -> Dict[str, Any]:
@@ -1069,3 +1145,7 @@ def _get_protocol_for_skill(skill_bank: Any, skill_id: Optional[str]) -> Dict[st
         if skill is not None and skill.protocol.steps:
             return skill.protocol.to_dict()
     return {}
+
+
+# Backward compatibility alias
+query_skill_bank = select_skill_from_bank

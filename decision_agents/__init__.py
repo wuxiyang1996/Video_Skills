@@ -22,6 +22,7 @@ from .agent_helper import (
     infer_intention,
     EpisodicMemoryStore,
     skill_bank_to_text,
+    select_skill_from_bank,
     query_skill_bank,
 )
 
@@ -33,8 +34,7 @@ from .agent import (
     TOOL_TAKE_ACTION,
     TOOL_GET_STATE_SUMMARY,
     TOOL_GET_INTENTION,
-    TOOL_QUERY_SKILL,
-    TOOL_QUERY_MEMORY,
+    TOOL_SELECT_SKILL,
     TOOL_REWARD,
 )
 
@@ -64,6 +64,7 @@ __all__ = [
     "infer_intention",
     "EpisodicMemoryStore",
     "skill_bank_to_text",
+    "select_skill_from_bank",
     "query_skill_bank",
     "VLMDecisionAgent",
     "AgentState",
@@ -72,8 +73,7 @@ __all__ = [
     "TOOL_TAKE_ACTION",
     "TOOL_GET_STATE_SUMMARY",
     "TOOL_GET_INTENTION",
-    "TOOL_QUERY_SKILL",
-    "TOOL_QUERY_MEMORY",
+    "TOOL_SELECT_SKILL",
     "TOOL_REWARD",
     "RewardConfig",
     "RewardResult",
