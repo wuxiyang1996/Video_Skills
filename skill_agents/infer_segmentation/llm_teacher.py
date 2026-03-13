@@ -37,17 +37,20 @@ def _get_ask_model():
     """Lazy import to avoid pulling in API dependencies at module load.
 
     Prefers the LoRA segment adapter when available, otherwise falls back
-    to the API-based ``ask_model``.
+    to the API-based ``ask_model``.  The returned callable is wrapped for
+    reasoning-model compatibility (Qwen3 ``/no_think``, think-tag stripping).
     """
+    from skill_agents._llm_compat import wrap_ask_for_reasoning_models
+
     try:
         from skill_agents.lora import MultiLoraSkillBankLLM, SkillFunction
         llm = MultiLoraSkillBankLLM.get_shared_instance()
         if llm is not None:
-            return llm.as_ask_fn(SkillFunction.SEGMENT)
+            return wrap_ask_for_reasoning_models(llm.as_ask_fn(SkillFunction.SEGMENT))
     except Exception:
         pass
     from API_func import ask_model
-    return ask_model
+    return wrap_ask_for_reasoning_models(ask_model)
 
 
 def _wrap_ask_with_semaphore(ask: Callable, max_concurrent: int):
@@ -443,14 +446,14 @@ def _build_skill_naming_prompt(
 ) -> str:
     """Build a prompt for the LLM to suggest a human-readable name for a new skill."""
     parts = [
-        "You are an expert at labeling agent skills from behavior.",
+        "You are a game-AI skill naming expert.",
         "",
-        "Below are one or more trajectory segments that were grouped as the same skill.",
-        "Suggest a short, actionable skill name (2–6 words) and a one-line description.",
+        "Below are trajectory segments grouped as the same skill.",
+        "Generate a concrete, actionable skill name and description.",
         "",
         "Segment observations (state summaries):",
     ]
-    for i, obs_slice in enumerate(observation_slices[:3]):  # at most 3 segments
+    for i, obs_slice in enumerate(observation_slices[:3]):
         parts.append(f"  Segment {i + 1}: {str(list(obs_slice))[:800]}")
     if eff_add or eff_del or eff_event:
         parts.append("")
@@ -463,9 +466,15 @@ def _build_skill_naming_prompt(
             parts.append(f"  events: {list(eff_event)}")
     parts.extend([
         "",
+        "RULES:",
+        "- The NAME must be a concrete imperative verb phrase (2-6 words) describing",
+        "  the actual game action. Reference game objects, mechanics, or goals.",
+        "- The DESCRIPTION must be specific: describe WHAT the skill does and WHEN",
+        "  to invoke it. Avoid generic phrases like 'applies effects' or 'does skill'.",
+        "- Use snake_case or short phrases (e.g. \"pick_up_onion\", \"clear_bottom_row\").",
+        "",
         "Return ONLY a JSON object (no extra text):",
         '{"name": "short skill name", "description": "one line description"}',
-        "Use snake_case or short phrases for name (e.g. \"pick_up_onion\", \"navigate to pot\").",
     ])
     return "\n".join(parts)
 

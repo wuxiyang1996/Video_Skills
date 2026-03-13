@@ -4,6 +4,8 @@ Build and maintain a **Skill Bank** from long-horizon game trajectories: segment
 
 **Model-agnostic design:** The pipeline and decision agent use the same skill-bank functions regardless of LLM backend. GPT and Qwen (and other backends) differ only in which API `ask_model` calls; loading, querying, and protocol synthesis all go through the same code paths. Set `PipelineConfig.llm_model` and/or `extractor_model` to your training or inference model (e.g. `Qwen/Qwen3-14B` or `gpt-4o-mini`) so protocol synthesis and boundary proposal use the correct backend.
 
+**Reasoning-model compatibility:** When using Qwen3 or other reasoning models that emit internal `<think>` blocks, all LLM call sites in skill_agents are wrapped via [`_llm_compat.py`](_llm_compat.py): prompts get `/no_think` appended so the full token budget goes to structured output, and responses are stripped of think tags. This avoids generic or truncated names, descriptions, and protocols. See [Reasoning-model compatibility](#reasoning-model-compatibility) below.
+
 ---
 
 ## Overview
@@ -266,6 +268,31 @@ Key options (see `pipeline.PipelineConfig` for all):
 
 ---
 
+## Reasoning-model compatibility
+
+Reasoning models (e.g. **Qwen3-14B**, QwQ) default to an internal “thinking” mode that emits `<think>…</think>` blocks before the actual answer. Those blocks consume the `max_tokens` budget and often leave little or no room for the structured output (JSON, rankings, protocols) the pipeline needs.
+
+The module [`skill_agents/_llm_compat.py`](_llm_compat.py) provides:
+
+| Function | Purpose |
+|----------|--------|
+| `strip_think_tags(text)` | Remove `<think>` blocks from LLM output. |
+| `is_reasoning_model(model_name)` | Detect Qwen3 / QwQ-style model names. |
+| `wrap_ask_for_reasoning_models(ask_fn, model_hint=...)` | Wrap any `ask_model`-style callable: appends `/no_think` to prompts for reasoning models and strips think tags from responses. |
+
+All LLM entry points in skill_agents use this wrapper:
+
+- **infer_segmentation/llm_teacher.py** — segment/transition rankings, skill naming
+- **pipeline.py** — protocol synthesis (`_llm_synthesize_protocol`)
+- **boundary_proposal/llm_extractor.py** — predicate extraction, boundary significance
+- **skill_bank/llm_retrieval.py** — RETRIEVAL adapter
+- **stage3_mvp/llm_contract.py** — CONTRACT adapter
+- **skill_evaluation/evaluators.py** — LLM judge
+
+Protocol and naming prompts have also been tightened (game-AI expert roles, concrete steps, tag-specific execution-hint failure modes) so that with the full token budget, outputs are concrete and game-specific rather than generic.
+
+---
+
 ## Training integration (VERL co-evolution)
 
 During VERL-based training, all four skill agent stages are integrated into the training loop via the **SkillBankCoEvolutionCallback** (in `trainer/decision/coevolution_callback.py`). Each stage is wrapped as a named tool in the `SkillAgentToolPipeline`:
@@ -319,6 +346,7 @@ skill_agents/
 ├── PLAN.md                # SkillBank Agent operating plan
 ├── CHANGELOG_REFACTOR.md  # Detailed changelog for the refactoring
 ├── __init__.py            # SkillBankAgent, SkillQueryEngine, SkillSelectionResult, NewPoolManager, etc.
+├── _llm_compat.py         # Reasoning-model compatibility (strip_think_tags, /no_think wrapper)
 ├── pipeline.py            # SkillBankAgent orchestrator (contract feedback, NEW pool integration)
 ├── query.py               # SkillQueryEngine + SkillSelectionResult (retrieval + selection policy)
 ├── tool_call_reward.py    # Reward for tool calls (agentic RL)

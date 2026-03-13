@@ -28,7 +28,7 @@ This repository provides a framework for enhancing agentic decision-making in mu
   - **Reward**: [reward_func.py](decision_agents/reward_func.py) — `RewardConfig`, `RewardComputer`; **r_total** = r_env + w_follow×r_follow + r_cost (query_mem_cost, query_skill_cost, call_skill_cost, skill_switch_cost).
   - **Tools**: `take_action`, `reward`, `get_state_summary`, `get_intention`, `query_skill`, `query_memory`. See [decision_agents/README.md](decision_agents/README.md).
 
-- **📚 Skill Agents** — [skill_agents/](skill_agents/): Build and maintain a Skill Bank from trajectories; consumed by decision_agents for skill retrieval (`select_skill_from_bank`). **Model-agnostic:** Set `PipelineConfig.llm_model` and/or `extractor_model` to your backend (e.g. `Qwen/Qwen3-14B`, `gpt-4o-mini`); protocol synthesis and boundary proposal use `ask_model` so both GPT and Qwen work without code changes.
+- **📚 Skill Agents** — [skill_agents/](skill_agents/): Build and maintain a Skill Bank from trajectories; consumed by decision_agents for skill retrieval (`select_skill_from_bank`). **Model-agnostic:** Set `PipelineConfig.llm_model` and/or `extractor_model` to your backend (e.g. `Qwen/Qwen3-14B`, `gpt-4o-mini`); protocol synthesis and boundary proposal use `ask_model` so both GPT and Qwen work without code changes. **Reasoning-model compat:** All LLM call sites use [skill_agents/_llm_compat.py](skill_agents/_llm_compat.py) (append `/no_think`, strip `<think>` tags) so Qwen3 gets full token budget for structured output.
   - **Orchestrator** [SkillBankAgent](skill_agents/pipeline.py): `ingest_episodes` → segment (Stage 1+2) → learn contracts (Stage 3) → maintain bank (Stage 4) → `query_skill` / `select_skill`. Methods: `segment_episode()`, `run_contract_learning()`, `run_bank_maintenance()`, `update_protocols()`, `run_until_stable()`.
   - **Stage 1** [boundary_proposal/](skill_agents/boundary_proposal/): Candidate cut points C (signals: rule-based or LLM `env_name="llm"`; optional RAG change-point; `merge_radius`). [README](skill_agents/boundary_proposal/README.md)
   - **Stage 2** [infer_segmentation/](skill_agents/infer_segmentation/): Decode over C with preference scorer (LLM → Bradley–Terry) → segments + labels (bank + `__NEW__`). [README](skill_agents/infer_segmentation/README.md)
@@ -556,7 +556,7 @@ The skill bank agent uses a **shared Qwen3-8B backbone** with **4 function-speci
 - [`skill_agents/stage3_mvp/llm_contract.py`](skill_agents/stage3_mvp/llm_contract.py) → CONTRACT adapter (enriches frequency-based contracts with LLM-generated effects)
 - [`skill_agents/skill_bank/llm_retrieval.py`](skill_agents/skill_bank/llm_retrieval.py) → RETRIEVAL adapter (re-ranks skill candidates during decode)
 
-All four consumers fall back gracefully to the algorithmic path or API-based `ask_model` when the multi-LoRA model is not configured.
+All four consumers (and pipeline protocol synthesis, skill_evaluation LLM judge) wrap their LLM call with [`skill_agents/_llm_compat.py`](skill_agents/_llm_compat.py) for reasoning-model compatibility: Qwen3 gets `/no_think` on prompts and think-tag stripping on responses so the full token budget goes to structured output. They fall back gracefully to the algorithmic path or API-based `ask_model` when the multi-LoRA model is not configured.
 
 **Usage:**
 

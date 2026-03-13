@@ -32,12 +32,20 @@ Return ONLY a JSON object:
 
 
 def _get_retrieval_ask_fn() -> Optional[Callable[..., str]]:
-    """Return a RETRIEVAL-routed ask function, or None if unavailable."""
+    """Return a RETRIEVAL-routed ask function, or None if unavailable.
+
+    The returned callable is wrapped for reasoning-model compatibility
+    (Qwen3 ``/no_think``, think-tag stripping).
+    """
+    from skill_agents._llm_compat import wrap_ask_for_reasoning_models
+
     try:
         from skill_agents.lora import MultiLoraSkillBankLLM, SkillFunction
         llm = MultiLoraSkillBankLLM.get_shared_instance()
         if llm is not None:
-            return llm.as_ask_fn(SkillFunction.RETRIEVAL)
+            return wrap_ask_for_reasoning_models(
+                llm.as_ask_fn(SkillFunction.RETRIEVAL),
+            )
     except Exception:
         pass
     return None

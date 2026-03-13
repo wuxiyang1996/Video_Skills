@@ -195,13 +195,17 @@ class LLMSignalExtractor(SignalExtractorBase):
         self._reward_spike_std = reward_spike_std
 
     def _get_ask_model(self) -> Callable:
+        from skill_agents._llm_compat import wrap_ask_for_reasoning_models
+
         if self._ask_model_fn is not None:
-            return self._ask_model_fn
+            return wrap_ask_for_reasoning_models(
+                self._ask_model_fn, model_hint=self._model,
+            )
         lora_fn = _make_boundary_ask_fn()
         if lora_fn is not None:
-            return lora_fn
+            return wrap_ask_for_reasoning_models(lora_fn, model_hint=self._model)
         from API_func import ask_model
-        return ask_model
+        return wrap_ask_for_reasoning_models(ask_model, model_hint=self._model)
 
     def _state_to_text(self, state: Any) -> str:
         """Convert a state (str, dict, or other) to a concise text repr."""

@@ -48,11 +48,16 @@ logger = logging.getLogger(__name__)
 
 
 def _get_ask_model(config: LLMJudgeConfig) -> Callable:
-    """Return the LLM call function, preferring user-supplied, then API_func."""
+    """Return the LLM call function, preferring user-supplied, then API_func.
+
+    Wrapped for reasoning-model compatibility (Qwen3 /no_think, think-tag stripping).
+    """
+    from skill_agents._llm_compat import wrap_ask_for_reasoning_models
+
     if config.ask_model_fn is not None:
-        return config.ask_model_fn
+        return wrap_ask_for_reasoning_models(config.ask_model_fn)
     from API_func import ask_model
-    return ask_model
+    return wrap_ask_for_reasoning_models(ask_model)
 
 
 def _call_llm(prompt: str, config: LLMJudgeConfig) -> str:

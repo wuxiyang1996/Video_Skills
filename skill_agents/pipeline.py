@@ -568,23 +568,29 @@ class SkillBankAgent:
         """Use ask_model (model-agnostic) to generate a structured protocol.
 
         Works identically for GPT and Qwen because ask_model routes to the
-        correct backend based on the model name.
+        correct backend based on the model name.  Reasoning models (Qwen3)
+        are handled transparently via ``wrap_ask_for_reasoning_models``.
         """
         try:
-            from API_func import ask_model as _ask
+            from API_func import ask_model as _raw_ask
         except ImportError:
             return None
-        if _ask is None or model is None:
+        if _raw_ask is None or model is None:
             return None
 
+        from skill_agents._llm_compat import wrap_ask_for_reasoning_models
         from skill_agents.stage3_mvp.schemas import Protocol
         import json as _json
 
+        _ask = wrap_ask_for_reasoning_models(_raw_ask, model_hint=model)
+
         evidence = "\n".join(f"  - {s}" for s in summaries[:5]) if summaries else "(none)"
+        skill_name = skill.name or skill.skill_id
 
         prompt = (
-            f"You are a game-agent skill designer.\n"
-            f"Skill: {skill.name or skill.skill_id}\n"
+            f"You are a game-AI protocol designer. Generate a concrete execution "
+            f"protocol for the skill below.\n\n"
+            f"Skill: {skill_name}\n"
             f"Description: {skill.strategic_description or '(none)'}\n"
             f"Effects: {effects_desc or '(none)'}\n"
             f"Evidence from successful executions:\n{evidence}\n\n"
@@ -592,23 +598,18 @@ class SkillBankAgent:
             f'{{"preconditions": ["..."], "steps": ["..."], '
             f'"success_criteria": ["..."], "abort_criteria": ["..."]}}\n'
             f"Rules:\n"
-            f"- preconditions: 1-3 conditions that must hold before starting\n"
-            f"- steps: 2-5 concrete action steps (imperative, specific)\n"
-            f"- success_criteria: 1-3 conditions indicating completion\n"
-            f"- abort_criteria: 1-2 conditions to stop early\n"
+            f"- preconditions: 1-3 specific conditions (game situation, state) "
+            f"that must hold before starting\n"
+            f"- steps: 2-7 concrete action steps (imperative, game-specific). "
+            f"Do NOT write generic steps like 'Achieve: X' or 'Execute skill'.\n"
+            f"- success_criteria: 1-3 observable conditions proving the skill worked\n"
+            f"- abort_criteria: 1-2 specific conditions to stop early\n"
             f"Reply with ONLY the JSON object."
         )
         try:
-            reply = _ask(prompt, model=model, temperature=0.2, max_tokens=400)
+            reply = _ask(prompt, model=model, temperature=0.2, max_tokens=800)
             if not reply or reply.startswith("Error"):
                 return None
-            # Strip think tags for reasoning models (Qwen3, etc.)
-            try:
-                from decision_agents.agent_helper import strip_think_tags
-                reply = strip_think_tags(reply) or reply
-            except ImportError:
-                pass
-            # Extract JSON from reply
             import re
             json_m = re.search(r"\{[\s\S]*\}", reply)
             if not json_m:
@@ -710,6 +711,27 @@ class SkillBankAgent:
                 ]
             if skill.protocol.abort_criteria:
                 failure_modes.extend(skill.protocol.abort_criteria[:2])
+
+            if not failure_modes and skill.tags:
+                primary_tag = skill.tags[0].upper() if skill.tags else ""
+                _TAG_FAILURE_DEFAULTS = {
+                    "SURVIVE": "Board state deteriorates despite defensive moves",
+                    "DEFEND": "Board state deteriorates despite defensive moves",
+                    "MERGE": "No merge opportunities available on any legal move",
+                    "POSITION": "Structure broken — anchor tile dislodged or ordering disrupted",
+                    "SETUP": "Structure broken — anchor tile dislodged or ordering disrupted",
+                    "CLEAR": "Clearing move creates worse congestion than before",
+                    "ATTACK": "Attack creates vulnerability without achieving objective",
+                    "NAVIGATE": "Path blocked or position unchanged after several moves",
+                    "COLLECT": "Target resource depleted or unreachable",
+                    "BUILD": "Required materials unavailable or placement blocked",
+                }
+                if primary_tag in _TAG_FAILURE_DEFAULTS:
+                    failure_modes.append(_TAG_FAILURE_DEFAULTS[primary_tag])
+                else:
+                    failure_modes.append(
+                        "No progress toward skill objective after several moves"
+                    )
 
             # --- execution description ---
             exec_desc = ""

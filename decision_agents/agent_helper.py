@@ -985,6 +985,79 @@ def skill_bank_to_text(skill_bank: Any) -> str:
     return "\n".join(lines)
 
 
+_KW_TOKENIZE_RE = re.compile(r"[\s=|:,;/\(\)\[\]\{\}\"']+")
+
+
+def _tokenize_for_matching(text: str) -> List[str]:
+    """Split text into lowercase tokens for keyword matching."""
+    return [w for w in _KW_TOKENIZE_RE.split(text.lower()) if len(w) >= 2]
+
+
+def _rank_skills_by_relevance(
+    bank: Any,
+    ids: List[str],
+    query: str,
+    has_get_skill: bool,
+) -> Optional[str]:
+    """Score each skill against *query* using TF-IDF-style keyword overlap.
+
+    Builds a document per skill from its name, description, tags, and
+    preconditions, then computes an IDF-weighted overlap score against the
+    query tokens.  Returns the best skill_id, or ``ids[0]`` only when all
+    scores are zero (should not happen for a well-populated bank).
+    """
+    import math
+
+    query_tokens = _tokenize_for_matching(query)
+    if not query_tokens:
+        return ids[0] if ids else None
+
+    skill_docs: List[List[str]] = []
+    for sid in ids:
+        parts = [sid]
+        if has_get_skill:
+            skill_obj = bank.get_skill(sid)
+            if skill_obj:
+                if skill_obj.name:
+                    parts.append(skill_obj.name)
+                if skill_obj.strategic_description:
+                    parts.append(skill_obj.strategic_description)
+                if getattr(skill_obj, "tags", None):
+                    parts.extend(skill_obj.tags)
+                proto = skill_obj.protocol
+                if proto:
+                    if proto.preconditions:
+                        parts.extend(proto.preconditions[:3])
+                    if proto.success_criteria:
+                        parts.extend(proto.success_criteria[:2])
+        skill_docs.append(_tokenize_for_matching(" ".join(parts)))
+
+    n_docs = len(skill_docs)
+    df: Dict[str, int] = {}
+    for doc in skill_docs:
+        for tok in set(doc):
+            df[tok] = df.get(tok, 0) + 1
+
+    scores: List[float] = []
+    query_set = set(query_tokens)
+    for doc_tokens in skill_docs:
+        doc_set = set(doc_tokens)
+        overlap = query_set & doc_set
+        if not overlap:
+            scores.append(0.0)
+            continue
+        score = sum(
+            math.log(1 + n_docs / (df.get(tok, 1)))
+            for tok in overlap
+        )
+        scores.append(score)
+
+    best_idx = max(range(len(scores)), key=lambda i: scores[i])
+    if scores[best_idx] > 0:
+        return ids[best_idx]
+    return ids[0] if ids else None
+
+
 def select_skill_from_bank(
     skill_bank: Any,
     key: str,
@@ -1021,76 +1094,75 @@ def select_skill_from_bank(
     if skill_bank is None:
         return empty_result
 
-    # ── Try SkillBankAgent.select_skill() — the richest path ──
-    if hasattr(skill_bank, "select_skill"):
-        results = skill_bank.select_skill(
-            key,
-            current_state=current_state,
-            current_predicates=current_state,
-            top_k=top_k,
-        )
-        if results:
-            best = results[0]
-            protocol = _get_protocol_for_skill(skill_bank, best.get("skill_id"))
-            best["protocol"] = protocol or best.get("protocol", {})
-            best.setdefault("relevant_memory", _query_memory_for_skill(memory, key))
-            return best
+    # ── Try SkillQueryEngine.select() — the richest path (relevance + applicability) ──
+    if hasattr(skill_bank, "select"):
+        try:
+            results = skill_bank.select(
+                key,
+                current_state=current_state,
+                current_predicates=current_state,
+                top_k=top_k,
+            )
+            if results:
+                best = results[0]
+                best_dict = best.to_dict() if hasattr(best, "to_dict") else dict(best)
+                sid = best_dict.get("skill_id")
+                if sid:
+                    protocol = _get_protocol_for_skill(skill_bank, sid)
+                    best_dict["protocol"] = protocol or best_dict.get("protocol", {})
+                    best_dict.setdefault("relevant_memory", _query_memory_for_skill(memory, key))
+                    return best_dict
+        except Exception:
+            pass
 
-    # ── Try SkillBankAgent.query_skill() with state ──
-    if hasattr(skill_bank, "query_skill"):
-        results = skill_bank.query_skill(
-            key,
-            current_state=current_state,
-            current_predicates=current_state,
-            top_k=top_k,
-        )
-        if results:
-            best = results[0]
-            protocol = _get_protocol_for_skill(skill_bank, best.get("skill_id"))
-            result = dict(best)
-            result["protocol"] = protocol or result.get("protocol", {})
-            result.setdefault("relevant_memory", _query_memory_for_skill(memory, key))
-            return result
-
-    # ── Try SkillQueryEngine directly ──
+    # ── Try SkillQueryEngine.query_for_decision_agent() ──
     if hasattr(skill_bank, "query_for_decision_agent"):
-        result = skill_bank.query_for_decision_agent(
-            key,
-            current_state=current_state,
-            current_predicates=current_state,
-            top_k=top_k,
-        )
-        protocol = _get_protocol_for_skill(skill_bank, result.get("skill_id"))
-        result["protocol"] = protocol or result.get("protocol", {})
-        result.setdefault("relevant_memory", _query_memory_for_skill(memory, key))
-        return result
+        try:
+            result = skill_bank.query_for_decision_agent(
+                key,
+                current_state=current_state,
+                current_predicates=current_state,
+                top_k=top_k,
+            )
+            sid = result.get("skill_id")
+            if sid:
+                protocol = _get_protocol_for_skill(skill_bank, sid)
+                result["protocol"] = protocol or result.get("protocol", {})
+                result.setdefault("relevant_memory", _query_memory_for_skill(memory, key))
+                return result
+        except Exception:
+            pass
 
-    # ── Fallback: plain SkillBankMVP — name match ──
+    # ── Try SkillBankAgent.select_skill() ──
+    if hasattr(skill_bank, "select_skill"):
+        try:
+            results = skill_bank.select_skill(
+                key,
+                current_state=current_state,
+                current_predicates=current_state,
+                top_k=top_k,
+            )
+            if results:
+                best = results[0]
+                protocol = _get_protocol_for_skill(skill_bank, best.get("skill_id"))
+                best["protocol"] = protocol or best.get("protocol", {})
+                best.setdefault("relevant_memory", _query_memory_for_skill(memory, key))
+                return best
+        except Exception:
+            pass
+
+    # ── Fallback: plain SkillBankMVP — TF-IDF keyword scoring ──
     bank = getattr(skill_bank, "bank", skill_bank)
     try:
         ids = list(bank.skill_ids)
     except AttributeError:
         return empty_result
 
-    key_lower = key.lower()
-    skill_id = None
+    if not ids:
+        return empty_result
 
     has_get_skill = hasattr(bank, "get_skill")
-    for sid in ids:
-        if sid.lower() in key_lower or key_lower in sid.lower():
-            skill_id = sid
-            break
-        if has_get_skill:
-            skill_obj = bank.get_skill(sid)
-            if skill_obj:
-                desc = (skill_obj.strategic_description or "").lower()
-                name = (skill_obj.name or "").lower()
-                if key_lower in desc or key_lower in name:
-                    skill_id = sid
-                    break
-
-    if skill_id is None and ids:
-        skill_id = ids[0]
+    skill_id = _rank_skills_by_relevance(bank, ids, key, has_get_skill)
 
     if not skill_id:
         return empty_result
@@ -1119,7 +1191,7 @@ def select_skill_from_bank(
     return {
         "skill_id": skill_id,
         "skill_name": skill_name,
-        "why_selected": f"best match for '{key}'",
+        "why_selected": f"keyword-scored match for state",
         "protocol": protocol,
         "micro_plan": steps,
         "execution_hint": execution_hint,
