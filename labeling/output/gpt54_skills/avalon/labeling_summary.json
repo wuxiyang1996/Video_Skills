@@ -1,8 +1,0 @@
-{
-  "game": "avalon",
-  "model": "gpt-5.4",
-  "timestamp": "2026-03-12T10:43:00.204631",
-  "episodes_labeled": 1,
-  "skills_extracted": 4,
-  "elapsed_seconds": 35.22623014450073
-}

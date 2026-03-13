@@ -1,8 +1,0 @@
-{
-  "game": "super_mario",
-  "model": "gpt-5.4",
-  "timestamp": "2026-03-12T10:56:45.471840",
-  "episodes_labeled": 1,
-  "skills_extracted": 5,
-  "elapsed_seconds": 51.78710722923279
-}

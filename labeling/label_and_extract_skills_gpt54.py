@@ -130,8 +130,10 @@ except ImportError:
 # ---------------------------------------------------------------------------
 from skill_agents.pipeline import SkillBankAgent, PipelineConfig
 from skill_agents.stage3_mvp.schemas import (
+    ExecutionHint,
     SegmentRecord,
     SkillEffectsContract,
+    SubEpisodeRef,
 )
 from data_structure.experience import SubTask_Experience
 
@@ -540,6 +542,138 @@ def _generate_skill_name(
     return name, rag_summary
 
 
+def _generate_skill_protocol(
+    skill_id: str,
+    name: str,
+    description: str,
+    contract: SkillEffectsContract,
+    game_name: str,
+    sample_intentions: List[str],
+    sample_states: List[str],
+    model: str = MODEL_GPT54,
+) -> Dict[str, Any]:
+    """Ask GPT-5.4 to generate actionable protocol fields for a skill.
+
+    Returns a dict with preconditions, steps, success_criteria, abort_criteria.
+    """
+    eff_add_str = ", ".join(sorted(contract.eff_add)[:6]) if contract.eff_add else "none"
+    eff_del_str = ", ".join(sorted(contract.eff_del)[:6]) if contract.eff_del else "none"
+    eff_event_str = ", ".join(sorted(contract.eff_event)[:5]) if contract.eff_event else "none"
+    intentions_str = " | ".join(sample_intentions[:4]) if sample_intentions else "n/a"
+    states_str = " // ".join(s[:100] for s in sample_states[:3]) if sample_states else "n/a"
+
+    prompt = (
+        f"Game: {game_name}\n"
+        f"Skill: {name} ({skill_id})\n"
+        f"Description: {description}\n"
+        f"Effects added: {eff_add_str}\n"
+        f"Effects removed: {eff_del_str}\n"
+        f"Events: {eff_event_str}\n"
+        f"Sample intentions: {intentions_str}\n"
+        f"Sample states: {states_str}\n\n"
+        f"Generate an actionable protocol for a decision agent to follow when executing this skill.\n"
+        f"Reply in this EXACT format (one item per line within each section):\n"
+        f"PRECONDITIONS:\n- <when this skill should be invoked>\n"
+        f"STEPS:\n- <step 1>\n- <step 2>\n- ...\n"
+        f"SUCCESS_CRITERIA:\n- <how to know the skill succeeded>\n"
+        f"ABORT_CRITERIA:\n- <when to abandon this skill>\n"
+    )
+
+    result = _ask_gpt54(prompt, model=model, max_tokens=500, temperature=0.3)
+
+    preconditions: List[str] = []
+    steps: List[str] = []
+    success_criteria: List[str] = []
+    abort_criteria: List[str] = []
+
+    if result:
+        current_section = None
+        for line in result.split("\n"):
+            line = line.strip()
+            upper = line.upper().rstrip(":")
+            if upper in ("PRECONDITIONS", "PRECONDITION"):
+                current_section = "preconditions"
+                continue
+            elif upper in ("STEPS", "STEP"):
+                current_section = "steps"
+                continue
+            elif upper in ("SUCCESS_CRITERIA", "SUCCESS CRITERIA", "SUCCESS"):
+                current_section = "success_criteria"
+                continue
+            elif upper in ("ABORT_CRITERIA", "ABORT CRITERIA", "ABORT"):
+                current_section = "abort_criteria"
+                continue
+
+            if line.startswith("- "):
+                line = line[2:].strip()
+            elif line.startswith("* "):
+                line = line[2:].strip()
+            elif line and line[0].isdigit() and ". " in line[:4]:
+                line = line.split(". ", 1)[1].strip()
+
+            if not line:
+                continue
+
+            if current_section == "preconditions" and len(preconditions) < 3:
+                preconditions.append(line)
+            elif current_section == "steps" and len(steps) < 7:
+                steps.append(line)
+            elif current_section == "success_criteria" and len(success_criteria) < 3:
+                success_criteria.append(line)
+            elif current_section == "abort_criteria" and len(abort_criteria) < 3:
+                abort_criteria.append(line)
+
+    def _trim_incomplete(items: List[str]) -> List[str]:
+        """Drop last item if it looks cut off mid-sentence (no sentence-ending punctuation)."""
+        if not items:
+            return items
+        last = items[-1].rstrip()
+        if last and last[-1] not in ".!?)]\u2019\u201d":
+            cut = last.rfind(".")
+            if cut > 20:
+                items[-1] = last[:cut + 1]
+            elif len(items) > 1:
+                items = items[:-1]
+        return items
+
+    steps = _trim_incomplete(steps)
+    preconditions = _trim_incomplete(preconditions)
+    success_criteria = _trim_incomplete(success_criteria)
+
+    if not steps:
+        if contract.eff_add:
+            for lit in sorted(contract.eff_add)[:4]:
+                steps.append(f"Achieve: {lit}")
+        if contract.eff_event:
+            for lit in sorted(contract.eff_event)[:2]:
+                steps.append(f"Trigger: {lit}")
+        if not steps:
+            steps = [f"Execute {name} actions as needed"]
+
+    if not preconditions and sample_intentions:
+        tag_match = _TAG_RE.match(sample_intentions[0].strip())
+        if tag_match:
+            preconditions = [f"Situation calls for [{tag_match.group(1).upper()}] action"]
+
+    if not success_criteria:
+        if contract.eff_add:
+            success_criteria = [f"{lit} is achieved" for lit in sorted(contract.eff_add)[:2]]
+        elif contract.eff_event:
+            success_criteria = [f"{ev} observed" for ev in sorted(contract.eff_event)[:2]]
+        else:
+            success_criteria = [f"{name} completed successfully"]
+
+    if not abort_criteria:
+        abort_criteria = ["No progress after expected duration"]
+
+    return {
+        "preconditions": preconditions,
+        "steps": steps,
+        "success_criteria": success_criteria,
+        "abort_criteria": abort_criteria,
+    }
+
+
 def _generate_skill_description(
     skill_id: str,
     name: str,
@@ -560,10 +694,13 @@ def _generate_skill_description(
         f"Be concrete and specific to the game. Max 40 words.\nDescription:"
     )
 
-    result = _ask_gpt54(prompt, model=model, max_tokens=60, temperature=0.3)
+    result = _ask_gpt54(prompt, model=model, max_tokens=120, temperature=0.3)
     if result:
         desc = result.split("\n")[0].strip().strip('"').strip("'")
-        return desc[:200]
+        if len(desc) > 200:
+            cut = desc[:200].rfind(".")
+            desc = desc[:cut + 1] if cut > 80 else desc[:200]
+        return desc
     return f"Skill '{name}' in {game_name}: applies {eff_str[:80]}."
 
 
@@ -645,6 +782,147 @@ def _build_sub_episodes_from_tags(
         )
         sub_episodes.append(sub_ep)
     return sub_episodes
+
+
+def _link_sub_episodes_to_skills(
+    agent: SkillBankAgent,
+    all_sub_episodes: List[SubTask_Experience],
+    verbose: bool = False,
+) -> int:
+    """Create SubEpisodeRef pointers on each Skill from SubTask_Experience objects."""
+    linked = 0
+    skill_refs: Dict[str, List[SubEpisodeRef]] = defaultdict(list)
+
+    for se in all_sub_episodes:
+        skill_id = se.sub_task
+        if not skill_id:
+            continue
+
+        cum_reward = sum(
+            getattr(e, "reward", 0.0) or 0.0
+            for e in (se.sub_task_experience or [])
+        )
+        n_steps = len(se.sub_task_experience) if se.sub_task_experience else 0
+        outcome_exps = se.outcome_experiences if hasattr(se, "outcome_experiences") else None
+        oc_class = getattr(se, "outcome_classification", None)
+        outcome = "partial"
+        if oc_class == "success":
+            outcome = "success"
+        elif oc_class == "failure":
+            outcome = "failure"
+        elif outcome_exps:
+            outcome_reward = sum(getattr(e, "reward", 0.0) or 0.0 for e in outcome_exps)
+            if outcome_reward > 0:
+                outcome = "success"
+        if outcome == "partial" and cum_reward > 0:
+            outcome = "success"
+
+        intent_tags = []
+        for e in (se.sub_task_experience or []):
+            intent = getattr(e, "intentions", "") or ""
+            m = _TAG_RE.match(intent.strip())
+            if m:
+                intent_tags.append(m.group(1).upper())
+
+        summary_parts = []
+        if se.sub_task_experience:
+            first_s = getattr(se.sub_task_experience[0], "summary", "") or ""
+            if first_s:
+                summary_parts.append(first_s[:80])
+        if not summary_parts:
+            summary_parts.append(f"{skill_id}: {n_steps} steps")
+
+        ref = SubEpisodeRef(
+            episode_id=se.episode_id if hasattr(se, "episode_id") else "",
+            seg_start=se.sub_task_experience[0].idx if se.sub_task_experience and hasattr(se.sub_task_experience[0], "idx") and se.sub_task_experience[0].idx is not None else 0,
+            seg_end=(se.sub_task_experience[-1].idx or 0) + 1 if se.sub_task_experience and hasattr(se.sub_task_experience[-1], "idx") and se.sub_task_experience[-1].idx is not None else n_steps,
+            rollout_source=se.seg_id if hasattr(se, "seg_id") else "",
+            summary=summary_parts[0],
+            intention_tags=intent_tags[:10],
+            outcome=outcome,
+            cumulative_reward=cum_reward,
+            quality_score=se.quality_score if hasattr(se, "quality_score") and se.quality_score else 0.0,
+        )
+        skill_refs[skill_id].append(ref)
+
+    for sid, refs in skill_refs.items():
+        skill = agent.bank.get_skill(sid)
+        if skill is None:
+            continue
+        skill.sub_episodes = refs
+        skill.n_instances = max(skill.n_instances, len(refs))
+        agent.bank.add_or_update_skill(skill)
+        linked += len(refs)
+
+    if verbose:
+        print(f"    Linked {linked} sub-episode ref(s) across {len(skill_refs)} skill(s)")
+    return linked
+
+
+def _populate_execution_hints(
+    agent: SkillBankAgent,
+    skill_catalog: Dict[str, Dict[str, Any]],
+    model: str = MODEL_GPT54,
+    verbose: bool = False,
+) -> int:
+    """Generate ExecutionHint for skills that lack one."""
+    updated = 0
+    bank = agent.bank
+
+    for sid in list(bank.skill_ids):
+        skill = bank.get_skill(sid)
+        if skill is None or skill.retired:
+            continue
+        if skill.execution_hint is not None:
+            continue
+
+        cat_entry = skill_catalog.get(sid, {})
+        name = skill.name or cat_entry.get("name", sid)
+        desc = skill.strategic_description or cat_entry.get("description", "")
+        tag = (cat_entry.get("tag", "") or "").upper()
+
+        preconditions = skill.protocol.preconditions[:2] if skill.protocol.preconditions else []
+        success_crit = skill.protocol.success_criteria[:2] if skill.protocol.success_criteria else []
+
+        termination_cues = list(success_crit) if success_crit else []
+        if not termination_cues and skill.contract and skill.contract.eff_add:
+            termination_cues = [f"{lit} achieved" for lit in sorted(skill.contract.eff_add)[:2]]
+        if not termination_cues and skill.contract and skill.contract.eff_event:
+            termination_cues = [f"{ev} observed" for ev in sorted(skill.contract.eff_event)[:2]]
+        if not termination_cues:
+            termination_cues = [f"{name} objective met"]
+
+        failure_modes = []
+        if tag in ("SURVIVE", "DEFEND"):
+            failure_modes.append("Board state deteriorates despite defensive moves")
+        elif tag == "MERGE":
+            failure_modes.append("No merge opportunities available on any legal move")
+        elif tag in ("POSITION", "SETUP"):
+            failure_modes.append("Structure broken — anchor tile dislodged or ordering disrupted")
+        elif tag == "CLEAR":
+            failure_modes.append("Clearing move creates worse congestion than before")
+        if not failure_modes:
+            failure_modes.append("No progress toward skill objective after several moves")
+
+        n_refs = len(skill.sub_episodes) if skill.sub_episodes else 0
+
+        hint = ExecutionHint(
+            common_preconditions=preconditions,
+            common_target_objects=[],
+            state_transition_pattern=f"[{tag}] {desc[:80]}" if tag else desc[:80],
+            termination_cues=termination_cues,
+            common_failure_modes=failure_modes,
+            execution_description=desc[:150],
+            n_source_segments=n_refs,
+        )
+
+        skill.execution_hint = hint
+        bank.add_or_update_skill(skill)
+        updated += 1
+
+    if verbose and updated > 0:
+        print(f"    Generated {updated} execution hint(s)")
+    return updated
 
 
 def _intention_based_segmentation(
@@ -783,10 +1061,9 @@ def _intention_based_segmentation(
                 if cnt / n_pred_segs >= min_freq:
                     real_eff_del.add(k)
 
-        has_real_effects = bool(real_eff_add or real_eff_del or agg_event)
         contract = SkillEffectsContract(
             skill_id=skill_id,
-            eff_add=real_eff_add if has_real_effects else {f"{tag.lower()}_completed"},
+            eff_add=real_eff_add if real_eff_add else {f"{tag.lower()}_completed"},
             eff_del=real_eff_del,
             eff_event=agg_event if agg_event else {f"tag_{tag.lower()}"},
             n_instances=len(segs),
@@ -836,6 +1113,102 @@ def _intention_based_segmentation(
             print(f"    Built {len(sub_episodes)} SubTask_Experience objects from tag segments")
 
     return tag_segments, skill_catalog, sub_episodes
+
+
+def _populate_skill_protocols(
+    agent: SkillBankAgent,
+    skill_catalog: Dict[str, Dict[str, Any]],
+    episodes_data: List[Dict[str, Any]],
+    game_name: str,
+    model: str = MODEL_GPT54,
+    verbose: bool = False,
+) -> int:
+    """Fill empty protocols on skills in the bank using GPT-5.4.
+
+    Iterates all skills, generates a protocol for any skill whose protocol
+    has no steps, and updates the bank in-place.  Returns the count of
+    protocols generated.
+    """
+    from skill_agents.stage3_mvp.schemas import Protocol
+
+    updated = 0
+    bank = agent.bank
+
+    for sid in list(bank.skill_ids):
+        skill = bank.get_skill(sid)
+        if skill is None or skill.retired:
+            continue
+        if skill.protocol.steps:
+            continue
+
+        contract = skill.contract
+        if contract is None:
+            continue
+
+        cat_entry = skill_catalog.get(sid, {})
+        description = skill.strategic_description or cat_entry.get("description", "")
+        name = skill.name or cat_entry.get("name", sid)
+
+        sample_intentions: List[str] = []
+        sample_states: List[str] = []
+
+        target_tag = cat_entry.get("tag", "").upper()
+        for ep_data in episodes_data:
+            for exp in ep_data.get("experiences", []):
+                sk = exp.get("skills")
+                if sk and isinstance(sk, dict) and sk.get("skill_id") == sid:
+                    intent = exp.get("intentions", "")
+                    if intent and len(sample_intentions) < 5:
+                        sample_intentions.append(intent)
+                    ss = exp.get("summary_state", "")
+                    if ss and len(sample_states) < 5:
+                        sample_states.append(str(ss)[:150])
+
+        if not sample_intentions and target_tag:
+            for ep_data in episodes_data:
+                for exp in ep_data.get("experiences", []):
+                    intent = exp.get("intentions", "")
+                    if not intent:
+                        continue
+                    m = _TAG_RE.match(intent.strip())
+                    exp_tag = m.group(1).upper() if m else ""
+                    if exp_tag == target_tag or _TAG_ALIASES.get(exp_tag) == target_tag:
+                        if len(sample_intentions) < 5:
+                            sample_intentions.append(intent)
+                        ss = exp.get("summary_state", "")
+                        if ss and len(sample_states) < 5:
+                            sample_states.append(str(ss)[:150])
+
+        if not sample_intentions:
+            tag = target_tag or "EXECUTE"
+            sample_intentions = [f"[{tag}] {description[:60]}"]
+
+        proto_dict = _generate_skill_protocol(
+            sid, name, description, contract, game_name,
+            sample_intentions, sample_states, model=model,
+        )
+
+        total_steps = cat_entry.get("total_steps", 0)
+        n_inst = cat_entry.get("n_instances", contract.n_instances or 1)
+        avg_duration = max(1, total_steps // n_inst) if n_inst and total_steps else 10
+
+        protocol = Protocol(
+            preconditions=proto_dict["preconditions"],
+            steps=proto_dict["steps"],
+            success_criteria=proto_dict["success_criteria"],
+            abort_criteria=proto_dict["abort_criteria"],
+            expected_duration=avg_duration,
+        )
+
+        skill.protocol = protocol
+        bank.add_or_update_skill(skill)
+        updated += 1
+
+        if verbose:
+            print(f"      Protocol for {sid}: {len(protocol.steps)} steps, "
+                  f"{len(protocol.preconditions)} preconditions")
+
+    return updated
 
 
 def extract_skills_for_game(
@@ -989,6 +1362,13 @@ def extract_skills_for_game(
                 n_instances=entry.get("n_instances", 0),
             )
             agent.bank.add_or_update(contract)
+            skill = agent.bank.get_skill(sid)
+            if skill is not None:
+                tag = entry.get("tag", "")
+                if tag:
+                    skill.tags = [tag]
+                    skill.expected_tag_pattern = [tag]
+                agent.bank.add_or_update_skill(skill)
     else:
         # Use pipeline results — generate names/summaries for extracted skills
         for sid in agent.skill_ids:
@@ -1088,6 +1468,47 @@ def extract_skills_for_game(
             all_sub_episodes = reseg_sub_episodes
             agent = reseg_agent
             print(f"    Re-segmentation produced {len(reseg_sub_episodes)} sub-episodes, {len(reseg_agent.skill_ids)} skills")
+
+    # ── Generate protocols for skills with empty protocols ──
+    if len(agent.skill_ids) > 0:
+        print(f"    Generating protocols for skills with empty protocols ...")
+        try:
+            n_protos = _populate_skill_protocols(
+                agent, skill_catalog, episodes_data, game_name,
+                model=model, verbose=verbose,
+            )
+            if n_protos > 0:
+                print(f"    Generated {n_protos} protocol(s)")
+            else:
+                print(f"    All skills already have protocols")
+        except Exception as exc:
+            print(f"    [WARN] Protocol generation failed: {exc}")
+            if verbose:
+                traceback.print_exc()
+
+    # ── Link sub-episodes to skills in the bank ──
+    if all_sub_episodes and len(agent.skill_ids) > 0:
+        try:
+            n_linked = _link_sub_episodes_to_skills(agent, all_sub_episodes, verbose=verbose)
+            if n_linked > 0:
+                print(f"    Linked {n_linked} sub-episode ref(s) to skills")
+        except Exception as exc:
+            print(f"    [WARN] Sub-episode linking failed: {exc}")
+            if verbose:
+                traceback.print_exc()
+
+    # ── Generate execution hints for skills ──
+    if len(agent.skill_ids) > 0:
+        try:
+            n_hints = _populate_execution_hints(
+                agent, skill_catalog, model=model, verbose=verbose,
+            )
+            if n_hints > 0:
+                print(f"    Generated {n_hints} execution hint(s)")
+        except Exception as exc:
+            print(f"    [WARN] Execution hint generation failed: {exc}")
+            if verbose:
+                traceback.print_exc()
 
     # Save bank
     try:

@@ -2,6 +2,8 @@
 
 VLM decision-making agent that plays video games step-by-step using a **two-turn micro-loop**: `take_action` → `reward` per timestep. Supports **skill-bank retrieval** (protocol-driven plans), **episodic memory**, **intention inference**, and **composite reward shaping**.
 
+**Model-agnostic design:** The same code path is used for GPT, Qwen, and other backends. Pass `model="gpt-4o-mini"`, `model="Qwen/Qwen3-14B"`, or any supported name; `API_func.ask_model` routes to the correct API. Skill bank loading and querying (`load_skill_bank`, `select_skill_from_bank`, `skill_bank_to_text`) are identical for all models — both `scripts/run_inference.py` and `scripts/run_qwen3_14b_eval.py` use these same functions, with only the LLM backend differing. The default model when none is provided is `VLMDecisionAgent.DEFAULT_MODEL` (and `DEFAULT_LLM_MODEL` in helpers); callers (inference and training) should pass an explicit `model` for the intended backend.
+
 ## Files
 
 | File | What it does |
@@ -24,7 +26,7 @@ from decision_agents import VLMDecisionAgent, run_episode_vlm_agent, RewardConfi
 # Wrap your env (must have reset() → (obs, info) and step(action) → (obs, r, term, trunc, info))
 episode = run_episode_vlm_agent(
     env,
-    model="gpt-4o-mini",       # or "gpt-4o", "claude-...", "gemini-..."
+    model="gpt-4o-mini",       # or "Qwen/Qwen3-14B", "claude-...", "gemini-..."
     task="Complete level 1",
     max_steps=200,
     verbose=True,
@@ -81,7 +83,7 @@ reward_cfg = RewardConfig(
 )
 
 agent = VLMDecisionAgent(
-    model="gpt-4o-mini",
+    model="gpt-4o-mini",       # or "Qwen/Qwen3-14B" for vLLM backend
     skill_bank=bank,
     memory=memory,
     reward_config=reward_cfg,
@@ -106,7 +108,7 @@ If you need finer control, drive the agent one step at a time:
 ```python
 from decision_agents import VLMDecisionAgent
 
-agent = VLMDecisionAgent(model="gpt-4o-mini")
+agent = VLMDecisionAgent(model="gpt-4o-mini")  # or any supported model name
 obs, info = env.reset()
 
 last_tool_name = None
@@ -210,6 +212,7 @@ the `run_tool(TOOL_GET_STATE_SUMMARY, ...)` call site automatically consumes.
 
 | Constant | Value | Meaning |
 |----------|-------|---------|
+| `DEFAULT_LLM_MODEL` | `"gpt-4o-mini"` | Fallback when no `model` is passed to `get_state_summary` / `infer_intention`; callers should pass an explicit model for the intended backend. |
 | `DEFAULT_SUMMARY_CHAR_BUDGET` | 400 | Default budget for all summaries |
 | `HARD_SUMMARY_CHAR_LIMIT` | 400 | Absolute upper bound; never exceeded |
 
@@ -388,7 +391,7 @@ from decision_agents import language_agent_action
 action = language_agent_action(
     state_nl=observation_text,
     game="overcooked",          # or None for auto-detect
-    model="gpt-4o-mini",
+    model="gpt-4o-mini",        # or "Qwen/Qwen3-14B", etc.
 )
 # Returns: "north", "interact", etc.
 ```

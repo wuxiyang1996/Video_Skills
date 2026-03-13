@@ -88,12 +88,24 @@ from decision_agents.dummy_agent import (
     _parse_valid_actions_from_state,
     GAME_GAMINGAGENT,
 )
+from decision_agents.agent_helper import (
+    select_skill_from_bank,
+    skill_bank_to_text,
+)
 
 try:
     from API_func import ask_model, ask_vllm
 except ImportError:
     ask_model = None
     ask_vllm = None
+
+# Skill bank loading — reuse the same function as run_inference.py
+from skill_agents.skill_bank.bank import SkillBankMVP
+
+try:
+    from skill_agents.query import SkillQueryEngine
+except ImportError:
+    SkillQueryEngine = None
 
 # --- Additional environment wrappers (Avalon, Diplomacy, Orak, Sokoban) ---
 try:
@@ -176,6 +188,121 @@ ORAK_EVAL_INFO: Dict[str, Dict[str, Any]] = {
         "display_name": "Pokemon Red (Orak)",
     },
 }
+
+def load_skill_bank(
+    bank_path: str,
+    *,
+    use_query_engine: bool = True,
+) -> Tuple[Any, Any]:
+    """Load a SkillBankMVP from a JSONL file or directory.
+
+    Same logic as scripts/run_inference.py — ensures GPT and Qwen paths
+    load and query the skill bank identically.
+    """
+    bp = Path(bank_path)
+    if bp.is_dir():
+        candidates = ["bank.jsonl", "skill_bank.jsonl"]
+        jsonl = None
+        for c in candidates:
+            if (bp / c).exists():
+                jsonl = bp / c
+                break
+        if jsonl is None:
+            jsonls = sorted(bp.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
+            jsonl = jsonls[0] if jsonls else None
+        if jsonl is None:
+            print(f"[load_skill_bank] WARNING: no .jsonl found in {bp}, using empty bank.")
+            return None, None
+        bp = jsonl
+
+    bank = SkillBankMVP(path=str(bp))
+    bank.load()
+    print(f"[load_skill_bank] Loaded {len(bank)} skills from {bp}")
+
+    engine = None
+    if use_query_engine and SkillQueryEngine is not None and len(bank) > 0:
+        try:
+            engine = SkillQueryEngine(bank)
+            print(f"[load_skill_bank] SkillQueryEngine initialised")
+        except Exception as exc:
+            print(f"[load_skill_bank] SkillQueryEngine init failed: {exc}")
+    return bank, engine
+
+
+def get_skill_guidance(
+    skill_bank: Any,
+    state_text: str,
+    game_name: str = "",
+) -> Optional[Dict[str, Any]]:
+    """Query the skill bank for guidance, using the same select_skill_from_bank
+    function as VLMDecisionAgent.
+
+    Returns the guidance dict (with protocol, micro_plan, etc.) or None.
+    """
+    if skill_bank is None:
+        return None
+    key = state_text[:500]
+    try:
+        result = select_skill_from_bank(skill_bank, key, top_k=1)
+        if result and result.get("skill_id"):
+            # Enrich with skill name / description if missing (SkillQueryEngine
+            # returns a minimal dict; ensure both paths produce identical fields)
+            if not result.get("skill_name"):
+                underlying = (
+                    getattr(skill_bank, "_bank", None)
+                    or getattr(skill_bank, "bank", None)
+                    or skill_bank
+                )
+                if hasattr(underlying, "get_skill"):
+                    skill_obj = underlying.get_skill(result["skill_id"])
+                    if skill_obj:
+                        result["skill_name"] = skill_obj.name or result["skill_id"]
+                        if not result.get("execution_hint"):
+                            result["execution_hint"] = skill_obj.strategic_description or ""
+            return result
+    except Exception:
+        pass
+    return None
+
+
+def format_skill_guidance_for_prompt(guidance: Optional[Dict[str, Any]]) -> str:
+    """Format skill guidance as text to inject into LLM prompts.
+
+    Produces the same information that VLMDecisionAgent._format_active_skill()
+    exposes, so both GPT and Qwen see identical skill context.
+    """
+    if guidance is None or not guidance.get("skill_id"):
+        return ""
+
+    parts = [f"\n--- Active Skill: {guidance.get('skill_name', guidance['skill_id'])} ---"]
+    if guidance.get("execution_hint"):
+        parts.append(f"  Strategy: {guidance['execution_hint'][:120]}")
+
+    protocol = guidance.get("protocol", {})
+    steps = protocol.get("steps", []) if isinstance(protocol, dict) else []
+    if steps:
+        parts.append(f"  Plan ({len(steps)} steps):")
+        for i, step in enumerate(steps[:5], 1):
+            parts.append(f"    {i}. {step}")
+
+    preconditions = protocol.get("preconditions", []) if isinstance(protocol, dict) else []
+    if preconditions:
+        parts.append(f"  When: {'; '.join(preconditions[:2])}")
+
+    success = protocol.get("success_criteria", []) if isinstance(protocol, dict) else []
+    if success:
+        parts.append(f"  Done when: {'; '.join(success[:2])}")
+
+    abort = protocol.get("abort_criteria", []) if isinstance(protocol, dict) else []
+    if abort:
+        parts.append(f"  Abort if: {'; '.join(abort[:2])}")
+
+    if guidance.get("failure_modes"):
+        parts.append(f"  Watch for: {'; '.join(guidance['failure_modes'][:2])}")
+
+    parts.append("--- end skill ---\n")
+    return "\n".join(parts)
+
 
 QWEN_SYSTEM_PROMPT = (
     "You are an expert game-playing agent powered by Qwen3-14B.\n"
@@ -308,6 +435,7 @@ def qwen3_agent_action(
     action_names: List[str],
     model: str = DEFAULT_MODEL,
     temperature: float = 0.3,
+    skill_guidance: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Optional[str]]:
     """Query Qwen3-14B via vLLM. Returns (action, reasoning)."""
     if ask_model is None:
@@ -317,7 +445,8 @@ def qwen3_agent_action(
         state=state_nl,
         actions=", ".join(action_names),
     )
-    prompt = QWEN_SYSTEM_PROMPT + "\n" + user_content
+    skill_text = format_skill_guidance_for_prompt(skill_guidance)
+    prompt = QWEN_SYSTEM_PROMPT + skill_text + "\n" + user_content
 
     try:
         reply = ask_model(prompt, model=model, temperature=temperature, max_tokens=1024)
@@ -337,12 +466,14 @@ def qwen3_avalon_action(
     state_nl: str,
     model: str = DEFAULT_MODEL,
     temperature: float = 0.3,
+    skill_guidance: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Optional[str]]:
     """Query Qwen3-14B for one Avalon player. Returns (action_str, reasoning)."""
     if ask_model is None:
         return "wait", None
 
-    prompt = QWEN_AVALON_SYSTEM + "\n\n" + QWEN_AVALON_USER.format(state=state_nl)
+    skill_text = format_skill_guidance_for_prompt(skill_guidance)
+    prompt = QWEN_AVALON_SYSTEM + skill_text + "\n\n" + QWEN_AVALON_USER.format(state=state_nl)
     try:
         reply = ask_model(prompt, model=model, temperature=temperature, max_tokens=1024)
         if not reply or reply.startswith("Error"):
@@ -384,12 +515,14 @@ def qwen3_diplomacy_action(
     state_nl: str,
     model: str = DEFAULT_MODEL,
     temperature: float = 0.3,
+    skill_guidance: Optional[Dict[str, Any]] = None,
 ) -> Tuple[List[str], Optional[str]]:
     """Query Qwen3-14B for one Diplomacy power. Returns (orders_list, reasoning)."""
     if ask_model is None:
         return [], None
 
-    prompt = QWEN_DIPLOMACY_SYSTEM + "\n\n" + QWEN_DIPLOMACY_USER.format(state=state_nl)
+    skill_text = format_skill_guidance_for_prompt(skill_guidance)
+    prompt = QWEN_DIPLOMACY_SYSTEM + skill_text + "\n\n" + QWEN_DIPLOMACY_USER.format(state=state_nl)
     try:
         reply = ask_model(prompt, model=model, temperature=temperature, max_tokens=1200)
         if not reply or reply.startswith("Error"):
@@ -417,6 +550,7 @@ def qwen3_orak_action(
     action_names: List[str],
     model: str = DEFAULT_MODEL,
     temperature: float = 0.3,
+    skill_guidance: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Optional[str]]:
     """Query Qwen3-14B for one Orak game step. Returns (action, reasoning)."""
     if ask_model is None:
@@ -426,7 +560,8 @@ def qwen3_orak_action(
         state=state_nl,
         actions=", ".join(action_names),
     )
-    prompt = QWEN_ORAK_SYSTEM + "\n" + user_content
+    skill_text = format_skill_guidance_for_prompt(skill_guidance)
+    prompt = QWEN_ORAK_SYSTEM + skill_text + "\n" + user_content
 
     try:
         reply = ask_model(prompt, model=model, temperature=temperature, max_tokens=1024)
@@ -450,6 +585,7 @@ def run_qwen3_episode(
     verbose: bool = False,
     label: bool = True,
     label_model: Optional[str] = None,
+    skill_bank: Any = None,
 ) -> Tuple[Episode, Dict[str, Any]]:
     """Run one episode with Qwen3-14B, calling get_state_summary and
     infer_intention at every step."""
@@ -499,12 +635,16 @@ def run_qwen3_episode(
         if intention:
             current_intention = intention
 
-        # --- Get action from Qwen3-14B ---
+        # --- Skill guidance (same path as VLMDecisionAgent) ---
+        guidance = get_skill_guidance(skill_bank, last_state_summary or obs_nl, game_name=game)
+
+        # --- Get action from LLM ---
         action, reasoning = qwen3_agent_action(
             state_nl=obs_nl,
             action_names=step_actions,
             model=model,
             temperature=temperature,
+            skill_guidance=guidance,
         )
 
         combined_intentions = current_intention
@@ -626,6 +766,7 @@ def run_qwen3_sokoban_episode(
     verbose: bool = False,
     label: bool = True,
     reflect_every: int = 3,
+    skill_bank: Any = None,
 ) -> Tuple[Episode, Dict[str, Any]]:
     """Run one Sokoban episode using the SokobanNLWrapper with domain-specific
     grid prompts, rolling memory, and periodic reflection — all powered by Qwen3."""
@@ -654,10 +795,14 @@ def run_qwen3_sokoban_episode(
         if env.should_reflect() and ask_model is not None:
             env.generate_reflection(ask_model, model)
 
-        # --- Build Sokoban-specific prompt and query Qwen3 ---
+        # --- Skill guidance (same path as VLMDecisionAgent) ---
+        guidance = get_skill_guidance(skill_bank, obs_nl, game_name="sokoban")
+        skill_text = format_skill_guidance_for_prompt(guidance)
+
+        # --- Build Sokoban-specific prompt and query LLM ---
         user_prompt = env.build_user_prompt()
         system_prompt = env.system_prompt
-        full_prompt = system_prompt + "\n\n" + user_prompt
+        full_prompt = system_prompt + skill_text + "\n\n" + user_prompt
 
         action = "up"
         reasoning = None
@@ -824,6 +969,7 @@ def run_qwen3_avalon_episode(
     verbose: bool = False,
     num_players: int = 5,
     seed: int = 42,
+    skill_bank: Any = None,
     **kwargs,
 ) -> Tuple[Episode, Dict[str, Any]]:
     """Run one Avalon episode with all players controlled by Qwen3-14B."""
@@ -847,9 +993,13 @@ def run_qwen3_avalon_episode(
             (pid, obs.get(pid, "")) for pid in active if obs.get(pid, "")
         ]
 
+        # Retrieve skill guidance once per step (shared across players)
+        representative_state = next((s for _, s in players_to_query), "")
+        guidance = get_skill_guidance(skill_bank, representative_state, game_name="avalon")
+
         with ThreadPoolExecutor(max_workers=max(len(players_to_query), 1)) as pool:
             futures = {
-                pool.submit(qwen3_avalon_action, state_nl, model, temperature): pid
+                pool.submit(qwen3_avalon_action, state_nl, model, temperature, guidance): pid
                 for pid, state_nl in players_to_query
             }
             for future in as_completed(futures):
@@ -974,6 +1124,7 @@ def run_qwen3_diplomacy_episode(
     temperature: float = 0.3,
     verbose: bool = False,
     seed: int = 42,
+    skill_bank: Any = None,
     **kwargs,
 ) -> Tuple[Episode, Dict[str, Any]]:
     """Run one Diplomacy episode with all 7 powers controlled by Qwen3-14B."""
@@ -1006,9 +1157,13 @@ def run_qwen3_diplomacy_episode(
             if obs.get(pname) and pname in active_powers
         ]
 
+        # Retrieve skill guidance once per phase (shared across powers)
+        representative_state = next((s for _, s in powers_to_query), "")
+        guidance = get_skill_guidance(skill_bank, representative_state, game_name="diplomacy")
+
         with ThreadPoolExecutor(max_workers=max(len(powers_to_query), 1)) as pool:
             futures = {
-                pool.submit(qwen3_diplomacy_action, state_nl, model, temperature): pname
+                pool.submit(qwen3_diplomacy_action, state_nl, model, temperature, guidance): pname
                 for pname, state_nl in powers_to_query
             }
             for future in as_completed(futures):
@@ -1186,6 +1341,7 @@ def run_qwen3_orak_episode(
     model: str = DEFAULT_MODEL,
     temperature: float = 0.3,
     verbose: bool = False,
+    skill_bank: Any = None,
     **kwargs,
 ) -> Tuple[Episode, Dict[str, Any]]:
     """Run one Orak game episode with Qwen3-14B."""
@@ -1222,11 +1378,15 @@ def run_qwen3_orak_episode(
             context={"last_actions": [e.action for e in experiences[-5:]], "task": task},
         )
 
+        # Skill guidance (same path as VLMDecisionAgent)
+        guidance = get_skill_guidance(skill_bank, last_state_summary or obs[:500], game_name=game)
+
         action, reasoning = qwen3_orak_action(
             state_nl=obs,
             action_names=step_actions,
             model=model,
             temperature=temperature,
+            skill_guidance=guidance,
         )
 
         try:
@@ -1386,6 +1546,7 @@ def run_game_rollouts(
     game_name: str,
     args: argparse.Namespace,
     game_run_dir: Path,
+    skill_bank: Any = None,
 ) -> Dict[str, Any]:
     """Run all episodes for one game and save outputs. game_run_dir = output/<model>/<game>/<timestamp>."""
     game_dir = game_run_dir
@@ -1432,6 +1593,7 @@ def run_game_rollouts(
                     verbose=args.verbose,
                     label=args.label,
                     reflect_every=getattr(args, "reflect_every", 3),
+                    skill_bank=skill_bank,
                 )
             elif game_name == "avalon":
                 episode, stats = run_qwen3_avalon_episode(
@@ -1440,6 +1602,7 @@ def run_game_rollouts(
                     verbose=args.verbose,
                     num_players=getattr(args, "num_players", 5),
                     seed=seed_base + ep_idx,
+                    skill_bank=skill_bank,
                 )
             elif game_name == "diplomacy":
                 episode, stats = run_qwen3_diplomacy_episode(
@@ -1447,6 +1610,7 @@ def run_game_rollouts(
                     temperature=args.temperature,
                     verbose=args.verbose,
                     seed=seed_base + ep_idx,
+                    skill_bank=skill_bank,
                 )
             elif game_name in ORAK_EVAL_GAME_NAMES:
                 episode, stats = run_qwen3_orak_episode(
@@ -1455,6 +1619,7 @@ def run_game_rollouts(
                     model=args.model,
                     temperature=args.temperature,
                     verbose=args.verbose,
+                    skill_bank=skill_bank,
                 )
             else:
                 episode, stats = run_qwen3_episode(
@@ -1465,6 +1630,7 @@ def run_game_rollouts(
                     verbose=args.verbose,
                     label=args.label,
                     label_model=args.label_model,
+                    skill_bank=skill_bank,
                 )
 
             stats["episode_index"] = ep_idx
@@ -1569,6 +1735,18 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="Base random seed for Avalon/Diplomacy (default: 42)")
     parser.add_argument("--num_players", type=int, default=5, help="Number of Avalon players (default: 5)")
     parser.add_argument("--reflect_every", type=int, default=3, help="Sokoban: run reflection every N steps (default: 3)")
+    parser.add_argument(
+        "--bank", type=str, default=None,
+        help="Path to skill bank JSONL file or directory (same format as run_inference.py --bank).",
+    )
+    parser.add_argument(
+        "--no-bank", action="store_true",
+        help="Explicitly run without a skill bank (baseline / ablation).",
+    )
+    parser.add_argument(
+        "--no-query-engine", action="store_true",
+        help="Disable SkillQueryEngine (use plain SkillBankMVP for skill queries).",
+    )
 
     args = parser.parse_args()
 
@@ -1649,8 +1827,19 @@ def main():
         print("[ERROR] No games available. Ensure GamingAgent / AgentEvolver / Orak is installed.")
         sys.exit(1)
 
+    # -- Load skill bank (same function as run_inference.py) --
+    skill_bank_obj = None
+    if not args.no_bank and args.bank:
+        bank, engine = load_skill_bank(
+            args.bank,
+            use_query_engine=not args.no_query_engine,
+        )
+        skill_bank_obj = engine if engine is not None else bank
+    elif args.no_bank:
+        print("[eval] Running without skill bank (--no-bank).")
+
     print("=" * 78)
-    print("  Qwen3-14B Decision Agent Evaluation")
+    print("  Decision Agent Evaluation")
     print("=" * 78)
     print(f"  Games:       {', '.join(available_games)}")
     if skipped_games:
@@ -1659,6 +1848,11 @@ def main():
     print(f"  Max steps:   {'per-game config' if args.max_steps is None else args.max_steps}")
     print(f"  Model:       {args.model}")
     print(f"  Temperature: {args.temperature}")
+    bank_desc = "none"
+    if skill_bank_obj is not None:
+        bank_size = len(skill_bank_obj) if hasattr(skill_bank_obj, "__len__") else "?"
+        bank_desc = f"{args.bank} ({bank_size} skills)"
+    print(f"  Skill Bank:  {bank_desc}")
     print(f"  Labeling:    {args.label}")
     print(f"  Resume:      {args.resume}")
     print(f"  Output:      {base_dir} (model/game/{run_timestamp})")
@@ -1673,7 +1867,7 @@ def main():
         print(f"{'━' * 78}")
 
         game_run_dir = base_dir / game_name / run_timestamp
-        summary = run_game_rollouts(game_name, args, game_run_dir)
+        summary = run_game_rollouts(game_name, args, game_run_dir, skill_bank=skill_bank_obj)
         game_summaries.append(summary)
 
     overall_elapsed = time.time() - overall_t0

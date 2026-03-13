@@ -1,8 +1,0 @@
-{
-  "game": "candy_crush",
-  "model": "gpt-5.4",
-  "timestamp": "2026-03-12T10:43:50.319880",
-  "episodes_labeled": 1,
-  "skills_extracted": 4,
-  "elapsed_seconds": 50.11498188972473
-}

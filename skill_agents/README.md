@@ -2,6 +2,8 @@
 
 Build and maintain a **Skill Bank** from long-horizon game trajectories: segment trajectories into skills, learn symbolic contracts (effects), and serve queries for the [decision_agents](../decision_agents/README.md) VLM agent.
 
+**Model-agnostic design:** The pipeline and decision agent use the same skill-bank functions regardless of LLM backend. GPT and Qwen (and other backends) differ only in which API `ask_model` calls; loading, querying, and protocol synthesis all go through the same code paths. Set `PipelineConfig.llm_model` and/or `extractor_model` to your training or inference model (e.g. `Qwen/Qwen3-14B` or `gpt-4o-mini`) so protocol synthesis and boundary proposal use the correct backend.
+
 ---
 
 ## Overview
@@ -98,7 +100,7 @@ detail = agent.get_skill_detail("nav_to_pot")
 
 ### 3. Use with the decision agent
 
-Pass the **SkillBankAgent** (or a plain **SkillBankMVP**) as the decision agent’s skill bank. The decision agent will call `query_skill` with a key; the helper uses the richest available API (SkillBankAgent → SkillQueryEngine → name match).
+Pass the **SkillBankAgent** (or a plain **SkillBankMVP**) as the decision agent’s skill bank. The decision agent calls `select_skill_from_bank` (via `run_tool(TOOL_SELECT_SKILL, ...)`); the helper uses the richest available API (SkillQueryEngine when present, else name match). The same path is used for both GPT and Qwen — only the `model` string changes, and `API_func.ask_model` routes to the correct backend.
 
 ```python
 from decision_agents import VLMDecisionAgent, run_episode_vlm_agent, RewardConfig
@@ -108,9 +110,9 @@ from skill_agents import SkillBankAgent
 skill_agent = SkillBankAgent(bank_path="data/skill_bank.jsonl")
 skill_agent.load()
 
-# Decision agent uses it for QUERY_SKILL and prompt context
+# Decision agent: pass any model name (GPT, Qwen, etc.); same code path
 vlm_agent = VLMDecisionAgent(
-    model="gpt-4o-mini",
+    model="gpt-4o-mini",      # or "Qwen/Qwen3-14B", etc.
     skill_bank=skill_agent,   # or skill_agent.bank for plain bank
     reward_config=RewardConfig(w_follow=0.1),
 )
@@ -233,6 +235,8 @@ Key options (see `pipeline.PipelineConfig` for all):
 |-------|--------|--------|
 | `bank_path` | `None` | JSONL path for the skill bank. |
 | `env_name` | `"llm"` | Signal extraction: `"llm"`, `"llm+overcooked"`, `"overcooked"`, etc. |
+| `extractor_model` | `None` | LLM for Stage 1 boundary proposal. Set to your backend (e.g. `gpt-4o-mini`, `Qwen/Qwen3-14B`); same `ask_model` routing as inference. |
+| `llm_model` | `None` | LLM for protocol synthesis and other pipeline LLM calls. When set, `update_protocols()` can generate richer protocols via `ask_model` (model-agnostic). |
 | `merge_radius` | `5` | Merge boundary candidates within this many steps (Stage 1). |
 | `preference_iterations` | `3` | Active-learning rounds in Stage 2. |
 | `margin_threshold` | `1.0` | Segments with margin below this get preference queries. |
@@ -257,6 +261,8 @@ Key options (see `pipeline.PipelineConfig` for all):
 5. **Stage 4** (bank_maintenance): split low-quality skills, merge similar ones, refine contracts; optional local re-decode.
 6. **Materialize NEW**: `NewPoolManager` clusters NEW pool by effect similarity (Jaccard, not exact match), tracks context metadata (predecessor/successor, duration), and promotes clusters meeting support + consistency + separability criteria.
 7. **Query / Select**: decision agent calls `select_skill(query, current_state)` for rich results (relevance + applicability + confidence), or `query_skill(key)` / `query_by_effects(...)` for backward-compatible retrieval.
+
+**Protocol synthesis (co-evolution):** After EM accepts an update, `SkillBankAgent.update_protocols()` is called. When `PipelineConfig.llm_model` or `extractor_model` is set (e.g. from `trainer/launch_coevolution.py`), protocol synthesis uses `ask_model` to generate structured protocols from skill evidence — the same routing as inference, so both GPT and Qwen backends work without code changes.
 
 ---
 

@@ -60,7 +60,7 @@ class PipelineConfig:
     # Stage 1: boundary proposal
     env_name: str = "llm"
     merge_radius: int = 5
-    extractor_model: str = "gpt-4o-mini"
+    extractor_model: Optional[str] = None
 
     # Stage 2: segmentation
     segmentation_method: str = "dp"
@@ -466,43 +466,14 @@ class SkillBankAgent:
         """Synthesize a Protocol from high-quality sub-episode pointers.
 
         Uses sub-episode summaries and intention_tags (cached on the
-        pointers) plus contract effects.  No need to load full rollouts.
+        pointers) plus contract effects.  When an LLM model is configured
+        (via ``config.llm_model`` or ``config.extractor_model``), generates
+        richer protocols via the same ``ask_model`` routing used by both
+        GPT and Qwen backends.
         """
         from skill_agents.stage3_mvp.schemas import Protocol
 
         contract = skill.contract
-
-        steps = []
-        preconditions = []
-        success_criteria = []
-
-        # Derive steps from the evidence summaries on the pointers
-        summaries = [se.summary for se in high_quality_eps if se.summary]
-        if summaries:
-            seen = set()
-            for s in summaries:
-                key = s.strip().lower()
-                if key and key not in seen:
-                    seen.add(key)
-                    steps.append(s.strip())
-                if len(steps) >= 5:
-                    break
-
-        # Fall back to contract effects when no summaries are available
-        if not steps and contract:
-            if contract.eff_add:
-                for lit in sorted(contract.eff_add)[:5]:
-                    steps.append(f"Achieve: {lit}")
-                    success_criteria.append(f"{lit} is true")
-            if contract.eff_del:
-                for lit in sorted(contract.eff_del)[:3]:
-                    steps.append(f"Remove: {lit}")
-            if contract.eff_event:
-                for lit in sorted(contract.eff_event)[:3]:
-                    steps.append(f"Trigger: {lit}")
-
-        if not steps:
-            steps = ["Execute skill actions as needed"]
 
         # Derive expected_tag_pattern from the majority tag set
         from collections import Counter
@@ -519,6 +490,62 @@ class SkillBankAgent:
             lengths = [se.length for se in high_quality_eps]
             avg_len = sum(lengths) // len(lengths)
 
+        # Collect evidence for LLM synthesis
+        summaries = [se.summary for se in high_quality_eps if se.summary]
+        effects_desc = ""
+        if contract:
+            parts = []
+            if contract.eff_add:
+                parts.append("achieves: " + ", ".join(sorted(contract.eff_add)[:5]))
+            if contract.eff_del:
+                parts.append("removes: " + ", ".join(sorted(contract.eff_del)[:3]))
+            if contract.eff_event:
+                parts.append("triggers: " + ", ".join(sorted(contract.eff_event)[:3]))
+            effects_desc = "; ".join(parts)
+
+        # Try LLM-based synthesis (model-agnostic: routes to GPT or Qwen)
+        llm_model = self.config.llm_model or self.config.extractor_model
+        protocol = self._llm_synthesize_protocol(
+            skill, summaries, effects_desc, llm_model
+        )
+        if protocol is not None:
+            protocol.expected_duration = max(1, avg_len)
+            if skill.success_rate < 0.5:
+                protocol.abort_criteria.append(
+                    "Abort if no progress after expected duration"
+                )
+            return protocol
+
+        # Deterministic fallback (no LLM available)
+        steps = []
+        preconditions = []
+        success_criteria = []
+
+        if summaries:
+            seen = set()
+            for s in summaries:
+                key = s.strip().lower()
+                if key and key not in seen:
+                    seen.add(key)
+                    steps.append(s.strip())
+                if len(steps) >= 5:
+                    break
+
+        if not steps and contract:
+            if contract.eff_add:
+                for lit in sorted(contract.eff_add)[:5]:
+                    steps.append(f"Achieve: {lit}")
+                    success_criteria.append(f"{lit} is true")
+            if contract.eff_del:
+                for lit in sorted(contract.eff_del)[:3]:
+                    steps.append(f"Remove: {lit}")
+            if contract.eff_event:
+                for lit in sorted(contract.eff_event)[:3]:
+                    steps.append(f"Trigger: {lit}")
+
+        if not steps:
+            steps = ["Execute skill actions as needed"]
+
         abort_criteria = []
         if skill.success_rate < 0.5:
             abort_criteria.append("Abort if no progress after expected duration")
@@ -530,6 +557,72 @@ class SkillBankAgent:
             abort_criteria=abort_criteria,
             expected_duration=max(1, avg_len),
         )
+
+    def _llm_synthesize_protocol(
+        self,
+        skill,
+        summaries: List[str],
+        effects_desc: str,
+        model: Optional[str],
+    ) -> Optional:
+        """Use ask_model (model-agnostic) to generate a structured protocol.
+
+        Works identically for GPT and Qwen because ask_model routes to the
+        correct backend based on the model name.
+        """
+        try:
+            from API_func import ask_model as _ask
+        except ImportError:
+            return None
+        if _ask is None or model is None:
+            return None
+
+        from skill_agents.stage3_mvp.schemas import Protocol
+        import json as _json
+
+        evidence = "\n".join(f"  - {s}" for s in summaries[:5]) if summaries else "(none)"
+
+        prompt = (
+            f"You are a game-agent skill designer.\n"
+            f"Skill: {skill.name or skill.skill_id}\n"
+            f"Description: {skill.strategic_description or '(none)'}\n"
+            f"Effects: {effects_desc or '(none)'}\n"
+            f"Evidence from successful executions:\n{evidence}\n\n"
+            f"Generate a structured protocol as JSON with these exact keys:\n"
+            f'{{"preconditions": ["..."], "steps": ["..."], '
+            f'"success_criteria": ["..."], "abort_criteria": ["..."]}}\n'
+            f"Rules:\n"
+            f"- preconditions: 1-3 conditions that must hold before starting\n"
+            f"- steps: 2-5 concrete action steps (imperative, specific)\n"
+            f"- success_criteria: 1-3 conditions indicating completion\n"
+            f"- abort_criteria: 1-2 conditions to stop early\n"
+            f"Reply with ONLY the JSON object."
+        )
+        try:
+            reply = _ask(prompt, model=model, temperature=0.2, max_tokens=400)
+            if not reply or reply.startswith("Error"):
+                return None
+            # Strip think tags for reasoning models (Qwen3, etc.)
+            try:
+                from decision_agents.agent_helper import strip_think_tags
+                reply = strip_think_tags(reply) or reply
+            except ImportError:
+                pass
+            # Extract JSON from reply
+            import re
+            json_m = re.search(r"\{[\s\S]*\}", reply)
+            if not json_m:
+                return None
+            data = _json.loads(json_m.group(0))
+            return Protocol(
+                preconditions=data.get("preconditions", [])[:5],
+                steps=data.get("steps", [])[:7],
+                success_criteria=data.get("success_criteria", [])[:5],
+                abort_criteria=data.get("abort_criteria", [])[:3],
+            )
+        except Exception as exc:
+            logger.debug("LLM protocol synthesis failed: %s", exc)
+            return None
 
     # ── Phase 5: Distill execution hints ────────────────────────────
 

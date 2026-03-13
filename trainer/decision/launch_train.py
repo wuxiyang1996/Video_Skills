@@ -489,9 +489,21 @@ def _build_coevo_callback(config, envs, val_envs):
         initial_bank = SkillBankMVP()
         if bank_path:
             initial_bank.load(bank_path)
-            logger.info("Loaded initial skill bank from %s", bank_path)
+            logger.info("Loaded initial skill bank from %s (%d skills)",
+                        bank_path, len(initial_bank))
     except ImportError:
         logger.warning("skill_agents not available; starting with empty bank")
+
+    # Wrap with SkillQueryEngine for richer retrieval during training
+    # rollouts — same path used by run_inference.py for both GPT and Qwen.
+    query_engine = None
+    if initial_bank is not None and len(initial_bank) > 0:
+        try:
+            from skill_agents.query import SkillQueryEngine
+            query_engine = SkillQueryEngine(initial_bank)
+            logger.info("SkillQueryEngine initialized for training")
+        except (ImportError, Exception) as exc:
+            logger.debug("SkillQueryEngine not available: %s", exc)
 
     return SkillBankCoEvolutionCallback(
         config=callback_config,

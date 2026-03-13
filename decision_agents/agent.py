@@ -94,6 +94,8 @@ class VLMDecisionAgent:
     follows the protocol to execute.
     """
 
+    DEFAULT_MODEL = "gpt-4o-mini"
+
     def __init__(
         self,
         model: Optional[str] = None,
@@ -105,7 +107,7 @@ class VLMDecisionAgent:
         reward_config: Optional[RewardConfig] = None,
         embedder: Any = None,
     ) -> None:
-        self.model = model or "gpt-4o-mini"
+        self.model = model or self.DEFAULT_MODEL
         self.skill_bank = skill_bank
         if memory is not None:
             self.memory = memory

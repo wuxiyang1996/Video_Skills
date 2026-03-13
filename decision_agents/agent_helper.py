@@ -21,6 +21,11 @@ except ImportError:
 # Summary budget constants
 # ---------------------------------------------------------------------------
 
+DEFAULT_LLM_MODEL: str = "gpt-4o-mini"
+"""Fallback LLM model when none is explicitly provided by the caller.
+Both GPT and Qwen inference paths should always pass an explicit model;
+this constant only guards against accidental None."""
+
 DEFAULT_SUMMARY_CHAR_BUDGET: int = 400
 """Default budget for state summaries (characters).  Prefer ~220-380 when
 possible; treat 400 as the hard cap, not a target to fill."""
@@ -621,7 +626,7 @@ def get_state_summary(
                 "Format: key=value | key=value | ...\n\n" + obs_slice
             )
             try:
-                result = _llm(prompt, model=model or "gpt-4o-mini",
+                result = _llm(prompt, model=model or DEFAULT_LLM_MODEL,
                               temperature=0.0, max_tokens=200)
                 if result:
                     return _truncate_keep_important(result.strip(), max_chars)
@@ -726,7 +731,7 @@ def infer_intention(
             "Subgoal:"
         )
 
-    out = ask_model(prompt, model=model or "gpt-4o-mini", temperature=0.2, max_tokens=200)
+    out = ask_model(prompt, model=model or DEFAULT_LLM_MODEL, temperature=0.2, max_tokens=200)
     if not out or out.startswith("Error"):
         return ""
 

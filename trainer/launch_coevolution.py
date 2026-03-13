@@ -219,12 +219,19 @@ def run_coevolution(
 
             em_result = em_trainer.run(trajectories)
 
-            # Protocol update: synthesize/revise protocols from new sub-episodes
+            # Protocol update: synthesize/revise protocols from new sub-episodes.
+            # Passes the training model so ask_model routes to the correct
+            # backend (GPT or Qwen) — same path for both.
             if em_result.accepted:
                 try:
                     from skill_agents.pipeline import SkillBankAgent, PipelineConfig
                     _bank = bank_store.current_bank
-                    _agent = SkillBankAgent(bank=_bank)
+                    _model_name = model_cfg.get("name")
+                    _pipe_cfg = PipelineConfig(
+                        llm_model=_model_name,
+                        extractor_model=_model_name,
+                    )
+                    _agent = SkillBankAgent(config=_pipe_cfg, bank=_bank)
                     n_updated = _agent.update_protocols()
                     if n_updated:
                         logger.info("Updated %d protocols after EM round.", n_updated)
