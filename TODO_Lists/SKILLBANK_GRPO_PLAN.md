@@ -449,31 +449,112 @@ The original design considered a 20-turn tool-calling agent loop with sandboxed 
 
 The full agentic design is preserved as Phase 3 (§2.10) for when the simpler approach hits a ceiling.
 
-### 2.3 The Four Actions
+### 2.3 The Five Actions
 
-All four actions modify skills stored in the bank. Refine is distinguished because it updates an **existing** skill's contract in-place rather than changing the bank's structure.
+Five actions modify the skill bank. The first three operate on existing skills; the last two handle the lifecycle of new skills entering the bank.
 
 | Action | What it does | When it fires | What changes in the bank |
 |--------|-------------|---------------|-------------------------|
 | **Refine** | Re-learns a skill's contract (eff_add/eff_del) from latest segment evidence | Evidence delta ≥ 5% between current contract and new observations | Skill's contract updated in-place, version bumped, pass_rate recalculated |
 | **Merge** | Combines two skills with near-identical contracts into one | Jaccard similarity ≥ 0.85 between contracts | One skill removed, survivor inherits combined instances, contract re-learned |
 | **Split** | Breaks a weak skill into sub-skills by re-clustering its instances | pass_rate < 0.70 and ≥ 6 instances | Original skill replaced by 2+ children, each with its own contract |
-| **Materialize** | Promotes a NEW segment cluster to a real skill | ≥ 5 segments with consistent effect signature | New skill added to bank with initial contract |
+| **Materialize** | Graduates a `__NEW__` cluster into a proto-skill in the staging area | Cluster meets `min_cluster_size`, `min_consistency`, `min_distinctiveness` | Proto-skill created in `ProtoSkillManager`; participates in Stage 2 decoding as candidate label |
+| **Promote** | Promotes a verified proto-skill to a full bank skill | Proto-skill passes Stage 3 verification with `pass_rate ≥ 0.7` | Proto-skill removed from staging; real skill added to bank with verified contract and LLM-generated name |
 
 **Refine is critical for skill evolution.** A skill like `navigate_to_pot` might start with a noisy contract `eff_add={near_pot, near_counter}` from early instances. After 50 more instances, the evidence clearly shows `eff_add={near_pot, facing_pot}` is more accurate. Refine catches this drift. Without it, stale contracts degrade pass_rate and confuse the decision agent's follow-shaping reward.
 
-### 2.4 Model & Serving
+### 2.4 Proto-Skill Staging Pipeline
+
+New skills do NOT enter the bank directly. The codebase (`skill_agents/skill_bank/new_pool.py`) implements a multi-gate staging area that the GRPO plan must respect.
+
+**Lifecycle:**
+
+```
+__NEW__ segments (from Stage 2 decode)
+        │
+        ▼
+  NewPoolManager.add()              ← accumulate with context (predecessor/successor skill)
+        │
+        ▼
+  NewPoolManager.cluster()          ← group by effect similarity (Jaccard / agglomerative)
+        │                              produces ClusterSummary per cluster
+        ▼
+  ┌─────────────────────────────────────┐
+  │  Gate 1: min_cluster_size ≥ 5       │
+  │  Gate 2: min_consistency ≥ 0.5      │  ← fraction sharing majority effect signature
+  │  Gate 3: min_distinctiveness ≥ 0.25 │  ← Jaccard distance from ALL existing skills
+  └─────────────┬───────────────────────┘
+                │ passes
+                ▼
+  ProtoSkillManager.form_from_cluster() ← MATERIALIZE action lands here
+        │
+        ▼
+  Proto-skill in staging area
+  - Has candidate_effects_add/del/event (centroid of cluster)
+  - Has support count, consistency score
+  - Participates in Stage 2 decoding as candidate label
+  - NOT yet in the real bank
+        │
+        ▼
+  ProtoSkillManager.verify()        ← light Stage 3 verification
+  - Runs run_stage3_mvp() on proto-skill's member segments
+  - Records pass_rate, sets verified=True
+  - Cleans up trial contract from bank
+        │
+        ▼
+  ┌─────────────────────────────────────┐
+  │  Gate 4: is_promotable              │
+  │  - support ≥ promotion_min_support  │  ← default 5
+  │  - consistency ≥ 0.5                │
+  │  - verification_pass_rate ≥ 0.6     │
+  └─────────────┬───────────────────────┘
+                │ passes
+                ▼
+  ProtoSkillManager.promote_ready() ← PROMOTE action lands here
+  - Calls proto.to_skill() → real Skill object
+  - bank.add_or_update(skill.contract)
+  - bank.add_or_update_skill(skill)
+  - LLM suggests human-readable name (best-effort)
+        │
+        ▼
+  Real skill in bank ✓
+```
+
+**Why this matters for Stage 4:**
+
+1. **Materialize ≠ "add to bank."** The old GRPO plan treated materialize as a single step. In reality, it creates a proto-skill that must accumulate evidence and pass verification before promotion. The LLM filter should see both the NEW pool status AND the proto-skill status.
+
+2. **Proto-skills participate in Stage 2.** `ProtoSkillManager.candidate_labels()` returns labels that Stage 2 decoding can assign to segments. This means materializing a proto-skill has an immediate effect on the next decode pass — segments that were `__NEW__` can now match the proto-skill, building its support count.
+
+3. **Promotion is a separate decision from materialization.** A proto-skill might be materialized (created from a cluster) but not yet ready for promotion (insufficient support or low pass_rate). The LLM filter should be able to approve materialization while deferring promotion until the proto-skill matures.
+
+4. **Rollback on promotion failure.** `NewPoolManager.promote()` (line 444 of `new_pool.py`) removes the skill from the bank and reverts segments to `__NEW__` if Stage 3 verification fails. The execution path must handle this gracefully.
+
+**Config thresholds (from `NewPoolConfig` and `ProtoSkillConfig`):**
+
+| Threshold | Default | Gate |
+|-----------|---------|------|
+| `min_cluster_size` | 5 | Materialization: cluster must have ≥ N segments |
+| `min_consistency` | 0.5 | Materialization: majority effect pattern fraction |
+| `min_distinctiveness` | 0.25 | Materialization: Jaccard distance from existing skills |
+| `cluster_similarity_thresh` | 0.4 | Clustering: Jaccard threshold for merging NEW candidates |
+| `promotion_min_support` | 5 | Promotion: minimum segment instances |
+| `promotion_min_consistency` | 0.5 | Promotion: effect pattern consistency |
+| `promotion_min_pass_rate` | 0.6 | Promotion: Stage 3 verification pass rate |
+| `max_promotions_per_call` | 10 | Promotion: cap per EM iteration |
+
+### 2.5 Model & Serving
 
 **Qwen3-14B via vLLM** — same model as everything else. Uses the `/v1/chat/completions` endpoint, single turn, no tool-calling. Structured output via vLLM's JSON constrained decoding (`response_format={"type": "json_object"}`).
 
-### 2.5 Candidate Generation (Algorithm)
+### 2.6 Candidate Generation (Algorithm)
 
 The existing `run_update()` logic is refactored to produce candidates without executing them:
 
 ```python
 @dataclass
 class CandidateAction:
-    action_type: str          # "refine" | "merge" | "split" | "materialize"
+    action_type: str          # "refine" | "merge" | "split" | "materialize" | "promote"
     skill_ids: List[str]
     rationale: str            # human-readable reason this was proposed
     priority: float           # algorithm's confidence (used for default ordering)
@@ -487,6 +568,8 @@ def propose_candidates(
     decode_results: List[DecodeResult],
     contracts: Dict[str, LearnedContract],
     bank: SkillBankMVP,
+    new_pool_mgr: NewPoolManager,
+    proto_mgr: ProtoSkillManager,
     config: UpdateConfig,
 ) -> List[CandidateAction]:
     """Scan the bank and return ranked candidate actions without executing any."""
@@ -540,14 +623,50 @@ def propose_candidates(
                 details={"pass_rate": lc.pass_rate, "n_subclusters": n_sub},
             ))
 
-    # 4. Materialize: NEW clusters above size threshold
-    for cluster_id, cluster in _new_clusters(decode_results, config):
+    # 4. Materialize: NEW clusters ready for proto-skill formation
+    #    Sourced from NewPoolManager.get_candidates() — clusters that pass
+    #    min_cluster_size, min_consistency, min_distinctiveness gates
+    for summary in new_pool_mgr.get_candidates():
+        if not _is_distinctive(summary, bank, config):
+            continue
         candidates.append(CandidateAction(
             action_type="materialize",
-            skill_ids=[cluster_id],
-            rationale=f"{len(cluster)} segments, consistency {_consistency(cluster):.2f}",
-            priority=len(cluster) / 20.0,
-            details={"n_segments": len(cluster), "consistency": _consistency(cluster)},
+            skill_ids=[f"cluster_{summary.cluster_id}"],
+            rationale=f"{summary.size} segments, consistency {summary.consistency:.2f}, "
+                      f"sig={summary.representative_sig}",
+            priority=(summary.consistency * summary.size) / 20.0,
+            details={
+                "n_segments": summary.size,
+                "consistency": summary.consistency,
+                "mean_duration": summary.mean_duration,
+                "effect_centroid_add": sorted(summary.effect_centroid_add),
+                "effect_centroid_del": sorted(summary.effect_centroid_del),
+            },
+        ))
+
+    # 5. Promote: proto-skills ready for full bank promotion
+    #    Sourced from ProtoSkillManager — proto-skills that passed
+    #    light verification and meet promotion thresholds
+    for pid in proto_mgr.proto_ids:
+        proto = proto_mgr.get(pid)
+        if proto is None or not proto.verified:
+            continue
+        candidates.append(CandidateAction(
+            action_type="promote",
+            skill_ids=[pid],
+            rationale=f"Proto-skill: support={proto.support}, "
+                      f"consistency={proto.consistency:.2f}, "
+                      f"pass_rate={proto.verification_pass_rate:.2f}, "
+                      f"promotable={proto.is_promotable}",
+            priority=proto.verification_pass_rate * proto.consistency,
+            details={
+                "support": proto.support,
+                "consistency": proto.consistency,
+                "pass_rate": proto.verification_pass_rate,
+                "is_promotable": proto.is_promotable,
+                "effects_add": sorted(proto.candidate_effects_add),
+                "effects_del": sorted(proto.candidate_effects_del),
+            },
         ))
 
     # Detect conflicts (e.g. refine(S12) + merge(S05,S12) on the same skill)
@@ -556,7 +675,7 @@ def propose_candidates(
     return sorted(candidates, key=lambda c: c.priority, reverse=True)
 ```
 
-### 2.6 Conflict Detection
+### 2.7 Conflict Detection
 
 The algorithm flags conflicts before sending to the LLM:
 
@@ -564,11 +683,12 @@ The algorithm flags conflicts before sending to the LLM:
 |----------|-------------------|-----------------|
 | refine(X) + merge(X, Y) | Refining X's contract then merging overwrites the refinement | Pick one: refine if X is worth keeping solo, merge if X and Y are truly duplicates |
 | split(X) + merge(X, Y) | Contradictory: splitting X while also merging it | Usually split takes priority (low pass_rate triggered both) |
-| materialize(cluster) + merge(cluster_sig, existing) | New cluster's signature overlaps an existing skill | Merge-into-existing is usually better than creating a new skill |
+| materialize(cluster) + promote(proto) with overlapping effects | New proto-skill and existing proto-skill cover the same behavior | Promote the more mature proto-skill; defer materialize |
+| promote(proto) + merge(proto_sig, existing) | Promoting a proto-skill whose effects overlap an existing skill | Merge the proto-skill's instances into the existing skill instead of promoting |
 
 Conflicts are annotated as `conflicts_with: [idx]` on each candidate. The prompt explicitly asks the LLM to resolve them.
 
-### 2.7 Deferral Lifecycle
+### 2.8 Deferral Lifecycle
 
 When the LLM defers an action, here's what happens:
 
@@ -628,7 +748,7 @@ def annotate_deferrals(
 | 3rd consecutive deferral, thresholds still met | **auto-approve** | Expiry kicks in — trust the algorithm |
 | Conflicting action was approved last time | **action disappears** | Skill was merged/refined, split no longer applies |
 
-### 2.8 LLM Filter (Single Call)
+### 2.9 LLM Filter (Single Call)
 
 One LLM call. No tool-calling. Constrained JSON output.
 
@@ -642,7 +762,12 @@ Your job: approve good actions, veto harmful ones, defer uncertain ones.
 
 Skills in the bank have contracts (eff_add, eff_del) that describe what
 changes when the skill executes. These contracts evolve — refine updates
-them with better evidence. Merge/split/materialize change the bank structure.
+them with better evidence. Merge/split change the bank structure.
+
+New skills enter through a staging pipeline:
+- MATERIALIZE: creates a proto-skill from a __NEW__ cluster (staging area)
+- PROMOTE: graduates a verified proto-skill to a real bank skill
+Proto-skills participate in decoding but are NOT full bank skills yet.
 
 Rules:
 - approve: execute this action
@@ -650,6 +775,7 @@ Rules:
 - defer: skip for now, revisit next iteration (e.g. "not enough instances yet")
 - If two actions conflict, approve at most one and explain
 - When in doubt, approve — the algorithm's thresholds are conservative
+- For PROMOTE: only approve if pass_rate and consistency are strong
 
 Respond with JSON matching this schema exactly.
 ```
@@ -659,6 +785,14 @@ Respond with JSON matching this schema exactly.
 ```
 ## Bank Summary
 42 skills, 456 segments, mean_pass_rate=0.74, new_rate=0.08
+
+## NEW Pool & Proto-Skills
+NEW pool: 34 segments across 6 clusters
+Proto-skills in staging: 2
+  proto_1710000_3: support=7, consistency=0.71, pass_rate=0.68, promotable=YES
+    effects_add={holding_dish, near_serve}, effects_del={at_counter}
+  proto_1710000_5: support=4, consistency=0.50, pass_rate=0.42, promotable=NO
+    effects_add={at_pot}, effects_del={far_from_pot}
 
 ## Proposed Actions
 
@@ -671,8 +805,9 @@ Respond with JSON matching this schema exactly.
     Jaccard: 0.87, combined 15 instances
     ⚠ CONFLICTS WITH [1] — both touch S12_navigate_pot
 
-[3] MATERIALIZE cluster_7 (priority=0.40)
+[3] MATERIALIZE cluster_7 → proto-skill (priority=0.34)
     8 segments, consistency 0.85, sig=A:near_pot,facing_pot|D:
+    Distinctiveness from existing skills: 0.42 (passes min 0.25)
 
 [4] SPLIT S23_place_onion (priority=0.38)
     pass_rate 0.62, 12 instances, failure sigs suggest 2 sub-clusters
@@ -681,6 +816,10 @@ Respond with JSON matching this schema exactly.
     Old contract: eff_del={}
     New evidence:  eff_del={onion_on_counter}
     Rationale: Evidence delta 50%, pass_rate 0.71, 14 instances
+
+[6] PROMOTE proto_1710000_3 → real skill (priority=0.48)
+    support=7, consistency=0.71, pass_rate=0.68, promotable=YES
+    effects_add={holding_dish, near_serve}, effects_del={at_counter}
 ```
 
 *Output (generation):*
@@ -690,14 +829,21 @@ Respond with JSON matching this schema exactly.
   "decisions": [
     {"idx": 1, "verdict": "approve", "reason": "High evidence delta, contract clearly stale"},
     {"idx": 2, "verdict": "veto", "reason": "S05 is go-to-pot-from-counter, S12 is navigate-to-pot-from-anywhere — semantically different despite Jaccard. Conflicts with approved refine on S12."},
-    {"idx": 3, "verdict": "approve", "reason": "Strong cluster, consistent signature"},
+    {"idx": 3, "verdict": "approve", "reason": "Strong cluster with 0.85 consistency and good distinctiveness — ready for proto-skill staging"},
     {"idx": 4, "verdict": "defer", "reason": "12 instances borderline, want more evidence before splitting"},
-    {"idx": 5, "verdict": "approve", "reason": "Clear missing eff_del, 50% delta with 14 instances is strong signal"}
+    {"idx": 5, "verdict": "approve", "reason": "Clear missing eff_del, 50% delta with 14 instances is strong signal"},
+    {"idx": 6, "verdict": "approve", "reason": "Proto-skill has 7 instances, 0.71 consistency, 0.68 pass_rate — meets all promotion gates. Effects look like a carry-dish-to-serve skill."}
   ]
 }
 ```
 
-*Interpretation:* The LLM approves two refines and one materialize, vetoes a merge that the algorithm flagged purely on Jaccard (the LLM recognizes semantic difference), and defers a split for insufficient evidence. Actions [1] and [2] conflict — the LLM resolves by approving [1] (refine) and vetoing [2] (merge). After execution: S12's contract gets tightened, S07 gains a missing eff_del, and cluster_7 becomes a new skill. S23 is untouched — it will be re-evaluated next EM iteration with more instances.
+*Interpretation:* The LLM approves two refines, one materialize (cluster → proto-skill), and one promote (proto-skill → real skill). It vetoes a merge that the algorithm flagged on Jaccard alone (semantic difference), and defers a split for insufficient evidence. Actions [1] and [2] conflict — resolved by approving [1] and vetoing [2]. After execution:
+- S12's contract gets tightened (refine)
+- S07 gains a missing eff_del (refine)
+- cluster_7 becomes a proto-skill in staging (materialize) — will participate in Stage 2 decoding next iteration
+- proto_1710000_3 graduates to a real bank skill with LLM-generated name (promote)
+- S23 is untouched — re-evaluated next iteration with more instances
+- proto_1710000_5 stays in staging (not proposed — pass_rate too low, `promotable=NO`)
 
 **Output schema (for constrained decoding):**
 
@@ -724,7 +870,7 @@ Respond with JSON matching this schema exactly.
 
 With vLLM's JSON constrained decoding + this schema, the LLM **cannot** produce invalid JSON. The only structural failure mode is referencing an out-of-range `idx`, which is caught by validation.
 
-### 2.9 Parsing, Validation & Fallback
+### 2.10 Parsing, Validation & Fallback
 
 ```python
 def filter_candidates(
@@ -790,9 +936,9 @@ def filter_candidates(
 
 With constrained decoding, step 3 should only trigger when vLLM is down. The system is **never worse** than the current algorithmic-only version.
 
-### 2.10 Execution
+### 2.11 Execution
 
-After filtering, approved actions execute using the existing deterministic functions:
+After filtering, approved actions execute using the existing deterministic functions. The key change from the old plan: **materialize** and **promote** go through the proper `NewPoolManager` / `ProtoSkillManager` pipeline, not a simplified shortcut.
 
 ```python
 def execute_approved(
@@ -800,24 +946,70 @@ def execute_approved(
     decode_results: List[DecodeResult],
     contracts: Dict[str, LearnedContract],
     bank: SkillBankMVP,
+    new_pool_mgr: NewPoolManager,
+    proto_mgr: ProtoSkillManager,
+    observations_by_traj: Dict[str, list],
     config: UpdateConfig,
 ) -> UpdateResult:
     result = UpdateResult()
     for action in approved:
         if action.action_type == "refine":
             _refine_single(action.skill_ids[0], contracts, bank, config, result)
+
         elif action.action_type == "merge":
             _merge_pair(action.skill_ids[0], action.skill_ids[1], bank, config, result)
+
         elif action.action_type == "split":
             _split_single(action.skill_ids[0], contracts, bank, config, result)
+
         elif action.action_type == "materialize":
-            _materialize_single(action.skill_ids[0], decode_results, bank, config, result)
+            # Cluster → proto-skill via ProtoSkillManager
+            cluster_id = int(action.skill_ids[0].replace("cluster_", ""))
+            summary = _find_cluster_summary(new_pool_mgr, cluster_id)
+            if summary is not None:
+                records = new_pool_mgr.get_cluster_records(cluster_id)
+                proto = proto_mgr.form_from_cluster(
+                    summary, records,
+                    existing_bank_skills=set(bank.skill_ids),
+                )
+                if proto is not None:
+                    result.n_materialize += 1
+                    result.events.append(UpdateEvent(
+                        event_type="materialize",
+                        skill_ids=[proto.proto_id],
+                        details={"cluster_id": cluster_id, "support": summary.size},
+                    ))
+
+        elif action.action_type == "promote":
+            # Proto-skill → real skill via ProtoSkillManager
+            proto_id = action.skill_ids[0]
+            pass_rate = proto_mgr.verify(proto_id, bank, observations_by_traj)
+            if pass_rate is not None and pass_rate >= config.promotion_min_pass_rate:
+                promoted = proto_mgr.promote_ready(bank)
+                if proto_id in promoted:
+                    result.n_materialize += 1
+                    result.events.append(UpdateEvent(
+                        event_type="promote",
+                        skill_ids=[proto_id],
+                        details={"pass_rate": pass_rate},
+                    ))
+
     return result
 ```
 
-Same functions as `stage4_update.py`. No sandboxing, no deep copies per trial. SkillEval gate checks afterwards; rollback the whole batch if bank quality drops.
+**Key differences from old execution:**
 
-### 2.11 Cold-Start Data Collection (Phase 0)
+| Action | Old plan | New plan |
+|--------|----------|----------|
+| Refine | `_refine_single()` | Same — no change |
+| Merge | `_merge_pair()` | Same — no change |
+| Split | `_split_single()` | Same — no change |
+| Materialize | `_materialize_single()` — directly adds to bank | `ProtoSkillManager.form_from_cluster()` — creates proto-skill in staging area |
+| Promote | Did not exist | `ProtoSkillManager.verify()` + `promote_ready()` — full Stage 3 verification, then bank add |
+
+SkillEval gate checks after all actions. If bank quality drops, rollback the whole batch. Proto-skills that were materialized but not yet promoted survive rollback (they're in the staging area, not the bank).
+
+### 2.12 Cold-Start Data Collection (Phase 0)
 
 Before the LLM filter can be trained, we need labeled data on which actions help and which hurt. Phase 0 runs alongside the existing EM loop with **no LLM involvement**:
 
@@ -865,7 +1057,7 @@ After ~100 EM iterations, this produces labeled data:
 
 This data also reveals **which action types** benefit most from LLM filtering (hypothesis: merge and split have the most context-dependent outcomes, while refine is usually safe to auto-approve).
 
-### 2.12 GRPO Training (Phase 2)
+### 2.13 GRPO Training (Phase 2)
 
 After Phase 0 data collection and Phase 1 SFT warm-start, the filter is trained with GRPO. This is a clean single-turn GRPO setup:
 
@@ -943,7 +1135,7 @@ stage4_curator:
   temperature_inference: 0.1 # conservative during real execution
 ```
 
-### 2.13 Training Schedule
+### 2.14 Training Schedule
 
 | Phase | EM Iterations | What happens | LLM role |
 |-------|--------------|--------------|----------|
@@ -953,7 +1145,7 @@ stage4_curator:
 
 Phase 0 costs nothing beyond logging. Phase 1 is standard SFT. Phase 2 adds G=8 executions of `execute_approved()` per EM step — but these are fast deterministic functions, not LLM calls.
 
-### 2.14 Future: Full Agentic Mode (Phase 3)
+### 2.15 Future: Full Agentic Mode (Phase 3)
 
 Once the single-turn advisor is stable and we have data on where the algorithm's proposals miss, consider upgrading to a multi-turn tool-calling agent for cases where:
 
@@ -963,21 +1155,22 @@ Once the single-turn advisor is stable and we have data on where the algorithm's
 
 The tool definitions (inspect_skill, trial_merge, trial_split, trial_refine, trial_materialize, accept/reject, finish) remain the target API for Phase 3. Phase 1-2 ships without them.
 
-### 2.15 Files to Create/Modify
+### 2.16 Files to Create/Modify
 
-- [ ] `trainer/skillbank/stage4_candidates.py` — `propose_candidates()`, `CandidateAction`, conflict detection, `_annotate_conflicts()`, deferral annotation
+- [ ] `trainer/skillbank/stage4_candidates.py` — `propose_candidates()`, `CandidateAction`, conflict detection, `_annotate_conflicts()`, deferral annotation. Sources materialize candidates from `NewPoolManager.get_candidates()` and promote candidates from `ProtoSkillManager`
 - [ ] `trainer/skillbank/stage4_deferrals.py` — `DeferralRecord`, `annotate_deferrals()`, deferral log persistence, expiry logic (`max_deferrals=3`)
 - [ ] `trainer/skillbank/stage4_filter.py` — LLM filter call, constrained decoding, retry logic, `_apply_decisions()`, fallback
-- [ ] `trainer/skillbank/stage4_prompts.py` — curator system prompt, diagnostics formatter, output schema
+- [ ] `trainer/skillbank/stage4_prompts.py` — curator system prompt, diagnostics formatter (includes NEW pool status, proto-skill staging summary), output schema
 - [ ] `trainer/skillbank/stage4_counterfactual.py` — `collect_counterfactuals()`, `CounterfactualRecord`, Phase 0 logging
-- [ ] `trainer/skillbank/stage4_grpo.py` — GRPO training loop for CURATOR adapter (§2.11)
-- [ ] Refactor `trainer/skillbank/stages/stage4_update.py` — extract `_refine`, `_merge_similar`, `_split_weak`, `_materialize_new` into individually-callable `_refine_single()`, `_merge_pair()`, `_split_single()`, `_materialize_single()`
-- [ ] Modify `trainer/skillbank/em_trainer.py` — call `propose_candidates()` → `filter_candidates()` → `execute_approved()` instead of `run_update()`
-- [ ] Modify `trainer/common/configs/skillbank_em.yaml` — add `stage4_filter` config section (enabled, vllm_url, temperature, fallback_on_failure) and `stage4_curator` GRPO config
+- [ ] `trainer/skillbank/stage4_grpo.py` — GRPO training loop for CURATOR adapter (§2.13)
+- [ ] Refactor `trainer/skillbank/stages/stage4_update.py` — extract `_refine`, `_merge_similar`, `_split_weak` into individually-callable `_refine_single()`, `_merge_pair()`, `_split_single()`. Remove `_materialize_new()` shortcut — materialize now goes through `NewPoolManager`/`ProtoSkillManager`
+- [ ] Modify `trainer/skillbank/em_trainer.py` — call `propose_candidates()` → `filter_candidates()` → `execute_approved()` instead of `run_update()`. Pass `NewPoolManager` and `ProtoSkillManager` instances through
+- [ ] Modify `skill_agents/skill_bank/new_pool.py` — expose `get_candidates()` summary data in a format `stage4_candidates.py` can consume for materialize proposals
+- [ ] Modify `trainer/common/configs/skillbank_em.yaml` — add `stage4_filter` config section (enabled, vllm_url, temperature, fallback_on_failure), `stage4_curator` GRPO config, and `proto_skill` promotion thresholds
 - [ ] Modify `trainer/skillbank/grpo/config.py` — add CURATOR adapter config alongside BOUNDARY/SEGMENT/CONTRACT
-- [ ] Keep `trainer/skillbank/stages/stage4_update.py: run_update()` as algorithmic-only fallback path
+- [ ] Keep `trainer/skillbank/stages/stage4_update.py: run_update()` as algorithmic-only fallback path (still uses the old direct `_materialize_new()` for simplicity)
 
-### 2.16 Guardrails
+### 2.17 Guardrails
 
 | Guardrail | Implementation |
 |-----------|---------------|
@@ -988,7 +1181,9 @@ The tool definitions (inspect_skill, trial_merge, trial_split, trial_refine, tri
 | **Quality gate** | SkillEval runs after execution — rollback if bank quality drops |
 | **Conflict enforcement** | If LLM approves both sides of a conflict, only the higher-priority one executes |
 | **Deferral expiry** | After `max_deferrals=3` consecutive deferrals with algorithm threshold still met, auto-approve without LLM review |
-| **Logging** | Every (prompt, response, executed_actions, deferrals, q_before, q_after, counterfactuals) logged for training |
+| **Promote rollback** | If `ProtoSkillManager.verify()` returns pass_rate below threshold during promote execution, proto-skill stays in staging — no bank mutation |
+| **Materialize idempotency** | Materializing the same cluster twice is a no-op — `ProtoSkillManager.form_from_cluster()` deduplicates by effect signature |
+| **Logging** | Every (prompt, response, executed_actions, deferrals, proto_skill_changes, q_before, q_after, counterfactuals) logged for training |
 
 ---
 
