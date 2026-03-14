@@ -4,13 +4,13 @@
 
 ## Overview
 
-This repository provides a framework for enhancing agentic decision-making in multi-player, long-horizon games through unsupervised experience. The framework integrates with multiple game environments and supports both training-free (RAG-based) and trainable (RL-based) agent architectures. This readme outlines each module, gives initial instructions for vibe coding, and aims to ease integration and debugging (including function definitions and ToDo lists for each class).
+This repository provides a framework for enhancing agentic decision-making in multi-player, long-horizon games through unsupervised experience. The framework integrates with multiple game environments and supports both training-free (RAG-based) and trainable (RL-based) agent architectures. This readme outlines each module and aims to ease integration and debugging.
 
 **No external repos are bundled.** This repository contains only Game-AI-Agent code. For Avalon/Diplomacy you need [AgentEvolver](https://github.com/modelscope/AgentEvolver) (clone as sibling or on `PYTHONPATH`). For GamingAgent evaluation, clone that repo as a sibling when needed; see [evaluate_gamingagent/setup_gamingagent_eval_env.md](evaluate_gamingagent/setup_gamingagent_eval_env.md). For **VERL training and inference** (vLLM/sglang, GiGPO/PPO), use [verl-agent](https://github.com/verl-project/verl-agent) as a sibling and see [INSTALL.md](INSTALL.md).
 
 **Install:** See **[INSTALL.md](INSTALL.md)** for setup and VERL/verl-agent. Quick: add this repo to `PYTHONPATH`, or `conda env create -f environment.yml` then `conda activate game-ai-agent`.
 
-**Contents:** 1. [Environments](#1-environments) · 2. [Data structure](#2-data-structure) · 3. [Skill agent](#3-skill-agent) · 4. [Decision-making agent](#4-decision-making-agent) · 5. [Trainer code](#5-trainer-code) · [Implemented (done)](#implemented-done) · [ToDo (unfinished)](#todo-unfinished--future--consolidated)
+**Contents:** 1. [Environments](#1-environments) · 2. [Data structure (skills and experiences)](#2-data-structure-skills-and-experiences) · 3. [Skill agent](#3-skill-agent) · 4. [Decision-making agent](#4-decision-making-agent) · 5. [Trainer code](#5-trainer-code) · [Implemented (done)](#implemented-done) · [ToDo (unfinished)](#todo-unfinished--future--consolidated)
 
 ## Quick Links
 
@@ -48,13 +48,18 @@ This repository provides a framework for enhancing agentic decision-making in mu
 
 # 1. Environments
 
-This framework integrates with the following game environments. Each has an NL wrapper in [env_wrappers/](env_wrappers/) and a dedicated evaluation script folder.
+This framework integrates with the following game environments — **8 games** across **four** stacks, all covered by cold-start generators and NL wrappers. See [cold_start/readme.md](cold_start/readme.md) for scope, registry keys, and rollout commands.
 
-| Environment | Source | Wrapper | Evaluation |
-|-------------|--------|---------|------------|
+| Game | Source | Wrapper | Evaluation |
+|------|--------|---------|------------|
+| **2048** | **External:** [GamingAgent](https://github.com/lmgame-org/GamingAgent) (LMGame-Bench) | [gamingagent_nl_wrapper.py](env_wrappers/gamingagent_nl_wrapper.py) | [evaluate_gamingagent/](evaluate_gamingagent/) |
+| **Sokoban** | **External:** [GamingAgent](https://github.com/lmgame-org/GamingAgent) (LMGame-Bench) | [gamingagent_nl_wrapper.py](env_wrappers/gamingagent_nl_wrapper.py) | [evaluate_gamingagent/](evaluate_gamingagent/) |
+| **Candy Crush** | **External:** [GamingAgent](https://github.com/lmgame-org/GamingAgent) (LMGame-Bench) | [gamingagent_nl_wrapper.py](env_wrappers/gamingagent_nl_wrapper.py) | [evaluate_gamingagent/](evaluate_gamingagent/) |
+| **Tetris** | **External:** [GamingAgent](https://github.com/lmgame-org/GamingAgent) (LMGame-Bench) | [gamingagent_nl_wrapper.py](env_wrappers/gamingagent_nl_wrapper.py) | [evaluate_gamingagent/](evaluate_gamingagent/) |
 | **Avalon** | **External:** [AgentEvolver Games](https://github.com/modelscope/AgentEvolver/blob/main/games/README.md) — hidden-role deduction | [avalon_nl_wrapper.py](env_wrappers/avalon_nl_wrapper.py) | [evaluation_evolver/](evaluation_evolver/) |
 | **Diplomacy** | **External:** [AgentEvolver Games](https://github.com/modelscope/AgentEvolver/blob/main/games/README.md) — strategic negotiation | [diplomacy_nl_wrapper.py](env_wrappers/diplomacy_nl_wrapper.py) | [evaluation_evolver/](evaluation_evolver/) |
-| **GamingAgent (LMGame-Bench)** | **External:** [GamingAgent](https://github.com/lmgame-org/GamingAgent) — 2048, Sokoban, Tetris, etc. | [gamingagent_nl_wrapper.py](env_wrappers/gamingagent_nl_wrapper.py) | [evaluate_gamingagent/](evaluate_gamingagent/) |
+| **Super Mario** | **External:** Orak (gym_super_mario_bros) | [orak_nl_wrapper.py](env_wrappers/orak_nl_wrapper.py) | [evaluate_orak/](evaluate_orak/) |
+| **Pokemon Red** | **External:** Orak (PyBoy + pokered) | [orak_nl_wrapper.py](env_wrappers/orak_nl_wrapper.py) | [evaluate_orak/](evaluate_orak/) |
 
 ### Wrapper identification contract
 
@@ -65,6 +70,7 @@ All wrappers set `info["env_name"]` and `info["game_name"]` on every `reset()` a
 | GamingAgentNLWrapper | `"gamingagent"` | Auto-detected from obs (`"sokoban"`, `"tetris"`, `"2048"`, …) or explicit `game_name` constructor arg | Constructor: `GamingAgentNLWrapper(env, game_name="sokoban")` |
 | AvalonNLWrapper | `"avalon"` | `"avalon"` | Single-game platform |
 | DiplomacyNLWrapper | `"diplomacy"` | `"diplomacy"` | Single-game platform |
+| OrakNLWrapper | `"orak"` | Registry key (e.g. `"super_mario"`, `"pokemon_red"`) | [evaluate_orak/](evaluate_orak/); cold-start: [cold_start/](cold_start/) |
 | ColdStartEnvWrapper | `"gamingagent"` | Registry key (e.g. `"sokoban"`, `"twenty_forty_eight"`) | Used in [cold_start/](cold_start/) |
 
 `run_episode_vlm_agent()` reads `info["env_name"]` and `info["game_name"]` to populate the `Episode`. Fallback chain: `info["game"]` → `detect_game(obs)` → `info["structured_state"]["game"]`.
@@ -73,335 +79,232 @@ All wrappers set `info["env_name"]` and `info["game_name"]` on every `reset()` a
 
 ## Decision & Skill Agents: Co-evolution
 
-The **decision_agents** (VLM decision-making agent) and **skill_agents** (Skill Bank pipeline) are designed to **co-evolve**: the decision agent plays the game using skills retrieved from the bank, and new trajectories are fed back into the skill pipeline to refine and extend the bank.
+Two agents co-evolve: the **Decision Agent** (Qwen3-14B + LoRA, GRPO) plays games using skills from the bank, and the **Skill Bank Agent** (Qwen3-8B + 3 LoRA, Hard-EM) discovers and refines skills from the Decision Agent's trajectories. Training runs on **8 × A100-80GB GPUs** (GPUs 0-3 for Decision, GPUs 4-7 for Skill Bank). See [Section 5: Trainer code](#5-trainer-code) for full training settings and scripts.
 
 ### Big picture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         CO-EVOLUTION LOOP                                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   ┌──────────────────────┐         ┌──────────────────────┐                 │
-│   │   decision_agents    │         │   skill_agents       │                 │
-│   │   VLMDecisionAgent   │         │   SkillBankAgent     │                 │
-│   │                      │         │                      │                 │
-│   │ • step(obs) → tool   │  query  │ • ingest_episodes()  │                 │
-│   │ • take_action        │ ──────► │ • segment → Stage 3  │                 │
-│   │ • query_skill(key)   │ ◄────── │ • maintain bank      │                 │
-│   │ • query_memory       │  bank   │ • query_skill(key)   │                 │
-│   │ • reward (r_follow)  │         │ • add/remove/update  │                 │
-│   └──────────┬───────────┘         └──────────┬───────────┘                 │
-│              │                                 │                             │
-│              │ run_episode_vlm_agent(env)      │ run_until_stable()          │
-│              ▼                                 ▼                             │
-│   ┌──────────────────────┐         ┌──────────────────────┐                 │
-│   │  Episode (trajectory) │ ──────► │  Skill Bank (JSONL)   │                 │
-│   │  ID: episode_id (UUID)│  feed  │  contracts, reports  │                 │
-│   │  env_name + game_name │  back  │  versioned, queryable │                 │
-│   │  Experience per step: │        │                      │                 │
-│   │  state, action, reward│        │                      │                 │
-│   │  summary_state (k=v), │        │                      │                 │
-│   │  intentions ([TAG]),  │        │                      │                 │
-│   │  sub_tasks            │        │                      │                 │
-│   └──────────────────────┘         └──────────────────────┘                 │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          CO-EVOLUTION LOOP                                    │
+│                                                                              │
+│  Decision Agent (Qwen3-14B + LoRA)       Skill Bank Agent (Qwen3-8B + 3 LoRA)
+│  GPUs 0-3, GRPO via VERL                 GPUs 4-7, Hard-EM                   │
+│  ┌──────────────────────┐                ┌──────────────────────┐            │
+│  │ • take_action        │  query_skill   │ • boundary proposal  │            │
+│  │ • query_skill(key)   │ ─────────────► │ • segment decode     │            │
+│  │ • query_memory       │ ◄───────────── │ • contract learning  │            │
+│  │ • call_skill(id)     │  bank + skills │ • bank maintenance   │            │
+│  │ • reward (r_follow)  │                │ • SkillEval gating   │            │
+│  └──────────┬───────────┘                └──────────┬───────────┘            │
+│             │                                       │                        │
+│             ▼                                       ▼                        │
+│  ┌──────────────────────┐                ┌──────────────────────┐            │
+│  │  Episode (trajectory) │ ────feed────► │  Skill Bank (JSONL)   │            │
+│  │  summary_state (k=v)  │    back       │  versioned, queryable │            │
+│  │  intentions ([TAG])   │               │  contracts + protocols│            │
+│  │  reward_details       │               │  ~42 skills per game  │            │
+│  └──────────────────────┘                └──────────────────────┘            │
+│                                                                              │
+│  Each iteration: rollouts → Skill Bank EM → Decision Agent GRPO → repeat     │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
-
-**With training** ([trainer/](trainer/)): the same loop is driven by **GRPO** (decision agent) and **Hard-EM** (skill bank). In VERL mode, the [SkillBankCoEvolutionCallback](trainer/decision/coevolution_callback.py) is injected into `GameAITrainer.fit()` and runs all four skill agent stages (boundary proposal, segmentation decode, contract learning, bank maintenance) as a unified tool-calling pipeline after each training step. Trajectory segmentations are persisted in a `SegmentationStore` and updated as the bank evolves. Tool-call rewards from `skill_agents.tool_call_reward` are integrated into the reward shaping for dense RL signal on tool use. Standalone mode: [trainer/launch_coevolution.py](trainer/launch_coevolution.py) runs GRPO continuously, periodically freezes a rollout batch, runs the SkillBank EM trainer, and deploys the new bank only if SkillEval gating passes. See [trainer/README.md](trainer/README.md).
 
 ### How they connect
 
-| Role | decision_agents | skill_agents |
-|------|-----------------|--------------|
-| **Provides** | Game play: one action per step, optional retrieval (`query_skill`, `query_memory`) | Skill Bank: segment trajectories, learn effect contracts, split/merge/refine skills |
-| **Consumes** | Skill bank (list of skills + contracts for prompt and `QUERY_SKILL`) | Raw episodes (from rollouts or demos) to segment and extract skills |
-| **Interface** | `VLMDecisionAgent(skill_bank=..., model=...)`; `run_tool(TOOL_SELECT_SKILL, ...)` → `select_skill_from_bank()` / `query_skill_bank()`. Agent **plans** from protocol (steps, preconditions); **reward** uses contract (`bank.get_contract(skill_id)` for r_follow). | `SkillBankAgent.select_skill(query, current_state)` (preferred) or `query_skill(key)`; `SkillQueryEngine.select()` / `query_for_decision_agent()`; `skill_bank_to_text(bank)` for prompt. Same for GPT and Qwen. |
+| Role | Decision Agent | Skill Bank Agent |
+|------|----------------|------------------|
+| **Model** | Qwen3-14B + LoRA (rank 16) | Qwen3-8B + 3 LoRA (SEGMENT, CONTRACT, CURATOR) |
+| **Training** | GRPO via VERL (group size 8, LR 1e-5) | Hard-EM with LoRA fine-tuning (LR 2e-4) |
+| **Provides** | Game play: primitive actions + tool calls (`QUERY_SKILL`, `CALL_SKILL`, `QUERY_MEM`) | Skill Bank: segmented trajectories, effect contracts, split/merge/refine |
+| **Consumes** | Skill bank (protocols for planning, contracts for reward shaping) | Raw episodes from Decision Agent rollouts |
+| **Interface** | `VLMDecisionAgent(skill_bank=..., model=...)` → `select_skill_from_bank()` / `query_skill_bank()` | `SkillBankAgent.select_skill(query, current_state)` / `SkillQueryEngine` |
 
 The decision agent’s `skill_bank` can be a **SkillBankMVP** (plain storage) or a **SkillBankAgent** (full pipeline). Helpers (`skill_bank_to_text`, `query_skill_bank`, `select_skill_from_bank`) accept both and use the richest API available.
 
-**Skill bank: protocol store vs contract.** Each skill has two logical parts: (1) **Protocol store** — what the decision agent sees: `name`, `strategic_description`, `protocol` (steps, preconditions, success_criteria, expected_duration), `confidence`; used for `skill_bank_to_text()` and to set `active_skill_plan` from `protocol.steps`. (2) **Contract** — effects (`eff_add`, `eff_del`, `eff_event`) used for segmentation, verification, and **reward shaping**; the agent gets the contract via `bank.get_contract(skill_id)` when computing r_follow. So the agent **plans** from protocols and is **rewarded** for progress on the contract's eff_add predicates.
+**Skill bank: protocol store vs contract.** Each skill has two parts: (1) **Protocol store** — `name`, `strategic_description`, `protocol` (steps, preconditions, success_criteria, expected_duration), `confidence`; used for `skill_bank_to_text()` and `active_skill_plan`. (2) **Contract** — effects (`eff_add`, `eff_del`, `eff_event`) used for segmentation, verification, and reward shaping (r_follow). The agent **plans** from protocols and is **rewarded** for progress on the contract's eff_add predicates.
 
-### Do they use the RAG models ([rag/](rag/)) for memory/skill query?
+**Skill protocols for select.** When the agent selects a skill, the result includes a **protocol**: **steps** (up to 7), **preconditions**, **success_criteria**, **expected_duration**. If no protocol exists, a **micro_plan** is built from `eff_add` literals. See [agent_helper.py](decision_agents/agent_helper.py).
 
-**Yes.** Both agents now use RAG embeddings (default: Qwen3-Embedding-0.6B) for retrieval:
+### RAG retrieval ([rag/](rag/))
 
-| Component | Memory query (`query_memory`) | Skill query (`query_skill`) | RAG (rag/) usage |
-|-----------|-------------------------------|-----------------------------|-------------------|
-| **decision_agents** | **Yes.** [EpisodicMemoryStore](decision_agents/agent_helper.py) embeds every memory via [rag/TextEmbedder](rag/embedding/text_embedder.py) and retrieves by **cosine similarity + keyword overlap** (blended, default 70% embedding / 30% keyword). The embedder is auto-loaded from `rag.get_text_embedder()`. Falls back to keyword-only if RAG is unavailable. | **Yes** (via SkillQueryEngine). Uses [query_skill_bank](decision_agents/agent_helper.py) which delegates to **SkillQueryEngine**. | Uses [rag/](rag/) `TextEmbedder` for both memory and skill retrieval. |
-| **skill_agents** | N/A (skill_agents do not implement memory query). | **Yes.** [SkillQueryEngine](skill_agents/query.py) embeds all skill descriptions (ID + effect literals) via RAG `TextEmbedder` and scores queries by **cosine similarity + keyword Jaccard** (blended, default 60% embedding / 40% keyword). Auto-loads `rag.get_text_embedder()`. `query_by_effects` also uses embedding scores. Falls back to keyword-only if RAG is unavailable. | Uses [rag/](rag/) `TextEmbedder` for skill retrieval. Also **optional** in **boundary proposal**: [skill_agents/boundary_proposal](skill_agents/boundary_proposal/) can take a RAG embedder for embedding change-point scores. |
+Both agents use RAG embeddings (Qwen3-Embedding-0.6B) for retrieval, with graceful fallback to keyword-only:
 
-Both agents gracefully degrade to keyword-only retrieval if the RAG module or model is unavailable (import fails or embedder init fails).
+| Component | Memory query | Skill query |
+|-----------|-------------|-------------|
+| **Decision Agent** | [EpisodicMemoryStore](decision_agents/agent_helper.py): cosine similarity + keyword overlap (70/30 blend) | Via [SkillQueryEngine](skill_agents/query.py): cosine + keyword Jaccard (60/40 blend) |
+| **Skill Bank Agent** | N/A | [SkillQueryEngine](skill_agents/query.py): cosine + keyword Jaccard; optional embedding change-point scores in boundary proposal |
 
 ### Typical workflow
 
-1. **Bootstrap (optional)**  
-   Load or create an initial skill bank (e.g. from a few hand-labelled or pre-segmented episodes).  
-   `skill_agent = SkillBankAgent(bank_path="..."); skill_agent.load()` or `skill_agent.ingest_episodes(seed_episodes)`.
+1. **Bootstrap** — load or create an initial skill bank from seed episodes:
+   `skill_agent = SkillBankAgent(bank_path="..."); skill_agent.ingest_episodes(seed_episodes)`
 
-2. **Play**  
-   Run the VLM agent with that bank — returns an `Episode` directly:  
-   `episode = run_episode_vlm_agent(env, agent=VLMDecisionAgent(skill_bank=skill_agent), task="...", ...)`.  
-   Each `Experience` in the episode has `summary_state` (key=value facts), `intentions` ([TAG] phrase), `sub_tasks`, and `reward_details` populated from agent internal state — no post-hoc conversion needed.
+2. **Play** — run the Decision Agent with the bank:
+   `episode = run_episode_vlm_agent(env, agent=VLMDecisionAgent(skill_bank=skill_agent), task="...")`
 
-3. **Feed back**  
-   Ingest the episode directly into the skill pipeline:  
-   `skill_agent.ingest_episodes([episode])` then optionally `skill_agent.run_until_stable()`.  
-   The skill agents read `summary_state` (key=value for observations), `intentions` ([TAG] phrase for predicates/skill boundaries), and `sub_tasks` from each Experience for boundary proposal and segmentation.
+3. **Feed back** — ingest trajectories into the skill pipeline:
+   `skill_agent.ingest_episodes([episode])` then `skill_agent.run_until_stable()`
 
-4. **Repeat**  
-   The bank improves (new skills from `__NEW__`, splits/merges/refinements), so the next run has better `query_skill` results and reward shaping.
+4. **Repeat** — the bank improves (new skills, splits/merges/refinements), so the next run has better retrieval and reward shaping.
 
-**Trainable co-evolution**: Use [trainer/](trainer/) to run both agents in a training loop. The **Decision Agent** is trained with **GRPO** (group sampling + ranking on r_total); retrieval actions (`QUERY_MEM`, `QUERY_SKILL`, `CALL_SKILL`) are first-class actions with costs. The **SkillBank Agent** is updated via **Hard-EM** (decode → learn contracts → update → gate); no global LLM scoring. Shared rollout schema and reward contract live in `trainer/common/`; configs in `trainer/common/configs/decision_grpo.yaml` and `skillbank_em.yaml`. Run co-evolution: `python -m trainer.launch_coevolution --decision-config ... --skillbank-config ...`. See [trainer/README.md](trainer/README.md).
+**For training**: `bash scripts/coevolution_train.sh` runs this loop with GRPO + Hard-EM on 8 GPUs. See [Section 5](#5-trainer-code) for details.
 
 See [decision_agents/README.md](decision_agents/README.md) for the VLM agent API and [skill_agents/README.md](skill_agents/README.md) for the pipeline and query usage.
 
-### How reward is computed (decision + skill agents)
+### Reward (decision + skill agents)
 
-Reward for the decision/skill stack is computed in two places, now unified during training:
+During training, reward is computed from two sources, unified by `TrainRewardShaper`:
 
-- **decision_agents** (`reward_func.py`): **r_total = r_env + w_follow × r_follow + r_cost**
-  - **r_env**: Raw environment reward from `env.step`.
-  - **r_follow**: Skill-following shaping. The active skill’s contract has `eff_add` predicates (e.g. `at_pot`, `onion_in_pot`). Each predicate is checked against the **current observation text** (tokenize predicate and observation; predicate counts as satisfied if all its tokens appear in the observation). The agent gets a **per-predicate bonus** for each **newly** satisfied predicate, a **completion bonus** when all are satisfied, and a **small penalty** when no new predicate is satisfied this step. This is stateful over the episode (tracks which predicates were already satisfied).
-  - **r_cost**: Negative costs for tool use: **query_mem_cost**, **query_skill_cost**, **call_skill_cost**, and **skill_switch_cost** when the active skill changes.
+**r_total = r_env + 0.1 × r_follow + r_cost + 0.1 × r_tool**
 
-- **skill_agents** (`tool_call_reward.py`): **r_tool = w_relevance × r_relevance + w_utility × r_utility** (for agentic RL: “was this tool call good?”)
-  - **r_relevance**: For **query_skill**, the retrieval score (from `SkillQueryEngine.query(key)` or from `retrieved_result["score"]`) scaled by `relevance_scale`. For **query_memory**, an optional `retrieval_quality` in [0,1] scaled the same way.
-  - **r_utility**: For **query_skill** and **call_skill**, the skill’s **eff_add** predicates are checked against the **outcome observation** text (after the tool call). Same token-in-text rule: each predicate satisfied in the outcome gets a per-predicate bonus; if all are satisfied, an extra completion bonus. No state across steps—purely outcome-based.
+| Component | Signal | Source |
+|-----------|--------|--------|
+| **r_env** | Raw environment reward from `env.step` | [reward_func.py](decision_agents/reward_func.py) |
+| **r_follow** | Skill-following shaping: per-predicate bonus for each newly satisfied `eff_add` literal in the observation, completion bonus when all satisfied, small penalty per step with no progress. Stateful over the episode. | [reward_func.py](decision_agents/reward_func.py) |
+| **r_cost** | Negative costs: `query_mem_cost` (-0.05), `query_skill_cost` (-0.05), `call_skill_cost` (-0.02), `skill_switch_cost` (-0.10) | [reward_func.py](decision_agents/reward_func.py) |
+| **r_tool** | Tool-call quality: `r_relevance` (retrieval score) + `r_utility` (outcome `eff_add` satisfaction). Outcome-based, no cross-step state. | [tool_call_reward.py](skill_agents/tool_call_reward.py) |
 
-- **Training integration** (`trainer/decision/reward_shaping.py`): during VERL training, `TrainRewardShaper` combines both sources into a single per-step reward: **r_total = r_env + w_follow × r_follow + r_cost + tool_call_reward_weight × r_tool**. The tool-call reward (`r_tool`) is computed by `compute_tool_call_reward` for every QUERY_SKILL, QUERY_MEM, and CALL_SKILL action, providing a dense learning signal for effective tool use.
-
-Predicate satisfaction in both modules is **text-based**: tokenize the predicate (e.g. `onion_in_pot` → tokens), then require all tokens (length ≥ 2) to appear in the observation/outcome string (case-insensitive).
+Predicate satisfaction is **text-based**: tokenize the predicate (e.g. `onion_in_pot` → `["onion", "in", "pot"]`), then check all tokens (length ≥ 2) appear in the observation string (case-insensitive).
 
 ---
 
-# 2. Data structure
+# 2. Data structure (skills and experiences)
 
-This part defines how **experiences**, **episodes**, and **sub-task (skill)** segments are represented and cleaned from external sources into a uniform format, with optional fields for intention, summary, and quality for RAG and replay.
+This section defines how **experiences**, **episodes**, and **sub-episodes** are represented in code. Sub-episodes are the unit used to **generate skills**: the skill pipeline segments episodes into **SubTask_Experience** segments, then converts them to lightweight **SubEpisodeRef** pointers stored in each **Skill** (see [Skill agent](#3-skill-agent) and [skill_agents/](skill_agents/)). The skill bank format follows this readme: each skill has a **protocol store** (name, steps, preconditions) for the decision agent and a **contract** (eff_add, etc.) for reward and verification; evidence is a list of `SubEpisodeRef` from sub-episodes.
 
-- **Data structure details** (class definitions, buffers, serialization) are in **[data_structure/](data_structure/)**, in particular [data_structure/experience.py](data_structure/experience.py) and [data_structure/helper.py](data_structure/helper.py).
-- **Usage** — how episodes and experiences are produced and consumed:
-  - **[decision_agents/](decision_agents/)**: `run_episode_vlm_agent()` directly returns an `Episode` with fully-populated `Experience` objects (`summary_state` as key=value, `intentions` as [TAG] phrase, `sub_tasks`, `reward_details` filled from agent internal state during rollout). No separate conversion step needed.
-  - **[labeling/](labeling/)**: `label_episodes_gpt54.py` annotates cold-start episodes with the same formats — `summary_state` (deterministic key=value), `summary` (key=value + delta-aware note), `intentions` ([TAG] phrase with urgency detection). See [labeling/readme.md](labeling/readme.md).
-  - **[skill_agents/](skill_agents/)**: consumes `Episode` (list of `Experience`) for boundary proposal and segmentation; reads `summary_state` (key=value for observations), `intentions` ([TAG] phrase for predicates/skill boundaries). Produces `SubTask_Experience` segments and skill labels. See [skill_agents/infer_segmentation/episode_adapter.py](skill_agents/infer_segmentation/episode_adapter.py), [skill_agents/boundary_proposal/](skill_agents/boundary_proposal/), and [skill_agents/README.md](skill_agents/README.md).
+- **Definitions** (classes, serialization): [data_structure/experience.py](data_structure/experience.py), [data_structure/helper.py](data_structure/helper.py).
+- **Producers**: [decision_agents/](decision_agents/) (`run_episode_vlm_agent()` → `Episode` with full `Experience` fields), [labeling/](labeling/) ([label_episodes_gpt54.py](labeling/label_episodes_gpt54.py) for cold-start; [labeling/readme.md](labeling/readme.md)).
+- **Consumers**: [skill_agents/](skill_agents/) ingests `Episode`, segments into `SubTask_Experience`, and builds the skill bank (protocol + contract + `Skill.sub_episodes` as `SubEpisodeRef`).
 
 ## Experience
 
-Same as in standard RL: **state, action, intention, reward, next state, done**. Implemented in [data_structure/experience.py](data_structure/experience.py) as `Experience` with required fields plus optional: **intentions**, **tasks**, **sub_tasks**, **summary**, **summary_state**, **idx**, **sub_task_done**, **reward_details**, **action_type**. Long-term goal and short-term goal can be filled as needed. A field for experience value is left for prioritized replay.
+Single step: **state, action, reward, next_state, done**. Implemented in [data_structure/experience.py](data_structure/experience.py) as `Experience` with required fields and optional: **intentions**, **tasks**, **sub_tasks**, **summary**, **summary_state**, **idx**, **sub_task_done**, **reward_details**, **action_type**, **raw_state**, **raw_next_state**, **available_actions**, **interface**.
 
-Key fields use structured formats for RAG and downstream consumption:
+Structured formats (used by RAG and skill pipeline):
 
-- **`summary_state`**: Compact `key=value` facts (e.g. `game=tetris | phase=midgame | stack_h=14 | holes=32`). Deterministic — produced by `build_rag_summary()` with game-aware fact extractors (0 LLM tokens). Optimised for embedding retrieval and keyword matching.
-- **`summary`**: `summary_state | note=<strategic note>` — same deterministic facts plus a short LLM-generated threat/opportunity note (≤10 words). The note is delta-aware (reflects what changed since the previous step).
-- **`intentions`**: `[TAG] subgoal phrase` (e.g. `[CLEAR] Reduce holes before stack overflows`). Uses 13 canonical tags (SETUP, CLEAR, MERGE, ATTACK, DEFEND, NAVIGATE, POSITION, COLLECT, BUILD, SURVIVE, OPTIMIZE, EXPLORE, EXECUTE) for skill segmentation and RAG retrieval.
+| Field | Format | Purpose |
+|-------|--------|---------|
+| **summary_state** | `key=value \| key=value` (e.g. `game=tetris \| stack_h=14 \| holes=32`) | Deterministic; from `build_rag_summary()` (0 LLM). Retrieval and predicates. |
+| **summary** | `summary_state \| note=<strategic note>` | Facts + short LLM note (≤10 words); delta-aware. |
+| **intentions** | `[TAG] subgoal phrase` (e.g. `[CLEAR] Reduce holes before stack overflows`) | 13 tags: SETUP, CLEAR, MERGE, ATTACK, DEFEND, NAVIGATE, POSITION, COLLECT, BUILD, SURVIVE, OPTIMIZE, EXPLORE, EXECUTE. Used for skill boundaries and RAG. |
+| **reward_details** | `{r_env, r_follow, r_cost, r_total}` | Per-step breakdown from VLM reward tool. |
+| **action_type** | `"primitive"`, `"QUERY_MEM"`, `"QUERY_SKILL"`, `"CALL_SKILL"` | Used by trainer and metrics. |
 
-The **reward_details** dict stores per-step reward breakdown (`r_env`, `r_follow`, `r_cost`, `r_total`) from the VLM decision agent. The **action_type** classifies each step as `"primitive"`, `"QUERY_MEM"`, `"QUERY_SKILL"`, or `"CALL_SKILL"`. Depending on the environment, not all fields are provided; the actual state used by LLM agents is the **summary_state** (structured key=value), which also serves as context for RAG retrieval.
+`run_episode_vlm_agent()` fills these from agent state: `summary_state` ← `get_state_summary`, `intentions` ← `get_intention`, `sub_tasks` ← `active_skill_id`, `reward_details` / `action_type` from reward tool. Skill agents read `summary_state` and `intentions` for segmentation without extra conversion.
 
-`run_episode_vlm_agent()` now populates Experience fields directly from agent internal state during the rollout:
-
-| Experience field | Source | Format |
-|---|---|---|
-| `summary_state` | `agent.state.last_state_summary` (from `get_state_summary` tool) | `key=value \| key=value` (e.g. `game=tetris \| stack_h=14 \| holes=32`) |
-| `intentions` | `agent.state.current_intention` (from `get_intention` tool) | `[TAG] phrase` (e.g. `[CLEAR] Reduce holes before stack overflows`) |
-| `sub_tasks` | `agent.state.active_skill_id` (current skill being followed) | Skill ID string or `null` |
-| `reward_details` | Full reward breakdown dict from `RewardComputer` | `{r_env, r_follow, r_cost, r_total}` |
-| `action_type` | Classified from action string | `"primitive"`, `"QUERY_MEM"`, `"QUERY_SKILL"`, `"CALL_SKILL"` |
-
-This means skill agents can directly consume VLM agent rollouts — no conversion or post-hoc labeling needed for the fields that `_extract_obs_actions()` and `_extract_predicates()` read.
-
-Serialization: `Experience.from_dict()` is a `@classmethod` that constructs a new Experience from a dict (including all optional fields).
+Serialization: `Experience.from_dict()` / `to_dict()`.
 
 ## Episode
 
-An **episode** is a sequence of experiences (time-length limited) with final reward, length, optional outcome/summary, and **metadata**. Implemented as `Episode` in [data_structure/experience.py](data_structure/experience.py): **experiences**, **task**, **outcome**, **summary**, **metadata**; methods include **get_reward()**, **get_total_reward()**, **get_length()**, **set_outcome()**, **separate_into_sub_episodes()** (splits by sub-task indices into `SubTask_Experience`).
+A time-ordered sequence of **Experience** with **task**, **outcome**, **summary**, **metadata**. Implemented as `Episode` in [data_structure/experience.py](data_structure/experience.py): **experiences**, **task**, **outcome**, **summary**, **metadata**; **episode_id**, **env_name**, **game_name** (three-part identifier). Methods: **get_reward()**, **get_total_reward()**, **get_length()**, **set_outcome()**, **separate_into_sub_episodes(outcome_length)**.
+
+**Sub-episodes for skill generation:** `Episode.separate_into_sub_episodes(outcome_length)` splits the episode by **sub_tasks** boundaries (experience indices where `sub_tasks` changes) and returns a list of **SubTask_Experience**. Each segment has the experiences for one sub-task and optional outcome experiences (next `outcome_length` steps). The [skill_agents](skill_agents/) pipeline also produces `SubTask_Experience` via Stage 1+2 (boundary proposal + segmentation); those segments are then turned into **SubEpisodeRef** via `SubTask_Experience.to_sub_episode_ref()` and stored in **Skill.sub_episodes**.
 
 ### Three-part identifier
 
-Every Episode carries a triple that uniquely identifies it across supported environments:
-
 | Field | Type | Description | Example |
 |-------|------|-------------|---------|
-| `episode_id` | `str` | Auto-generated UUID (or caller-provided) | `"a3f1b2c4-..."` |
-| `env_name` | `str` | Platform / wrapper name | `"gamingagent"`, `"avalon"`, `"diplomacy"` |
-| `game_name` | `str` | Specific game within the platform | `"sokoban"`, `"2048"`, `"avalon"` |
+| **episode_id** | `str` | UUID (auto or caller) | `"a3f1b2c4-..."` |
+| **env_name** | `str` | Platform / wrapper | `"gamingagent"`, `"avalon"`, `"diplomacy"`, `"orak"` |
+| **game_name** | `str` | Game within platform | `"sokoban"`, `"tetris"`, `"avalon"`, `"super_mario"` |
 
-For single-game platforms (Avalon, Diplomacy), `env_name == game_name`. For multi-game platforms (GamingAgent), `game_name` disambiguates which game was played. All three fields are populated automatically by `run_episode_vlm_agent()` from wrapper `info` and are persisted through `to_dict()` / `from_dict()`.
+Filled by `run_episode_vlm_agent()` from wrapper `info`; persisted in `to_dict()` / `from_dict()`. **metadata** holds rollout info (e.g. `cumulative_reward`, `agent_state`, `done`, `steps`).
 
-The **metadata** dict stores rollout-level information (cumulative reward, final agent state, etc.). When returned by `run_episode_vlm_agent()`, metadata includes: `cumulative_reward`, `agent_state`, `done`, `steps`.
+## Sub-episode (SubTask_Experience) → skills
 
-Serialization: `Episode.from_dict()` is a `@classmethod` that reconstructs an Episode (including `episode_id`, `env_name`, `game_name`, metadata) from a dict.
+**SubTask_Experience** is the contiguous segment used to **generate skills**. Defined in [data_structure/experience.py](data_structure/experience.py):
 
-## Sub-task (skill) experience
+| Field | Description |
+|-------|-------------|
+| **sub_task** | Sub-task / strategy label (skill name or ID). |
+| **final_goal** | Episode-level task this segment serves. |
+| **sub_task_experience** | List of `Experience` in the segment (used during processing; not stored in the skill bank). |
+| **outcome_experiences** | Optional follow-up experiences to evaluate outcome. |
+| **summary**, **outcome_summary** | For retrieval and quality. |
+| **length**, **cumulative_reward** | Cached for quick use. |
+| **seg_id**, **episode_id**, **rollout_source** | Link to pipeline segment and rollout. |
+| **quality_score**, **outcome_classification** | Set by skill agent quality pipeline (`"success"` \| `"partial"` \| `"failure"`). |
 
-**SubTask_Experience** represents a contiguous segment of experiences that accomplish a sub-task (strategy/skill): **sub_task**, **final_goal**, **sub_task_experience** (list of `Experience`), **outcome_experiences** (nullable), **summary**, **outcome_summary**, **length**, **cumulative_reward**. Used by [skill_agents](skill_agents/) for skill labeling and the skill bank pipeline. Serialization: `SubTask_Experience.from_dict()` is a `@classmethod`; `to_dict()` handles `None` outcome_experiences.
+The skill bank does **not** store full experience lists. **SubTask_Experience.to_sub_episode_ref()** produces a **SubEpisodeRef** (episode_id, seg range, rollout_source, summary, intention_tags, outcome, cumulative_reward, quality_score); that pointer is stored in **Skill.sub_episodes** (see [skill_agents/stage3_mvp/schemas.py](skill_agents/stage3_mvp/schemas.py)). Skill format (protocol + contract) is described in [Skill agent](#3-skill-agent) and in the Quick Links (protocol store for planning, contract for r_follow).
+
+Serialization: `SubTask_Experience.from_dict()` / `to_dict()`; `outcome_experiences` may be `None`.
 
 ## Buffers
 
-- **Experience_Replay_Buffer**: FIFO buffer of experiences; **add_experience()** (single, list, or full `Episode`), **sample_experience()**, **get_experience_summary()**.
-- **Episode_Buffer**: FIFO buffer of full episodes; **add_episode()**, **sample_episode()**, **get_episode_summary()**, **save_to_json()** / **load_from_json()**.
-- **Tool_Buffer**: stores `SubTask_Experience` (tools/strategies) for retrieval; **add_tool()**, **sample_tool()**, **get_tool_summary()**.
+Defined in [data_structure/experience.py](data_structure/experience.py):
 
-All live in [data_structure/experience.py](data_structure/experience.py).
-
-### ToDo (data structure)
-
-**Status (repo-wide):** Not all ToDos are finalized. Implemented: experience/episode buffers (FIFO + add/sample), summary generation and RAG-backed memory/skill query, trainer prioritized replay, and sub-task pipeline (skill_agents). Open or partial: in/out policy scoring for buffer, per-env format helpers, completion validator, and some trainer items (LoRA, stronger replay). RAG is not fine-tuned (frozen by design). See notes below.
-
-1. **[Partial]** Experience buffer with in/out policy models that evaluate relative quality and relevance to the proposed latent state (intentions / sub-goals) and current state; push/pop (or add/sample) for adding/removing experiences.  
-   *Done:* [Experience_Replay_Buffer](data_structure/experience.py) and [Episode_Buffer](data_structure/experience.py) (add/sample, save/load); [trainer ReplayBuffer](trainer/decision/replay_buffer.py) with prioritized sampling. *Open:* policy-based in/out scoring for quality/relevance to intentions.
-2. **[Partial]** Per-environment helpers to convert raw experience sequences into this format and fill blank fields; sample experiences may be required.  
-   *Done:* [Experience](data_structure/experience.py) optional fields; [skill_agents](skill_agents/infer_segmentation/episode_adapter.py) uses `summary_state`/`summary`/`state`; [decision_agents](decision_agents/agent_helper.py) `get_state_summary` / `infer_intention`. *Open:* central per-env “raw → Episode” conversion helpers.
-3. **[Done]** (N/A) Hooks for experience quality evaluation and prioritized replay; optional auto-ranking inside the experience buffer.  
-   Not required. Existing support is sufficient: [ReplayBuffer](trainer/decision/replay_buffer.py) has priority-weighted sampling and a value field for replay. No plans for explicit quality hooks or auto-ranking in [Episode_Buffer](data_structure/experience.py) / [Experience_Replay_Buffer](data_structure/experience.py).
-4. **[Done]** Experience summary generation when missing; experience embedding code for RAG and experience query.  
-   *Done:* [Experience.generate_summary](data_structure/experience.py) (produces `summary_state | note=<note>`) / `generate_summary_state` (tries `build_rag_summary()` first for deterministic key=value, then LLM fallback) / `generate_intentions` (produces `[TAG] phrase` via `infer_intention()`); [get_state_summary](decision_agents/agent_helper.py); [EpisodicMemoryStore](decision_agents/agent_helper.py) (RAG-backed memory query with key=value keyword splitting); [SkillQueryEngine](skill_agents/query.py) (RAG-backed skill query). Episode_Buffer.get_episode_summary is keyword-only (no embedding).
+- **Experience_Replay_Buffer**: FIFO of experiences; **add_experience()** (single, list, or `Episode`), **sample_experience()**, **get_experience_summary()**.
+- **Episode_Buffer**: FIFO of episodes; **add_episode()**, **sample_episode()**, **get_episode_summary()**, **save_to_json()** / **load_from_json()**.
+- **Tool_Buffer**: stores **SubTask_Experience** (tools/strategies); **add_tool()**, **sample_tool()**, **get_tool_summary()**.
 
 ---
 
 # 3. Skill agent
 
-## Sub-task Decomposition
+## Sub-task decomposition
 
-This is for experience pre-processing coming from external source if unlabeled, or rollouts from sub-optimal policies.
+Segment long-horizon trajectories into **sub-tasks** (skills): unlabeled episodes → candidate boundaries → skill-labeled segments → learned contracts. Input: [Episode](data_structure/experience) with `experiences` (state/action/reward/done, `summary_state` or `state`, `intentions` as `[TAG] phrase`) and `task`. Output: [SubTask_Experience](data_structure/experience) segments with skill labels, persisted as skills with protocol + contract in the bank. See [skill_agents/README.md](skill_agents/README.md) and [skill_agents_grpo/README.md](skill_agents_grpo/README.md) for the base pipeline and GRPO-wrapped pipeline.
 
-Suppose that we have the experiences processed into the intended format, the intention of this step is to decompose the entire experience trajectories into sub-tasks and sub-trajectories, i.e., the input trajectory is unlabeled without any annotation over the entire trajectory, expected output should be sub-task labeling over the entire trajectory.
-
-## Pipeline implementation ([skill_agents/](skill_agents/))
-
-The [skill_agents](skill_agents/) module implements this via the **SkillBankAgent** pipeline: unlabeled episodes → candidate boundaries → skill-labeled segments → learned contracts (finite skill categories). Entry points: [SkillBankAgent](skill_agents/pipeline.py), [ingest_episodes](skill_agents/pipeline.py), [segment_episode](skill_agents/pipeline.py); see [skill_agents/README.md](skill_agents/README.md) and [skill_agents/PLAN.md](skill_agents/PLAN.md).
+## Pipeline implementation ([skill_agents/](skill_agents/), [skill_agents_grpo/](skill_agents_grpo/))
 
 | Step | Implementation | Notes |
 |------|----------------|--------|
-| **Input format** | [Episode](data_structure/experience) with `experiences` (state/action/reward/done, etc.) and `task`. Per-step state: `summary_state` (key=value, preferred), `summary` (key=value + note), or `state` (raw); `intentions` as `[TAG] phrase` for skill boundary predicates. | Experience clean-up / formulation can feed into this; `infer_intention()` and `build_rag_summary()` from [decision_agents](decision_agents/) produce structured labels matching the labeling pipeline format. |
-| **Stage 1: Boundary proposal** | [boundary_proposal](skill_agents/boundary_proposal/): extract signals (rule-based per env or **LLM-based** `env_name="llm"`) → propose **candidate cut points** C. Constraints: [merge_radius](skill_agents/pipeline.py) merges nearby candidates (default 5 steps); cuts only at C keep search O(\|C\|²). Optional RAG embedder for embedding change-point scores. | High-recall boundaries; no final segmentation yet. |
-| **Stage 2: Sub-task labeling** | [infer_segmentation](skill_agents/infer_segmentation/): decode over C with a **preference-learned scorer** (LLM provides rankings, not numeric scores). **Candidate options** = `skill_names` (existing bank IDs + `__NEW__`). Constraints: [new_skill_penalty](skill_agents/pipeline.py), [preference_iterations](skill_agents/pipeline.py), [margin_threshold](skill_agents/pipeline.py). Output: [SegmentationResult](skill_agents/infer_segmentation/diagnostics.py) + list of [SubTask_Experience](data_structure/experience) (each segment has a **skill label**). | Task types are constrained to a finite set: existing bank skills or `__NEW__`. LLM is used as a teacher for pairwise preferences; a small scorer is trained (Bradley–Terry) and DP/beam decode produces the labeling. |
-| **Stage 3: Contract learning** | [stage3_mvp](skill_agents/stage3_mvp/): for each non-NEW segment, learn **effects-only contracts** (eff_add, eff_del, eff_event), verify, refine; persist to [SkillBankMVP](skill_agents/skill_bank/bank.py). [eff_freq](skill_agents/pipeline.py), [min_instances_per_skill](skill_agents/pipeline.py). | Converts segments into a finite, queryable skill taxonomy. |
-| **Stage 4: Bank maintenance** | [bank_maintenance](skill_agents/bank_maintenance/): split low-quality skills, merge similar ones, refine contracts. [materialize_new_skills](skill_agents/pipeline.py) promotes `__NEW__` segments meeting support/pass-rate thresholds to new named skills. | Keeps the skill set finite and consistent. |
+| **Stage 1: Boundary proposal** | [boundary_proposal](skill_agents/boundary_proposal/): signals (rule-based per env or **LLM** `env_name="llm"` / `"llm+overcooked"`) → **candidate cut points** C. [merge_radius](skill_agents/pipeline.py) (default 5). *Not GRPO-wrapped.* | High-recall boundaries only. |
+| **Stage 2: Sub-task labeling** | [infer_segmentation](skill_agents/infer_segmentation/): decode over C with **preference-learned scorer** (LLM rankings → Bradley–Terry). Options = bank IDs + `__NEW__`. Contract feedback via `compat_fn`. **GRPO:** [skill_agents_grpo](skill_agents_grpo/): SEGMENT LoRA wraps `collect_segment_preferences()`; reward = SegmentationDiagnostics. | Output: [SegmentationResult](skill_agents/infer_segmentation/diagnostics.py) + list of [SubTask_Experience](data_structure/experience). |
+| **Stage 3: Contract learning** | [stage3_mvp](skill_agents/stage3_mvp/): effects-only contracts (eff_add, eff_del, eff_event), verify, refine → [SkillBankMVP](skill_agents/skill_bank/bank.py). **GRPO:** CONTRACT LoRA wraps `llm_summarize_contract()`; reward = `verify_effects_contract().overall_pass_rate`. | Contracts feed back to Stage 2 via `compat_fn`. |
+| **Stage 4: Bank maintenance** | [bank_maintenance](skill_agents/bank_maintenance/): **propose** (refine/merge/split/materialize/promote) → **filter** via `filter_candidates()` (CURATOR LoRA: approve/veto/defer) → **execute** approved actions. **GRPO:** CURATOR LoRA reward = bank_quality_delta. [materialize_new_skills](skill_agents/pipeline.py), [NewPoolManager](skill_agents/skill_bank/new_pool.py), **proto-skill staging** (`__NEW__` → materialize → verify → promote). | See [skill_agents_grpo/README.md](skill_agents_grpo/README.md) and [TODO_Lists/SKILLBANK_GRPO_PLAN.md](TODO_Lists/SKILLBANK_GRPO_PLAN.md). |
 
-**Usage (unlabeled trajectories → sub-task labeled):**
+**Training for the labeling path** is implemented via the GRPO pipeline (SEGMENT LoRA for Stage 2, CONTRACT for Stage 3, CURATOR for Stage 4) and co-evolution with the decision agent; see [skill_agents_grpo/README.md](skill_agents_grpo/README.md).
+
+**Quick usage:**
 
 ```python
 from skill_agents import SkillBankAgent, PipelineConfig
-from data_structure.experience import Episode  # experiences + task
+from data_structure.experience import Episode
 
 config = PipelineConfig(
     bank_path="data/skill_bank.jsonl",
-    env_name="llm+gamingagent",   # or "llm" for LLM-based predicate extraction
-    merge_radius=5,               # constrain boundary proximity
-    new_skill_penalty=5.0,        # penalty for assigning __NEW__
-    preference_iterations=3,      # active-learning rounds for preference scorer
+    env_name="llm+overcooked",   # or "llm", "llm+gamingagent"
+    merge_radius=5,
+    contract_feedback_mode="weak",
+    new_pool_min_cluster_size=5,
+    new_pool_min_consistency=0.5,
 )
 agent = SkillBankAgent(config=config)
 agent.load()
 
-# Episodes from external source or sub-optimal rollouts (unlabeled)
-episodes = [ep1, ep2, ...]
-results = agent.ingest_episodes(episodes)   # Stage 1+2 per episode, then Stage 3
-agent.run_until_stable(max_iterations=3)    # Stage 3 → Stage 4 → materialize NEW
+episodes = [ep1, ep2, ...]   # Episode with .experiences, .task
+agent.ingest_episodes(episodes, env_name="llm+overcooked")  # Stage 1+2 per episode, then Stage 3
+agent.run_until_stable(max_iterations=3)   # Stage 3 → Stage 4 → materialize NEW
 agent.save()
-# Each result: (SegmentationResult, list[SubTask_Experience]) with skill labels per segment
 ```
 
-**ToDo (beyond current pipeline):**
-
-1. **Experience clean-up / formulation**: Helpers to convert unformatted experiences into the Episode format (state/action/summary fields). Use intention inference (e.g. from [decision_agents](decision_agents/) or a dedicated module) to add pseudo intention labels over the trajectory where missing.
-2. **Tighter constraints**: Explicit max sub-task length and richer candidate options (e.g. intention-derived skill candidates per state) can be wired into Stage 1/2 config or segment filters.
-3. **Training code for labeling model**: No direct supervised label signal in the current pipeline; labeling is driven by LLM preference queries and a learned scorer. For end-to-end training, one could use rollout trajectories with reward signals (sub-task assignment, task-related rewards) as in the trainer’s [GRPO](trainer/decision/grpo_trainer.py) + [Hard-EM](trainer/skillbank/em_trainer.py) co-evolution.
-4. **In-context learning**: The labeling path could be extended to generate segment labels from retrieved demonstrations (e.g. RAG over past labeled segments) instead of or in addition to the current preference-based scorer.
+Entry points: [SkillBankAgent](skill_agents/pipeline.py) (`segment_episode`, `ingest_episodes`, `run_until_stable`), [skill_agents/PLAN.md](skill_agents/PLAN.md).
 
 ---
 
 # 4. Decision-making agent
 
-## Reward design for decision agent (implemented)
+The [decision_agents](decision_agents/) module provides an LLM decision agent for step-by-step game play with **skill-bank retrieval** (RAG-based), episodic memory, intention inference, and composite reward. Two backends share the same code path: **GPT-5.4** (training-free, cold-start/labeling) and **Qwen3-14B** (GRPO-trained, vLLM). See [decision_agents/README.md](decision_agents/README.md).
 
-The [decision_agents](decision_agents/) reward is implemented in [reward_func.py](decision_agents/reward_func.py). After every `take_action`, the **reward** tool computes a composite reward used for training-free logging and for GRPO training.
+## RAG-mode decision agent with skill selection
 
-**Formula:** **r_total** = r_env + w_follow × **r_follow** + **r_cost**
+The main inference pipeline that **selects skills** from the bank is **Pipeline A**: [scripts/qwen3_decision_agent.py](scripts/qwen3_decision_agent.py). It uses a **SkillQueryEngine** (RAG) and a **_SkillTracker** for protocol-aware lifecycle (re-selection on stall, duration, success/abort criteria).
 
-| Component | Description | Config / defaults |
-|-----------|-------------|-------------------|
-| **r_env** | Raw environment reward from `env.step`. | From game. |
-| **r_follow** | Skill-following shaping (termination-free): progress toward the active skill’s **eff_add** predicates. | [RewardConfig](decision_agents/reward_func.py): `w_follow=0.1`, `follow_predicate_bonus=0.05`, `follow_completion_bonus=0.20`, `follow_no_progress_penalty=-0.01`. |
-| **r_cost** | Costs for retrieval and skill use. | `query_mem_cost=-0.05`, `query_skill_cost=-0.05`, `call_skill_cost=-0.02`, `skill_switch_cost=-0.10`. |
+**Per-step loop:** (1) **get_state_summary()** — deterministic + LLM into `key=value`; (2) **infer_intention()** — `[TAG] subgoal phrase`; (3) **Skill re-selection** when no active skill, duration exceeded, or zero-reward stall; (4) **get_skill_guidance()** — queries `SkillQueryEngine` with `game_name + intention + state` and structured state for applicability; returns skill_id, protocol (steps, preconditions, success/abort); (5) **qwen3_action()** — prompt with skill plan + current step marker → vLLM; (6) **parse_qwen_response()** — action extraction (exact → fuzzy → **RAG embedding** fallback via `ActionEmbeddingMatcher`); (7) env.step; (8) **_SkillTracker.update()** and build **Experience**.
 
-**r_follow** logic (stateful per episode): For the active skill’s contract **eff_add**, the [RewardComputer](decision_agents/reward_func.py) checks the current observation (keyword presence). It awards a per-predicate bonus for each newly satisfied predicate, a completion bonus when *all* eff_add are satisfied, and a small penalty per step with no new progress. No terminal “skill done” signal—shaping is dense.
+**Skill selection (RAG):** [SkillQueryEngine](skill_agents/query.py) pre-embeds skill descriptions (Qwen3-Embedding-0.6B). **select_skill_from_bank()** routes to: **SkillQueryEngine.select()** (relevance + applicability + confidence) → **query_for_decision_agent()** → **SkillBankAgent.select_skill()** → TF-IDF fallback. **Scoring:** retrieval relevance (60% embedding + 40% keyword Jaccard), execution applicability (eff_add/eff_del vs current state), combined confidence (relevance + applicability + pass_rate). Returns skill_id, protocol, execution_hint, micro_plan, etc.
 
-**Usage:** The runner calls `RewardComputer.compute_reward(r_env, action_type, observation, active_skill_id, skill_contract)` after each step; see [agent.py](decision_agents/agent.py) and [run_episode_vlm_agent](decision_agents/agent.py). Config is [RewardConfig](decision_agents/reward_func.py); trainer uses the same contract in [trainer/decision/reward_shaping.py](trainer/decision/reward_shaping.py).
+**Reward:** **r_total** = r_env + w_follow×r_follow + r_cost (and optional r_tool). r_follow uses the active skill's **eff_add** (per-predicate bonus, completion bonus, no-progress penalty). Config: [RewardConfig](decision_agents/reward_func.py); same contract used in [trainer/decision/reward_shaping.py](trainer/decision/reward_shaping.py).
 
-## Completion validator
+**Run (with skill bank):**
+```bash
+python -m scripts.qwen3_decision_agent --games twenty_forty_eight --episodes 3
+python -m scripts.qwen3_decision_agent --no-bank --episodes 3   # baseline without bank
+```
 
-Verify whether the task / sub-task is completed, using the reward/completion logic above where applicable.
+Full API, pipelines (A vs B), and scoring details: [decision_agents/README.md](decision_agents/README.md).
 
-| Point | Status | Where / note |
-|-------|--------|----------------|
-| Skill-level completion signal | **Done** | [reward_func.py](decision_agents/reward_func.py): when all **eff_add** predicates are satisfied in the observation, the agent receives `follow_completion_bonus`. No separate LLM “completion level” or “steps left” function. |
-| LLM completion-level function | **Open** | Not implemented. Would load state and output completion level of current task (distinct from RAG and r_follow). e.g. high reward early → low completion score; low reward late → high completion score. |
-| Steps-left estimator (initial + final state) | **Open** | Not implemented. Would estimate steps to reach final state; could use stored experience from RAG. |
-
-CoT and causality could be used for plausibility in future implementations.
-
-
-## Experience retrieval
-
-Use RAG to retrieve experience from the buffer when generating new experience or in **training-free** mode for decision-making (in-context learning). The RAG stack is in [rag/](rag/): [TextEmbedder](rag/embedding/text_embedder.py) (default Qwen3-Embedding-0.6B), [MemoryStore](rag/retrieval.py) (add_texts / retrieve / rank by cosine similarity), [rag/README.md](rag/README.md).
-
-| ToDo | Status | Implementation / notes |
-|------|--------|-------------------------|
-| 1. Deploy RAG model to generate embeddings of experiences | **Done** (for episodic memory and skills) | [EpisodicMemoryStore](decision_agents/agent_helper.py) uses [rag.retrieval.MemoryStore](rag/retrieval.py) + `get_text_embedder()`; memories are embedded on `add()`. [SkillQueryEngine](skill_agents/query.py) embeds skill descriptions. RAG embedder is [frozen](rag/embedding/text_embedder.py) during training. *Not* wired to [Episode_Buffer](data_structure/experience.py) / [Experience_Replay_Buffer](data_structure/experience.py) (they use keyword-only `get_episode_summary` / `get_experience_summary`). |
-| 2. Query experience most relevant to current state and intentions (similarity from RAG) | **Done** (for decision agent memory) | `query_memory(key)` in [decision_agents](decision_agents/agent.py) calls [EpisodicMemoryStore.query(key, k)](decision_agents/agent_helper.py); key typically includes scene/objective/entities. Retrieval uses RAG cosine similarity blended with keyword overlap. See the [«Do they use the RAG models?»](#do-they-use-the-rag-models-rag-for-memoryskill-query) table above. |
-| 3. Update RAG model (e.g. contrastive learning or other RAG training) | **Done** (N/A) | RAG embedder is kept frozen (no fine-tuning). No contrastive or other RAG training is planned; retrieval uses the fixed pretrained model. |
-
-## Decision-making agent design
-
-This part designs an agent for step-by-step decision-making in games. The framework supports both **training-free** (in-context learning with RAG) and **trainable** (reinforcement learning) modes. The implemented agent lives in **[decision_agents/](decision_agents/)**.
-
-## Implemented agent: VLMDecisionAgent (decision_agents/)
-
-The **VLM Decision Agent** plays games using a **two-turn micro-loop** per timestep: (1) **take_action** — execute exactly one environment or retrieval action; (2) **reward** — compute and log composite reward.
-
-**Per-step loop (protocol):** Each timestep the runner executes: (1) **get_state_summary** — required; (2) at most one of **query_skill** or **query_memory** — optional, budget-limited (never both in the same step); (3) **take_action** — required; (4) **get_intention** — required; (5) **reward** — required. So get_state_summary, take_action, get_intention, and reward are necessary each env step; only the retrieval tools are optional.
-
-### Tools
-
-| Tool | Purpose |
-|------|--------|
-| **take_action** | Execute one action: either a **primitive** (move, interact, etc.) or a **retrieval action** — `QUERY_MEM(key)`, `QUERY_SKILL(key)`, `CALL_SKILL(skill_id, params)`. |
-| **reward** | Compute reward for the last transition (r_env, r_follow, r_cost, r_total). Call once right after take_action. |
-| **get_state_summary** | Optional: compact `key=value` state summary (≤ 400 chars). Uses `build_rag_summary()` with game-aware fact extractors (Tetris holes, 2048 tiles, etc.); deterministic by default, optional LLM fallback. Example: `game=tetris \| phase=midgame \| stack_h=14 \| holes=32`. |
-| **get_intention** | Optional: `[TAG] subgoal phrase` (≤15 words). Tags: SETUP, CLEAR, MERGE, ATTACK, DEFEND, NAVIGATE, POSITION, COLLECT, BUILD, SURVIVE, OPTIMIZE, EXPLORE, EXECUTE. Example: `[CLEAR] Reduce holes before stack overflows`. |
-| **query_skill** | Used when take_action is QUERY_SKILL: retrieve procedures from the skill bank by key. |
-| **query_memory** | Used when take_action is QUERY_MEM: retrieve similar past experiences (EpisodicMemoryStore). |
-
-Retrieval is **budget-limited** (e.g. every N steps or when stuck); never call query_skill and query_memory in the same timestep.
-
-### Internal state (AgentState)
-
-The agent keeps: **current_intention**, **progress_notes**, **last_actions** (last 3–5), **stuck_counter**, **active_skill_id** / **active_skill_plan** / **skill_step_index**, **steps_without_progress**, **last_state_summary**, **last_reward**. The runner calls **update_from_tool_result()** after each tool so the next **step()** sees the updated state.
-
-### Reward (decision_agents/reward_func.py)
-
-**r_total = r_env + w_follow × r_follow + r_cost + tool_call_reward_weight × r_tool**
-
-- **r_env**: Raw environment reward from env.step.
-- **r_follow**: Skill-following shaping (termination-free). The active skill's contract has **eff_add** predicates; each is satisfied if its tokens appear in the current observation. The agent gets a **per-predicate bonus** for newly satisfied predicates, a **completion bonus** when all are satisfied, and a **no-progress penalty** when none are newly satisfied.
-- **r_cost**: **query_mem_cost**, **query_skill_cost**, **call_skill_cost**, **skill_switch_cost** (when active_skill_id changes).
-
-Defaults: `RewardConfig(w_follow=0.1, query_mem_cost=-0.05, query_skill_cost=-0.05, call_skill_cost=-0.02, skill_switch_cost=-0.10, follow_predicate_bonus=0.05, follow_completion_bonus=0.20, follow_no_progress_penalty=-0.01)`.
-
-### Helpers and integration
-
-- **get_state_summary(observation, structured_state, *, max_chars, ...)** — compact `key=value` state summary (≤ 400 chars). Prefers structured dict from env wrapper; falls back to deterministic text compression. See [decision_agents/README.md](decision_agents/README.md).
-- **build_rag_summary(state, game_name, *, step_idx, total_steps, reward)** — fully deterministic `key=value` summary using game-aware fact extractors (0 LLM tokens). Used by the labeling pipeline.
-- **extract_game_facts(state, game_name)** — game-specific parsers for Tetris (stack_h, holes, piece, next), 2048 (highest, empty, tiles, merges), Candy Crush (score, moves, pairs), Sokoban, Super Mario, Avalon, Diplomacy.
-- **compact_structured_state(dict, max_chars)**, **compact_text_observation(obs, max_chars)** — low-level compressors.
-- **infer_intention(summary, game, model, context)** — `[TAG] subgoal phrase` (e.g. `[CLEAR] Reduce holes before stack overflows`). Uses the same 13 canonical tags as the labeling pipeline.
-- **EpisodicMemoryStore** — RAG-backed memory; **add_experience()**, **query(key, k)**. Keyword scoring splits on `=|:,;/` for correct `key=value` tokenisation.
-- **skill_bank_to_text(bank)**, **query_skill_bank(bank, ...)** / **select_skill_from_bank(...)** — used in prompts and by run_tool(TOOL_QUERY_SKILL); same entry point, richest API used when available.
-- The agent's **skill_bank** can be a **SkillBankMVP** or a **SkillBankAgent**; **run_episode_vlm_agent(env, agent=..., task=..., max_steps=...)** runs the full two-turn loop and returns an **`Episode`** with fully-populated `Experience` objects (including `summary_state`, `intentions`, `sub_tasks`, `reward_details`, `action_type`). The Episode is identified by a triple: `episode_id` (UUID), `env_name` (platform), `game_name` (specific game) — populated automatically from wrapper `info`. Episode metadata contains cumulative_reward, agent_state, done, and step count.
-
-See [decision_agents/README.md](decision_agents/README.md) for API, quick start, and reward details.
 
 ## Training-free agent
 
@@ -464,14 +367,14 @@ skill_agent.ingest_episodes([episode])
 
 Storage: each episode is one JSON object per line (JSONL) when `save_path` is set. See [inference/README.md](inference/README.md) for full details.
 
-## ToDo (design modules)
+## Design goals (decision agent)
 
-The decision-making agent is expected to support:
+Implemented in the RAG-mode pipeline ([scripts/qwen3_decision_agent.py](scripts/qwen3_decision_agent.py) and [decision_agents/](decision_agents/)):
 
-1. **Summarize the state** — deterministic `key=value` via `build_rag_summary()` (game-aware fact extractors, 0 LLM tokens) + optional LLM note. GPT for training-free, Qwen3-14B for trainable.
-2. **Reachable tasks / intention update** — From current state, decide whether to update sub-task or intention.
-3. **(Training-free)** Integrate a RAG module to query relevant experience from the buffer.
-4. **Action generation** — From current state (summary), in-episode history, and (for training-free) retrieved context, output the next action.
+1. **Summarize the state** — `get_state_summary()` / `build_rag_summary()` (deterministic `key=value`, game-aware); optional LLM compression.
+2. **Intention update / skill re-selection** — `infer_intention()`; `_SkillTracker.should_reselect()` (stall, duration, success/abort criteria).
+3. **RAG for skill selection** — `SkillQueryEngine` (embedding + applicability); `get_skill_guidance()`; EpisodicMemoryStore for memory query.
+4. **Action generation** — `qwen3_action()` from state + skill protocol + history; `parse_qwen_response()` with RAG embedding fallback.
 
 ## Reward design for skill agent
 
@@ -489,106 +392,106 @@ The first two are env-related. A time-sensitive discount can be applied to penal
 
 # 5. Trainer code
 
-The training code uses experience to train agents so they (i) take better actions, (ii) get better summaries of the environment, and (iii) improve retrieval and skill-following. It lives in **[trainer/](trainer/)** and implements co-evolution for both agents.
+The training code lives in **[trainer/](trainer/)** and implements co-evolution between two agents on **8 × A100-80GB GPUs**: a **Decision Agent** (Qwen3-14B, GRPO, GPUs 0-3) that plays games and a **Skill Bank Agent** (Qwen3-8B, 3 LoRA adapters + Hard-EM, GPUs 4-7) that discovers and maintains reusable skills from the Decision Agent's trajectories. Both agents improve each other over multiple co-evolution iterations.
 
-## Implemented (trainer/)
+## Decision Agent (Agent A) — Qwen3-14B + LoRA GRPO
 
-- **Decision Agent (Agent A)** — **GRPO** (Group Relative Policy Optimization)
-  - **Actions**: primitives + `QUERY_MEM(key)`, `QUERY_SKILL(key)`, `CALL_SKILL(id, params)`; retrieval is first-class.
-  - **Reward**: r_env + w_follow × r_follow + r_cost + tool_call_reward_weight × r_tool; tool-call reward integrated from `skill_agents.tool_call_reward`.
-  - **Components**: [trainer/decision/env_wrapper.py](trainer/decision/env_wrapper.py) (retrieval-as-action, tool call trace recording), [trainer/decision/reward_shaping.py](trainer/decision/reward_shaping.py), [trainer/decision/rollout_collector.py](trainer/decision/rollout_collector.py), [trainer/decision/grpo_trainer.py](trainer/decision/grpo_trainer.py), [trainer/decision/replay_buffer.py](trainer/decision/replay_buffer.py).
-  - **Launch**: `python -m trainer.decision.launch_train --config trainer/common/configs/decision_grpo.yaml`
+The Decision Agent selects primitive game actions and tool calls (`QUERY_SKILL`, `CALL_SKILL`, `QUERY_MEM`) against the current skill bank. Trained with **GRPO via VERL** (`GameAITrainer` subclassing `RayPPOTrainer`).
 
-- **SkillBank Agent (Agent B)** — **Hard-EM** (decode → update → gate)
-  - **Pipeline**: ingest rollouts → Stage 0 (predicates) → Stage 1 (propose cuts) → Stage 2 (decode) → Stage 3 (contracts) → Stage 4 (refine/materialize/merge/split) → SkillEval gating; no global LLM scoring.
-  - **Components**: [trainer/skillbank/ingest_rollouts.py](trainer/skillbank/ingest_rollouts.py), [trainer/skillbank/em_trainer.py](trainer/skillbank/em_trainer.py) (with segmentation store support), [trainer/skillbank/stages/](trainer/skillbank/stages/), [trainer/skillbank/bank_io/](trainer/skillbank/bank_io/) (versioned store, indices, diff logger).
-  - **Optional learners**: boundary classifier ([trainer/skillbank/learners/boundary_trainer.py](trainer/skillbank/learners/boundary_trainer.py)), top-2 tie-breaker ([trainer/skillbank/learners/tiebreaker_trainer.py](trainer/skillbank/learners/tiebreaker_trainer.py)).
+**Training settings** ([`scripts/configs/decision_agent_grpo_80gb.yaml`](scripts/configs/decision_agent_grpo_80gb.yaml)):
 
-- **Co-evolution callback** (VERL): [trainer/decision/coevolution_callback.py](trainer/decision/coevolution_callback.py)
-  - `SkillBankCoEvolutionCallback` — injected into `GameAITrainer.fit()`; runs after each training step at cadence.
-  - `SkillAgentToolPipeline` — wraps all four skill agent stages as callable tools: `boundary_proposal`, `segmentation_decode`, `contract_learning`, `bank_maintenance`.
-  - `SegmentationStore` — persistent JSONL store for per-trajectory segmentations, keyed by trajectory ID, updated each EM cycle.
-  - Integrates `skill_agents.tool_call_reward` for tool-call reward metrics.
-  - On accepted update: hot-swaps bank into environment workers, persists segmentations.
+| Parameter | Value |
+|-----------|-------|
+| Base model | Qwen/Qwen3-14B |
+| LoRA rank / alpha | 16 / 32 |
+| GRPO group size | 8 |
+| Clip ratio | 0.2 |
+| KL coeff | 1e-2 (low-var KL penalty) |
+| Learning rate | 1e-5 (AdamW, warmup 3%) |
+| Max prompt / response length | 8192 / 4096 |
+| Rollout batch size | 64 |
+| Training steps per iteration | 20 |
+| GPUs | GPUs 0-3 (FSDP + vLLM rollout, TP=2) |
 
-- **Shared**
-  - **Rollout schema**: [trainer/common/metrics.py](trainer/common/metrics.py) — `RolloutRecord` / `RolloutStep` (single source of truth for both trainers). `RolloutRecord` carries `episode_id`, `env_name`, and `game_name` from the source `Episode`.
-  - **Reward contract**: [trainer/decision/reward_shaping.py](trainer/decision/reward_shaping.py) — `compute_reward(prev, action, next, bank_state)` → r_env, r_follow, r_cost, r_tool, r_total.
-  - **Eval & logging**: [trainer/common/eval_harness.py](trainer/common/eval_harness.py) (fixed-seed eval, SkillBank quick eval for gating), [trainer/common/logging.py](trainer/common/logging.py), [trainer/common/seeds.py](trainer/common/seeds.py).
-  - **Configs**: [trainer/common/configs/decision_grpo.yaml](trainer/common/configs/decision_grpo.yaml), [trainer/common/configs/skillbank_em.yaml](trainer/common/configs/skillbank_em.yaml).
+**Reward**: `r_total = r_env + 0.1 × r_follow + r_cost + 0.1 × r_tool`
+- `r_env` — raw environment reward
+- `r_follow` — skill-following shaping (predicate satisfaction progress toward active skill's `eff_add`)
+- `r_cost` — negative costs for retrieval queries, skill calls, and skill switching
+- `r_tool` — tool-call quality reward from `skill_agents.tool_call_reward`
 
-- **Standalone co-evolution orchestrator**: [trainer/launch_coevolution.py](trainer/launch_coevolution.py)
-  - Runs Decision GRPO continuously; every N episodes freezes a rollout batch, runs SkillBank EM, gates with fixed-seed eval, then commits or rolls back the bank.
-  - Run: `python -m trainer.launch_coevolution --decision-config trainer/common/configs/decision_grpo.yaml --skillbank-config trainer/common/configs/skillbank_em.yaml`
+**Components**: [trainer/decision/env_wrapper.py](trainer/decision/env_wrapper.py) (retrieval-as-action, tool call trace recording), [trainer/decision/reward_shaping.py](trainer/decision/reward_shaping.py), [trainer/decision/grpo_trainer.py](trainer/decision/grpo_trainer.py), [trainer/decision/replay_buffer.py](trainer/decision/replay_buffer.py), [trainer/decision/rollout_collector.py](trainer/decision/rollout_collector.py).
 
-See [trainer/README.md](trainer/README.md) for full layout, milestones, metrics, and implementation order.
+## Skill Bank Agent (Agent B) — Qwen3-8B + 3 LoRA (Hard-EM)
 
-### Multi-LoRA Skill Bank Agent
-
-The skill bank agent uses a **shared Qwen3-8B backbone** with **4 function-specific LoRA adapters**, one per EM stage function. This avoids loading 4 separate models while giving each stage a specialized fine-tuned head.
+The Skill Bank Agent processes trajectory rollouts from the Decision Agent through a 4-stage pipeline, with 3 GRPO-trained LoRA adapters on a shared Qwen3-8B backbone. Stage 1 (boundary) and retrieval are algorithmic / RAG — not GRPO-wrapped.
 
 ```
 ┌─────────────────────────────────────────┐
-│       Qwen3-8B  (shared backbone)       │
-│                                         │
-│  ┌──────────┐      ┌──────────┐        │
-│  │ BOUNDARY  │      │ SEGMENT  │        │  ← predicate extraction (Stage 1)
-│  │   LoRA    │      │   LoRA   │        │  ← skill label ranking  (Stage 2)
-│  └──────────┘      └──────────┘        │
-│  ┌──────────┐      ┌──────────┐        │
-│  │ CONTRACT  │      │ RETRIEVAL│        │  ← effect summarization  (Stage 3)
-│  │   LoRA    │      │   LoRA   │        │  ← skill re-ranking      (Stage 2)
-│  └──────────┘      └──────────┘        │
+│       Qwen3-8B  (shared backbone)        │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐  │
+│  │ SEGMENT  │ │ CONTRACT │ │ CURATOR  │  │  ← Stage 2 label preferences
+│  │   LoRA   │ │   LoRA   │ │   LoRA   │  │  ← Stage 3 effect contracts
+│  └──────────┘ └──────────┘ └──────────┘  │  ← Stage 4 approve/veto/defer
 └─────────────────────────────────────────┘
 ```
 
-**Key modules:**
+**LoRA training settings** ([`scripts/skillbank_agent_train.sh`](scripts/skillbank_agent_train.sh)):
 
-| Module | Purpose |
-|--------|---------|
-| [`skill_agents/lora/skill_function.py`](skill_agents/lora/skill_function.py) | `SkillFunction` enum — routing key for adapter selection |
-| [`skill_agents/lora/config.py`](skill_agents/lora/config.py) | `MultiLoraConfig` + `LoraTrainingConfig` dataclasses |
-| [`skill_agents/lora/model.py`](skill_agents/lora/model.py) | `MultiLoraSkillBankLLM` — shared model with adapter switching via PEFT |
-| [`configs/skillbank_lora.yaml`](configs/skillbank_lora.yaml) | Full config: base model, adapter paths, generation defaults |
-| [`trainer/skillbank/lora/`](trainer/skillbank/lora/) | Per-adapter training scripts + unified `train_lora.py` |
-| [`trainer/skillbank/lora/data_builder.py`](trainer/skillbank/lora/data_builder.py) | Dataset builders with prompt templates for each function |
+| Parameter | Value |
+|-----------|-------|
+| Base model | Qwen/Qwen3-8B |
+| LoRA rank / alpha | 16 / 32 |
+| Learning rate | 2e-4 |
+| Epochs | 3 |
+| Batch size / grad accum | 4 / 4 (effective 16) |
+| Max sequence length | 2048 |
+| GPUs | GPUs 4-7 |
 
-**Singleton pattern:** `MultiLoraSkillBankLLM.set_shared_instance(llm)` is called once at startup. Consumer code automatically discovers the model:
+**EM pipeline** (3 iterations per co-evolution step):
+1. **Stage 0** — predicate extraction (booleanize observations)
+2. **Stage 1** — boundary proposal (predicate changes + surprisal signals, algorithmic)
+3. **Stage 2** — segmentation decode (DP/Viterbi with **SEGMENT** LoRA ranking, top-10 candidates, segments 3–100 steps)
+4. **Stage 3** — contract learning (**CONTRACT** LoRA generates effect summaries, verified against holdout, pass rate ≥ 0.6)
+5. **Stage 4** — bank maintenance (**CURATOR** LoRA approves/vetoes/defers merge, split, materialize proposals)
+6. **SkillEval gating** — accept/reject: avg pass rate ≥ 0.6, NEW rate ≤ 0.3, margin regression tolerance 0.1
 
-- [`skill_agents/boundary_proposal/llm_extractor.py`](skill_agents/boundary_proposal/llm_extractor.py) → BOUNDARY adapter
-- [`skill_agents/infer_segmentation/llm_teacher.py`](skill_agents/infer_segmentation/llm_teacher.py) → SEGMENT adapter
-- [`skill_agents/stage3_mvp/llm_contract.py`](skill_agents/stage3_mvp/llm_contract.py) → CONTRACT adapter (enriches frequency-based contracts with LLM-generated effects)
-- [`skill_agents/skill_bank/llm_retrieval.py`](skill_agents/skill_bank/llm_retrieval.py) → RETRIEVAL adapter (re-ranks skill candidates during decode)
+**Components**: [trainer/skillbank/em_trainer.py](trainer/skillbank/em_trainer.py) (with segmentation store), [trainer/skillbank/stages/](trainer/skillbank/stages/), [trainer/skillbank/bank_io/](trainer/skillbank/bank_io/) (versioned store, indices, diff logger), [trainer/skillbank/learners/](trainer/skillbank/learners/) (boundary classifier, tie-breaker). LoRA routing via [skill_agents_grpo/lora/](skill_agents_grpo/lora/) — `SkillFunction` enum, `MultiLoraSkillBankLLM`, adapter routing. LLM calls use [skill_agents/_llm_compat.py](skill_agents/_llm_compat.py) for reasoning-model compatibility (`/no_think`, think-tag stripping).
 
-All four consumers (and pipeline protocol synthesis, skill_evaluation LLM judge) wrap their LLM call with [`skill_agents/_llm_compat.py`](skill_agents/_llm_compat.py) for reasoning-model compatibility: Qwen3 gets `/no_think` on prompts and think-tag stripping on responses so the full token budget goes to structured output. They fall back gracefully to the algorithmic path or API-based `ask_model` when the multi-LoRA model is not configured.
+See [skill_agents_grpo/README.md](skill_agents_grpo/README.md) for the full GRPO skill bank pipeline and [TODO_Lists/SKILLBANK_GRPO_PLAN.md](TODO_Lists/SKILLBANK_GRPO_PLAN.md) for the training plan.
 
-**Usage:**
+## Co-Evolution Pipeline
 
-```python
-from skill_agents.lora import MultiLoraSkillBankLLM, MultiLoraConfig
-import yaml
+The co-evolution loop alternates between training both agents. Each iteration: collect rollouts → update Skill Bank → train Decision Agent → repeat.
 
-with open("configs/skillbank_lora.yaml") as f:
-    raw = yaml.safe_load(f)
-cfg = MultiLoraConfig.from_dict(raw["lora"])
-llm = MultiLoraSkillBankLLM(cfg)
-llm.load()
-MultiLoraSkillBankLLM.set_shared_instance(llm)
-# Now all EM stages automatically use the LoRA adapters
+```
+Iteration 1:
+  cold-start rollouts (base Qwen3-14B)
+    → Skill Bank v1 (LoRA training + Hard-EM on GPUs 4-7)
+    → Decision Agent v1 (GRPO on GPUs 0-3, with Bank v1)
+
+Iteration 2+:
+  rollouts with Decision Agent v_{i-1}
+    → Skill Bank v_i (LoRA + EM on new rollouts)
+    → Decision Agent v_i (GRPO with updated bank)
 ```
 
-### Co-Evolution Training Scripts
+**Co-evolution callback** (VERL): [trainer/decision/coevolution_callback.py](trainer/decision/coevolution_callback.py)
+- `SkillBankCoEvolutionCallback` — injected into `GameAITrainer.fit()`; runs EM every 10 training steps.
+- `SkillAgentToolPipeline` — wraps all four skill agent stages as callable tools.
+- `SegmentationStore` — persistent JSONL store for per-trajectory segmentations, updated each EM cycle.
+- On accepted update: hot-swaps bank into environment workers.
 
-Shell-based orchestration for multi-GPU co-evolution training:
+**Standalone orchestrator**: [trainer/launch_coevolution.py](trainer/launch_coevolution.py) — runs Decision GRPO continuously; every N episodes freezes a rollout batch, runs SkillBank EM, gates with fixed-seed eval, then commits or rolls back the bank.
+
+### Training Scripts
 
 | Script | Purpose |
 |--------|---------|
-| [`scripts/coevolution_train.sh`](scripts/coevolution_train.sh) | Main loop: cold-start rollouts → Skill Bank v1 → Decision Agent v1 → iterate |
+| [`scripts/coevolution_train.sh`](scripts/coevolution_train.sh) | Main loop: cold-start rollouts → Skill Bank v1 → Decision Agent v1 → iterate (default 6 iterations) |
 | [`scripts/decision_agent_train.sh`](scripts/decision_agent_train.sh) | GRPO training for Decision Agent (Qwen3-14B) on GPUs 0-3 via VERL |
 | [`scripts/skillbank_agent_train.sh`](scripts/skillbank_agent_train.sh) | LoRA training + Hard-EM for Skill Bank Agent (Qwen3-8B) on GPUs 4-7 |
 | [`cold_start/run_100_rollouts.py`](cold_start/run_100_rollouts.py) | Batch rollout generation (100 episodes per game) |
 
-**Run co-evolution:**
 ```bash
 # Default: Qwen3-14B decision + Qwen3-8B skill bank, 6 iterations
 bash scripts/coevolution_train.sh
@@ -599,6 +502,19 @@ SkillBank_base_model=Qwen/Qwen3-8B \
 NUM_ITERATIONS=10 TRAIN_STEPS=30 \
   bash scripts/coevolution_train.sh
 ```
+
+### Shared Infrastructure
+
+- **Rollout schema**: [trainer/common/metrics.py](trainer/common/metrics.py) — `RolloutRecord` / `RolloutStep` (single source of truth). Carries `episode_id`, `env_name`, `game_name`.
+- **Reward contract**: [trainer/decision/reward_shaping.py](trainer/decision/reward_shaping.py) — `compute_reward(prev, action, next, bank_state)` → r_env, r_follow, r_cost, r_tool, r_total.
+- **Eval & logging**: [trainer/common/eval_harness.py](trainer/common/eval_harness.py), [trainer/common/logging.py](trainer/common/logging.py), [trainer/common/seeds.py](trainer/common/seeds.py).
+- **Configs**: [scripts/configs/decision_agent_grpo_80gb.yaml](scripts/configs/decision_agent_grpo_80gb.yaml), [trainer/common/configs/skillbank_em.yaml](trainer/common/configs/skillbank_em.yaml).
+
+See [trainer/README.md](trainer/README.md) for full layout, milestones, metrics, and implementation order.
+
+### Inference Speed (not yet implemented)
+
+The skill bank pipeline currently runs all ~572 LLM calls per EM step serially (batch size 1 via HuggingFace `.generate()`), taking ~47 min per iteration. The planned fix is **vLLM serving with multi-LoRA + async batching**, which would bring this down to ~4 min per iteration (~12× speedup). With cross-stage pipeline parallelism (micro-batch overlap across stages), the target is ~3 min per EM iteration. See [TODO_Lists/SKILLBANK_INFERENCE_SPEED.md](TODO_Lists/SKILLBANK_INFERENCE_SPEED.md) for the full analysis, implementation checklist, and GPU memory budget.
 
 ### Recent Bug Fixes (Co-Evolution Pipeline)
 
@@ -622,24 +538,6 @@ rm -f rollouts/*_rollouts_v0.jsonl
 rm -rf temp_results/* lora_adapters/* logs/skillbank/*
 ```
 
-ToDo (future):
-1. Integrate PPO / GDPO code bases for alternative training objectives where applicable.
-2. Strengthen prioritized experience replay in [trainer/decision/replay_buffer.py](trainer/decision/replay_buffer.py) for training performance.
-3. Add LoRA options to the decision agent policy interface for parameter-efficient fine-tuning.
-
----
-
-# Implemented (done)
-
-Completed work is tracked in the main readme sections and in **[TODO_Lists/done/](TODO_Lists/done/)**. Key implemented pieces:
-
-- **Decision agent:** VLM two-turn micro-loop, per-step protocol (get_state_summary → take_action → get_intention → reward), skill bank protocol store + contract (plan from steps, reward from eff_add), EpisodicMemoryStore and SkillQueryEngine integration, RewardConfig/r_follow/r_cost.
-- **Skill agents:** SkillBankAgent pipeline (Stages 1–4), NewPoolManager for `__NEW__` promotion, contract feedback (Stage 3 → Stage 2 via `compat_fn`), `select_skill(query, current_state)` and `query_skill`/`query_by_effects`, tool_call_reward for RL, reasoning-model compat (_llm_compat.py).
-- **Data & RAG:** Experience/Episode with summary_state, intentions, reward_details, action_type; RAG embeddings for memory and skill retrieval (frozen); three-part episode identifier (episode_id, env_name, game_name).
-- **Trainer:** GRPO decision agent, Hard-EM skill bank, co-evolution callback with SkillAgentToolPipeline and SegmentationStore, Multi-LoRA skill bank (4 adapters), tool-call reward in reward shaping.
-
-See [decision_agents/README.md](decision_agents/README.md), [skill_agents/README.md](skill_agents/README.md), and [trainer/README.md](trainer/README.md) for API and usage.
-
 ---
 
 # ToDo (unfinished / future) — consolidated
@@ -648,14 +546,5 @@ Unfinished or future work across the repo. See in-doc sections for details.
 
 | Area | Item | Status |
 |------|------|--------|
-| **Data structure** | Experience buffer with in/out policy models for quality/relevance to intentions | **[Partial]** — buffers exist; policy-based scoring open |
-| **Data structure** | Per-environment helpers to convert raw experience → Episode format | **[Partial]** — optional fields and adapters exist; central per-env helpers open |
-| **Sub-task (skill agent)** | Experience clean-up / formulation; intention inference for pseudo-labels | **Open** |
-| **Sub-task (skill agent)** | Tighter constraints (max sub-task length, intention-derived skill candidates) | **Open** |
-| **Sub-task (skill agent)** | Training code for labeling model (supervised signal + GRPO/Hard-EM) | **Open** |
-| **Sub-task (skill agent)** | In-context learning for segment labels from retrieved demonstrations | **Open** |
-| **Completion** | LLM completion-level function (distinct from r_follow) | **Open** |
-| **Completion** | Steps-left estimator (initial + final state; use RAG experience) | **Open** |
-| **Decision agent** | Reachable tasks / intention update; optional RAG for training-free | **Open** (partially done: get_state_summary, infer_intention, EpisodicMemoryStore) |
-| **Trainer** | PPO / GDPO integration; stronger prioritized replay; LoRA in decision agent policy interface | **[Partial]** — Multi-LoRA for skill bank agent is done (4 adapters: boundary, segment, contract, retrieval); decision agent LoRA open |
+| **Trainer** | Decision agent LoRA for parameter-efficient fine-tuning | **Open** |
 

@@ -1,23 +1,32 @@
 """
-Multi-LoRA skill-bank LLM wrapper.
+Multi-LoRA skill-bank LLM wrapper (GRPO edition).
 
-Loads one shared Qwen-3 causal-LM backbone and up to 4 function-specific
-PEFT LoRA adapters.  Exposes a single ``generate()`` entry-point that
-selects the correct adapter before running inference.
+Loads one shared Qwen3-14B causal-LM backbone and up to 3 GRPO-trained
+LoRA adapters (segment, contract, curator).  BOUNDARY and RETRIEVAL
+enum values are kept for backward compat but have no adapters here.
+
+Two entry-points:
+  - ``generate()`` — standard text generation (inference mode, no gradients).
+  - ``log_probs()`` — per-token log-probability computation with gradients,
+    used by the GRPO training phase to compute policy-gradient loss.
 
 Usage::
 
     from skill_agents_grpo.lora import MultiLoraSkillBankLLM, MultiLoraConfig, SkillFunction
 
     cfg = MultiLoraConfig(
-        base_model_name_or_path="Qwen/Qwen3-8B",
+        base_model_name_or_path="Qwen/Qwen3-14B",
         adapter_paths={
-            "boundary": "runs/lora_adapters/boundary",
             "segment":  "runs/lora_adapters/segment",
+            "contract": "runs/lora_adapters/contract",
+            "curator":  "runs/lora_adapters/curator",
         },
     )
     llm = MultiLoraSkillBankLLM(cfg)
-    out = llm.generate(SkillFunction.BOUNDARY, "Extract predicates …")
+    out = llm.generate(SkillFunction.CONTRACT, "Summarize effects …")
+
+    # GRPO training: recompute log-probs with gradients
+    lp = llm.log_probs(SkillFunction.CONTRACT, prompt, completion)
 """
 
 from __future__ import annotations
@@ -38,16 +47,20 @@ _DTYPE_MAP = {
 
 
 class MultiLoraSkillBankLLM:
-    """Shared base model + switchable LoRA adapters.
+    """Shared base model + switchable LoRA adapters (GRPO-capable).
 
     The class lazily loads the base model on first ``generate()`` call
     (or eagerly via ``load()``).  Each adapter is loaded once and stays
     resident; switching adapters is a lightweight ``set_adapter()`` call.
 
+    For GRPO training, ``log_probs()`` recomputes per-token log-probabilities
+    with ``torch.enable_grad()`` so that the policy-gradient loss can
+    backpropagate into the 3 active LoRA adapters (segment, contract, curator).
+
     A process-wide singleton is available via ``set_shared_instance()`` /
-    ``get_shared_instance()``.  Existing LLM call sites (``llm_extractor``,
-    ``llm_teacher``) check the singleton automatically so they pick up
-    the LoRA model without explicit wiring.
+    ``get_shared_instance()``.  Existing LLM call sites (``llm_teacher``,
+    ``llm_contract``, ``llm_curator``) check the singleton automatically so
+    they pick up the LoRA model without explicit wiring.
 
     Parameters
     ----------

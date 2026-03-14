@@ -1,7 +1,8 @@
 """
-Configuration for the multi-LoRA skill-bank LLM.
+Configuration for the multi-LoRA skill-bank LLM (GRPO edition).
 
-One shared Qwen-3-8B backbone, four independent LoRA adapters.
+One shared Qwen3-14B backbone, 3 GRPO-trained LoRA adapters
+(segment, contract, curator).
 """
 
 from __future__ import annotations
@@ -15,15 +16,17 @@ from skill_agents_grpo.lora.skill_function import SkillFunction
 
 @dataclass
 class MultiLoraConfig:
-    """All settings for the shared base model + 4 function-specific LoRAs.
+    """All settings for the shared base model + GRPO-trained LoRA adapters.
 
     Parameters
     ----------
     base_model_name_or_path : str
-        HuggingFace model id or local path for Qwen3-8B.
+        HuggingFace model id or local path for Qwen3-14B.
     adapter_paths : dict
-        ``{function_name: path_to_adapter}``.  Keys should be
-        ``"boundary"``, ``"segment"``, ``"contract"``, ``"retrieval"``.
+        ``{function_name: path_to_adapter}``.  Active GRPO keys:
+        ``"segment"``, ``"contract"``, ``"curator"``.
+        Legacy keys ``"boundary"`` and ``"retrieval"`` are accepted
+        but not GRPO-trained.
     default_function : str
         Fallback function used when none is specified.
     device : str
@@ -41,7 +44,7 @@ class MultiLoraConfig:
         is missing.  If False, raise an error.
     """
 
-    base_model_name_or_path: str = "Qwen/Qwen3-8B"
+    base_model_name_or_path: str = "Qwen/Qwen3-14B"
     adapter_paths: Dict[str, str] = field(default_factory=dict)
     default_function: str = "boundary"
     device: str = "auto"
@@ -83,8 +86,9 @@ class LoraTrainingConfig:
     Parameters
     ----------
     skill_function : str
-        Which adapter to train (``"boundary"`` | ``"segment"`` |
-        ``"contract"`` | ``"retrieval"``).
+        Which adapter to train (``"segment"`` | ``"contract"`` |
+        ``"curator"`` for GRPO; ``"boundary"`` | ``"retrieval"``
+        also accepted for legacy SFT training).
     base_model_name_or_path : str
         Same base model as inference.
     output_dir : str
@@ -109,7 +113,7 @@ class LoraTrainingConfig:
     """
 
     skill_function: str = "boundary"
-    base_model_name_or_path: str = "Qwen/Qwen3-8B"
+    base_model_name_or_path: str = "Qwen/Qwen3-14B"
     output_dir: str = "runs/lora_adapters/boundary"
     lora_r: int = 16
     lora_alpha: int = 32
