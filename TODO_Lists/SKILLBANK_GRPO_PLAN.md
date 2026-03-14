@@ -1,25 +1,36 @@
 # Skill Bank GRPO + Tool-Calling Agent Plan
 
 **Created:** 2026-03-14  
-**Updated:** 2026-03-14 — Rewritten to target production `skill_agents/` modules per `SKILLBANK_GRPO_PLAN_REWRITE.md` gap analysis  
-**Status:** Draft (v2)  
+**Updated:** 2026-03-14 — v3: GRPO Wrapper Architecture — reuse existing LLM functions, ~680 lines vs ~3000+  
+**Status:** Draft (v3)  
 **Depends on:** `SKILLBANK_AUDIT_GAPS.md`, existing Hard-EM pipeline, Decision Agent GRPO trainer
 
 ---
 
 ## Overview
 
-Three workstreams:
+### Key Design Principle: Wrap, Don't Rebuild
 
-1. **Stages 1–3 GRPO**: Train GRPO LoRA adapters on Qwen3-14B for the LLM generation tasks in each stage — boundary proposal, segment preference generation, and contract generation — rewarded by downstream metrics. The adapters augment (not replace) the existing algorithmic/heuristic infrastructure in `skill_agents/`.
-2. **Stage 4 LLM-Advised Bank Maintenance**: Add a single-turn LLM filter (CURATOR LoRA) to the algorithmic bank maintenance pipeline in `skill_agents/bank_maintenance/`. The algorithm proposes candidates (split/merge/refine/materialize/promote); the LLM approves, vetoes, or defers.
-3. **`select_skill` GRPO**: Train the decision agent's skill-selection policy with GRPO so it learns _when_ to query, _which_ skill to pick, and _when_ to switch — rewarded by downstream episode return.
+Instead of building 5 custom GRPO training loops with new prompts and I/O formats, we wrap the **existing LLM call points** in the EM pipeline with a generic GRPO sampler. Each LLM call produces G samples instead of 1, evaluates them with a downstream metric, stores (prompt, completion, reward) for deferred training, and returns the best sample to the pipeline. The EM pipeline runs unchanged — it just gets better LLM outputs as GRPO training progresses.
+
+### Scope: 3 GRPO Targets (not 5)
+
+| Target | Existing LLM function | Reward signal | Status |
+|--------|----------------------|---------------|--------|
+| **Stage 3 CONTRACT** (P0) | `llm_summarize_contract()` in `stage3_mvp/llm_contract.py` | `verify_effects_contract().overall_pass_rate` (CPU-only) | Wrap existing |
+| **Stage 4 CURATOR** (P1) | New `filter_candidates()` | `bank_quality_delta` (CPU-only) | New LLM call |
+| **Stage 2 SEGMENT** (P1) | `collect_segment_preferences()` in `infer_segmentation/llm_teacher.py` | `SegmentationDiagnostics` (CPU-only) | Wrap existing |
+| ~~Stage 1 BOUNDARY~~ | `LLMSignalExtractor._extract_predicates_chunk()` | Indirect (extracts predicates, not boundaries) | **SKIP** — reward too indirect |
+| ~~RETRIEVAL~~ | `llm_retrieve_skills()` | Requires env rollout per sample | **SKIP** — use existing decision agent GRPO trainer |
+
+**Why skip BOUNDARY:** The LLM extracts predicates, not boundaries. Boundaries are computed algorithmically from predicates + 5 other signals. GRPO reward (decode quality) would be extremely indirect.
+
+**Why skip RETRIEVAL:** Reward requires full environment rollout per sample (G=4 rollouts per select_skill call). The existing decision agent GRPO trainer already trains the full policy including skill selection — the episode return signal flows through naturally.
 
 **Target codebase:** This plan targets the production `skill_agents/` implementations, NOT the simplified EM trainer stages in `trainer/skillbank/stages/`. The trainer stages are kept as fallback baselines.
 
-| Stage | Production module (GRPO target) | Simplified fallback |
-|-------|-------------------------------|---------------------|
-| 1 — Boundary | `skill_agents/boundary_proposal/` | `trainer/skillbank/stages/stage1_propose_cuts.py` |
+| Stage | Production module | Simplified fallback |
+|-------|------------------|---------------------|
 | 2 — Segmentation | `skill_agents/infer_segmentation/` | `trainer/skillbank/stages/stage2_decode.py` |
 | 3 — Contracts | `skill_agents/stage3_mvp/` | `trainer/skillbank/stages/stage3_contracts.py` |
 | 4 — Maintenance | `skill_agents/bank_maintenance/` | `trainer/skillbank/stages/stage4_update.py` |
@@ -28,15 +39,35 @@ Three workstreams:
 
 ### GRPO-Trained LoRA Adapters
 
-5 LoRA adapters on the shared Qwen3-14B base, each trained independently via GRPO:
+3 LoRA adapters on the shared Qwen3-14B base, trained via the generic GRPO wrapper:
 
-| Adapter | Stage | LLM Generation Task | Augments / Replaces |
-|---------|-------|---------------------|---------------------|
-| BOUNDARY (LoRA #1) | 1 | Generate boundary cut proposals from multi-signal trajectory input | Augments `propose_boundary_candidates()` in `boundary_proposal/proposal.py` |
-| SEGMENT (LoRA #2) | 2 | Generate segment-skill pairwise preferences that feed into `PreferenceStore` + Bradley-Terry scorer | Replaces LLM teacher calls (`collect_segment_preferences`, `collect_transition_preferences`, `collect_uncertain_prefs`) in `infer_segmentation/llm_teacher.py` |
-| CONTRACT (LoRA #3) | 3 | Generate effects contracts from segment evidence (union enrichment) | Augments frequency-based `learn_effects_contract()` in `stage3_mvp/contract_learn.py` |
-| CURATOR (LoRA #4) | 4 | Single-turn filter — approve/veto/defer candidate bank mutations | Augments algorithmic `run_bank_maintenance()` in `bank_maintenance/run_bank_maintenance.py` |
-| RETRIEVAL (LoRA #5) | select_skill | Re-rank skill candidates for decision agent | Augments `SkillQueryEngine.select()` fixed scoring |
+| Adapter | Stage | Wraps existing function | Reward |
+|---------|-------|------------------------|--------|
+| SEGMENT (LoRA #1) | 2 | `collect_segment_preferences()` in `llm_teacher.py` — generates pairwise skill rankings per segment | `SegmentationDiagnostics` (mean_margin, n_confident, n_new) after scorer rebuild + decode |
+| CONTRACT (LoRA #2) | 3 | `llm_summarize_contract()` in `llm_contract.py` — generates effect contract suggestions | `verify_effects_contract().overall_pass_rate` on holdout instances |
+| CURATOR (LoRA #3) | 4 | New `filter_candidates()` — approves/vetoes/defers bank mutations | `bank_quality_delta` = q_filtered - q_all |
+
+### Two-Phase GRPO Architecture
+
+```
+Phase 1 — Rollout (during EM):
+  EM pipeline calls LLM function as normal
+  → GRPOCallWrapper intercepts
+  → Generates G samples (inference_mode, temperature=0.7)
+  → Computes reward per sample (CPU-only downstream metrics)
+  → Stores (prompt, completions, rewards) in GRPOBuffer
+  → Returns best sample to pipeline (EM continues unchanged)
+
+Phase 2 — Training (after EM step):
+  GRPOLoRATrainer reads buffer
+  → Recomputes log_probs with gradients enabled
+  → Group-normalizes rewards → advantages
+  → GRPO policy gradient loss
+  → Updates LoRA adapter weights
+  → Clears buffer
+```
+
+New code: `MultiLoraSkillBankLLM.log_probs()` (~50 lines), `GRPOCallWrapper` (~100 lines), `GRPOBuffer` (~80 lines), `GRPOLoRATrainer` (~150 lines), 3 reward functions (~100 lines), `filter_candidates()` (~200 lines). **Total: ~680 lines** vs ~3000+ in the v2 plan.
 
 ### Non-GRPO Functions (Infrastructure)
 
@@ -52,39 +83,48 @@ These `SkillBankAgent` functions are NOT LLM generation tasks. They stay as-is a
 | `run_until_stable()` / `_is_converged()` | Outer loop convergence detection | Orchestration logic. |
 | `form_proto_skills()` / `verify_proto_skills()` / `promote_proto_skills()` | Proto-skill pipeline — execution logic is algorithmic; CURATOR LoRA decides whether to approve | LLM role is in CURATOR filter, not formation/verification. |
 
-### Co-Evolution Training Loop
+### Co-Evolution Training Loop (Wrapper Architecture)
 
-```
+```python
+grpo_buffer = GRPOBuffer()
+
 for co_evolution_step in range(total_steps):
-    # ── Decision agent GRPO (existing) ──
+    # ── Decision agent GRPO (existing — trains full policy incl. skill selection) ──
     rollouts = collect_rollouts(decision_agent, env, skill_bank)
-    decision_grpo_update(rollouts)                              # trains RETRIEVAL LoRA
+    decision_grpo_update(rollouts)
 
     if co_evolution_step % bank_update_cadence == 0:
         trajectories = ingest_rollouts(rollouts)
 
-        # ── Stage 1 GRPO ──
-        stage1_grpo_step(trajectories, bank)                    # trains BOUNDARY LoRA
+        # ── Phase 1: EM pipeline with GRPO wrappers active ──
+        # Each wrapped LLM call:
+        #   1. Generates G samples (inference, temp=0.7)
+        #   2. Evaluates with CPU-only reward
+        #   3. Stores (prompt, completions, rewards) in buffer
+        #   4. Returns best sample to pipeline (EM continues unchanged)
 
-        # ── Stage 2 GRPO ──
-        stage2_grpo_step(trajectories, bank)                    # trains SEGMENT LoRA
-                                                                # (generates preferences → PreferenceStore)
+        # Stage 2: collect_segment_preferences() → SEGMENT wrapper
+        run_segmentation(trajectories, bank)                    # wrapper stores preferences + rewards
 
-        # ── Stage 3 GRPO ──
-        stage3_grpo_step(trajectories, bank)                    # trains CONTRACT LoRA
+        # Stage 3: llm_summarize_contract() → CONTRACT wrapper
+        run_contracts(trajectories, bank)                       # wrapper stores contracts + rewards
 
-        # ── Infrastructure: data quality gate (Stage 4.5) ──
+        # Infrastructure: data quality gate (Stage 4.5)
         run_sub_episode_quality_check()                         # heuristic, no LLM
 
-        # ── Stage 4: algorithm proposes, LLM filters ──
-        candidates = propose_candidates(bank, bank_maintenance) # algorithmic (SkillProfile, indices)
-        approved = filter_candidates(candidates, bank, vllm)    # CURATOR LoRA
-        execute_approved(approved, bank, new_pool, proto_mgr)   # algorithmic
-        _apply_alias_map(alias_map)                             # bookkeeping
+        # Stage 4: propose → filter (CURATOR wrapper) → execute
+        candidates = propose_candidates(bank, bank_maintenance)
+        approved = filter_candidates(candidates, bank, vllm)    # CURATOR wrapper stores decisions + rewards
+        execute_approved(approved, bank, new_pool, proto_mgr)
+        _apply_alias_map(alias_map)
 
-        # ── Infrastructure: post-Stage 4 ──
-        distill_execution_hints()                               # heuristic, no LLM
+        # Infrastructure: post-Stage 4
+        distill_execution_hints()
         update_protocols()                                      # LLM inference (not GRPO)
+
+        # ── Phase 2: GRPO training from buffer ──
+        grpo_trainer.train_step(grpo_buffer)                    # one gradient step per adapter
+        grpo_buffer.clear()
 
         # ── SkillEval gating (6 dimensions + holistic) ──
         if not skilleval_passes(bank):
@@ -93,163 +133,79 @@ for co_evolution_step in range(total_steps):
 
 ---
 
-## 1. Stages 1–3: GRPO-Trained Skill Bank Agents
+## 1. GRPO Wrapper Infrastructure
 
 ### 1.1 Architecture
 
-Each stage uses the shared Qwen3-14B base model with a dedicated LoRA adapter (BOUNDARY, SEGMENT, CONTRACT). During GRPO training, each adapter is updated independently. The shared base stays frozen. This is the same Qwen3-14B used for vLLM serving and the decision agent — one model size for the entire project.
+Each GRPO-targeted stage uses the shared Qwen3-14B base model with a dedicated LoRA adapter (SEGMENT, CONTRACT, CURATOR). During GRPO training, each adapter is updated independently. The shared base stays frozen. This is the same Qwen3-14B used for vLLM serving and the decision agent — one model size for the entire project.
 
-Each adapter augments (not replaces) the existing algorithmic infrastructure in `skill_agents/`:
+**The wrapper approach:** Instead of custom training loops per stage, a single `GRPOCallWrapper` class wraps any existing LLM function. During EM rollouts, the wrapper generates G samples, scores them, stores data, and returns the best. After each EM step, `GRPOLoRATrainer` performs one gradient step per adapter.
 
-| Stage | GRPO adapter role | Existing algorithm (stays as infrastructure) |
-|-------|------------------|---------------------------------------------|
-| 1 | Generate boundary proposals as additional signal channel | `propose_boundary_candidates()` — signal extraction, merge, density control |
-| 2 | Generate pairwise preferences (replaces LLM teacher) | `PreferenceStore` → `PreferenceScorer` (Bradley-Terry) → `SegmentScorer` (6-term) → DP/beam decoder |
-| 3 | Generate contract suggestions (union enrichment) | `learn_effects_contract()` (frequency counting) → `verify_effects_contract()` → `refine_effects_contract()` |
+| Stage | Wrapped function | Adapter role | Existing algorithm (unchanged) |
+|-------|-----------------|-------------|-------------------------------|
+| 2 | `collect_segment_preferences()` | Generate pairwise preferences | `PreferenceStore` → `PreferenceScorer` (Bradley-Terry) → `SegmentScorer` (6-term) → DP/beam decoder |
+| 3 | `llm_summarize_contract()` | Generate contract suggestions (union enrichment) | `learn_effects_contract()` (frequency counting) → `verify_effects_contract()` → `refine_effects_contract()` |
+| 4 | `filter_candidates()` (new) | Approve/veto/defer bank mutations | `run_bank_maintenance()` propose → execute pipeline |
 
-**GPU memory note:** Qwen3-14B in bf16 ≈ 28GB base. With LoRA rank 16 and 5 adapters loaded, add ~200MB per adapter (LoRA params are tiny relative to the base). GRPO training adds optimizer states + gradients for adapter params only (~1–2GB total). Fits comfortably on a single 80GB A100. For inference via vLLM, the existing `--gpu-memory-utilization 0.75` (≈60GB on 80GB) is sufficient for 14B with generous KV cache.
+**GPU memory note:** Qwen3-14B in bf16 ≈ 28GB base. With LoRA rank 16 and 3 adapters loaded, add ~200MB per adapter. GRPO training adds optimizer states + gradients for adapter params only (~1–2GB total). Fits comfortably on a single 80GB A100.
 
-```
-For each EM batch of trajectories:
-  Stage 1: BOUNDARY adapter generates cut proposals      → rewarded by Stage 2 decode quality
-           (augments boundary_proposal/proposal.py signal pipeline)
-  Stage 2: SEGMENT adapter generates pairwise preferences → rewarded by Stage 3 pass rate + follow score
-           (replaces infer_segmentation/llm_teacher.py LLM teacher calls)
-  Stage 3: CONTRACT adapter generates contract suggestions → rewarded by holdout verification + follow score
-           (union-enriches stage3_mvp/contract_learn.py frequency consensus)
-```
+### 1.1.1 Critical Prerequisite: `log_probs()` Method
 
-### 1.2 Stage 1 — Boundary Proposal (GRPO)
-
-**Current state:** `skill_agents/boundary_proposal/` implements a multi-signal boundary proposal pipeline. `propose_boundary_candidates()` fuses 6+ signal types (predicate flips, surprisal spikes, changepoint scores via CUSUM/sliding-window cosine, intention-tag transitions with 20+ aliases, done flags, hard events) through trigger extraction → merge → density control → optional preference filtering. Outputs `List[BoundaryCandidate]` with `center`, `half_window`, and `source` attribution. The existing `LLMSignalExtractor` already uses LLM for predicate extraction per chunk.
-
-**What changes:**
-
-The BOUNDARY LoRA adapter generates boundary cut proposals given the full multi-signal trajectory summary. GRPO trains the adapter to produce cuts that maximize downstream Stage 2 decode quality. The adapter augments — not replaces — the existing signal pipeline: it can be used as an additional signal channel feeding into `propose_boundary_candidates()`, or as a re-ranker over the algorithm's proposals.
-
-**Design decision:** GRPO generates preference pairs from rollouts that feed into `BoundaryPreferenceScorer` (Bradley-Terry). This integrates naturally: the scorer already accepts pairwise preferences via `add_preference(t_win, t_lose)` and feeds a `decoding_bonus()` into Stage 2.
-
-| Component | Detail |
-|-----------|--------|
-| **Input (prompt)** | Multi-signal trajectory summary: per-timestep predicates (booleanized), action labels, surprisal values, changepoint scores (CUSUM + sliding-window cosine), intention tags (canonical via `_TAG_ALIASES`), done flags, hard event times (reward spikes, phase transitions). Truncated to last 200 steps if needed. |
-| **Output (generation)** | JSON list of `BoundaryCandidate` objects: `[{"center": 12, "half_window": 2, "source": "grpo"}, ...]` |
-| **Group generation** | `G=4` independent proposals per trajectory (low G because boundary proposals are cheap to evaluate) |
-| **Reward** | Computed after running Stage 2 decode on each proposal. See reward table below. |
-
-**Concrete I/O example:**
-
-*Input prompt:*
-
-```
-Propose boundary cut positions for this trajectory using all available signals.
-
-Trajectory (45 timesteps):
-t=0:  preds=[at_counter, not_holding, onion_on_counter]  action=noop        surp=0.1  cp=0.02  tag=PICKUP
-t=1:  preds=[at_counter, not_holding, onion_on_counter]  action=interact     surp=0.2  cp=0.05  tag=PICKUP
-t=2:  preds=[at_counter, holding_onion]                  action=move_south   surp=0.8  cp=0.41  tag=CARRY     event=picked_up_onion
-t=3:  preds=[near_counter, holding_onion]                action=move_south   surp=0.3  cp=0.12  tag=CARRY
-...
-t=11: preds=[near_pot, holding_onion, facing_pot]        action=move_south   surp=0.2  cp=0.08  tag=CARRY
-t=12: preds=[at_pot, holding_onion, facing_pot]          action=interact     surp=0.9  cp=0.55  tag=SETUP     event=placed_in_pot  done=true
-t=13: preds=[at_pot, not_holding, onion_in_pot]          action=noop         surp=0.7  cp=0.38  tag=NAVIGATE
-t=14: preds=[at_pot, not_holding, onion_in_pot]          action=move_north   surp=0.5  cp=0.15  tag=NAVIGATE
-...
-t=26: preds=[at_counter, not_holding, dish_on_counter]   action=interact     surp=0.8  cp=0.48  tag=PICKUP    event=picked_up_dish
-t=27: preds=[at_counter, holding_dish]                   action=move_south   surp=0.6  cp=0.32  tag=CARRY
-...
-t=38: preds=[at_pot, holding_dish, pot_cooked]           action=interact     surp=0.9  cp=0.61  tag=SETUP     event=plated_soup
-t=39: preds=[at_pot, holding_soup]                       action=move_east    surp=0.7  cp=0.29  tag=DELIVER
-...
-t=44: preds=[at_serve, holding_soup]                     action=interact     surp=0.8  cp=0.52  tag=DELIVER   event=served
-t=45: preds=[at_serve, not_holding, soup_delivered]      action=noop         surp=0.1  cp=0.05  tag=IDLE      done=true
-
-Signal legend: surp=action surprisal, cp=changepoint score (CUSUM), tag=intention tag, event=hard event
-ProposalConfig: merge_radius=5, window_half_width=2, soft_max_per_minute=20, tag_min_segment_len=3
-
-Respond with a JSON list of boundary candidates.
-```
-
-*Output (generation):*
-
-```json
-[
-  {"center": 12, "half_window": 2, "source": "grpo"},
-  {"center": 26, "half_window": 2, "source": "grpo"},
-  {"center": 38, "half_window": 2, "source": "grpo"},
-  {"center": 45, "half_window": 0, "source": "grpo"}
-]
-```
-
-*Interpretation:* The model proposes 4 segments: t=0–12 (pick up onion, carry to pot), t=13–26 (go get a dish), t=27–38 (carry dish to pot, plate soup), t=39–45 (serve soup). Each cut aligns with high changepoint scores, intention-tag transitions, and hard events. The `half_window=2` allows Stage 2 to fine-tune exact positions.
-
-**Reward function for Stage 1:**
-
-| Component | Formula | Weight | Rationale |
-|-----------|---------|--------|-----------|
-| `r_decode_margin` | `mean(seg.margin for seg in decode_result.segments)` normalized to [0,1] | 0.30 | Segments decoded with high margin → cuts landed at natural boundaries |
-| `r_known_rate` | `1.0 - (n_new / n_total_segments)` | 0.20 | Low NEW rate → cuts align with known skills |
-| `r_pass_rate` | `mean(contract.pass_rate for contract in stage3_result)` | 0.20 | Downstream contract quality validates boundary placement |
-| `r_frag_penalty` | `-max(0, n_segments - 2 * n_expected) / n_expected` | 0.15 | Prevents over-fragmentation |
-| `r_boundary_plausibility` | `mean(BoundaryPreferenceScorer.boundary_score_value(t) for t in cuts)` | 0.15 | Proposed cuts should align with multi-signal plausibility |
-
-**BoundaryPreferenceScorer integration:**
-
-GRPO rollouts generate training data for the existing `BoundaryPreferenceScorer`:
+`MultiLoraSkillBankLLM` currently only exposes inference (generate text). GRPO training requires per-token log-probabilities with gradients. New method:
 
 ```python
-# After GRPO evaluation, convert reward-ranked proposals to pairwise preferences
-for (traj, group, rewards) in evaluated_proposals:
-    ranked = sorted(zip(group, rewards), key=lambda x: x[1], reverse=True)
-    best_cuts = ranked[0][0]
-    worst_cuts = ranked[-1][0]
-    for t_win in best_cuts:
-        for t_lose in worst_cuts:
-            if t_lose not in best_cuts:
-                boundary_scorer.add_preference(t_win, t_lose)
+def log_probs(self, function: SkillFunction, prompt: str, completion: str) -> torch.Tensor:
+    """Compute per-token log-probs of completion given prompt, with gradients."""
+    self._activate_adapter(function)
+    full_text = prompt + completion
+    inputs = self._tokenizer(full_text, return_tensors="pt").to(self._model.device)
+    prompt_len = self._tokenizer(prompt, return_tensors="pt")["input_ids"].shape[1]
+    with torch.enable_grad():
+        outputs = self._model(**inputs)
+        logits = outputs.logits[:, prompt_len-1:-1, :]
+        target_ids = inputs["input_ids"][:, prompt_len:]
+        log_probs = torch.log_softmax(logits, dim=-1)
+        return log_probs.gather(-1, target_ids.unsqueeze(-1)).squeeze(-1)
 ```
 
-This feeds back into Stage 2 via `BoundaryPreferenceScorer.decoding_bonus(seg_start, seg_end)`.
-
-**Training loop:**
+### 1.1.2 Generic GRPO Wrapper
 
 ```python
-for batch in trajectory_batches:
-    proposals = []
-    for traj in batch:
-        signals = extract_signals(traj.experiences, env_name, embedder)
-        prompt = format_boundary_prompt(traj, signals)
-        group = [llm.generate(SkillFunction.BOUNDARY, prompt, temperature=0.7)
-                 for _ in range(G)]
-        proposals.append((traj, signals, group))
+class GRPOCallWrapper:
+    def __init__(self, adapter: SkillFunction, reward_fn, G: int, buffer: GRPOBuffer):
+        self.adapter = adapter
+        self.reward_fn = reward_fn
+        self.G = G
+        self.buffer = buffer
 
-    rewards = []
-    for traj, signals, group in proposals:
-        group_rewards = []
-        for candidate_json in group:
-            candidates = parse_boundary_candidates(candidate_json)
-            centers = candidate_centers_only(candidates)
-            result = infer_segmentation(centers, len(traj), skill_names, obs, actions,
-                                        predicates, config, scorer)
-            r = compute_boundary_reward(result, traj, boundary_scorer)
-            group_rewards.append(r)
-        rewards.append(group_rewards)
-
-    advantages = compute_grpo_advantages(rewards)
-    update_lora(SkillFunction.BOUNDARY, prompts, generations, advantages)
+    def wrap(self, original_fn):
+        @wraps(original_fn)
+        def wrapped(*args, **kwargs):
+            kwargs_high_temp = {**kwargs, "temperature": 0.7}
+            samples = [original_fn(*args, **kwargs_high_temp) for _ in range(self.G)]
+            rewards = [self.reward_fn(s, *args, **kwargs) for s in samples]
+            self.buffer.add(self.adapter, args, kwargs, samples, rewards)
+            return samples[max(range(len(rewards)), key=lambda i: rewards[i])]
+        return wrapped
 ```
 
-**Files to create/modify:**
+### 1.1.3 Per-Stage Compute Cost
 
-- [ ] `trainer/skillbank/grpo/stage1_grpo.py` — training loop, multi-signal prompt formatting, reward computation, `BoundaryPreferenceScorer` preference generation
-- [ ] `trainer/skillbank/grpo/prompts.py` — shared prompt templates for all stages
-- [ ] Modify `skill_agents/boundary_proposal/proposal.py` — add GRPO adapter as optional signal channel in `propose_boundary_candidates()`
-- [ ] Modify `skill_agents/boundary_proposal/boundary_preference.py` — add batch preference ingestion from GRPO rollouts
-- [ ] Modify `skill_agents/boundary_proposal/episode_adapter.py` — wire GRPO boundary proposer into `propose_from_episode()`
-- [ ] Keep `trainer/skillbank/stages/stage1_propose_cuts.py` as simplified fallback
+| Stage | Wrapped call | Reward computation | Cost per G=4 sample | Stability |
+|-------|-------------|-------------------|---------------------|-----------|
+| 3 CONTRACT | `llm_summarize_contract()` | `verify_effects_contract().overall_pass_rate` | ~820ms/skill (CPU-only, no LLM) | Very high |
+| 4 CURATOR | `filter_candidates()` | `bank_quality_delta` | ~3s/EM iter (CPU-only) | High |
+| 2 SEGMENT | `collect_segment_preferences()` | `SegmentationDiagnostics` | ~12.5s/episode (requires scorer rebuild + decode) | High |
+
+### 1.2 Stage 1 — Boundary Proposal (SKIPPED)
+
+> **Decision:** Do not GRPO-wrap boundary proposal. The LLM function in `skill_agents/boundary_proposal/` extracts predicates (via `LLMSignalExtractor._extract_predicates_chunk()`), NOT boundaries. Boundaries are computed algorithmically from predicates + 5 other signals (surprisal, changepoints, intention tags, done flags, hard events). GRPO reward (decode quality) would be extremely indirect — any signal has to propagate through 6-signal fusion → merge → density control → decode before being measurable. Keep the existing algorithmic pipeline unchanged.
 
 ---
 
-### 1.3 Stage 2 — Decode / Segmentation (GRPO)
+### 1.3 Stage 2 — Segmentation (GRPO Wrapper)
+
+**Wrapped function:** `collect_segment_preferences()` in `skill_agents/infer_segmentation/llm_teacher.py`
 
 **Current state:** `skill_agents/infer_segmentation/` implements a preference-learning pipeline:
 1. **LLM teacher** (`llm_teacher.py`) ranks skills per segment → pairwise preferences
@@ -259,367 +215,135 @@ for batch in trajectory_batches:
 5. **Decoder** (Viterbi DP or beam search with `beam_width=16`) finds the optimal segmentation
 6. **Active learning** loop: 3 iterations of uncertain-segment queries (`margin < 1.0`, max 5 per iteration), retrain, re-decode
 
-**The 6-term scoring function (`SegmentScorer.score()`):**
+**What the wrapper does:** Wraps `collect_segment_preferences()` at the **batch level** (per episode). For each episode, generates G=4 complete sets of preferences, feeds each through scorer rebuild + decode, measures `SegmentationDiagnostics`, stores data, returns the best. The rest of the pipeline (PreferenceStore, PreferenceScorer, decoder, active learning) runs unchanged.
 
-```
-total = w.behavior_fit       * behavior_fit(obs, actions, skill, i, j)   [default w=1.0]
-      + w.duration_prior     * duration_prior(length, skill)              [default w=0.3]
-      + w.transition_prior   * transition_prior(skill, prev_skill)        [default w=1.0]
-      + w.contract_compat    * contract_compat(skill, preds_start, end)   [default w=0.0]
-      + boundary_quality(i, j)                                            [no weight]
-      + w.boundary_preference * boundary_preference(i, j)                 [default w=0.5]
-```
-
-`behavior_fit` and `transition_prior` come from the Bradley-Terry `PreferenceScorer`. `contract_compat` is a feedback loop from Stage 3 effects (configurable via `ContractFeedbackConfig`). `boundary_preference` comes from Stage 1's `BoundaryPreferenceScorer.decoding_bonus()`.
-
-**What changes:**
-
-GRPO replaces the LLM teacher calls (`collect_segment_preferences`, `collect_transition_preferences`, `collect_uncertain_prefs`) with the SEGMENT LoRA adapter. The adapter generates pairwise preferences that feed into the existing `PreferenceStore` → Bradley-Terry → `SegmentScorer` → decoder pipeline. This is **Option A** from the design space — GRPO replaces the LLM teacher, not the scorer or decoder.
-
-| Component | Detail |
-|-----------|--------|
-| **Input (prompt)** | Per-segment: start/end predicates, action sequence, top-K candidates with `SegmentScorer.score_breakdown()` (behavior_fit, duration_prior, transition_prior, contract_compat, boundary_preference). |
-| **Output (generation)** | JSON ranking: `{"ranking": ["S04_pick_and_carry_onion", "S11_navigate_to_pot", "__NEW__"], "evidence": "..."}` — converted to pairwise preferences via `ranking_to_pairwise()` |
-| **Group generation** | `G=8` independent rankings per episode (higher G because preferences are more variable) |
-| **Reward** | Contract pass rate + decision agent follow score + diagnostics quality. See reward table. |
-
-**Concrete I/O example:**
-
-*Input prompt:*
-
-```
-Rank the candidate skills for each segment. For each segment, you see predicates,
-actions, and the scorer breakdown for each candidate.
-
-Segment 1 (t=0 to t=12):
-  start_preds: [at_counter, not_holding, onion_on_counter]
-  end_preds:   [at_pot, holding_onion, facing_pot]
-  actions:     [noop, interact, move_south x9, interact]
-  candidates:
-    1. S04_pick_and_carry_onion
-       breakdown: behavior_fit=0.45, duration_prior=-0.12, transition_prior=0.30,
-                  contract_compat=0.19, boundary_pref=0.08  total=0.90
-       contract: eff_add={holding_onion, at_pot} eff_del={onion_on_counter, not_holding}
-    2. S11_navigate_to_pot
-       breakdown: behavior_fit=0.20, duration_prior=-0.15, transition_prior=0.25,
-                  contract_compat=0.10, boundary_pref=0.08  total=0.48
-       contract: eff_add={at_pot, facing_pot} eff_del={far_from_pot}
-    3. __NEW__
-       breakdown: behavior_fit=0.00, duration_prior=-3.00, transition_prior=0.00,
-                  contract_compat=0.00, boundary_pref=0.08  total=-2.92
-       (penalty=5.0)
-
-Segment 2 (t=13 to t=26):
-  start_preds: [at_pot, not_holding, onion_in_pot]
-  end_preds:   [at_counter, not_holding, dish_on_counter]
-  actions:     [noop, move_north x11, interact]
-  candidates:
-    1. S08_fetch_dish
-       breakdown: behavior_fit=0.38, duration_prior=-0.10, transition_prior=0.22,
-                  contract_compat=0.18, boundary_pref=0.06  total=0.74
-    2. S11_navigate_to_counter
-       breakdown: behavior_fit=0.15, duration_prior=-0.18, transition_prior=0.20,
-                  contract_compat=0.08, boundary_pref=0.06  total=0.31
-    3. __NEW__
-       breakdown: behavior_fit=0.00, duration_prior=-3.00, ...  total=-2.94
-
-For each segment, return a ranking from best to worst skill.
-```
-
-*Output (generation):*
-
-```json
-{
-  "segments": [
-    {
-      "start": 0, "end": 12,
-      "ranking": ["S04_pick_and_carry_onion", "S11_navigate_to_pot", "__NEW__"],
-      "evidence": "S04 matches both holding_onion and at_pot effects; S11 only covers navigation"
-    },
-    {
-      "start": 13, "end": 26,
-      "ranking": ["S08_fetch_dish", "S11_navigate_to_counter", "__NEW__"],
-      "evidence": "S08 captures dish pickup + counter arrival; S11 is too generic"
-    }
-  ]
-}
-```
-
-*Preference conversion:* Each ranking `[A, B, C]` produces pairwise preferences `A≻B`, `A≻C`, `B≻C` via `ranking_to_pairwise()`. These are added to `PreferenceStore` with `source="grpo"`.
-
-**Reward function for Stage 2:**
+**Reward function:**
 
 | Component | Formula | Weight | Rationale |
 |-----------|---------|--------|-----------|
-| `r_pass_rate` | `mean(contract.pass_rate for skill in assignment)` | 0.25 | Assigned skills should have valid contracts |
-| `r_margin` | `mean(seg.margin for seg in result.segments)` | 0.15 | Confident assignments (margin = top1 - top2 score) |
-| `r_follow` | `mean(r_follow_t)` from decision agent follow-shaping over holdout episodes | 0.20 | Downstream: does the decision agent benefit from this segmentation? |
-| `r_new_penalty` | `-0.5 * new_rate` where `new_rate = len(result.new_segments()) / len(result.segments)` | 0.10 | Discourage excessive NEW labels |
-| `r_label_entropy` | `-mean(seg.label_entropy for seg in result.segments)` | 0.10 | Low entropy = unambiguous assignments |
-| `r_compat_margin` | `mean(seg.compat_margin for seg in result.segments)` | 0.10 | Contract compatibility gap between top-1 and top-2 |
-| `r_confusion_penalty` | `-mean(confusion_overlap for confuser_pairs)` | 0.10 | Different skills should have different effects |
+| `r_margin` | `mean(seg.margin for seg in result.segments)` | 0.30 | Confident assignments |
+| `r_new_penalty` | `-0.5 * new_rate` | 0.20 | Discourage excessive NEW labels |
+| `r_label_entropy` | `-mean(seg.label_entropy for seg in result.segments)` | 0.20 | Low entropy = unambiguous |
+| `r_compat_margin` | `mean(seg.compat_margin for seg in result.segments)` | 0.15 | Contract compatibility gap between top-1 and top-2 |
+| `r_confusion_penalty` | `-mean(confusion_overlap for confuser_pairs)` | 0.15 | Different skills should have different effects |
 
-**Key design choice — GRPO replaces LLM teacher, not the decoder:**
+**Compute cost per G=4:** ~12.5s/episode (4× scorer rebuild + decode). All CPU-only — no additional LLM inference for reward.
 
-The existing pipeline has clear separation: LLM teacher → preferences → scorer → decoder. GRPO plugs in at the LLM teacher level:
+**Complexity note:** This is the most complex wrapper because reward requires rebuilding the scorer and re-running the decoder per sample. Do this stage last.
 
-1. **SEGMENT adapter generates rankings** (replacing `collect_segment_preferences` + `collect_transition_preferences`)
-2. Rankings are converted to `PreferenceExample` objects via `ranking_to_pairwise()`
-3. `PreferenceStore` accumulates preferences (GRPO + any retained human/rule-based prefs)
-4. `PreferenceScorer.train()` fits Bradley-Terry model (unchanged)
-5. `SegmentScorer` uses trained scores for behavior_fit + transition_prior (unchanged)
-6. Viterbi DP or beam decoder finds optimal path (unchanged)
-7. Active learning loop: `collect_uncertain_preferences` also uses SEGMENT adapter (replaces LLM teacher queries)
+**Files to modify:**
 
-This preserves the preference-learning structure while letting GRPO optimize the preference generation. The decoder, scorer weights, and active learning loop are infrastructure, not GRPO targets.
-
-**Transition preferences (also GRPO-trained):**
-
-The SEGMENT adapter also generates transition preferences (which `prev_skill → skill` sequences are natural). These are stored as `PreferenceExample(segment_start=-1, segment_end=-1, skill_win="prev->A", skill_lose="prev->B")` and train the `_transition_scores` in `PreferenceScorer`.
-
-**Files to create/modify:**
-
-- [ ] `trainer/skillbank/grpo/stage2_grpo.py` — training loop: generate rankings, convert to preferences, build scorer, decode, compute reward
-- [ ] Modify `skill_agents/infer_segmentation/llm_teacher.py` — add GRPO adapter variants of `collect_segment_preferences()`, `collect_transition_preferences()`, `collect_uncertain_preferences()`
-- [ ] Modify `skill_agents/infer_segmentation/preference.py` — accept `source="grpo"` preferences; add batch ingestion from GRPO rollouts
-- [ ] Modify `skill_agents/infer_segmentation/episode_adapter.py` — wire GRPO adapter into `infer_and_segment()` active learning loop
-- [ ] Keep `skill_agents/infer_segmentation/dp_decoder.py` and `beam_decoder.py` unchanged (infrastructure)
-- [ ] Keep `trainer/skillbank/stages/stage2_decode.py` as simplified fallback
+- [ ] `trainer/skillbank/grpo/rewards.py` — `segmentation_reward()` function
+- [ ] `trainer/skillbank/grpo/wrappers.py` — register `collect_segment_preferences` wrapper
+- [ ] No modifications needed to `llm_teacher.py`, `preference.py`, `scorer.py`, or decoders — the wrapper sits outside these
 
 ---
 
-### 1.4 Stage 3 — Contract Learning (GRPO)
+### 1.4 Stage 3 — Contract Learning (GRPO Wrapper — P0, Implement First)
 
-**Current state:** `skill_agents/stage3_mvp/` implements a 7-step contract pipeline:
+**Wrapped function:** `llm_summarize_contract()` in `skill_agents/stage3_mvp/llm_contract.py`
 
-1. **Summarize** (`segment_summarize.py`): Smooth predicate windows with `start_end_window=5`, OR-aggregate for UI predicates, mean for vision/HUD. Produces `SegmentRecord` with `P_start`, `P_end` (probabilities) and `B_start`, `B_end` (booleanized sets).
-2. **Effects compute** (`effects_compute.py`): `eff_add = B_end - B_start`, `eff_del = B_start - B_end`, `eff_event` from normalized UI events. Filtered by `reliability_min_for_effects=0.7`.
-3. **Learn** (`contract_learn.py`): Frequency counting — `learn_effects_contract()` counts literal occurrences, thresholds at `eff_freq=0.8`.
-4. **Verify** (`contract_verify.py`): `verify_effects_contract()` → `VerificationReport` with per-literal success rates, failure signatures, worst segments. Pass rule: instance passes if `(total_literals - n_fails) / total_literals >= instance_pass_literal_frac` (default 0.7).
-5. **Refine** (`contract_refine.py`): Drop-only — removes literals with success rate below `eff_freq`. No strengthening.
-6. **Re-verify**: Run `verify_effects_contract()` on refined contract.
-7. **Persist**: `bank.add_or_update(refined_contract, report)`.
+**Why P0:** Easiest stage to wrap. The existing `llm_summarize_contract()` already produces contract JSON. Reward is `verify_effects_contract().overall_pass_rate` — CPU-only, ~200ms/call, deterministic. Very high signal-to-noise ratio.
 
-**Existing LLM usage:** `llm_contract.py` provides `llm_summarize_contract()` using the CONTRACT LoRA adapter, but this is **union-only enrichment** (adds to frequency-based consensus, doesn't replace it) and is **only used in the EM trainer path** (`trainer/skillbank/stages/stage3_contracts.py`), NOT in `run_stage3_mvp.py`.
+**Current state:** `skill_agents/stage3_mvp/` implements a 7-step contract pipeline. `llm_summarize_contract()` takes segment records + frequency stats and returns `{"eff_add": [...], "eff_del": [...], "eff_event": [...]}`. Currently used as union-only enrichment in the EM trainer path.
 
-**What changes:**
+**What the wrapper does:** Intercepts `llm_summarize_contract()` calls. Generates G=4 contract suggestions, evaluates each against holdout instances via `verify_effects_contract()`, stores data, returns the best.
 
-The CONTRACT LoRA adapter augments the frequency-based pipeline with contextual judgment. GRPO trains the adapter to generate better union-enrichment suggestions. The frequency-counting core (`learn_effects_contract()`) stays as the consensus baseline; the CONTRACT adapter adds/refines literals that frequency counting misses or wrongly includes.
-
-| Component | Detail |
-|-----------|--------|
-| **Input (prompt)** | Skill ID, N representative `SegmentRecord` instances (booleanized `B_start`/`B_end`, computed `eff_add`/`eff_del`/`eff_event`, actions, events), frequency statistics across all instances, current bank contract (if exists), `VerificationReport` from initial verification (per-literal success rates, failure signatures). |
-| **Output (generation)** | JSON: `{"eff_add": [...], "eff_del": [...], "eff_event": [...], "description": "..."}` — merged with frequency consensus via union |
-| **Group generation** | `G=4` per skill (contracts are less variable than segmentations) |
-| **Reward** | Holdout `VerificationReport` quality + decision agent follow score. See reward table. |
-
-**Concrete I/O example:**
-
-*Input prompt:*
-
-```
-Generate an effects contract for this skill based on its segment instances.
-The frequency-based consensus and initial verification report are provided.
-
-Skill: S04_pick_and_carry_onion
-Current contract (if any): eff_add={holding_onion, at_pot}, eff_del={onion_on_counter, not_holding}
-
-Frequency consensus (eff_freq=0.80, 23 instances):
-  eff_add:  holding_onion (100%), near_pot (87%), facing_pot (83%), at_pot (70%)
-  eff_del:  not_holding (100%), onion_on_counter (96%)
-  events:   picked_up_onion (100%)
-  → Consensus contract: eff_add={holding_onion, near_pot, facing_pot}, eff_del={not_holding, onion_on_counter}, eff_event={picked_up_onion}
-
-Initial VerificationReport:
-  overall_pass_rate: 0.78
-  eff_add_success_rate: {holding_onion: 1.0, near_pot: 0.87, facing_pot: 0.83}
-  eff_del_success_rate: {not_holding: 1.0, onion_on_counter: 0.96}
-  failure_signatures: {"miss_add:near_pot": 3, "miss_add:facing_pot": 4}
-  worst_segments: [seg_17, seg_22, seg_09]
-
-Representative instances (5 of 23 total):
-
-Instance 1 (seg_01):
-  B_start: {at_counter, not_holding, onion_on_counter, far_from_pot}
-  B_end:   {at_pot, holding_onion, facing_pot, near_pot}
-  eff_add: {at_pot, holding_onion, facing_pot, near_pot}
-  eff_del: {not_holding, onion_on_counter, far_from_pot}
-  events:  [picked_up_onion]
-
-Instance 2 (seg_05):
-  B_start: {at_counter, not_holding, onion_on_counter}
-  B_end:   {near_pot, holding_onion}
-  eff_add: {near_pot, holding_onion}
-  eff_del: {not_holding, onion_on_counter}
-  events:  [picked_up_onion]
-
-... (3 more instances)
-
-Config: reliability_min_for_effects=0.7, instance_pass_literal_frac=0.7, max_effects_per_skill=50
-
-Generate a JSON effects contract. Include predicates that are reliably caused
-by this skill, not coincidental. The contract will be union-merged with the
-frequency consensus.
-```
-
-*Output (generation):*
-
-```json
-{
-  "eff_add": ["holding_onion", "near_pot", "facing_pot"],
-  "eff_del": ["not_holding", "onion_on_counter"],
-  "eff_event": ["picked_up_onion"],
-  "description": "Pick up an onion from the counter and carry it toward the pot. Reliably results in holding the onion and being near/facing the pot. at_pot excluded (only 70% — some instances stop short)."
-}
-```
-
-*Interpretation:* The model confirms `near_pot` (87%) and `facing_pot` (83%) as core despite being near the threshold. It excludes `at_pot` (70%) because the failure signatures show `miss_add:near_pot` and `miss_add:facing_pot` are the top failures, not `miss_add:at_pot` — the skill is about carrying toward the pot, not necessarily arriving. The union merge with frequency consensus produces the same contract since the LLM agrees with the frequency filter here. In cases of disagreement, the LLM can add literals frequency missed (below threshold but semantically important) or omit literals frequency included (above threshold but noisy).
-
-**Reward function for Stage 3:**
+**Reward function (simplified from v2):**
 
 | Component | Formula | Weight | Rationale |
 |-----------|---------|--------|-----------|
-| `r_holdout_pass` | `verify_effects_contract(contract, holdout_instances).overall_pass_rate` | 0.30 | Contract must generalize to unseen instances |
-| `r_decision_follow` | `mean(r_follow)` from decision agent using the new contract on holdout episodes | 0.20 | Downstream: does the decision agent follow this contract better? |
-| `r_per_literal_quality` | `mean(min(success_rate, 1.0) for lit in eff_add_success_rate ∪ eff_del_success_rate)` | 0.15 | Per-literal success rates from `VerificationReport` — every literal should be reliable |
-| `r_sparsity` | `-max(0, n_literals - budget) / budget` | 0.10 | Prevent bloated contracts |
+| `r_holdout_pass` | `verify_effects_contract(contract, holdout_instances).overall_pass_rate` | 0.50 | Contract must generalize |
+| `r_per_literal_quality` | `mean(success_rate for lit in all_literals)` | 0.25 | Every literal should be reliable |
+| `r_sparsity` | `-max(0, n_literals - budget) / budget` | 0.15 | Prevent bloated contracts |
 | `r_coverage` | `n_instances_covered / n_total_instances` | 0.10 | Contract should explain most instances |
-| `r_failure_sig_diversity` | `-len(failure_signatures) / n_instances` | 0.10 | Fewer distinct failure modes = more consistent contract |
-| `r_overfit_penalty` | `-(train_pass_rate - holdout_pass_rate)` if gap > 0.1 | 0.05 | Generalization check |
 
-**Critical difference from current approach:**
+**Compute cost per G=4:** ~820ms/skill (4× `verify_effects_contract()` at ~200ms each). All CPU-only.
 
-Current: frequency counting is deterministic — same input always produces same contract. Refine is drop-only (removes weak literals, never adds).
+**Files to modify:**
 
-GRPO: the LLM generates diverse contract suggestions, and the best ones (by holdout `VerificationReport` + decision-agent utility) are reinforced. Union merge means the LLM can only add value, never make things worse than frequency consensus alone. This allows the model to learn:
-
-- When to include a predicate at 70% frequency (below threshold but semantically important)
-- When to exclude a predicate at 90% frequency (noisy/irrelevant)
-- Contextual effects (predicate X matters only when predicate Y is present)
-- Using failure signatures to guide contract refinement
-
-**Full pipeline with GRPO integration:**
-
-```
-summarize_segment()  →  compute_effects()  →  learn_effects_contract() (frequency)
-                                                       │
-                                              GRPO CONTRACT adapter (union enrichment)
-                                                       │
-                                              verify_effects_contract()
-                                                       │
-                                              refine_effects_contract() (drop weak)
-                                                       │
-                                              verify_effects_contract() (re-verify)
-                                                       │
-                                              bank.add_or_update()
-```
-
-**Files to create/modify:**
-
-- [ ] `trainer/skillbank/grpo/stage3_grpo.py` — training loop: format evidence from `SegmentRecord`, generate contracts, compute holdout `VerificationReport` reward
-- [ ] Modify `skill_agents/stage3_mvp/llm_contract.py` — use GRPO-trained CONTRACT adapter; add structured input with `VerificationReport` fields
-- [ ] Modify `skill_agents/stage3_mvp/run_stage3_mvp.py` — integrate LLM enrichment into the 7-step pipeline (between learn and verify)
-- [ ] Keep `skill_agents/stage3_mvp/contract_learn.py` frequency counting as consensus baseline (never replaced)
-- [ ] Keep `skill_agents/stage3_mvp/contract_refine.py` drop-only refine as post-verification cleanup
-- [ ] Keep `trainer/skillbank/stages/stage3_contracts.py` as simplified fallback
+- [ ] `trainer/skillbank/grpo/rewards.py` — `contract_reward()` function
+- [ ] `trainer/skillbank/grpo/wrappers.py` — register `llm_summarize_contract` wrapper
+- [ ] No modifications to the 7-step pipeline — wrapper sits outside `run_stage3_mvp.py`
 
 ---
 
-### 1.5 Shared GRPO Infrastructure
+### 1.5 Shared GRPO Infrastructure (New Code)
 
-All three stages share:
+New files to create:
 
-- [ ] `trainer/skillbank/grpo/grpo_lora_updater.py` — GRPO advantage computation + LoRA parameter update on Qwen3-14B. Reuses advantage normalization logic from `trainer/decision/grpo_trainer.py` but operates on LoRA params only.
-- [ ] `trainer/skillbank/grpo/config.py` — per-stage GRPO hyperparameters (G, clip_ratio, kl_coeff, lr). Lower G and higher kl_coeff than decision agent since skill bank outputs are more structured.
-- [ ] `trainer/common/configs/skillbank_grpo.yaml` — unified config file.
-- [ ] Update `skill_agents/lora/config.py` — change `base_model_name_or_path` default from `"Qwen/Qwen3-8B"` to `"Qwen/Qwen3-14B"`
-- [ ] Update `trainer/common/configs/skillbank_em.yaml` — change `lora.base_model_name_or_path` from `"Qwen/Qwen3-8B"` to `"Qwen/Qwen3-14B"`
+- [ ] `trainer/skillbank/grpo/__init__.py` — package init
+- [ ] `trainer/skillbank/grpo/buffer.py` — `GRPOBuffer` dataclass: stores `(adapter, prompt, completions, rewards)` tuples per stage (~80 lines)
+- [ ] `trainer/skillbank/grpo/wrapper.py` — `GRPOCallWrapper` class: generic function wrapper that samples G times, evaluates rewards, stores in buffer (~100 lines)
+- [ ] `trainer/skillbank/grpo/trainer.py` — `GRPOLoRATrainer`: reads buffer, calls `log_probs()`, computes GRPO loss, updates LoRA weights (~150 lines)
+- [ ] `trainer/skillbank/grpo/rewards.py` — `contract_reward()`, `curator_reward()`, `segmentation_reward()` (~100 lines)
+- [ ] `trainer/skillbank/grpo/config.py` — per-stage GRPO hyperparameters
+- [ ] `trainer/common/configs/skillbank_grpo.yaml` — unified config file
+
+Existing files to modify:
+
+- [ ] `skill_agents/lora/model.py` — add `log_probs()` method to `MultiLoraSkillBankLLM` (~50 lines)
+- [ ] `skill_agents/lora/config.py` — change `base_model_name_or_path` default from `"Qwen/Qwen3-8B"` to `"Qwen/Qwen3-14B"`
+- [ ] `trainer/common/configs/skillbank_em.yaml` — change `lora.base_model_name_or_path` from `"Qwen/Qwen3-8B"` to `"Qwen/Qwen3-14B"`
 
 **Hyperparameter defaults:**
 
 ```yaml
-stage1_boundary:
-  group_size: 4
-  clip_ratio: 0.2
-  kl_coeff: 0.05      # higher KL — boundary outputs are structured, don't drift too far
-  lr: 5.0e-5
-  epochs_per_batch: 2
+grpo:
+  stage3_contract:
+    group_size: 4
+    clip_ratio: 0.2
+    kl_coeff: 0.05
+    lr: 5.0e-5
+    epochs_per_batch: 2
 
-stage2_decode:
-  group_size: 8
-  clip_ratio: 0.2
-  kl_coeff: 0.02
-  lr: 3.0e-5
-  epochs_per_batch: 3
+  stage4_curator:
+    group_size: 4
+    clip_ratio: 0.2
+    kl_coeff: 0.05
+    lr: 5.0e-5
+    epochs_per_batch: 2
 
-stage3_contracts:
-  group_size: 4
-  clip_ratio: 0.2
-  kl_coeff: 0.05
-  lr: 5.0e-5
-  epochs_per_batch: 2
-```
-
-### 1.6 Training Schedule (Co-evolution)
-
-The EM loop in `em_trainer.py` currently runs: propose → decode → contract → update → gate.
-
-With GRPO, the outer loop becomes:
-
-```
-for co_evolution_step in range(total_steps):
-    # Phase 1: Collect decision agent rollouts (GRPO, existing)
-    rollouts = collect_rollouts(decision_agent, env, skill_bank)
-    decision_grpo_update(rollouts)
-
-    # Phase 2: Skill bank GRPO update (every bank_update_cadence steps)
-    if co_evolution_step % bank_update_cadence == 0:
-        trajectories = ingest_rollouts(rollouts)
-
-        # Stage 1 GRPO: train boundary proposer
-        stage1_grpo_step(trajectories, bank)
-
-        # Stage 2 GRPO: train segment decoder
-        stage2_grpo_step(trajectories, bank)
-
-        # Stage 3 GRPO: train contract learner
-        stage3_grpo_step(trajectories, bank)
-
-        # Stage 4: tool-calling agent curates the bank (see §2)
-        stage4_agent_step(bank, trajectories)
-
-        # SkillEval gating
-        if not skilleval_passes(bank):
-            rollback_bank()
+  stage2_segment:
+    group_size: 4
+    clip_ratio: 0.2
+    kl_coeff: 0.02
+    lr: 3.0e-5
+    epochs_per_batch: 3
 ```
 
 ---
 
-## 2. Stage 4: LLM-Advised Bank Maintenance
+## 2. Stage 4: LLM-Advised Bank Maintenance (GRPO Wrapper — P1)
 
-### 2.1 Design Principle
+### 2.1 GRPO Wrapper Summary
+
+**New LLM function:** `filter_candidates()` (does not exist yet — must be created)
+
+Unlike Stages 2 and 3 which wrap existing LLM functions, Stage 4 requires a **new** `filter_candidates()` call. The algorithmic pipeline proposes candidate mutations; the CURATOR LoRA reviews them and returns approve/veto/defer decisions.
+
+**Reward function:**
+
+| Component | Formula | Weight | Rationale |
+|-----------|---------|--------|-----------|
+| `r_quality_delta` | `q_filtered - q_all` (where q = mean pass_rate of affected skills) | 0.50 | Filtering should improve bank quality |
+| `r_conservative_bonus` | `+0.1 * n_deferred / n_total` | 0.20 | Encourage caution (prefer defer over bad approve) |
+| `r_action_diversity` | `-entropy(action_type_distribution)` if all same type | 0.15 | Don't always approve/veto everything |
+| `r_veto_precision` | `ratio of vetoed items that would have lowered quality` | 0.15 | Vetoes should be justified |
+
+**Compute cost per G=4:** ~3s/EM iteration (4× bank quality computation). All CPU-only.
+
+### 2.2 Design Principle
 
 **Production module:** `skill_agents/bank_maintenance/` — implements `run_bank_maintenance()` with a pipeline of: profile building → index construction → split → merge → refine → local re-decode.
 
-Stage 4 mutates the skill bank through five actions — **refine, merge, split, materialize, promote**. Skills stored in the bank are living objects: their contracts (eff_add, eff_del, eff_event) evolve as new evidence arrives. Refine is the most frequent action and includes both **weakening** (dropping unreliable literals) and **strengthening** (adding discriminative literals vs confusion partners).
+Stage 4 mutates the skill bank through five actions — **refine, merge, split, materialize, promote**. The architecture is **propose-filter-execute**:
 
-The architecture is **propose-filter-execute**:
-
-- **Propose:** The algorithmic `run_bank_maintenance()` builds `SkillProfile` per skill (with effect signatures, embedding centroids/variance, transition top-k, duration stats, pass rates, failure signatures), constructs indices (`EffectInvertedIndex`, `MinHashLSH`, `EmbeddingANN`), and generates a ranked candidate action list.
-- **Filter:** A single LLM call (CURATOR LoRA) reviews candidates against the full `SkillProfile` diagnostics and returns approved/vetoed/deferred decisions.
-- **Execute:** The algorithm executes approved actions using the existing deterministic functions (`refine_skill`, `execute_merge`, `execute_split`, `form_from_cluster`, `promote_ready`).
+- **Propose:** The algorithmic `run_bank_maintenance()` builds `SkillProfile` per skill and generates a ranked candidate action list.
+- **Filter:** A single LLM call (CURATOR LoRA) reviews candidates against `SkillProfile` diagnostics and returns approved/vetoed/deferred decisions. **This is the GRPO wrapper target.**
+- **Execute:** The algorithm executes approved actions using existing deterministic functions.
 
 The LLM's role is narrow: contextual judgment on "should we do this?" The algorithm handles "what could we do?" and "how do we do it?"
-
-### 2.2 Why Not a Full Multi-Turn Agent
-
-The original design considered a 20-turn tool-calling agent loop with sandboxed trials, but this has stability risks disproportionate to Stage 4's role:
-
-- Stage 4 runs **once per EM batch** (~every 500 episodes). Multi-turn compounding (turn N's accept mutates the bank state turn N+1 reasons about) is fragile for sparse execution.
-- Sandboxed deep-copies per trial are 10-20x the compute of the algorithmic version.
-- Multi-turn = 20 failure points for malformed JSON, hallucinated skill_ids, etc.
-
-The full agentic design is preserved as Phase 3 (§2.10) for when the simpler approach hits a ceiling.
 
 ### 2.3 The Five Actions
 
@@ -1451,142 +1175,13 @@ The tool definitions (inspect_skill, trial_merge, trial_split, trial_refine, tri
 
 ---
 
-## 3. `select_skill` in the Decision Agent (GRPO)
+## 3. `select_skill` in the Decision Agent (SKIPPED)
 
-### 3.1 Current State
-
-The decision agent's `select_skill` is a deterministic pipeline:
-
-1. `VLMDecisionAgent.step()` generates `TOOL: select_skill, ARGS: {"key": "..."}` via LLM
-2. `run_tool(TOOL_SELECT_SKILL, ...)` calls `select_skill_from_bank()`
-3. `select_skill_from_bank()` tries multiple fallback paths:
-   - `SkillQueryEngine.select()` → relevance (embedding + keyword Jaccard) + applicability (contract match) + confidence blend → `SkillSelectionResult`
-   - `query_for_decision_agent()` → same but returns single best
-   - `SkillBankAgent.select_skill()` → delegated
-   - Fallback: TF-IDF keyword scoring
-4. Result includes: `skill_id`, `protocol` (steps/preconditions/success_criteria/abort_criteria), `execution_hint`, `termination_hint`, `failure_modes`, `micro_plan`
-5. Agent follows the protocol steps via `take_action`
-
-**What's NOT learned:**
-- The query key generation (`ARGS: {"key": "..."}`) is already part of the LLM's policy — GRPO trains this.
-- But `SkillQueryEngine.select()` itself is a fixed scoring function: `confidence = 0.4 * relevance + 0.35 * applicability + 0.25 * pass_rate`. No learning.
-- The decision of _when_ to call `select_skill` vs. continuing with current skill is heuristic: `steps_since_retrieval >= budget_n or stuck_counter >= 3`.
-
-### 3.2 What GRPO Trains
-
-GRPO already trains the decision agent's full policy (via `GRPOTrainer` / VERL `RayPPOTrainer`). The `select_skill` action is part of the action space. What needs to improve:
-
-#### A. Query Key Generation (already trained by GRPO)
-
-The LLM generates `{"key": "navigate to pot with onion"}`. GRPO reward flows back through the full episode return. The agent learns to generate better query keys because better keys → better skill matches → better follow-shaping reward → higher episode return.
-
-No additional work needed here. The existing `r_total = r_env + w_follow * r_follow + r_cost` already captures this.
-
-#### B. When to Select (timing policy)
-
-**Current:** Heuristic — `can_select = steps_since_retrieval >= N or stuck_counter >= 3 or active_skill_id is None`
-
-**Proposed:** Remove the hard gating. Let GRPO learn when to select.
-
-```python
-# REMOVE this:
-can_select = s.steps_since_retrieval >= self.retrieval_budget_n or ...
-
-# KEEP the cost signal:
-# c_skill = -0.05 per select_skill call (already in reward_func.py)
-# c_switch = -0.10 per skill switch (already in reward_func.py)
-```
-
-The cost penalties (`c_skill`, `c_switch`) already exist in `decision_grpo.yaml`. By removing the hard gate and relying on GRPO to learn the timing through cost-vs-benefit tradeoff, the agent learns:
-
-- Don't re-select every step (costs accumulate)
-- Do re-select when stuck (future reward justifies the cost)
-- Do re-select when the current skill's termination hint is met (need a new skill)
-
-#### C. Skill Ranking (replacing the fixed scoring function)
-
-**Current:** `SkillQueryEngine.select()` uses a fixed weighted sum: `0.4 * relevance + 0.35 * applicability + 0.25 * pass_rate`
-
-**Proposed:** Train a RETRIEVAL LoRA adapter (on the shared Qwen3-14B base) to re-rank skills.
-
-| Component | Detail |
-|-----------|--------|
-| **Input** | Query key + current state predicates + top-K candidates from `SkillQueryEngine.select()` (with their scores, contracts, match details) |
-| **Output** | Re-ranked list with selected skill_id and reasoning |
-| **Reward** | Episode-level: did selecting this skill lead to better return? |
-
-This is a **contextual bandit within GRPO**: the RETRIEVAL adapter sees the candidate list and picks one. The episode return provides the reward signal. Over many episodes, GRPO learns which ranking decisions lead to better outcomes.
-
-Implementation approach — add an LLM re-ranking step inside `select_skill_from_bank()`:
-
-```python
-def select_skill_from_bank(skill_bank, key, current_state, memory, top_k=1):
-    # Step 1: existing SkillQueryEngine.select() produces candidates
-    engine = SkillQueryEngine(skill_bank)
-    candidates = engine.select(key, current_state=current_state, top_k=5)
-
-    # Step 2: LLM re-rank (RETRIEVAL adapter)
-    reranked = llm_rerank_skills(candidates, key, current_state)
-    if reranked:
-        return reranked[0]
-
-    # Step 3: fallback to SkillQueryEngine's ranking
-    return candidates[0].to_dict()
-```
-
-The `llm_rerank_skills()` function formats the candidates into a prompt, calls the RETRIEVAL LoRA adapter, and parses the selection. During GRPO training, the gradient flows through the re-ranking decision.
-
-### 3.3 Reward Signal for select_skill
-
-The reward for `select_skill` is already decomposed in the existing codebase:
-
-| Component | Source | What it captures |
-|-----------|--------|-----------------|
-| `r_env` | Environment reward | Did the selected skill lead to game progress? |
-| `r_follow` | `reward_func.py: _compute_follow()` | Did the agent follow the skill's contract (eff_add satisfied)? |
-| `r_cost` | `reward_func.py: _compute_cost()` | Cost of querying/switching skills |
-| `r_tool` | `tool_call_reward.py` | Retrieval relevance + utility of the selected skill |
-
-Total: `r_total = r_env + w_follow * r_follow + r_cost + r_tool`
-
-This already exists and flows into GRPO. The changes are:
-
-1. **Remove hard gating** on when `select_skill` can be called
-2. **Add LLM re-ranking** step using RETRIEVAL adapter
-3. **Include re-ranking in the GRPO computation graph** so gradients reach the RETRIEVAL adapter
-
-### 3.4 Files to Create/Modify
-
-- [ ] Modify `decision_agents/agent.py` — remove `can_select` hard gate, always allow `select_skill` in the action space
-- [ ] Modify `decision_agents/agent_helper.py: select_skill_from_bank()` — add LLM re-ranking step using RETRIEVAL adapter
-- [ ] Create `decision_agents/skill_reranker.py` — RETRIEVAL adapter re-ranking logic, prompt formatting
-- [ ] Modify `trainer/decision/reward_shaping.py` — include `r_tool` in the per-step reward passed to GRPO
-- [ ] Modify `trainer/common/configs/decision_grpo.yaml` — add `reranker` section (enabled, top_k_candidates, temperature)
-- [ ] The existing `skill_agents/tool_call_reward.py` already computes `r_relevance` and `r_utility` — no changes needed
-
-### 3.5 Training Flow
-
-```
-GRPO episode rollout:
-  step 0: get_state_summary → "near_counter=true, holding_onion=true, ..."
-  step 1: LLM generates TOOL: select_skill, ARGS: {"key": "place onion in pot"}
-          → SkillQueryEngine.select() returns top-5 candidates
-          → RETRIEVAL adapter re-ranks → picks "navigate_to_pot"
-          → r_tool = relevance_score * 0.5 + utility_score * 0.5
-  step 2: LLM generates TOOL: take_action, ARGS: {"action": "move_south"}
-          → r_env = 0.0, r_follow = +0.05 (near_pot predicate getting closer)
-  step 3: take_action → r_env = 0.0, r_follow = +0.05
-  step 4: take_action → r_env = +1.0 (onion placed!), r_follow = +0.20 (completion)
-  ...
-
-Total episode return → GRPO advantage → updates:
-  - Decision agent policy (when to select, what key to generate, which action to take)
-  - RETRIEVAL adapter (which candidate to pick from the re-ranked list)
-```
+> **Decision:** Do not add a RETRIEVAL LoRA adapter. The existing decision agent GRPO trainer already trains the full policy including skill selection. The episode return signal (`r_env + r_follow + r_cost + r_tool`) flows through `select_skill` naturally. Adding a separate RETRIEVAL adapter would require full environment rollouts per GRPO sample (~30s/episode), making it prohibitively expensive. The existing `SkillQueryEngine.select()` fixed scoring + GRPO-trained query generation is sufficient for v1.
 
 ---
 
-## Dependency Graph
+## Dependency Graph (Wrapper Architecture)
 
 ```
                     ┌─────────────────────┐
@@ -1594,67 +1189,61 @@ Total episode return → GRPO advantage → updates:
                     │  (GPT-5.4 rollouts)  │
                     └──────────┬──────────┘
                                │
+                    ┌──────────▼──────────┐
+                    │  §1.1: Prerequisites │
+                    │  log_probs() method  │
+                    │  GRPOBuffer          │
+                    │  GRPOCallWrapper     │
+                    │  GRPOLoRATrainer     │
+                    └──────────┬──────────┘
+                               │
               ┌────────────────┼────────────────┐
               │                │                │
-    ┌─────────▼──────┐  ┌─────▼──────┐  ┌──────▼─────────┐
-    │ §1: Stages 1-3 │  │ §2: Stage 4│  │ §3: select_skill│
-    │ GRPO adapters  │  │ LLM-advised│  │ GRPO + reranker │
-    │ (Qwen3-14B     │  │ propose →  │  │ (Qwen3-14B     │
-    │  + LoRA:       │  │ filter →   │  │  + LoRA:       │
-    │  BOUNDARY,     │  │ execute    │  │  RETRIEVAL)    │
-    │  SEGMENT,      │  │ (Qwen3-14B │  │                │
-    │  CONTRACT)     │  │  + LoRA:   │  │                │
-    │                │  │  CURATOR)  │  │                │
-    └────────┬───────┘  └─────┬──────┘  └──────┬─────────┘
+    ┌─────────▼──────┐  ┌─────▼──────┐  ┌──────▼──────────┐
+    │ §1.4: Stage 3  │  │ §2: Stage 4│  │ §1.3: Stage 2   │
+    │ CONTRACT       │  │ CURATOR    │  │ SEGMENT          │
+    │ (wrap existing │  │ (new LLM   │  │ (wrap existing   │
+    │  llm_summarize │  │  filter_   │  │  collect_segment │
+    │  _contract)    │  │  candidates│  │  _preferences)   │
+    │                │  │  + wrap)   │  │                  │
+    │ P0: Do first   │  │ P1        │  │ P1: Do last      │
+    └────────┬───────┘  └─────┬──────┘  └──────┬──────────┘
              │                │                │
              └────────────────┼────────────────┘
                               │
                     ┌─────────▼─────────┐
                     │  Co-evolution loop │
-                    │  (launch_coevo.py) │
+                    │  Phase 1: wrappers │
+                    │  Phase 2: training │
                     └───────────────────┘
 
-    All components use Qwen3-14B. No mixed model sizes.
-    5 LoRA adapters total: BOUNDARY, SEGMENT, CONTRACT, CURATOR, RETRIEVAL.
+    All components use Qwen3-14B. 3 LoRA adapters: SEGMENT, CONTRACT, CURATOR.
+    ~680 lines of new code total.
 ```
-
-**§1 and §3 can be developed in parallel** — they share the Qwen3-14B LoRA infrastructure but operate on different adapters (BOUNDARY/SEGMENT/CONTRACT vs RETRIEVAL).
-
-**§2 Phase 0 starts immediately** — counterfactual logging requires zero new infrastructure (just wrap `run_bank_maintenance()` with leave-one-out evaluation). Phase 1 (SFT) and Phase 2 (GRPO) depend on §1.5 shared GRPO infrastructure.
 
 ## Implementation Priority
 
 | Priority | Item | Effort | Rationale |
 |----------|------|--------|-----------|
-| **P0** | §1.5 — Shared GRPO infrastructure (`grpo_lora_updater.py`) | 2 days | Everything else depends on this |
-| **P0** | §3.4 — Remove hard gate + add RETRIEVAL re-ranker | 2 days | Simplest win, immediately improves decision agent |
-| **P0** | §2 Phase 0 — Counterfactual logging in `em_trainer.py` | 1 day | Zero-cost data collection, starts immediately |
-| **P1** | §1.4 — Stage 3 GRPO (CONTRACT adapter) — integrate with `stage3_mvp/` | 3 days | Highest impact: contracts feed into both decode scoring and follow-shaping reward |
-| **P1** | §2 Phases 1-2 — Stage 4 LLM filter + CURATOR GRPO — integrate with `bank_maintenance/` | 3 days | Simpler than old design: single-turn filter + standard GRPO |
-| **P2** | §1.3 — Stage 2 GRPO (SEGMENT adapter) — replaces LLM teacher in `infer_segmentation/llm_teacher.py` | 4 days | Largest gap: preference-learning pipeline needs careful GRPO integration |
-| **P2** | §1.2 — Stage 1 GRPO (BOUNDARY adapter) — integrates with `boundary_proposal/` | 2 days | Depends on §1.3 for reward signal (decode quality) |
+| **P0** | `log_probs()` on `MultiLoraSkillBankLLM` | 0.5 day | Everything depends on this |
+| **P0** | `GRPOCallWrapper` + `GRPOBuffer` + `GRPOLoRATrainer` | 1.5 days | Generic infrastructure for all stages |
+| **P0** | Stage 3 CONTRACT wrapper + `contract_reward()` | 1 day | Easiest stage — validate the wrapper approach |
+| **P1** | Stage 4 CURATOR `filter_candidates()` + wrapper | 1.5 days | New LLM call, but simple reward |
+| **P1** | Stage 2 SEGMENT wrapper + `segmentation_reward()` | 2 days | Most complex reward (scorer rebuild + decode) — do last |
+
+**Total: ~6.5 days** (vs ~17 days in v2 plan)
 
 ---
 
 ## Open Questions
 
-1. **GRPO batch size vs EM cadence**: Currently EM runs every 500 decision-agent episodes. With GRPO on Stages 1–3, each EM step is more expensive (G parallel generations + evaluation). Should we increase cadence to 1000?
+1. **GRPO batch size vs EM cadence**: Currently EM runs every 500 decision-agent episodes. With G=4 sampling per LLM call, each EM step is ~4× more LLM-inference-heavy. Should we increase cadence to 1000?
 
-2. **Shared vs separate GRPO optimizers**: Each LoRA adapter has its own optimizer state. Should we use a single learning rate schedule across all 5 adapters, or tune independently?
+2. **HuggingFace native vs VERL/TRL for `GRPOLoRATrainer`**: Option A (HF native) is simpler (~150 lines, direct PyTorch optimizer on LoRA params). Option B (VERL/TRL) offers distributed training and memory optimization. **Recommend Option A for v1.**
 
-3. **RETRIEVAL adapter training data**: The RETRIEVAL adapter needs (query, candidates, selected, outcome_reward) tuples. During GRPO, these come from rollouts. But initially the adapter has no training — should we warm-start from the `SkillQueryEngine.select()` rankings (distillation)?
+3. **GPU memory for dual-mode `MultiLoraSkillBankLLM`**: `log_probs()` requires `torch.enable_grad()` which increases memory. Need to verify Qwen3-14B + LoRA gradient computation fits in remaining GPU memory alongside vLLM KV cache. May need to pause vLLM during training phase.
 
-4. **GPU memory for LoRA training on 14B**: Qwen3-14B in bf16 ≈ 28GB. With LoRA (rank 16) and 5 adapters loaded, add ~1GB total (LoRA params are tiny). GRPO training adds optimizer states + gradients for adapter params only (~1–2GB). Fits on a single 80GB A100 but requires careful `gpu-memory-utilization` tuning when vLLM is also serving on the same GPU. Consider: (a) dedicated GPU for LoRA training separate from vLLM serving, or (b) time-slicing — pause vLLM during GRPO LoRA updates, resume for inference.
-
-5. **Stage 4 Phase 0 duration**: How many EM iterations before transitioning from Phase 0 (logging only) to Phase 1 (SFT)? 100 is the current estimate — is this enough counterfactual data for reliable SFT?
-
-6. **Refine auto-approve threshold**: Phase 0 data may show that refine with `too_strong` trigger (top_violating_literals non-empty) and clear evidence is always beneficial. If so, auto-approve high-confidence refines without LLM review (reduce prompt size, faster execution).
-
-7. **Stage 2 GRPO integration point**: The plan uses Option A (GRPO replaces LLM teacher, preferences feed into existing PreferenceStore → Bradley-Terry → SegmentScorer → decoder). Should we start with Option C (re-ranker on top) for lower risk, and upgrade to Option A after validation?
-
-8. **Model mismatch between cold-start and co-evolution**: Cold-start extraction uses GPT-5.4 (`labeling/extract_skillbank_gpt54.py`); co-evolution uses Qwen3-14B. The initial bank quality may degrade when switching models. Should we run a calibration pass where Qwen3-14B re-processes the cold-start bank?
-
-9. **Stage 4 local re-decode cost**: After splits and merges, `redecode_windows()` re-runs Stage 2 on affected trajectory windows. With `redecode_window_pad=300`, this can be expensive for large banks with many splits per iteration. Should we batch re-decode requests and run them asynchronously?
+4. **Model mismatch between cold-start and co-evolution**: Cold-start extraction uses GPT-5.4; co-evolution uses Qwen3-14B. Should we run a calibration pass where Qwen3-14B re-processes the cold-start bank?
 
 ---
 
