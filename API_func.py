@@ -12,6 +12,33 @@ OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 VLLM_BASE_URL = os.environ.get("VLLM_BASE_URL", "http://localhost:8000/v1")
 VLLM_API_KEY = os.environ.get("VLLM_API_KEY", "EMPTY")
 
+# Cached vLLM reachability (None = not yet probed)
+_vllm_reachable: bool | None = None
+
+
+def _probe_vllm() -> bool:
+    """One-shot TCP probe to check if the vLLM server is reachable.
+
+    Result is cached so subsequent calls return instantly.
+    """
+    global _vllm_reachable
+    if _vllm_reachable is not None:
+        return _vllm_reachable
+
+    import socket
+    try:
+        stripped = VLLM_BASE_URL.replace("http://", "").replace("https://", "").rstrip("/")
+        host_port = stripped.split("/")[0]
+        host, port_str = host_port.rsplit(":", 1)
+        sock = socket.create_connection((host, int(port_str)), timeout=2)
+        sock.close()
+        _vllm_reachable = True
+    except Exception:
+        _vllm_reachable = False
+        print(f"[API_func] vLLM at {VLLM_BASE_URL} unreachable — "
+              "Qwen calls will be routed through OpenRouter.")
+    return _vllm_reachable
+
 
 def ask_openrouter(question, model="openai/gpt-4o-mini", temperature=0.7, max_tokens=2000):
     """
@@ -129,7 +156,15 @@ def ask_vllm(question, model="Qwen/Qwen3-14B", temperature=0.7, max_tokens=2000)
     Configure the endpoint via VLLM_BASE_URL env var (default: http://localhost:8000/v1).
 
     Automatically strips ``<think>`` tags from reasoning models (Qwen3, QwQ, etc.).
+
+    Falls back to OpenRouter when the vLLM server is unreachable and
+    ``open_router_api_key`` is configured.
     """
+    if not _probe_vllm():
+        return _ask_qwen_via_openrouter(
+            question, model=model, temperature=temperature, max_tokens=max_tokens,
+        )
+
     try:
         client = openai.OpenAI(base_url=VLLM_BASE_URL, api_key=VLLM_API_KEY)
         response = client.chat.completions.create(
@@ -141,7 +176,52 @@ def ask_vllm(question, model="Qwen/Qwen3-14B", temperature=0.7, max_tokens=2000)
         raw = response.choices[0].message.content or ""
         return _strip_think_tags(raw)
     except Exception as e:
+        global _vllm_reachable
+        _vllm_reachable = False
+        fallback = _ask_qwen_via_openrouter(
+            question, model=model, temperature=temperature, max_tokens=max_tokens,
+        )
+        if not fallback.startswith("Error"):
+            return fallback
         return f"Error calling vLLM API at {VLLM_BASE_URL}: {str(e)}"
+
+
+def _ask_qwen_via_openrouter(question, model="Qwen/Qwen3-14B", temperature=0.7, max_tokens=2000):
+    """Route a Qwen model call through OpenRouter as a fallback.
+
+    Handles Qwen3 reasoning-model quirks:
+      - Appends ``/no_think`` if not already present so the full token
+        budget goes to actual content rather than thinking.
+      - Falls back to the ``reasoning`` response field when ``content``
+        is empty (some OpenRouter providers put thinking there).
+    """
+    if not (open_router_api_key and open_router_api_key.strip()):
+        return (f"Error: vLLM at {VLLM_BASE_URL} unreachable and no "
+                "OpenRouter API key configured for Qwen fallback.")
+
+    if "/no_think" not in question:
+        question = question.rstrip() + "\n/no_think"
+
+    or_model = model.lower()
+    try:
+        client = openai.OpenAI(
+            base_url=OPENROUTER_BASE, api_key=open_router_api_key.strip(),
+        )
+        response = client.chat.completions.create(
+            model=or_model,
+            messages=[{"role": "user", "content": question}],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        choice = response.choices[0]
+        content = choice.message.content or ""
+        if not content:
+            reasoning = getattr(choice.message, "reasoning", None) or ""
+            if reasoning:
+                content = reasoning
+        return _strip_think_tags(content)
+    except Exception as e:
+        return f"Error calling OpenRouter API (Qwen fallback): {str(e)}"
 
 
 def ask_model(question, model=None, temperature=0.7, max_tokens=2000):

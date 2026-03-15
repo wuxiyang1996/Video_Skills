@@ -4,11 +4,12 @@ This folder contains code and scripts for annotating cold-start episode
 trajectories with concise labels suitable for RAG retrieval, the manager
 agent, and downstream skill extraction.
 
-There are **three pipelines** available:
+There are **four pipelines** available:
 
 | Script | Purpose |
 |--------|---------|
 | `label_episodes_gpt54.py` | **Labels only** — annotates episodes with `summary_state`, `summary`, `intentions` (leaves `skills` null). |
+| `label_episodes_with_skills.py` | **Labels + Skill Selection + GRPO Cold-Start** — same annotations as above, **plus** loads a pre-built skill bank, runs top-k skill selection at each step, and exports GRPO cold-start training data for both action-taking and skill-selection LoRA adapters. |
 | `label_and_extract_skills_gpt54.py` | **Labels + Skills** — same annotations **plus** full skill extraction via the `SkillBankAgent` pipeline. Populates `skills` with named, RAG-optimised skill assignments. |
 | `extract_skillbank_gpt54.py` | **Skills only** — reads **already-labeled** rollouts (e.g. from `labeling/output/gpt54/`), runs the full SkillBankAgent pipeline, and writes the skill bank and catalogs. No labeling step. |
 
@@ -120,6 +121,7 @@ step 49/50 (endgame — final move):
 | File                                   | Purpose |
 |----------------------------------------|---------|
 | `label_episodes_gpt54.py`             | Labels-only script. Reads episode JSONs, calls GPT-5.4, writes labeled output with `skills=null`. |
+| `label_episodes_with_skills.py`       | **Labels + Skill Selection + GRPO Cold-Start**. Loads a pre-built skill bank, runs top-k skill selection per step, exports GRPO training data for action-taking and skill-selection LoRA adapters. |
 | `label_and_extract_skills_gpt54.py`   | **Full pipeline**: labels + skill extraction via `SkillBankAgent`. Populates the `skills` field with RAG-friendly skill assignments. |
 | `extract_skillbank_gpt54.py`          | **Skills only**: reads already-labeled rollouts, runs SkillBankAgent pipeline, writes skill bank and catalogs. No labeling. |
 | `run_labeling.sh`                      | Shell wrapper for `label_episodes_gpt54.py`. |
@@ -157,6 +159,212 @@ python labeling/label_episodes_gpt54.py --in_place
 # Or use the shell wrapper:
 bash labeling/run_labeling.sh --games tetris -v
 ```
+
+## Usage — Labels + Skill Selection + GRPO Cold-Start (`label_episodes_with_skills.py`)
+
+This pipeline extends the labels-only pipeline by loading a **pre-built skill bank** (e.g. from `skill_agents_grpo`), running top-k skill selection at each step, and exporting GRPO cold-start training data for decision-agent LoRA fine-tuning.
+
+**Prerequisites:** A skill bank must already exist (e.g. from `skill_agents_grpo/extract_skillbank/`). The script auto-discovers per-game banks under the default search directories.
+
+```bash
+# From Game-AI-Agent root
+export OPENROUTER_API_KEY="sk-or-..."
+export PYTHONPATH="$(pwd):$(pwd)/../GamingAgent:$PYTHONPATH"
+
+# Quick dry run — preview one episode per game
+python labeling/label_episodes_with_skills.py \
+    --one_per_game --dry_run -v \
+    --bank skill_agents_grpo/extract_skillbank/output/gpt54_skillbank_grpo
+
+# Full run — all episodes, all games, auto-discover banks
+python labeling/label_episodes_with_skills.py \
+    --bank skill_agents_grpo/extract_skillbank/output/gpt54_skillbank_grpo \
+    -v
+
+# Specific games
+python labeling/label_episodes_with_skills.py --games tetris candy_crush -v
+
+# Without skill bank (skills will be null, no GRPO data)
+python labeling/label_episodes_with_skills.py --no-bank
+
+# Custom top-k (retrieve 5 candidates before LLM picks one)
+python labeling/label_episodes_with_skills.py --top_k 5
+
+# Label in-place (overwrite originals)
+python labeling/label_episodes_with_skills.py --in_place \
+    --bank skill_agents_grpo/extract_skillbank/output/gpt54_skillbank_grpo
+```
+
+### Skill Selection Options
+
+| Flag                | Default | Description |
+|---------------------|---------|-------------|
+| `--bank`            | auto-discover | Skill bank directory (or JSONL file). Auto-discovers per-game banks within. |
+| `--bank_dir`        | —       | Additional skill bank root director(ies) to scan. |
+| `--no-bank`         | off     | Disable skill bank entirely (skills field will be null). |
+| `--top_k`           | `3`     | Number of skill candidates to retrieve before LLM selection. |
+| `--no-query-engine` | off     | Disable SkillQueryEngine (use TF-IDF keyword fallback only). |
+
+### Output Structure
+
+```
+labeling/output/gpt54_skill_labeled/
+├── tetris/
+│   ├── episode_000.json           # labeled episode with skills populated
+│   ├── episode_001.json
+│   └── labeling_summary.json
+├── candy_crush/
+│   └── ...
+├── grpo_coldstart/                # GRPO cold-start training data
+│   ├── tetris/
+│   │   ├── action_taking.jsonl    # state + actions → chosen action (every step)
+│   │   └── skill_selection.jsonl  # state + candidates → chosen skill (steps with ≥2 candidates)
+│   ├── candy_crush/
+│   │   ├── action_taking.jsonl
+│   │   └── skill_selection.jsonl
+│   └── ...
+└── labeling_batch_summary.json
+```
+
+### GRPO Cold-Start Data Format
+
+The `grpo_coldstart/` directory contains two JSONL files per game, designed for GRPO LoRA training of a decision agent. Both files share a common schema so a single GRPO trainer can consume either.
+
+#### `action_taking.jsonl` — one row per step
+
+Each row contains the full action-selection prompt (state + available actions + active skill guidance) and the expert action chosen by GPT-5.4.
+
+```json
+{
+  "type": "action_taking",
+  "game": "tetris",
+  "episode": "78bf8bfa-...",
+  "step": 5,
+  "prompt": "<system prompt + skill guidance block + state + numbered action list>",
+  "completion": "REASONING: Expert play.\nACTION: 7",
+  "chosen_action": "hard_drop",
+  "available_actions": ["no_op","left","right","rotate_left","rotate_right","soft_drop","hard_drop"],
+  "reward": 1.0,
+  "summary_state": "game=tetris | phase=opening | ...",
+  "intention": "[SETUP] Place L-piece to build flat stack",
+  "active_skill": "sk_clear_rows"
+}
+```
+
+#### `skill_selection.jsonl` — one row per step with ≥ 2 skill candidates
+
+Each row contains the skill-selection prompt (state + intention + numbered candidate menu) and the GPT-5.4 expert skill choice.
+
+```json
+{
+  "type": "skill_selection",
+  "game": "tetris",
+  "episode": "78bf8bfa-...",
+  "step": 5,
+  "prompt": "<system prompt + state + intention + numbered candidate menu>",
+  "completion": "REASONING: Holes are severe, clearing is priority.\nSKILL: 1",
+  "chosen_idx": 0,
+  "skill_candidates": ["sk_clear_rows", "sk_stack_flat", "sk_survive"],
+  "chosen_skill_id": "sk_clear_rows",
+  "reward": 1.0,
+  "summary_state": "game=tetris | phase=opening | ...",
+  "intention": "[SETUP] Place L-piece to build flat stack"
+}
+```
+
+### How to Use GRPO Cold-Start Data for LoRA Training
+
+The cold-start data provides expert demonstrations (from GPT-5.4) that seed the GRPO training loop. The typical workflow is:
+
+```
+Step 1: Generate cold-start episodes
+  └─ cold_start/generate_cold_start_gpt54.py
+
+Step 2: Extract skill banks
+  └─ skill_agents_grpo/extract_skillbank/extract_skillbank_grpo_gpt54.py
+
+Step 3: Label episodes + select skills + export GRPO data    ← this script
+  └─ labeling/label_episodes_with_skills.py
+
+Step 4: Train LoRA adapters via GRPO
+  └─ Use grpo_coldstart/{game}/action_taking.jsonl
+     and grpo_coldstart/{game}/skill_selection.jsonl
+     as initial training data for two LoRA adapters
+```
+
+**Two LoRA adapters for the decision agent:**
+
+| Adapter | Training data | Input (prompt) | Output (completion) | Reward signal |
+|---------|--------------|----------------|--------------------|----|
+| **action** | `action_taking.jsonl` | State + available actions + active skill guidance | `REASONING: ... ACTION: <number>` | Step reward from episode |
+| **skill_select** | `skill_selection.jsonl` | State + intention + numbered skill candidates | `REASONING: ... SKILL: <number>` | Step reward from episode |
+
+**GRPO training loop (per adapter):**
+
+1. **Cold-start phase**: Load JSONL, treat GPT-5.4 completions as expert demonstrations. Fine-tune the LoRA adapter using supervised loss on `(prompt, completion)` pairs, weighted by `reward`.
+2. **Rollout phase**: Generate G completions per prompt at higher temperature. Evaluate each completion with the reward function (step reward, or a learned reward model).
+3. **Training phase**: Compute GRPO advantages from the G-sample rewards. Update LoRA weights via policy gradient with clipping.
+
+This follows the same two-phase pattern used by the existing `segment`/`contract`/`curator` adapters in `skill_agents_grpo/grpo/`. To integrate, add `ACTION` and `SKILL_SELECT` to the `SkillFunction` enum in `skill_agents_grpo/lora/skill_function.py`.
+
+```python
+# Example: loading cold-start data for training
+import json
+from pathlib import Path
+
+grpo_dir = Path("labeling/output/gpt54_skill_labeled/grpo_coldstart/tetris")
+
+# Action-taking samples
+with open(grpo_dir / "action_taking.jsonl") as f:
+    action_samples = [json.loads(line) for line in f]
+
+# Skill-selection samples
+with open(grpo_dir / "skill_selection.jsonl") as f:
+    skill_samples = [json.loads(line) for line in f]
+
+print(f"Action samples: {len(action_samples)}")
+print(f"Skill samples:  {len(skill_samples)}")
+
+# Each sample has: prompt, completion, reward — ready for GRPO
+for s in action_samples[:2]:
+    print(f"  step {s['step']}: action={s['chosen_action']}, reward={s['reward']}")
+```
+
+### Architecture
+
+```
+label_experience()
+  ├─ summary_state = build_rag_summary()         # deterministic, 0 LLM tokens
+  ├─ [skill selection]                            # only when skill bank loaded
+  │    ├─ extract_game_facts() → structured_state
+  │    ├─ get_top_k_skill_candidates()            # SkillQueryEngine or TF-IDF
+  │    └─ select_skill_via_llm()                  # LLM picks best of top-k
+  ├─ summary = summary_state + LLM note           # 1 LLM call, ≤25 tokens
+  ├─ intentions = [TAG] phrase                     # 1 LLM call, ≤40 tokens
+  ├─ skills = _skill_guidance_to_label(guidance)   # structured skill dict
+  └─ GRPO metadata:                               # stored on experience
+       ├─ skill_candidates, skill_chosen_idx
+       └─ skill_reasoning
+
+export_grpo_coldstart_data()                      # called after each episode
+  ├─ action_taking.jsonl                           # every step
+  │    └─ prompt = system + skill_guidance + state + actions
+  └─ skill_selection.jsonl                         # steps with ≥2 candidates
+       └─ prompt = system + state + intention + candidates
+```
+
+### Relationship to Other Pipelines
+
+| What | `label_episodes_gpt54.py` | `label_episodes_with_skills.py` | `qwen3_decision_agent.py` |
+|------|---------------------------|--------------------------------|---------------------------|
+| Summary | identical | identical | `get_state_summary()` |
+| Intentions | identical | identical | `infer_intention()` |
+| Skill selection | none (`skills=null`) | top-k + LLM selection | top-k + LLM selection |
+| Action selection | none (offline labeling) | none (offline labeling) | LLM action selection |
+| GRPO export | none | action_taking + skill_selection JSONL | stored on Experience objects |
+| Output | labeled episodes | labeled episodes + GRPO cold-start | live rollouts |
+
+---
 
 ## Usage — Labels + Skill Extraction (`label_and_extract_skills_gpt54.py`)
 
