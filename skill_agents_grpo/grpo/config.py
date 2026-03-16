@@ -18,7 +18,8 @@ class StageGRPOConfig:
     lr: float = 5e-5
     epochs_per_batch: int = 2
     temperature: float = 0.7
-    max_buffer_size: int = 2048
+    max_buffer_size: int = 256
+    grad_accum_steps: int = 8
     enabled: bool = True
 
 

@@ -152,8 +152,9 @@ class AsyncSkillBankPipeline:
     ) -> None:
         """Process a micro-batch of completed episodes through Stages 1+2.
 
-        Runs synchronous pipeline code in a thread executor to avoid
-        blocking the event loop.
+        Segments episodes concurrently via the thread executor (each
+        segmentation involves LLM calls, so parallelism overlaps the
+        network I/O).
         """
         episodes = []
         for r in results:
@@ -165,21 +166,35 @@ class AsyncSkillBankPipeline:
 
         agent = self._ensure_agent()
         loop = asyncio.get_running_loop()
-
-        def _segment_batch():
-            for ep in episodes:
-                try:
-                    result, sub_eps = agent.segment_episode(ep, env_name="llm")
-                    n_segs = len(result.segments) if hasattr(result, "segments") else 0
-                    logger.debug(
-                        "Segmented %s: %d steps → %d segments",
-                        ep.episode_id, len(ep.experiences), n_segs,
-                    )
-                except Exception as exc:
-                    logger.warning("Segmentation failed for %s: %s", ep.episode_id, exc)
-
         executor = self._executor
-        await loop.run_in_executor(executor, _segment_batch)
+        t0 = time.monotonic()
+
+        def _segment_one(ep):
+            try:
+                result, sub_eps = agent.segment_episode(ep, env_name="llm")
+                n_segs = len(result.segments) if hasattr(result, "segments") else 0
+                logger.debug(
+                    "Segmented %s: %d steps → %d segments",
+                    ep.episode_id, len(ep.experiences), n_segs,
+                )
+                return True
+            except Exception as exc:
+                logger.warning("Segmentation failed for %s: %s", ep.episode_id, exc)
+                return False
+
+        futures = [
+            loop.run_in_executor(executor, _segment_one, ep)
+            for ep in episodes
+        ]
+        results_ok = await asyncio.gather(*futures, return_exceptions=True)
+
+        n_ok = sum(1 for r in results_ok if r is True)
+        elapsed = time.monotonic() - t0
+        logger.info(
+            "Segmented %d/%d episodes in %.1fs",
+            n_ok, len(episodes), elapsed,
+        )
+
         self._pending_episodes.extend(episodes)
 
     async def finalize_update(self) -> SkillBankUpdateResult:
@@ -297,3 +312,132 @@ class AsyncSkillBankPipeline:
         if self._agent is not None:
             self._agent._all_segments = []
             self._agent._new_pool = []
+
+
+class PerGameSkillBankManager:
+    """Maintains a separate ``AsyncSkillBankPipeline`` per game.
+
+    Each game gets its own ``skill_bank.jsonl`` under
+    ``<bank_dir>/<game>/skill_bank.jsonl``, so skills learned in Tetris
+    stay separate from Diplomacy, etc.
+
+    The manager exposes an interface similar to ``AsyncSkillBankPipeline``
+    but routes operations by game name.
+    """
+
+    def __init__(
+        self,
+        games: List[str],
+        bank_dir: str = "runs/skillbank",
+        model_name: str = "Qwen/Qwen3-14B",
+        executor: Optional[ThreadPoolExecutor] = None,
+    ):
+        self._pipelines: Dict[str, AsyncSkillBankPipeline] = {}
+        for game in games:
+            game_dir = str(Path(bank_dir) / game)
+            Path(game_dir).mkdir(parents=True, exist_ok=True)
+            self._pipelines[game] = AsyncSkillBankPipeline(
+                bank_dir=game_dir,
+                model_name=model_name,
+                executor=executor,
+                report_dir=str(Path(game_dir) / "reports"),
+            )
+        self._bank_dir = bank_dir
+        logger.info(
+            "PerGameSkillBankManager: %d game banks under %s",
+            len(games), bank_dir,
+        )
+
+    def pipeline_for(self, game: str) -> Optional[AsyncSkillBankPipeline]:
+        return self._pipelines.get(game)
+
+    def get_bank(self, game: str) -> Any:
+        pipe = self._pipelines.get(game)
+        return pipe.get_bank() if pipe else None
+
+    def get_banks(self) -> Dict[str, Any]:
+        """Return ``{game: bank}`` for all games that have a loaded bank."""
+        return {
+            game: pipe.get_bank()
+            for game, pipe in self._pipelines.items()
+            if pipe.get_bank() is not None
+        }
+
+    def get_agents(self) -> Dict[str, Any]:
+        return {
+            game: pipe.get_agent()
+            for game, pipe in self._pipelines.items()
+        }
+
+    def reset_for_step(self) -> None:
+        for pipe in self._pipelines.values():
+            pipe.reset_for_step()
+
+    async def process_batch_async(
+        self, results: List[EpisodeResult],
+    ) -> None:
+        """Route episodes to the correct per-game pipeline."""
+        by_game: Dict[str, List[EpisodeResult]] = {}
+        for r in results:
+            by_game.setdefault(r.game, []).append(r)
+
+        tasks = []
+        for game, game_results in by_game.items():
+            pipe = self._pipelines.get(game)
+            if pipe is None:
+                logger.warning(
+                    "No skill bank pipeline for game '%s', skipping %d episodes",
+                    game, len(game_results),
+                )
+                continue
+            tasks.append(pipe.process_batch_async(game_results))
+
+        if tasks:
+            await asyncio.gather(*tasks)
+
+    async def finalize_all(self) -> Dict[str, SkillBankUpdateResult]:
+        """Finalize all per-game banks and return per-game results."""
+        results: Dict[str, SkillBankUpdateResult] = {}
+
+        async def _finalize_one(game: str, pipe: AsyncSkillBankPipeline):
+            try:
+                results[game] = await pipe.finalize_update()
+            except Exception as exc:
+                logger.error("Skill bank finalize failed for %s: %s", game, exc)
+
+        tasks = [
+            _finalize_one(game, pipe)
+            for game, pipe in self._pipelines.items()
+        ]
+        await asyncio.gather(*tasks)
+        return results
+
+    @property
+    def grpo_data(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Merge GRPO data from all per-game pipelines."""
+        merged: Dict[str, List[Dict[str, Any]]] = {
+            "segment": [], "contract": [], "curator": [],
+        }
+        for pipe in self._pipelines.values():
+            for key in merged:
+                merged[key].extend(pipe.grpo_data.get(key, []))
+        return merged
+
+    def total_skills(self) -> int:
+        total = 0
+        for pipe in self._pipelines.values():
+            bank = pipe.get_bank()
+            if bank and hasattr(bank, "skill_ids"):
+                total += len(list(bank.skill_ids))
+        return total
+
+    def skill_counts(self) -> Dict[str, int]:
+        """Return ``{game: n_skills}``."""
+        counts = {}
+        for game, pipe in self._pipelines.items():
+            bank = pipe.get_bank()
+            if bank and hasattr(bank, "skill_ids"):
+                counts[game] = len(list(bank.skill_ids))
+            else:
+                counts[game] = 0
+        return counts

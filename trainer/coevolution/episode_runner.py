@@ -14,15 +14,16 @@ import random
 import re
 import time
 import uuid
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # Headless mode for retro/pyglet/SDL — must be set before any game env import
 os.environ.setdefault("PYGLET_HEADLESS", "1")
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+os.environ.setdefault("HF_HOME", "/workspace/huggingface")
+os.environ.setdefault("HF_HUB_CACHE", os.path.join(os.environ["HF_HOME"], "hub"))
 
-from trainer.coevolution.config import EMULATOR_GAMES
 from trainer.coevolution.vllm_client import AsyncVLLMClient
 
 logger = logging.getLogger(__name__)
@@ -32,10 +33,22 @@ logger = logging.getLogger(__name__)
 # Lazy imports — these pull in heavyweight packages that live in the project
 # ---------------------------------------------------------------------------
 
+_IMPORTS_CACHE: Dict[str, Any] = {}
+
+# Games that use Orak env (evaluate_orak.orak_nl_wrapper.make_orak_env)
+ORAK_GAMES_SET = {"super_mario"}
+# Games that use AgentEvolver wrappers (env_wrappers)
+EVOLVER_GAMES_SET = {"diplomacy", "avalon"}
+# Games that use GamingAgent make_gaming_env
+GAMINGAGENT_GAMES = {
+    "twenty_forty_eight", "sokoban", "candy_crush", "tetris", "pokemon_red",
+}
+
+
 def _lazy_imports():
     """Return project modules, imported once and cached."""
     global _IMPORTS_CACHE
-    if "_IMPORTS_CACHE" not in globals():
+    if not _IMPORTS_CACHE:
         from evaluate_gamingagent.game_configs import GAME_CONFIGS
         from evaluate_gamingagent.gym_like import make_gaming_env
         from env_wrappers.gamingagent_nl_wrapper import GamingAgentNLWrapper
@@ -43,6 +56,23 @@ def _lazy_imports():
             from env_wrappers.sokoban_nl_wrapper import SokobanNLWrapper
         except ImportError:
             SokobanNLWrapper = None
+
+        # Orak env (Super Mario, etc.)
+        try:
+            from evaluate_orak.orak_nl_wrapper import make_orak_env
+        except ImportError:
+            make_orak_env = None
+
+        # Evolver wrappers (Diplomacy, Avalon)
+        try:
+            from env_wrappers.diplomacy_nl_wrapper import DiplomacyNLWrapper
+        except ImportError:
+            DiplomacyNLWrapper = None
+        try:
+            from env_wrappers.avalon_nl_wrapper import AvalonNLWrapper
+        except ImportError:
+            AvalonNLWrapper = None
+
         from decision_agents.agent_helper import (
             build_rag_summary,
             compact_text_observation,
@@ -60,8 +90,11 @@ def _lazy_imports():
         _IMPORTS_CACHE = {
             "GAME_CONFIGS": GAME_CONFIGS,
             "make_gaming_env": make_gaming_env,
+            "make_orak_env": make_orak_env,
             "GamingAgentNLWrapper": GamingAgentNLWrapper,
             "SokobanNLWrapper": SokobanNLWrapper,
+            "DiplomacyNLWrapper": DiplomacyNLWrapper,
+            "AvalonNLWrapper": AvalonNLWrapper,
             "build_rag_summary": build_rag_summary,
             "compact_text_observation": compact_text_observation,
             "extract_game_facts": extract_game_facts,
@@ -72,9 +105,6 @@ def _lazy_imports():
             "_get_protocol_for_skill": _get_protocol_for_skill,
         }
     return _IMPORTS_CACHE
-
-
-_IMPORTS_CACHE: Dict[str, Any] = {}
 
 INTENTION_WORD_BUDGET = 15
 MAX_REPEAT_ACTIONS = 2
@@ -88,6 +118,7 @@ SYSTEM_PROMPT = (
     "- NEVER repeat the same action more than 2 times in a row — try something different.\n"
     "- If recent actions got zero reward, change strategy.\n\n"
     "Output format (strict):\n"
+    "SUBGOAL: [TAG] <your immediate objective in ≤15 words>\n"
     "REASONING: <1-2 sentences>\n"
     "ACTION: <number>\n"
 )
@@ -112,6 +143,126 @@ _TAG_ALIASES: Dict[str, str] = {
     "SECURE": "DEFEND", "EXPAND": "ATTACK", "RETREAT": "DEFEND",
 }
 _TAG_RE = re.compile(r"\[(\w+)\]\s*")
+
+
+# ---------------------------------------------------------------------------
+# Adapters for multi-agent / complex-action games
+# ---------------------------------------------------------------------------
+
+class _AvalonAdapter:
+    """Wraps AvalonNLWrapper (single-agent) to provide discrete action_names."""
+
+    def __init__(self, env):
+        self._env = env
+
+    def reset(self):
+        obs, info = self._env.reset()
+        info["action_names"] = self._build_actions(info)
+        return obs, info
+
+    def step(self, action_str: str):
+        real = self._convert(action_str, self._last_info)
+        obs, reward, term, trunc, info = self._env.step(real)
+        info["action_names"] = self._build_actions(info)
+        self._last_info = info
+        return obs, reward, term, trunc, info
+
+    def _build_actions(self, info):
+        self._last_info = info
+        phase = info.get("phase", -1)
+        if phase == 1:
+            return ["approve", "reject"]
+        if phase == 2:
+            return ["pass", "fail"]
+        if phase == 0:
+            team_size = info.get("team_size", 2)
+            n = self._env.num_players
+            from itertools import combinations
+            combos = list(combinations(range(n), team_size))
+            return [",".join(str(p) for p in c) for c in combos[:15]]
+        if phase == 3:
+            return [str(i) for i in range(self._env.num_players)]
+        return ["wait"]
+
+    def _convert(self, action_str: str, info):
+        phase = info.get("phase", -1)
+        if phase == 0:
+            try:
+                return [int(x) for x in action_str.split(",")]
+            except ValueError:
+                ts = info.get("team_size", 2)
+                return list(range(ts))
+        if phase == 3:
+            try:
+                return int(action_str)
+            except ValueError:
+                return 0
+        return action_str
+
+    def close(self):
+        if hasattr(self._env, "close"):
+            self._env.close()
+
+    @property
+    def done(self):
+        return self._env.done
+
+
+class _DiplomacyAdapter:
+    """Wraps DiplomacyNLWrapper (single-agent) to provide discrete action_names.
+
+    Presents each unit's possible orders as flat choices.  The LLM picks one
+    order; unmentioned units use random valid orders.
+    """
+
+    def __init__(self, env):
+        self._env = env
+        self._last_info = {}
+
+    def reset(self):
+        obs, info = self._env.reset()
+        info["action_names"] = self._build_actions(info)
+        self._last_info = info
+        return obs, info
+
+    def step(self, action_str: str):
+        orders = self._make_orders(action_str)
+        obs, reward, term, trunc, info = self._env.step(orders)
+        info["action_names"] = self._build_actions(info)
+        self._last_info = info
+        return obs, reward, term, trunc, info
+
+    def _build_actions(self, info):
+        cp = self._env._controlled_power
+        possible = info.get("possible_orders", {}).get(cp, {})
+        flat: List[str] = []
+        for loc, orders in possible.items():
+            flat.extend(orders[:8])
+        if not flat:
+            return ["hold"]
+        return flat[:20]
+
+    def _make_orders(self, action_str: str) -> list:
+        cp = self._env._controlled_power
+        possible = self._last_info.get("possible_orders", {}).get(cp, {})
+        orders: List[str] = []
+        used = False
+        for loc, loc_orders in possible.items():
+            if not used and action_str in loc_orders:
+                orders.append(action_str)
+                used = True
+            else:
+                if loc_orders:
+                    orders.append(random.choice(loc_orders))
+        return orders
+
+    def close(self):
+        if hasattr(self._env, "close"):
+            self._env.close()
+
+    @property
+    def done(self):
+        return self._env.done
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +293,7 @@ class EpisodeResult:
     grpo_records: List[GRPORecord] = field(default_factory=list)
     experiences: List[Dict[str, Any]] = field(default_factory=list)
     wall_time_s: float = 0.0
+    eval_only: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -324,15 +476,30 @@ def _parse_skill_selection(reply: str, n_candidates: int, candidates: Optional[L
     return 0, reasoning
 
 
-def _parse_action_response(reply: str, valid_actions: List[str]) -> Tuple[str, Optional[str]]:
+def _parse_action_response(
+    reply: str, valid_actions: List[str],
+) -> Tuple[str, Optional[str], Optional[str]]:
+    """Parse merged SUBGOAL + REASONING + ACTION response.
+
+    Returns (action, reasoning, intention).
+    """
     imp = _lazy_imports()
     strip_think_tags = imp["strip_think_tags"]
 
     if not reply:
-        return (valid_actions[0] if valid_actions else "stay"), None
+        return (valid_actions[0] if valid_actions else "stay"), None, None
     cleaned = strip_think_tags(reply)
     if not cleaned:
         cleaned = reply
+
+    intention = None
+    subgoal_m = re.search(
+        r"SUBGOAL\s*:\s*(.+?)(?=\nREASONING|\nACTION|\Z)",
+        cleaned, re.DOTALL | re.IGNORECASE,
+    )
+    if subgoal_m:
+        raw_sg = subgoal_m.group(1).strip().split("\n")[0].strip()
+        intention = _normalize_intention(raw_sg)[:150] if raw_sg else None
 
     reasoning = None
     reasoning_m = re.search(r"REASONING\s*:\s*(.+?)(?=\nACTION|\Z)", cleaned, re.DOTALL | re.IGNORECASE)
@@ -344,9 +511,9 @@ def _parse_action_response(reply: str, valid_actions: List[str]) -> Tuple[str, O
         raw = action_m.group(1).strip()
         matched = _fuzzy_match_action(raw, valid_actions)
         if matched:
-            return matched, reasoning
+            return matched, reasoning, intention
 
-    return (valid_actions[0] if valid_actions else "stay"), reasoning
+    return (valid_actions[0] if valid_actions else "stay"), reasoning, intention
 
 
 def _fuzzy_match_action(raw: str, valid_actions: List[str]) -> Optional[str]:
@@ -356,6 +523,10 @@ def _fuzzy_match_action(raw: str, valid_actions: List[str]) -> Optional[str]:
     lower_map = {a.lower(): a for a in valid_actions}
     if raw_lower in lower_map:
         return lower_map[raw_lower]
+    raw_compact = re.sub(r"\s+", "", raw_lower)
+    compact_map = {re.sub(r"\s+", "", a.lower()): a for a in valid_actions}
+    if raw_compact in compact_map:
+        return compact_map[raw_compact]
     num_m = re.match(r"^(\d+)\.?\s*$", raw_lower)
     if num_m:
         idx = int(num_m.group(1)) - 1
@@ -490,7 +661,6 @@ async def run_episode_async(
     skill_bank: Any = None,
     temperature: float = 0.3,
     executor: Optional[ThreadPoolExecutor] = None,
-    process_executor: Optional[ProcessPoolExecutor] = None,
     stuck_window: int = 15,
     min_steps_before_stuck: int = 20,
 ) -> EpisodeResult:
@@ -507,8 +677,11 @@ async def run_episode_async(
     imp = _lazy_imports()
     GAME_CONFIGS = imp["GAME_CONFIGS"]
     make_gaming_env = imp["make_gaming_env"]
+    make_orak_env = imp["make_orak_env"]
     GamingAgentNLWrapper = imp["GamingAgentNLWrapper"]
     SokobanNLWrapper = imp["SokobanNLWrapper"]
+    DiplomacyNLWrapper = imp["DiplomacyNLWrapper"]
+    AvalonNLWrapper = imp["AvalonNLWrapper"]
     HARD_SUMMARY_CHAR_LIMIT = imp["HARD_SUMMARY_CHAR_LIMIT"]
     extract_game_facts = imp["extract_game_facts"]
     compact_text_observation = imp["compact_text_observation"]
@@ -519,20 +692,48 @@ async def run_episode_async(
 
     game_cfg = GAME_CONFIGS.get(game)
     episode_id = f"{game}_{uuid.uuid4().hex[:8]}"
+    exe = executor
 
-    # Create env (CPU-bound for emulators → executor)
-    use_process = game in EMULATOR_GAMES and process_executor is not None
-    exe = process_executor if use_process else executor
+    if game in ORAK_GAMES_SET:
+        if make_orak_env is None:
+            raise ImportError(
+                f"Game '{game}' requires evaluate_orak but it could not be imported"
+            )
+        if exe:
+            env = await loop.run_in_executor(
+                exe, make_orak_env, game, max_steps,
+            )
+        else:
+            env = make_orak_env(game, max_steps=max_steps)
 
-    if exe:
-        base_env = await loop.run_in_executor(exe, make_gaming_env, game, max_steps)
+    elif game == "diplomacy":
+        if DiplomacyNLWrapper is None:
+            raise ImportError("DiplomacyNLWrapper not available")
+        power = random.choice(
+            ["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"]
+        )
+        logger.info("Diplomacy: controlling %s this episode", power)
+        env = _DiplomacyAdapter(DiplomacyNLWrapper(controlled_power=power, max_phases=50))
+
+    elif game == "avalon":
+        if AvalonNLWrapper is None:
+            raise ImportError("AvalonNLWrapper not available")
+        player = random.randint(0, 4)
+        logger.info("Avalon: controlling player %d this episode", player)
+        env = _AvalonAdapter(AvalonNLWrapper(num_players=5, controlled_player=player))
+
     else:
-        base_env = make_gaming_env(game=game, max_steps=max_steps)
+        if exe:
+            base_env = await loop.run_in_executor(
+                exe, make_gaming_env, game, max_steps,
+            )
+        else:
+            base_env = make_gaming_env(game=game, max_steps=max_steps)
 
-    if game == "sokoban" and SokobanNLWrapper is not None:
-        env = SokobanNLWrapper(base_env, reflect_every=3)
-    else:
-        env = GamingAgentNLWrapper(base_env)
+        if game == "sokoban" and SokobanNLWrapper is not None:
+            env = SokobanNLWrapper(base_env, reflect_every=3)
+        else:
+            env = GamingAgentNLWrapper(base_env)
 
     if exe:
         obs_nl, info = await loop.run_in_executor(exe, env.reset)
@@ -575,31 +776,30 @@ async def run_episode_async(
             reward=total_reward,
         )
 
-        # ── 2. summary_prose (1 LLM call, cheap) ─────────────────
         compact = compact_text_observation(obs_nl, max_chars=200)
         state_text = compact if compact else obs_nl[:1000]
         game_label = game.replace("_", " ")
         delta = _compute_state_delta(prev_summary_state, summary_state)
         delta_line = f"Changed since last step: {delta}\n" if delta else ""
+
+        # ── 2+3. summary_prose & skill_selection (PARALLEL) ──────
+        # Both only need obs_nl/summary_state — fire concurrently.
         summary_prompt = (
             f"{game_label}: {state_text}\n"
             f"{delta_line}"
             f"Key strategic note about the current threat or opportunity "
             f"(max 10 words, be specific to what changed).\nNote:"
         )
-        summary_result = await vllm_client.generate(
+        summary_coro = vllm_client.generate(
             summary_prompt, adapter="base", temperature=0.2, max_tokens=25,
+            stop=["\n"],
         )
-        note = strip_think_tags(summary_result.text).strip() if summary_result.text else ""
-        note = note.split("\n")[0].strip().strip('"').strip("'")[:80]
-        current_summary = f"{summary_state} | note={note}" if note else summary_state
-        current_summary = current_summary[:HARD_SUMMARY_CHAR_LIMIT]
 
-        # ── 3. Skill selection (skill_selection LoRA) ─────────────
         need_reselect = skill_tracker.should_reselect(
             last_guidance, state_text=summary_state or obs_nl,
         )
         skill_select_prompt: Optional[str] = None
+        skill_coro = None
 
         if bank_available and (need_reselect or last_guidance is None):
             facts = extract_game_facts(obs_nl, game)
@@ -624,10 +824,30 @@ async def run_episode_async(
                     f"Choose the best strategy. Output REASONING then SKILL number."
                 )
                 skill_select_prompt = SKILL_SELECTION_SYSTEM_PROMPT + "\n" + user_content
-                sk_result = await vllm_client.generate(
+                skill_coro = vllm_client.generate(
                     skill_select_prompt, adapter="skill_selection",
-                    temperature=temperature, max_tokens=256,
+                    temperature=temperature, max_tokens=128,
+                    stop=["\n\nAvailable", "\n\nGame state", "\n\n---"],
                 )
+
+        # Fire both LLM calls concurrently
+        if skill_coro is not None:
+            summary_result, sk_result = await asyncio.gather(
+                summary_coro, skill_coro,
+            )
+        else:
+            summary_result = await summary_coro
+            sk_result = None
+
+        # Process summary result
+        note = strip_think_tags(summary_result.text).strip() if summary_result.text else ""
+        note = note.split("\n")[0].strip().strip('"').strip("'")[:80]
+        current_summary = f"{summary_state} | note={note}" if note else summary_state
+        current_summary = current_summary[:HARD_SUMMARY_CHAR_LIMIT]
+
+        # Process skill selection result
+        if bank_available and (need_reselect or last_guidance is None):
+            if sk_result is not None and candidates and len(candidates) >= 2:
                 chosen_idx, skill_reasoning = _parse_skill_selection(
                     sk_result.text, len(candidates), candidates,
                 )
@@ -657,12 +877,10 @@ async def run_episode_async(
         else:
             guidance = last_guidance
 
-        # ── 4. Intention (1 LLM call) ────────────────────────────
+        # ── 4+5. Merged: subgoal + action (action_taking LoRA) ──
         urgency = _detect_urgency(summary_state, game)
         urgency_line = f"URGENCY: {urgency}\n" if urgency else ""
         prev_line = f"Previous subgoal: {prev_intention}\n" if prev_intention else ""
-        delta_intent = _compute_state_delta(prev_summary_state, summary_state)
-        delta_intent_line = f"Changed: {delta_intent}\n" if delta_intent else ""
         skill_context = ""
         if guidance and guidance.get("skill_id"):
             sk_name = guidance.get("skill_name", guidance["skill_id"])
@@ -672,43 +890,34 @@ async def run_episode_async(
                 skill_context += f" — {sk_hint[:100]}"
             skill_context += "\n"
 
-        imp_tags = imp["SUBGOAL_TAGS"]
-        tags_str = "|".join(imp_tags)
-        facts_line = f"Facts: {summary_state}\n" if summary_state else ""
-        intention_prompt = (
-            f"{game_label}. Action: {recent_actions[-1] if recent_actions else 'start'}\n"
-            f"State: {state_text}\n"
-            f"{facts_line}{delta_intent_line}{urgency_line}{skill_context}{prev_line}"
-            f"What subgoal? Reply ONLY: [TAG] phrase (max {INTENTION_WORD_BUDGET} words)\n"
-            f"Tags: {tags_str}\nSubgoal:"
-        )
-        intention_result = await vllm_client.generate(
-            intention_prompt, adapter="base", temperature=0.2, max_tokens=40,
-        )
-        intention_text = strip_think_tags(intention_result.text).strip() if intention_result.text else ""
-        current_intention = _normalize_intention(intention_text)[:150] if intention_text else f"[EXECUTE] play"
-
-        # ── 5. Action selection (action_taking LoRA) ──────────────
         recent_context = _build_recent_context(recent_actions, recent_rewards)
         summary_for_action = summary_state if summary_state else obs_nl[:4000]
-        intention_line = f"Current intention: {current_intention}\n\n" if current_intention else ""
         skill_text = _format_skill_guidance_for_prompt(guidance, skill_tracker.protocol_step_idx)
+
+        imp_tags = imp["SUBGOAL_TAGS"]
+        tags_str = "|".join(imp_tags)
         action_user = (
             f"Game state:\n\n{summary_for_action}\n\n"
-            f"{intention_line}{recent_context}"
+            f"{urgency_line}{prev_line}{skill_context}{recent_context}"
             f"Available actions (pick ONE by number):\n{_format_numbered_actions(step_actions)}\n\n"
-            f"Choose the best action. Output REASONING then ACTION number."
+            f"Subgoal tags: {tags_str}\n"
+            f"First state your SUBGOAL, then choose the best action.\n"
+            f"Output SUBGOAL, REASONING, then ACTION number."
         )
         action_prompt = SYSTEM_PROMPT + skill_text + "\n" + action_user
 
         action_result = await vllm_client.generate(
             action_prompt, adapter="action_taking",
-            temperature=temperature, max_tokens=512,
+            temperature=temperature, max_tokens=256,
+            stop=["\n\nAvailable", "\n\nGame state", "\n\n---"],
         )
-        action, reasoning = _parse_action_response(action_result.text, step_actions)
+        action, reasoning, parsed_intention = _parse_action_response(
+            action_result.text, step_actions,
+        )
+        current_intention = parsed_intention or prev_intention or "[EXECUTE] play"
         action = _apply_anti_repetition(action, step_actions, recent_actions, recent_rewards)
 
-        # ── 6. env.step() (in executor) ──────────────────────────
+        # ── 6. env.step() (in executor) ─────────────────────────
         try:
             if exe:
                 next_obs_nl, reward, terminated, truncated, next_info = await loop.run_in_executor(
@@ -738,7 +947,8 @@ async def run_episode_async(
                 action_num = step_actions.index(action) + 1
             except ValueError:
                 action_num = 1
-            action_completion = f"REASONING: {reasoning or 'Expert play.'}\nACTION: {action_num}"
+            subgoal_line = f"SUBGOAL: {current_intention}\n" if current_intention else ""
+            action_completion = f"{subgoal_line}REASONING: {reasoning or 'Expert play.'}\nACTION: {action_num}"
             grpo_records.append(GRPORecord(
                 adapter="action_taking", game=game, episode_id=episode_id, step=step_count,
                 prompt=action_prompt, completion=action_completion, reward=float(reward),
@@ -795,7 +1005,10 @@ async def run_episode_async(
             break
 
         # Early termination: stuck detection
-        if (step_count >= min_steps_before_stuck
+        # Skip for games with sparse rewards (reward only at game end)
+        _SPARSE_REWARD_GAMES = {"avalon", "diplomacy", "pokemon_red"}
+        if (game not in _SPARSE_REWARD_GAMES
+                and step_count >= min_steps_before_stuck
                 and len(recent_rewards) >= stuck_window
                 and sum(recent_rewards[-stuck_window:]) <= 0):
             logger.debug("Episode %s stuck at step %d, terminating early", episode_id, step_count)

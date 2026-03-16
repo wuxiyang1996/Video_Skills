@@ -12,11 +12,11 @@ Usage (from Game-AI-Agent root):
         --max-loras 5 \\
         --max-lora-rank 64 \\
         --lora-modules \\
-            skill_selection=runs/lora_adapters/skill_selection \\
-            action_taking=runs/lora_adapters/action_taking \\
-            segment=runs/lora_adapters/segment \\
-            contract=runs/lora_adapters/contract \\
-            curator=runs/lora_adapters/curator \\
+            skill_selection=runs/lora_adapters/decision/skill_selection \\
+            action_taking=runs/lora_adapters/decision/action_taking \\
+            segment=runs/lora_adapters/skillbank/segment \\
+            contract=runs/lora_adapters/skillbank/contract \\
+            curator=runs/lora_adapters/skillbank/curator \\
         --enable-prefix-caching \\
         --enable-chunked-prefill \\
         --max-num-seqs 128 \\
@@ -56,6 +56,11 @@ import os
 os.environ.setdefault("PYGLET_HEADLESS", "1")
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
+# HuggingFace cache — point to /workspace/huggingface so models
+# (Qwen3-14B etc.) are not re-downloaded.
+os.environ.setdefault("HF_HOME", "/workspace/huggingface")
+os.environ.setdefault("HF_HUB_CACHE", os.path.join(os.environ["HF_HOME"], "hub"))
+
 import argparse
 import asyncio
 import logging
@@ -66,11 +71,17 @@ from typing import Dict
 SCRIPT_DIR = Path(__file__).resolve().parent
 CODEBASE_ROOT = SCRIPT_DIR.parent
 
-for p in [str(CODEBASE_ROOT), str(CODEBASE_ROOT.parent / "GamingAgent")]:
+for p in [
+    str(CODEBASE_ROOT),
+    str(CODEBASE_ROOT.parent / "GamingAgent"),
+    str(CODEBASE_ROOT.parent / "AgentEvolver"),
+    str(CODEBASE_ROOT.parent / "AI_Diplomacy"),
+    str(CODEBASE_ROOT.parent / "Orak"),
+]:
     if Path(p).exists() and p not in sys.path:
         sys.path.insert(0, p)
 
-from trainer.coevolution.config import CoEvolutionConfig, SKILL_BANK_GAMES
+from trainer.coevolution.config import CoEvolutionConfig, SKILL_BANK_GAMES, EVAL_ONLY_GAMES
 from trainer.coevolution.orchestrator import co_evolution_loop
 
 
@@ -94,18 +105,14 @@ def parse_args() -> argparse.Namespace:
         help="Episodes per game per step (default: 8)",
     )
     parser.add_argument(
-        "--max-concurrent", type=int, default=40,
-        help="Max concurrent episodes (default: 40)",
+        "--max-concurrent", type=int, default=64,
+        help="Max concurrent episodes (default: 64)",
     )
 
     # Model
     parser.add_argument(
         "--model", type=str, default="Qwen/Qwen3-14B",
         help="Base model name (default: Qwen/Qwen3-14B)",
-    )
-    parser.add_argument(
-        "--vllm-url", type=str, default="http://localhost:8000/v1",
-        help="vLLM server URL (default: http://localhost:8000/v1)",
     )
     parser.add_argument(
         "--temperature", type=float, default=0.3,
@@ -116,18 +123,42 @@ def parse_args() -> argparse.Namespace:
         help="Max generation tokens (default: 512)",
     )
 
+    # GPU allocation (phase-swap)
+    parser.add_argument(
+        "--gpu-ids", nargs="+", type=int, default=[0, 1, 2, 3, 4, 5, 6, 7],
+        help="All available GPU IDs — shared between inference (vLLM) "
+             "and GRPO training (FSDP). Default: 0 1 2 3 4 5 6 7",
+    )
+    parser.add_argument(
+        "--no-manage-vllm", action="store_true",
+        help="Disable managed vLLM lifecycle. Use when running vLLM "
+             "externally. In this mode, --vllm-url and --grpo-devices "
+             "control GPU allocation.",
+    )
+    parser.add_argument(
+        "--vllm-url", type=str, default="http://localhost:8000/v1",
+        help="vLLM server URL (only used with --no-manage-vllm). "
+             "Default: http://localhost:8000/v1",
+    )
+    parser.add_argument(
+        "--vllm-base-port", type=int, default=8000,
+        help="Base port for managed vLLM instances (default: 8000). "
+             "Instance N runs on port 8000+N.",
+    )
+    parser.add_argument(
+        "--vllm-gpu-util", type=float, default=0.90,
+        help="GPU memory utilization for vLLM (default: 0.90)",
+    )
+
     # GRPO
     parser.add_argument(
         "--no-grpo", action="store_true",
         help="Disable GRPO training (rollout + skill bank only)",
     )
     parser.add_argument(
-        "--grpo-decision-devices", nargs="+", type=int, default=[4, 5],
-        help="GPU devices for decision agent GRPO (default: 4 5)",
-    )
-    parser.add_argument(
-        "--grpo-skillbank-devices", nargs="+", type=int, default=[6, 7],
-        help="GPU devices for skill bank GRPO (default: 6 7)",
+        "--grpo-devices", nargs="+", type=int, default=[4, 5, 6, 7],
+        help="GPU devices for GRPO training (only with --no-manage-vllm). "
+             "When managed, all --gpu-ids are used. Default: 4 5 6 7",
     )
 
     # Directories
@@ -208,12 +239,19 @@ def parse_args() -> argparse.Namespace:
 
     # Workers
     parser.add_argument(
-        "--thread-workers", type=int, default=20,
-        help="Thread pool size (default: 20)",
+        "--thread-workers", type=int, default=64,
+        help="Thread pool size (default: 64)",
     )
     parser.add_argument(
         "--process-workers", type=int, default=8,
         help="Process pool size (default: 8)",
+    )
+
+    # Debug
+    parser.add_argument(
+        "--debug-io", action="store_true",
+        help="Log every LLM I/O and GRPO sample to <run-dir>/debug_io/ "
+             "for debugging truncation and prompt/completion inspection",
     )
 
     return parser.parse_args()
@@ -264,18 +302,23 @@ def main() -> None:
             if p.exists():
                 pretrained[name] = str(p)
 
+    manage_vllm = not args.no_manage_vllm
+
     config_kwargs = dict(
         games=games,
         episodes_per_game=args.episodes_per_game,
         max_concurrent_episodes=args.max_concurrent,
         total_steps=args.total_steps,
+        gpu_ids=args.gpu_ids,
+        manage_vllm=manage_vllm,
         vllm_base_url=args.vllm_url,
+        vllm_base_port=args.vllm_base_port,
+        vllm_gpu_util=args.vllm_gpu_util,
         model_name=args.model,
         temperature=args.temperature,
         max_tokens=args.max_tokens,
         grpo_enabled=not args.no_grpo,
-        grpo_decision_devices=args.grpo_decision_devices,
-        grpo_skillbank_devices=args.grpo_skillbank_devices,
+        grpo_devices=args.grpo_devices,
         checkpoint_interval=args.checkpoint_interval,
         wandb_enabled=not args.no_wandb,
         wandb_project=args.wandb_project,
@@ -285,6 +328,7 @@ def main() -> None:
         pretrained_adapter_paths=pretrained,
         thread_workers=args.thread_workers,
         process_workers=args.process_workers,
+        debug_io=args.debug_io,
     )
 
     if args.run_dir is not None:
@@ -314,11 +358,18 @@ def main() -> None:
     print(f"  Eps/game:     {config.episodes_per_game}")
     print(f"  Concurrent:   {config.max_concurrent_episodes}")
     print(f"  Model:        {config.model_name}")
-    print(f"  vLLM:         {config.vllm_base_url}")
+    print(f"  GPUs:         {config.gpu_ids}")
+    if config.manage_vllm:
+        print(f"  vLLM:         MANAGED — {len(config.gpu_ids)} × TP=1 "
+              f"(ports {config.vllm_base_port}–"
+              f"{config.vllm_base_port + len(config.gpu_ids) - 1})")
+        print(f"  GPU sharing:  rollout → all GPUs (vLLM) | "
+              f"GRPO → all GPUs (FSDP)")
+    else:
+        print(f"  vLLM:         EXTERNAL — {config.vllm_base_url}")
     print(f"  GRPO:         {'enabled' if config.grpo_enabled else 'disabled'}")
     if config.grpo_enabled:
-        print(f"    Decision:   GPUs {config.grpo_decision_devices}")
-        print(f"    SkillBank:  GPUs {config.grpo_skillbank_devices}")
+        print(f"    FSDP GPUs:  {config.effective_grpo_devices}")
     print(f"  Bank dir:     {config.bank_dir}")
     print(f"  Adapter dir:  {config.adapter_dir}")
     print(f"  Checkpoint:   every {config.checkpoint_interval} steps → {config.checkpoint_dir}")
@@ -327,6 +378,7 @@ def main() -> None:
     print(f"  TensorBoard:  {config.tensorboard_dir}")
     print(f"  Log dir:      {config.log_dir}")
     print(f"  W&B:          {'enabled' if config.wandb_enabled else 'disabled'}")
+    print(f"  Debug I/O:    {'enabled → ' + config.debug_io_dir if config.debug_io else 'disabled'}")
     if config.start_mode == "from_scratch":
         print("  Start mode:   FROM SCRATCH (gaussian LoRA init, no checkpoint)")
         print(f"    Warmup:     {config.scratch_warmup_steps} steps "

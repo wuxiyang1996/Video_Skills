@@ -1,24 +1,24 @@
 """GRPO training wrappers for the co-evolution loop.
 
-Provides two independent training paths that can run concurrently on
-separate GPU groups:
+Provides two independent training paths that run **sequentially** on
+the same set of GPUs using FSDP data parallelism:
 
 1. **Decision Agent GRPO** — updates ``skill_selection`` and
    ``action_taking`` LoRA adapters using per-step environment rewards.
 2. **Skill Bank GRPO** — updates ``segment``, ``contract``, and
    ``curator`` LoRA adapters using stage-specific reward signals.
 
-Both wrap the existing ``GRPOOrchestrator`` / ``GRPOLoRATrainer`` from
-``skill_agents_grpo.grpo``.
+Both delegate the actual training to
+:func:`skill_agents_grpo.grpo.fsdp_trainer.run_fsdp_grpo` which
+spawns one process per GPU and uses PyTorch FSDP to shard the frozen
+14B base model across all ranks while each rank processes its own
+data slice.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -46,6 +46,22 @@ class GRPOStepResult:
     records: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
 
 
+# ── Helpers ─────────────────────────────────────────────────────────────
+
+
+def _compute_advantages(rewards: List[float]) -> List[float]:
+    """Group-normalize rewards to zero-mean, unit-variance advantages."""
+    if not rewards:
+        return []
+    n = len(rewards)
+    if n == 1:
+        return [0.0]
+    mean = sum(rewards) / n
+    var = sum((r - mean) ** 2 for r in rewards) / n
+    std = var ** 0.5 if var > 0 else 1.0
+    return [(r - mean) / std for r in rewards]
+
+
 def _collect_grpo_records(results: List[EpisodeResult]) -> Dict[str, List[GRPORecord]]:
     """Group GRPO records by adapter from all episode results."""
     records: Dict[str, List[GRPORecord]] = {
@@ -60,11 +76,70 @@ def _collect_grpo_records(results: List[EpisodeResult]) -> Dict[str, List[GRPORe
     return records
 
 
+def _records_to_training_data(
+    records: List[GRPORecord],
+) -> tuple:
+    """Convert GRPORecords to flat (prompts, completions, advantages) lists.
+
+    Records are grouped by (episode_id, step) and advantages are
+    computed within each group.
+    """
+    groups: Dict[str, List[GRPORecord]] = {}
+    for rec in records:
+        key = f"{rec.episode_id}_{rec.step}"
+        groups.setdefault(key, []).append(rec)
+
+    prompts: List[str] = []
+    completions: List[str] = []
+    advantages: List[float] = []
+
+    for group in groups.values():
+        rewards = [r.reward for r in group]
+        advs = _compute_advantages(rewards)
+        for rec, adv in zip(group, advs):
+            if rec.completion:
+                prompts.append(rec.prompt)
+                completions.append(rec.completion)
+                advantages.append(adv)
+
+    return prompts, completions, advantages
+
+
+def _samples_to_training_data(
+    samples: List[Dict[str, Any]],
+) -> tuple:
+    """Convert skill-bank sample dicts to flat training lists.
+
+    Each sample has: prompt, completions: [], rewards: [].
+    """
+    prompts: List[str] = []
+    completions: List[str] = []
+    advantages: List[float] = []
+
+    for s in samples:
+        prompt = s.get("prompt", "")
+        comps = s.get("completions", [])
+        rewards = s.get("rewards", [])
+        if not prompt or not comps:
+            continue
+        advs = _compute_advantages(rewards)
+        for comp, adv in zip(comps, advs):
+            if comp:
+                prompts.append(prompt)
+                completions.append(comp)
+                advantages.append(adv)
+
+    return prompts, completions, advantages
+
+
+# ── Decision Agent Trainer ──────────────────────────────────────────────
+
+
 class DecisionGRPOTrainer:
     """GRPO trainer for decision agent LoRAs (skill_selection + action_taking).
 
-    Uses the ``GRPOOrchestrator`` from ``skill_agents_grpo.grpo`` with
-    custom stage configs for the two decision adapters.
+    Launches FSDP training across all specified GPUs for each adapter
+    sequentially.
     """
 
     def __init__(
@@ -76,150 +151,96 @@ class DecisionGRPOTrainer:
         lr: float = 5e-5,
         temperature: float = 0.7,
         kl_coeff: float = 0.05,
+        io_log_dir: Optional[str] = None,
     ):
         self.model_name = model_name
         self.adapter_dir = adapter_dir
-        self.devices = devices or [4, 5]
-        self.group_size = group_size
+        self.devices = devices or [4, 5, 6, 7]
         self.lr = lr
-        self.temperature = temperature
         self.kl_coeff = kl_coeff
-        self._orchestrator: Any = None
-        self._llm: Any = None
-
-    def _ensure_orchestrator(self) -> Any:
-        if self._orchestrator is not None:
-            return self._orchestrator
-
-        from skill_agents_grpo.lora.config import MultiLoraConfig
-        from skill_agents_grpo.lora.model import MultiLoraSkillBankLLM
-        from skill_agents_grpo.grpo.orchestrator import GRPOOrchestrator
-        from skill_agents_grpo.grpo.config import GRPOConfig, StageGRPOConfig
-
-        adapter_paths = {}
-        ad = Path(self.adapter_dir)
-        for name in ("skill_selection", "action_taking"):
-            p = ad / name
-            if p.exists():
-                adapter_paths[name] = str(p)
-
-        device_str = f"cuda:{self.devices[0]}" if self.devices else "auto"
-        cfg = MultiLoraConfig(
-            base_model_name_or_path=self.model_name,
-            adapter_paths=adapter_paths,
-            allow_fallback_to_base_model=True,
-            device=device_str,
-        )
-        self._llm = MultiLoraSkillBankLLM(cfg)
-
-        grpo_cfg = GRPOConfig(stage_configs={
-            "skill_selection": StageGRPOConfig(
-                group_size=self.group_size,
-                kl_coeff=min(self.kl_coeff, 0.02),
-                lr=self.lr * 0.6,
-                epochs_per_batch=3,
-                temperature=self.temperature,
-            ),
-            "action_taking": StageGRPOConfig(
-                group_size=self.group_size,
-                kl_coeff=self.kl_coeff,
-                lr=self.lr,
-                epochs_per_batch=2,
-                temperature=self.temperature,
-            ),
-        })
-        self._orchestrator = GRPOOrchestrator(self._llm, grpo_cfg)
-        logger.info(
-            "Decision GRPO orchestrator initialized on %s "
-            "(lr=%.2e, temp=%.2f, kl=%.3f)",
-            device_str, self.lr, self.temperature, self.kl_coeff,
-        )
-        return self._orchestrator
+        self.io_log_dir = io_log_dir
 
     def train_step(
         self,
         records: Dict[str, List[GRPORecord]],
     ) -> Dict[str, GRPOTrainStats]:
-        """Run one GRPO update for decision agent adapters.
-
-        Parameters
-        ----------
-        records : dict
-            Maps adapter name → list of ``GRPORecord`` from rollouts.
-        """
-        orchestrator = self._ensure_orchestrator()
-        from skill_agents_grpo.grpo.buffer import GRPOSample, GRPOBuffer
-        from skill_agents_grpo.lora.skill_function import SkillFunction
-
-        adapter_map = {
-            "action_taking": SkillFunction.ACTION_TAKING
-            if hasattr(SkillFunction, "ACTION_TAKING")
-            else "action_taking",
-            "skill_selection": SkillFunction.SKILL_SELECTION
-            if hasattr(SkillFunction, "SKILL_SELECTION")
-            else "skill_selection",
-        }
-
-        for adapter_name, recs in records.items():
-            if not recs:
-                continue
-            sf = adapter_map.get(adapter_name, adapter_name)
-
-            groups: Dict[str, List[GRPORecord]] = {}
-            for rec in recs:
-                key = f"{rec.episode_id}_{rec.step}"
-                groups.setdefault(key, []).append(rec)
-
-            for key, group in groups.items():
-                sample = GRPOSample(
-                    adapter=sf,
-                    prompt=group[0].prompt,
-                    completions=[r.completion for r in group],
-                    rewards=[r.reward for r in group],
-                    metadata=group[0].metadata,
-                )
-                orchestrator.buffer.add(sample)
-
-        t0 = time.monotonic()
-        raw_stats = orchestrator.train_step()
-        elapsed = time.monotonic() - t0
+        """Run FSDP GRPO for each decision adapter that has data."""
+        from skill_agents_grpo.grpo.fsdp_trainer import run_fsdp_grpo
 
         result: Dict[str, GRPOTrainStats] = {}
-        for adapter_key, stats in raw_stats.items():
-            result[str(adapter_key)] = GRPOTrainStats(
-                adapter=str(adapter_key),
+
+        adapter_configs = {
+            "skill_selection": {
+                "lr": self.lr * 0.6,
+                "kl_coeff": min(self.kl_coeff, 0.02),
+                "epochs": 3,
+            },
+            "action_taking": {
+                "lr": self.lr,
+                "kl_coeff": self.kl_coeff,
+                "epochs": 2,
+            },
+        }
+
+        for adapter_name, cfg in adapter_configs.items():
+            recs = records.get(adapter_name, [])
+            if not recs:
+                logger.info("No GRPO records for '%s', skipping", adapter_name)
+                continue
+
+            prompts, completions, advantages = _records_to_training_data(recs)
+            if not prompts:
+                continue
+
+            adapter_path = str(Path(self.adapter_dir) / adapter_name)
+            logger.info(
+                "Decision GRPO [%s]: %d samples on %d GPUs",
+                adapter_name, len(prompts), len(self.devices),
+            )
+
+            stats = run_fsdp_grpo(
+                gpu_ids=self.devices,
+                model_name=self.model_name,
+                adapter_dir=adapter_path,
+                adapter_name=adapter_name,
+                prompts=prompts,
+                completions=completions,
+                advantages=advantages,
+                lr=cfg["lr"],
+                epochs=cfg["epochs"],
+                batch_size=8,
+                clip_ratio=0.2,
+                kl_coeff=cfg["kl_coeff"],
+                save_dir=adapter_path,
+                io_log_dir=self.io_log_dir,
+            )
+
+            result[adapter_name] = GRPOTrainStats(
+                adapter=adapter_name,
                 n_samples=stats.get("n_samples", 0),
                 n_tokens=stats.get("n_tokens", 0),
                 mean_loss=stats.get("mean_loss", 0.0),
                 epochs=stats.get("epochs", 0),
-                wall_time_s=elapsed / max(len(raw_stats), 1),
+                wall_time_s=stats.get("wall_time_s", 0.0),
             )
 
         return result
 
     def save_adapters(self) -> None:
-        """Save updated LoRA adapters to disk."""
-        if self._llm is None:
-            return
-        ad = Path(self.adapter_dir)
-        for name in ("skill_selection", "action_taking"):
-            save_path = ad / name
-            save_path.mkdir(parents=True, exist_ok=True)
-            try:
-                adapter_name = f"lora_{name}"
-                loaded = getattr(self._llm, "_loaded_adapters", {})
-                if adapter_name in loaded:
-                    self._llm._model.set_adapter(adapter_name)
-                    self._llm._model.save_pretrained(str(save_path))
-                    logger.info("Saved decision adapter '%s' → %s", name, save_path)
-            except Exception as exc:
-                logger.warning("Save failed for '%s': %s", name, exc)
+        pass  # FSDP workers save directly
+
+    def cleanup(self) -> None:
+        pass  # FSDP workers clean up their own GPU memory
+
+
+# ── Skill Bank Trainer ──────────────────────────────────────────────────
 
 
 class SkillBankGRPOTrainer:
     """GRPO trainer for skill bank LoRAs (segment, contract, curator).
 
-    Wraps the existing ``GRPOOrchestrator`` from ``skill_agents_grpo.grpo``.
+    Launches FSDP training across all specified GPUs for each adapter
+    sequentially.
     """
 
     def __init__(
@@ -230,142 +251,94 @@ class SkillBankGRPOTrainer:
         lr: float = 5e-5,
         temperature: float = 0.7,
         kl_coeff: float = 0.05,
+        io_log_dir: Optional[str] = None,
     ):
         self.model_name = model_name
         self.adapter_dir = adapter_dir
-        self.devices = devices or [6, 7]
+        self.devices = devices or [4, 5, 6, 7]
         self.lr = lr
-        self.temperature = temperature
         self.kl_coeff = kl_coeff
-        self._orchestrator: Any = None
-        self._llm: Any = None
-
-    def _ensure_orchestrator(self) -> Any:
-        if self._orchestrator is not None:
-            return self._orchestrator
-
-        from skill_agents_grpo.lora.config import MultiLoraConfig
-        from skill_agents_grpo.lora.model import MultiLoraSkillBankLLM
-        from skill_agents_grpo.grpo.orchestrator import GRPOOrchestrator
-        from skill_agents_grpo.grpo.config import GRPOConfig, StageGRPOConfig
-
-        adapter_paths = {}
-        ad = Path(self.adapter_dir)
-        for name in ("segment", "contract", "curator"):
-            p = ad / name
-            if p.exists():
-                adapter_paths[name] = str(p)
-
-        device_str = f"cuda:{self.devices[0]}" if self.devices else "auto"
-        cfg = MultiLoraConfig(
-            base_model_name_or_path=self.model_name,
-            adapter_paths=adapter_paths,
-            allow_fallback_to_base_model=True,
-            device=device_str,
-        )
-        self._llm = MultiLoraSkillBankLLM(cfg)
-
-        grpo_cfg = GRPOConfig(stage_configs={
-            "segment": StageGRPOConfig(
-                group_size=4,
-                kl_coeff=min(self.kl_coeff, 0.02),
-                lr=self.lr * 0.6,
-                epochs_per_batch=3,
-                temperature=self.temperature,
-            ),
-            "contract": StageGRPOConfig(
-                group_size=4,
-                kl_coeff=self.kl_coeff,
-                lr=self.lr,
-                epochs_per_batch=2,
-                temperature=self.temperature,
-            ),
-            "curator": StageGRPOConfig(
-                group_size=4,
-                kl_coeff=self.kl_coeff,
-                lr=self.lr,
-                epochs_per_batch=2,
-                temperature=self.temperature,
-            ),
-        })
-        self._orchestrator = GRPOOrchestrator(self._llm, grpo_cfg)
-        logger.info(
-            "Skill bank GRPO orchestrator initialized on %s "
-            "(lr=%.2e, temp=%.2f, kl=%.3f)",
-            device_str, self.lr, self.temperature, self.kl_coeff,
-        )
-        return self._orchestrator
+        self.io_log_dir = io_log_dir
 
     def train_step(
         self,
         grpo_data: Dict[str, List[Dict[str, Any]]],
     ) -> Dict[str, GRPOTrainStats]:
-        """Run one GRPO update for skill bank adapters.
-
-        Parameters
-        ----------
-        grpo_data : dict
-            Maps adapter name (segment/contract/curator) → list of
-            GRPO training samples from the skill bank pipeline.
-        """
-        orchestrator = self._ensure_orchestrator()
-        from skill_agents_grpo.grpo.buffer import GRPOSample
-        from skill_agents_grpo.lora.skill_function import SkillFunction
-
-        sf_map = {
-            "segment": SkillFunction.SEGMENT,
-            "contract": SkillFunction.CONTRACT,
-            "curator": SkillFunction.CURATOR,
-        }
-
-        for adapter_name, samples in grpo_data.items():
-            sf = sf_map.get(adapter_name)
-            if sf is None or not samples:
-                continue
-            for s in samples:
-                sample = GRPOSample(
-                    adapter=sf,
-                    prompt=s.get("prompt", ""),
-                    completions=s.get("completions", []),
-                    rewards=s.get("rewards", []),
-                    metadata=s.get("metadata", {}),
-                )
-                orchestrator.buffer.add(sample)
-
-        t0 = time.monotonic()
-        raw_stats = orchestrator.train_step()
-        elapsed = time.monotonic() - t0
+        """Run FSDP GRPO for each skill bank adapter that has data."""
+        from skill_agents_grpo.grpo.fsdp_trainer import run_fsdp_grpo
 
         result: Dict[str, GRPOTrainStats] = {}
-        for adapter_key, stats in raw_stats.items():
-            result[str(adapter_key)] = GRPOTrainStats(
-                adapter=str(adapter_key),
+
+        adapter_configs = {
+            "segment": {
+                "lr": self.lr * 0.6,
+                "kl_coeff": min(self.kl_coeff, 0.02),
+                "epochs": 3,
+            },
+            "contract": {
+                "lr": self.lr,
+                "kl_coeff": self.kl_coeff,
+                "epochs": 2,
+            },
+            "curator": {
+                "lr": self.lr,
+                "kl_coeff": self.kl_coeff,
+                "epochs": 2,
+            },
+        }
+
+        for adapter_name, cfg in adapter_configs.items():
+            samples = grpo_data.get(adapter_name, [])
+            if not samples:
+                logger.info("No GRPO data for '%s', skipping", adapter_name)
+                continue
+
+            prompts, completions, advantages = _samples_to_training_data(samples)
+            if not prompts:
+                continue
+
+            adapter_path = str(Path(self.adapter_dir) / adapter_name)
+            logger.info(
+                "SkillBank GRPO [%s]: %d samples on %d GPUs",
+                adapter_name, len(prompts), len(self.devices),
+            )
+
+            stats = run_fsdp_grpo(
+                gpu_ids=self.devices,
+                model_name=self.model_name,
+                adapter_dir=adapter_path,
+                adapter_name=adapter_name,
+                prompts=prompts,
+                completions=completions,
+                advantages=advantages,
+                lr=cfg["lr"],
+                epochs=cfg["epochs"],
+                batch_size=8,
+                clip_ratio=0.2,
+                kl_coeff=cfg["kl_coeff"],
+                save_dir=adapter_path,
+                io_log_dir=self.io_log_dir,
+            )
+
+            result[adapter_name] = GRPOTrainStats(
+                adapter=adapter_name,
                 n_samples=stats.get("n_samples", 0),
                 n_tokens=stats.get("n_tokens", 0),
                 mean_loss=stats.get("mean_loss", 0.0),
                 epochs=stats.get("epochs", 0),
-                wall_time_s=elapsed / max(len(raw_stats), 1),
+                wall_time_s=stats.get("wall_time_s", 0.0),
             )
 
         return result
 
     def save_adapters(self) -> None:
-        """Save updated skill bank LoRA adapters to disk."""
-        if self._llm is None:
-            return
-        ad = Path(self.adapter_dir)
-        for name in ("segment", "contract", "curator"):
-            save_path = ad / name
-            save_path.mkdir(parents=True, exist_ok=True)
-            try:
-                adapter_name = f"lora_{name}"
-                loaded = getattr(self._llm, "_loaded_adapters", {})
-                if adapter_name in loaded:
-                    self._llm._model.set_adapter(adapter_name)
-                    self._llm._model.save_pretrained(str(save_path))
-                    logger.info("Saved skillbank adapter '%s' → %s", name, save_path)
-            except Exception as exc:
-                logger.warning("Save failed for '%s': %s", name, exc)
+        pass  # FSDP workers save directly
+
+    def cleanup(self) -> None:
+        pass  # FSDP workers clean up their own GPU memory
+
+
+# ── Top-level entry point ───────────────────────────────────────────────
 
 
 async def run_grpo_training(
@@ -374,23 +347,28 @@ async def run_grpo_training(
     config: Any,
     *,
     step: int = 0,
-    executor: Optional[ThreadPoolExecutor] = None,
+    executor=None,
 ) -> GRPOStepResult:
     """Run GRPO training for both decision agent and skill bank.
 
-    Decision agent and skill bank GRPO are independent and can run
-    concurrently on separate GPU groups.
+    Decision and skill bank adapters train **sequentially** on the
+    same GPUs using FSDP data parallelism.  Each adapter spawns N
+    worker processes (one per GPU) that load the model shard, train
+    on their data slice, and exit.
 
     Parameters
     ----------
     step : int
-        Current co-evolution step (used for from-scratch learning rate /
+        Current co-evolution step (used for learning rate /
         temperature schedule).
+    executor : ThreadPoolExecutor | None
+        Used to run blocking FSDP training off the event loop.
     """
+    import asyncio
+
     t0 = time.monotonic()
     loop = asyncio.get_running_loop()
 
-    # Get per-step hyperparameters from the from-scratch schedule
     sched = config.grpo_schedule(step)
     lr = sched["lr"]
     temperature = sched["temperature"]
@@ -400,48 +378,48 @@ async def run_grpo_training(
         step, lr, temperature, kl_coeff,
     )
 
-    decision_records = _collect_grpo_records(rollout_results)
+    devices = config.effective_grpo_devices
+    io_dir = config.debug_io_dir if getattr(config, "debug_io", False) else None
+
+    train_results = [r for r in rollout_results if not r.eval_only]
+    decision_records = _collect_grpo_records(train_results)
     has_decision_data = any(len(v) > 0 for v in decision_records.values())
     has_skillbank_data = any(len(v) > 0 for v in skillbank_grpo_data.values())
 
     decision_stats: Dict[str, GRPOTrainStats] = {}
     skillbank_stats: Dict[str, GRPOTrainStats] = {}
 
-    async def _train_decision():
-        nonlocal decision_stats
-        if not has_decision_data:
-            return
+    # Run decision and skillbank SEQUENTIALLY (both use all GPUs via FSDP)
+
+    if has_decision_data:
+        logger.info("Phase C.1: Decision agent GRPO on GPUs %s", devices)
         trainer = DecisionGRPOTrainer(
             model_name=config.model_name,
-            adapter_dir=config.adapter_dir,
-            devices=config.grpo_decision_devices,
+            adapter_dir=config.decision_adapter_dir,
+            devices=devices,
             lr=lr,
             temperature=temperature,
             kl_coeff=kl_coeff,
+            io_log_dir=io_dir,
         )
         decision_stats = await loop.run_in_executor(
             executor, trainer.train_step, decision_records,
         )
-        await loop.run_in_executor(executor, trainer.save_adapters)
 
-    async def _train_skillbank():
-        nonlocal skillbank_stats
-        if not has_skillbank_data:
-            return
+    if has_skillbank_data:
+        logger.info("Phase C.2: Skill bank GRPO on GPUs %s", devices)
         trainer = SkillBankGRPOTrainer(
             model_name=config.model_name,
-            adapter_dir=config.adapter_dir,
-            devices=config.grpo_skillbank_devices,
+            adapter_dir=config.skillbank_adapter_dir,
+            devices=devices,
             lr=lr,
             temperature=temperature,
             kl_coeff=kl_coeff,
+            io_log_dir=io_dir,
         )
         skillbank_stats = await loop.run_in_executor(
             executor, trainer.train_step, skillbank_grpo_data,
         )
-        await loop.run_in_executor(executor, trainer.save_adapters)
-
-    await asyncio.gather(_train_decision(), _train_skillbank())
 
     # Collect serializable records for disk export
     all_records: Dict[str, List[Dict[str, Any]]] = {}

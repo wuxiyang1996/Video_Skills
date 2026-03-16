@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+os.environ.setdefault("HF_HOME", "/workspace/huggingface")
+os.environ.setdefault("HF_HUB_CACHE", os.path.join(os.environ["HF_HOME"], "hub"))
+
 
 SKILL_BANK_GAMES = [
-    "super_mario",
-    "pokemon_red",
     "diplomacy",
     "twenty_forty_eight",
     "tetris",
@@ -20,28 +22,32 @@ SKILL_BANK_GAMES = [
     "candy_crush",
 ]
 
+# Evaluation-only: rollouts collected for metrics but NOT fed into GRPO training.
+# pokemon_red: PyBoy emulator race condition under concurrent episode init.
+# super_mario: nes_py 8.2.1 + NumPy 2.x incompatibility.
+EVAL_ONLY_GAMES: List[str] = ["pokemon_red"]
+
 GAME_MAX_STEPS: Dict[str, int] = {
-    "super_mario": 500,
     "pokemon_red": 200,
-    "diplomacy": 200,
+    "diplomacy": 50,
     "twenty_forty_eight": 200,
     "tetris": 200,
     "avalon": 200,
-    "sokoban": 100,
+    "sokoban": 200,
     "candy_crush": 50,
+    "super_mario": 500,  # kept for reference if re-enabled
 }
 
-EMULATOR_GAMES = {"pokemon_red", "super_mario", "diplomacy"}
+EMULATOR_GAMES = {"pokemon_red"}
 
 GAME_DURATION_ORDER = [
-    "super_mario",
-    "pokemon_red",
     "diplomacy",
     "twenty_forty_eight",
     "tetris",
     "avalon",
     "sokoban",
     "candy_crush",
+    "pokemon_red",
 ]
 
 ADAPTER_NAMES = [
@@ -78,15 +84,31 @@ class CoEvolutionConfig:
     """Top-level configuration for the co-evolution loop."""
 
     games: List[str] = field(default_factory=lambda: list(SKILL_BANK_GAMES))
+    eval_games: List[str] = field(default_factory=lambda: list(EVAL_ONLY_GAMES))
     episodes_per_game: int = 8
-    max_concurrent_episodes: int = 40
+    eval_episodes_per_game: int = 3
+    max_concurrent_episodes: int = 64
     total_steps: int = 30
 
-    # vLLM
-    vllm_base_url: str = "http://localhost:8000/v1"
+    # GPU allocation — all GPUs are shared between inference and training.
+    # During rollout: one vLLM TP=1 instance per GPU.
+    # During GRPO: FSDP training uses all GPUs.
+    gpu_ids: List[int] = field(
+        default_factory=lambda: [0, 1, 2, 3, 4, 5, 6, 7],
+    )
+
+    # vLLM inference
     model_name: str = "Qwen/Qwen3-14B"
     temperature: float = 0.3
     max_tokens: int = 512
+    vllm_base_url: str = "http://localhost:8000/v1"  # used only when manage_vllm=False
+    vllm_base_port: int = 8000
+    vllm_gpu_util: float = 0.90
+
+    # When True, the orchestrator manages vLLM server lifecycle:
+    # starts N×TP=1 instances before rollout, kills them before GRPO,
+    # and restarts after training with freshly-updated adapters.
+    manage_vllm: bool = True
 
     # Skill bank EM
     em_max_iterations: int = 3
@@ -94,8 +116,10 @@ class CoEvolutionConfig:
 
     # GRPO
     grpo_enabled: bool = True
-    grpo_decision_devices: List[int] = field(default_factory=lambda: [4, 5])
-    grpo_skillbank_devices: List[int] = field(default_factory=lambda: [6, 7])
+    grpo_devices: List[int] = field(default_factory=lambda: [4, 5, 6, 7])  # used when manage_vllm=False
+    # Deprecated: kept for backward compat only.
+    grpo_decision_devices: List[int] = field(default_factory=list)
+    grpo_skillbank_devices: List[int] = field(default_factory=list)
 
     # Run directory — all other dirs are relative to this.
     # Auto-generated from model_name + timestamp if None.
@@ -103,12 +127,16 @@ class CoEvolutionConfig:
 
     # Directories (rebased under run_dir by resolve_paths())
     bank_dir: str = "skillbank"
-    adapter_dir: str = "lora_adapters"
+    adapter_dir: str = "lora_adapters"  # parent; decision/ and skillbank/ live under this
     checkpoint_dir: str = "checkpoints"
     log_dir: str = ""  # root of run_dir
     grpo_data_dir: str = "grpo_data"
     rewards_dir: str = "rewards"
     tensorboard_dir: str = "tensorboard"
+    debug_io_dir: str = "debug_io"
+
+    # Debug: log every LLM I/O and GRPO sample to disk for inspection
+    debug_io: bool = False
 
     # Checkpointing
     checkpoint_interval: int = 5
@@ -132,7 +160,7 @@ class CoEvolutionConfig:
     pretrained_adapter_paths: Dict[str, str] = field(default_factory=dict)
 
     # Thread/process executors
-    thread_workers: int = 20
+    thread_workers: int = 64
     process_workers: int = 8
 
     # Early episode termination
@@ -175,11 +203,12 @@ class CoEvolutionConfig:
         if self.run_dir is None:
             self.run_dir = _generate_run_dir(self.model_name)
 
-        root = Path(self.run_dir)
+        root = Path(self.run_dir).resolve()
+        self.run_dir = str(root)
 
         def _rebase(rel: str) -> str:
             p = Path(rel)
-            if p.is_absolute() or str(p).startswith("runs/"):
+            if p.is_absolute():
                 return rel
             return str(root / rel) if rel else str(root)
 
@@ -190,12 +219,48 @@ class CoEvolutionConfig:
         self.grpo_data_dir = _rebase(self.grpo_data_dir)
         self.rewards_dir = _rebase(self.rewards_dir)
         self.tensorboard_dir = _rebase(self.tensorboard_dir)
+        self.debug_io_dir = _rebase(self.debug_io_dir)
 
         self._resolved = True
         return self
 
+    @property
+    def effective_grpo_devices(self) -> List[int]:
+        """GPU IDs used for GRPO training (FSDP data-parallel).
+
+        When manage_vllm=True, all GPUs are used (vLLM is stopped
+        before training).  Otherwise, falls back to grpo_devices.
+        """
+        if self.manage_vllm:
+            return list(self.gpu_ids)
+        return self.grpo_devices
+
+    @property
+    def vllm_base_urls(self) -> List[str]:
+        """vLLM base URLs for the inference client.
+
+        Returns one URL per GPU when managed, or a single URL when
+        the user runs vLLM externally.
+        """
+        if self.manage_vllm:
+            return [
+                f"http://localhost:{self.vllm_base_port + i}/v1"
+                for i in range(len(self.gpu_ids))
+            ]
+        return [self.vllm_base_url]
+
+    @property
+    def decision_adapter_dir(self) -> str:
+        return str(Path(self.adapter_dir) / "decision")
+
+    @property
+    def skillbank_adapter_dir(self) -> str:
+        return str(Path(self.adapter_dir) / "skillbank")
+
     def adapter_path(self, name: str) -> str:
-        return str(Path(self.adapter_dir) / name)
+        if name in ("skill_selection", "action_taking"):
+            return str(Path(self.decision_adapter_dir) / name)
+        return str(Path(self.skillbank_adapter_dir) / name)
 
     def grpo_schedule(self, step: int) -> Dict[str, float]:
         """Return GRPO hyperparameters for the current step.
@@ -278,7 +343,7 @@ def prepare_adapters(config: CoEvolutionConfig) -> Dict[str, str]:
     # ── Phase 1: copy pre-trained adapters ────────────────────────
     copied: List[str] = []
     for name in ADAPTER_NAMES:
-        dst = Path(config.adapter_dir) / name
+        dst = Path(config.adapter_path(name))
         src = pretrained.get(name)
         if src is not None:
             src_path = Path(src)
@@ -300,7 +365,7 @@ def prepare_adapters(config: CoEvolutionConfig) -> Dict[str, str]:
     for name in ADAPTER_NAMES:
         if name in copied:
             continue
-        dst = Path(config.adapter_dir) / name
+        dst = Path(config.adapter_path(name))
         marker = dst / "adapter_config.json"
         if marker.exists() and not force:
             logger.info("LoRA adapter '%s' already exists: %s", name, dst)
@@ -362,7 +427,7 @@ def prepare_adapters(config: CoEvolutionConfig) -> Dict[str, str]:
     )
 
     for name in need_init:
-        out = Path(config.adapter_dir) / name
+        out = Path(config.adapter_path(name))
         out.mkdir(parents=True, exist_ok=True)
         logger.info("Random-init LoRA adapter '%s' → %s", name, out)
         try:

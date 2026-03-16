@@ -1,0 +1,220 @@
+_wandb:
+    value:
+        cli_version: 0.25.1
+        e:
+            bq7aes0p6xqt4qwckjyn3yyvugxcith0:
+                args:
+                    - --total-steps
+                    - "100"
+                    - --episodes-per-game
+                    - "8"
+                    - --checkpoint-interval
+                    - "5"
+                    - --model
+                    - Qwen/Qwen3-14B
+                    - --vllm-url
+                    - http://localhost:8000/v1
+                    - --wandb-project
+                    - game-ai-coevolution
+                    - --run-dir
+                    - /workspace/game_agent/Game-AI-Agent/runs/Qwen3-14B_20260316_044027
+                    - --from-scratch
+                codePath: scripts/run_coevolution.py
+                codePathLocal: scripts/run_coevolution.py
+                cpu_count: 126
+                cpu_count_logical: 126
+                cudaVersion: "12.6"
+                disk:
+                    /:
+                        total: "5283156971520"
+                        used: "1051365994496"
+                email: zli12321@terpmail.umd.edu
+                executable: /workspace/miniconda3/envs/game-ai-agent/bin/python
+                git:
+                    commit: 0523d9305a9c156b31488cea070edfcdbd3fe86d
+                    remote: https://github.com/wuxiyang1996/Game-AI-Agent.git
+                gpu: NVIDIA A100-SXM4-80GB
+                gpu_count: 8
+                gpu_nvidia:
+                    - architecture: Ampere
+                      cudaCores: 6912
+                      memoryTotal: "85899345920"
+                      name: NVIDIA A100-SXM4-80GB
+                      uuid: GPU-ed151e2b-86e2-986f-20b8-30f50312a7d0
+                    - architecture: Ampere
+                      cudaCores: 6912
+                      memoryTotal: "85899345920"
+                      name: NVIDIA A100-SXM4-80GB
+                      uuid: GPU-b71b9eb7-6f34-9d39-332c-5ca645da029a
+                    - architecture: Ampere
+                      cudaCores: 6912
+                      memoryTotal: "85899345920"
+                      name: NVIDIA A100-SXM4-80GB
+                      uuid: GPU-95c634c7-6fa8-a514-368b-0369135ad292
+                    - architecture: Ampere
+                      cudaCores: 6912
+                      memoryTotal: "85899345920"
+                      name: NVIDIA A100-SXM4-80GB
+                      uuid: GPU-7257da26-6af0-fc73-a438-b22d1caf9cb8
+                    - architecture: Ampere
+                      cudaCores: 6912
+                      memoryTotal: "85899345920"
+                      name: NVIDIA A100-SXM4-80GB
+                      uuid: GPU-98b7d648-ef28-5ff7-4dec-829a7f31fae2
+                    - architecture: Ampere
+                      cudaCores: 6912
+                      memoryTotal: "85899345920"
+                      name: NVIDIA A100-SXM4-80GB
+                      uuid: GPU-85a33124-211d-cecb-f553-613f47dc87dd
+                    - architecture: Ampere
+                      cudaCores: 6912
+                      memoryTotal: "85899345920"
+                      name: NVIDIA A100-SXM4-80GB
+                      uuid: GPU-7d366628-9106-a3c6-ddf4-eef2cff213d6
+                    - architecture: Ampere
+                      cudaCores: 6912
+                      memoryTotal: "85899345920"
+                      name: NVIDIA A100-SXM4-80GB
+                      uuid: GPU-7a4d21e1-3a11-a749-2e84-2b14aa966d41
+                host: 0196-dsm3-dla100sxm-prxmx260056
+                memory:
+                    total: "845401325568"
+                os: Linux-6.8.0-57-generic-x86_64-with-glibc2.35
+                program: /workspace/game_agent/Game-AI-Agent/scripts/run_coevolution.py
+                python: CPython 3.11.14
+                root: /workspace/game_agent/Game-AI-Agent
+                startedAt: "2026-03-16T04:42:36.391131Z"
+                writerId: bq7aes0p6xqt4qwckjyn3yyvugxcith0
+        m: []
+        python_version: 3.11.14
+        t:
+            "1":
+                - 1
+                - 5
+                - 11
+                - 41
+                - 49
+                - 53
+                - 71
+                - 95
+                - 98
+            "2":
+                - 1
+                - 5
+                - 11
+                - 41
+                - 49
+                - 53
+                - 71
+                - 95
+                - 97
+                - 98
+            "3":
+                - 16
+                - 61
+            "4": 3.11.14
+            "5": 0.25.1
+            "6": 4.57.6
+            "12": 0.25.1
+            "13": linux-x86_64
+adapter_dir:
+    value: /workspace/game_agent/Game-AI-Agent/runs/Qwen3-14B_20260316_044027/lora_adapters
+bank_dir:
+    value: /workspace/game_agent/Game-AI-Agent/runs/Qwen3-14B_20260316_044027/skillbank
+checkpoint_dir:
+    value: /workspace/game_agent/Game-AI-Agent/runs/Qwen3-14B_20260316_044027/checkpoints
+checkpoint_interval:
+    value: 5
+em_max_iterations:
+    value: 3
+em_micro_batch_size:
+    value: 8
+episodes_per_game:
+    value: 8
+eval_episodes_per_game:
+    value: 3
+eval_games:
+    value: []
+games:
+    value:
+        - pokemon_red
+        - diplomacy
+        - twenty_forty_eight
+        - tetris
+        - avalon
+        - sokoban
+        - candy_crush
+grpo_data_dir:
+    value: /workspace/game_agent/Game-AI-Agent/runs/Qwen3-14B_20260316_044027/grpo_data
+grpo_decision_devices:
+    value:
+        - 4
+        - 5
+grpo_enabled:
+    value: true
+grpo_skillbank_devices:
+    value:
+        - 6
+        - 7
+log_dir:
+    value: /workspace/game_agent/Game-AI-Agent/runs/Qwen3-14B_20260316_044027
+lora_alpha:
+    value: 32
+lora_dropout:
+    value: 0.05
+lora_init_weights:
+    value: gaussian
+lora_r:
+    value: 16
+lora_target_modules:
+    value: null
+max_concurrent_episodes:
+    value: 64
+max_tokens:
+    value: 512
+min_steps_before_stuck_check:
+    value: 20
+model_name:
+    value: Qwen/Qwen3-14B
+process_workers:
+    value: 8
+resume_from_step:
+    value: null
+rewards_dir:
+    value: /workspace/game_agent/Game-AI-Agent/runs/Qwen3-14B_20260316_044027/rewards
+run_dir:
+    value: /workspace/game_agent/Game-AI-Agent/runs/Qwen3-14B_20260316_044027
+scratch_initial_kl_coeff:
+    value: 0.01
+scratch_initial_lr:
+    value: 0.0001
+scratch_initial_temperature:
+    value: 1
+scratch_steady_kl_coeff:
+    value: 0.05
+scratch_steady_lr:
+    value: 5e-05
+scratch_steady_temperature:
+    value: 0.7
+scratch_warmup_steps:
+    value: 5
+start_mode:
+    value: from_scratch
+stuck_window:
+    value: 15
+temperature:
+    value: 0.3
+tensorboard_dir:
+    value: /workspace/game_agent/Game-AI-Agent/runs/Qwen3-14B_20260316_044027/tensorboard
+thread_workers:
+    value: 64
+total_steps:
+    value: 100
+vllm_base_url:
+    value: http://localhost:8000/v1
+wandb_enabled:
+    value: true
+wandb_project:
+    value: game-ai-coevolution
+wandb_run_name:
+    value: null

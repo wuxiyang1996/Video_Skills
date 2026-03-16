@@ -66,12 +66,16 @@ class GRPOBuffer:
     adapter independently.
     """
 
-    def __init__(self, max_size_per_adapter: int = 2048) -> None:
+    def __init__(self, max_size_per_adapter: int = 256) -> None:
         self._samples: Dict[str, List[GRPOSample]] = {}
         self._max_size = max_size_per_adapter
 
     def add(self, sample: GRPOSample) -> None:
-        key = sample.adapter.value
+        adapter = sample.adapter
+        if isinstance(adapter, str) and not hasattr(adapter, 'value'):
+            adapter = SkillFunction(adapter)
+            sample.adapter = adapter
+        key = adapter.value
         if key not in self._samples:
             self._samples[key] = []
         buf = self._samples[key]

@@ -23,11 +23,13 @@ class SkillFunction(str, Enum):
     Legacy (kept for compat): BOUNDARY, RETRIEVAL.
     """
 
-    BOUNDARY = "boundary"    # legacy — not GRPO-trained in this module
-    SEGMENT = "segment"      # GRPO-trained
-    CONTRACT = "contract"    # GRPO-trained
-    RETRIEVAL = "retrieval"  # legacy — uses decision-agent GRPO
-    CURATOR = "curator"      # GRPO-trained
+    BOUNDARY = "boundary"           # legacy — not GRPO-trained in this module
+    SEGMENT = "segment"             # GRPO-trained
+    CONTRACT = "contract"           # GRPO-trained
+    RETRIEVAL = "retrieval"         # legacy — uses decision-agent GRPO
+    CURATOR = "curator"             # GRPO-trained
+    ACTION_TAKING = "action_taking"       # decision-agent GRPO
+    SKILL_SELECTION = "skill_selection"   # decision-agent GRPO
 
     @classmethod
     def from_str(cls, value: str) -> "SkillFunction":

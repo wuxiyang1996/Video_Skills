@@ -32,7 +32,7 @@ Usage::
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from skill_agents_grpo.lora.config import MultiLoraConfig
 from skill_agents_grpo.lora.skill_function import SkillFunction
@@ -108,21 +108,63 @@ class MultiLoraSkillBankLLM:
             if path is not None:
                 self._load_adapter(fn)
 
+    def unload(self) -> None:
+        """Release model weights and free GPU memory."""
+        import gc
+        import torch
+        if self._model is not None:
+            del self._model
+            self._model = None
+        if self._tokenizer is not None:
+            del self._tokenizer
+            self._tokenizer = None
+        self._loaded_adapters.clear()
+        self._is_peft_model = False
+        gc.collect()
+        torch.cuda.empty_cache()
+        logger.info("Model unloaded, GPU memory cache cleared")
+
     def _load_base_model(self) -> None:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         dtype = getattr(torch, self.config.dtype, torch.bfloat16)
-        logger.info("Loading base model %s (dtype=%s, device=%s)",
-                     self.config.base_model_name_or_path, self.config.dtype, self.config.device)
 
-        device_map = self.config.device if self.config.device != "auto" else "auto"
+        load_kwargs: dict = {
+            "torch_dtype": dtype,
+            "trust_remote_code": True,
+        }
+
+        if self.config.devices and len(self.config.devices) > 1:
+            max_memory = {i: "75GiB" for i in self.config.devices}
+            max_memory["cpu"] = "32GiB"
+            load_kwargs["device_map"] = "auto"
+            load_kwargs["max_memory"] = max_memory
+            logger.info(
+                "Loading base model %s (dtype=%s) across GPUs %s",
+                self.config.base_model_name_or_path, self.config.dtype,
+                self.config.devices,
+            )
+        else:
+            device_map = self.config.device if self.config.device != "auto" else "auto"
+            load_kwargs["device_map"] = device_map
+            logger.info(
+                "Loading base model %s (dtype=%s, device=%s)",
+                self.config.base_model_name_or_path, self.config.dtype,
+                self.config.device,
+            )
+
         self._model = AutoModelForCausalLM.from_pretrained(
             self.config.base_model_name_or_path,
-            torch_dtype=dtype,
-            device_map=device_map,
-            trust_remote_code=True,
+            **load_kwargs,
         )
+
+        if self.config.gradient_checkpointing:
+            self._model.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs={"use_reentrant": False},
+            )
+            logger.info("Gradient checkpointing enabled")
+
         self._tokenizer = AutoTokenizer.from_pretrained(
             self.config.base_model_name_or_path,
             trust_remote_code=True,
@@ -157,6 +199,77 @@ class MultiLoraSkillBankLLM:
 
         self._loaded_adapters[name] = True
         logger.info("Loaded LoRA adapter '%s' from %s", name, path)
+
+    # ── Training preparation ─────────────────────────────────────────
+
+    def prepare_for_training(self, adapter_names: List[str]) -> None:
+        """Ensure LoRA adapters exist and are trainable for GRPO.
+
+        For each name in *adapter_names*:
+        - If already loaded from disk, enables ``requires_grad`` on its
+          LoRA parameters.
+        - If not loaded (from-scratch start), creates a fresh LoRA adapter
+          with the same hyper-parameters used by cold-start (r=16, alpha=32).
+
+        Also freezes all base-model parameters and puts the model in
+        ``.train()`` mode.
+        """
+        import torch
+        from peft import LoraConfig, TaskType, get_peft_model
+
+        if self._model is None:
+            raise RuntimeError("Call load() before prepare_for_training()")
+
+        for name in adapter_names:
+            if name in self._loaded_adapters:
+                continue
+            lora_cfg = LoraConfig(
+                task_type=TaskType.CAUSAL_LM,
+                r=16,
+                lora_alpha=32,
+                lora_dropout=0.05,
+                target_modules=[
+                    "q_proj", "k_proj", "v_proj", "o_proj",
+                    "gate_proj", "up_proj", "down_proj",
+                ],
+                inference_mode=False,
+            )
+            if not self._is_peft_model:
+                self._model = get_peft_model(
+                    self._model, lora_cfg, adapter_name=name,
+                )
+                self._is_peft_model = True
+            else:
+                self._model.add_adapter(name, lora_cfg)
+            self._loaded_adapters[name] = True
+            logger.info("Created fresh LoRA adapter '%s' (r=16, alpha=32)", name)
+
+        for n, p in self._model.named_parameters():
+            p.requires_grad = "lora" in n.lower()
+
+        self._model.train()
+
+        n_trainable = sum(p.numel() for p in self._model.parameters() if p.requires_grad)
+        n_total = sum(p.numel() for p in self._model.parameters())
+        logger.info(
+            "Model prepared for training: %s/%s params trainable (%.2f%%)",
+            f"{n_trainable:,}", f"{n_total:,}",
+            100.0 * n_trainable / max(n_total, 1),
+        )
+
+    @property
+    def _input_device(self):
+        """Device where input tensors should be placed.
+
+        For single-GPU models this equals ``model.device``.  For models
+        spread across GPUs via ``device_map="auto"`` the standard
+        ``.device`` property may raise; fall back to the device of the
+        first parameter (i.e. the embedding layer).
+        """
+        try:
+            return self._model.device
+        except (ValueError, AttributeError):
+            return next(self._model.parameters()).device
 
     # ── Adapter switching ────────────────────────────────────────────
 
@@ -230,10 +343,11 @@ class MultiLoraSkillBankLLM:
         import torch
 
         inputs = self._tokenizer(prompt, return_tensors="pt")
-        input_ids = inputs["input_ids"].to(self._model.device)
+        dev = self._input_device
+        input_ids = inputs["input_ids"].to(dev)
         attention_mask = inputs.get("attention_mask", None)
         if attention_mask is not None:
-            attention_mask = attention_mask.to(self._model.device)
+            attention_mask = attention_mask.to(dev)
 
         gen_kwargs = {
             "max_new_tokens": max_new_tokens or self.config.max_new_tokens,
@@ -292,16 +406,17 @@ class MultiLoraSkillBankLLM:
 
         full_text = prompt + completion
         inputs = self._tokenizer(full_text, return_tensors="pt")
-        input_ids = inputs["input_ids"].to(self._model.device)
+        dev = self._input_device
+        input_ids = inputs["input_ids"].to(dev)
         attention_mask = inputs.get("attention_mask")
         if attention_mask is not None:
-            attention_mask = attention_mask.to(self._model.device)
+            attention_mask = attention_mask.to(dev)
 
         prompt_inputs = self._tokenizer(prompt, return_tensors="pt")
         prompt_len = prompt_inputs["input_ids"].shape[1]
 
         if prompt_len >= input_ids.shape[1]:
-            return torch.zeros(0, device=self._model.device, requires_grad=True)
+            return torch.zeros(0, device=dev, requires_grad=True)
 
         with torch.enable_grad():
             outputs = self._model(
@@ -317,6 +432,62 @@ class MultiLoraSkillBankLLM:
                 -1, target_ids.unsqueeze(-1),
             ).squeeze(-1)
             return per_token.squeeze(0)  # (completion_length,)
+
+    def log_probs_batch(
+        self,
+        function: SkillFunction,
+        prompts: List[str],
+        completions: List[str],
+    ) -> List["torch.Tensor"]:
+        """Batched version of :meth:`log_probs`.
+
+        Pads all (prompt + completion) sequences to the same length and
+        runs a single forward pass.  Returns a list of per-sample
+        log-prob tensors, each with its own computation graph.
+        """
+        if not self.is_loaded:
+            self.load()
+
+        self._activate_adapter(function)
+        if self._active_adapter is not None and self._is_peft_model:
+            self._model.enable_adapter_layers()
+
+        import torch
+
+        dev = self._input_device
+        full_texts = [p + c for p, c in zip(prompts, completions)]
+        batch_enc = self._tokenizer(
+            full_texts, return_tensors="pt", padding=True, truncation=True,
+        )
+        input_ids = batch_enc["input_ids"].to(dev)
+        attention_mask = batch_enc["attention_mask"].to(dev)
+
+        prompt_lens = []
+        for p in prompts:
+            penc = self._tokenizer(p, return_tensors="pt")
+            prompt_lens.append(penc["input_ids"].shape[1])
+
+        with torch.enable_grad():
+            outputs = self._model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+            )
+            logits = outputs.logits  # (B, T, V)
+
+        results: List[torch.Tensor] = []
+        for i, plen in enumerate(prompt_lens):
+            seq_len = int(attention_mask[i].sum().item())
+            if plen >= seq_len:
+                results.append(torch.zeros(0, device=dev, requires_grad=True))
+                continue
+            sample_logits = logits[i, plen - 1 : seq_len - 1, :]
+            target_ids = input_ids[i, plen:seq_len]
+            token_log_probs = torch.log_softmax(sample_logits, dim=-1)
+            per_token = token_log_probs.gather(
+                -1, target_ids.unsqueeze(-1),
+            ).squeeze(-1)
+            results.append(per_token)
+        return results
 
     # ── Convenience: ask_model-compatible callable ───────────────────
 

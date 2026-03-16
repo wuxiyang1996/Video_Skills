@@ -44,11 +44,12 @@ class GRPOOrchestrator:
         self,
         llm: Any,
         config: Optional[GRPOConfig] = None,
+        io_log_dir: Optional[str] = None,
     ) -> None:
         self._llm = llm
         self._config = config or GRPOConfig()
         self._buffer = GRPOBuffer()
-        self._trainer = GRPOLoRATrainer(llm, self._config)
+        self._trainer = GRPOLoRATrainer(llm, self._config, io_log_dir=io_log_dir)
         self._wrappers_enabled = False
 
     @property

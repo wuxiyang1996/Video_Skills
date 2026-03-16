@@ -132,10 +132,8 @@ Phase A + B (overlapped):
   │  ├── asyncio.Semaphore(40) caps concurrency                │
   │  ├── run_episode_async() × 64 coroutines                   │
   │  │   ├── summary_state    (deterministic, 0 calls)         │
-  │  │   ├── summary_prose    (await vllm, base model)         │
-  │  │   ├── skill_selection  (await vllm, skill_selection)    │
-  │  │   ├── intention        (await vllm, base model)         │
-  │  │   ├── action_taking    (await vllm, action_taking)      │
+  │  │   ├── R1: summary_prose ║ skill_selection (parallel)    │
+  │  │   ├── R2: subgoal + action  (action_taking, merged)     │
   │  │   └── env.step()       (ThreadPoolExecutor)             │
   │  └── on_episode_done → asyncio.Queue                       │
   │                              │                             │
@@ -189,6 +187,41 @@ As short-game episodes complete, their trajectories immediately enter the skill 
 ### Cold-Start Handling (`episode_runner.py`)
 
 Step 0 passes `skill_bank=None` → `get_top_k_skill_candidates()` returns `[]` → no `skill_selection` LoRA call → only `action_taking` fires. GRPO records contain `action_taking` data only (no `skill_selection` samples). Subsequent steps automatically enable full skill selection when the bank becomes populated.
+
+### Merged Subgoal + Action Call (`episode_runner.py`)
+
+Intention (subgoal) and action selection are merged into a single LLM call,
+reducing serial rounds from 3 to 2 per game step (~33% faster Phase A):
+
+```
+BEFORE (3 serial rounds):          AFTER (2 serial rounds):
+  R1: summary ║ skill (parallel)     R1: summary ║ skill (parallel)
+  R2: intention (base, 40 tok)       R2: subgoal+action (action_taking, 256 tok)
+  R3: action (action_taking, 512)    env.step()
+  env.step()
+```
+
+The model outputs `SUBGOAL: [TAG] phrase\nREASONING: ...\nACTION: N` in one
+generation. The subgoal is parsed out and tracked identically to before.
+
+### Token Budget Tuning (`episode_runner.py`)
+
+`max_tokens` for each LLM call is set based on measured output lengths across all 8 games
+(~37,776 steps from 61 cold-start episodes per game):
+
+| Call | `max_tokens` | Actual p99 | Actual max | Headroom |
+|------|-------------|-----------|-----------|----------|
+| `summary_prose` (base) | 25 | ~15 tok | ~20 tok | 1.25× |
+| `skill_selection` | 128 | ~80 tok | ~91 tok | 1.4× |
+| `action_taking` (merged) | 256 | ~100 tok | ~130 tok | 2.0× |
+
+All calls use stop sequences (`\n`, `\n\nAvailable`, etc.) so outputs terminate
+naturally well before hitting the token limit. The completions API (raw prompt)
+is used — Qwen3's `<think>` mode is not activated, so no hidden token overhead.
+
+Diplomacy has the largest prompts (~5K words) but its actions are presented as
+discrete numbered choices via `_DiplomacyAdapter`, so output length is the same
+"SUBGOAL: ... REASONING: ... ACTION: N" format as all other games.
 
 ### Stuck Detection (`episode_runner.py`)
 
@@ -271,11 +304,17 @@ The main `co_evolution_loop()` coroutine. Manages Phase A (rollouts with cross-s
 
 ## Estimated Timeline
 
-| Steps | Wall time (8 GPU) | Notes |
-|-------|-------------------|-------|
-| 1 step | ~3-5 min | Phase A+B ~2.5 min, Phase C ~2 min (parallel GRPO) |
-| 30 steps | ~2-3 hours | Default setting |
-| 100 steps | ~5-8 hours | Recommended for convergence |
+| Steps | Wall time (8× A100) | Notes |
+|-------|---------------------|-------|
+| 1 step | ~12-20 min | Phase A ~8-14 min (56 episodes), Phase B ~2 min, Phase C ~3 min |
+| 30 steps | ~6-10 hours | Default setting |
+| 100 steps | ~20-33 hours | Recommended for convergence |
+
+Phase A is the bottleneck — limited by 200-step games (2048, tetris, sokoban,
+avalon). Each game step requires 2 sequential LLM rounds (summary ∥ skill
+selection, then merged subgoal + action). With 48-56 concurrent async
+episodes and 4 GPUs on vLLM (TP=4), typical throughput is ~10-13 LLM
+calls/sec globally.
 
 ---
 

@@ -20,13 +20,32 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-ADAPTER_NAMES = [
-    "skill_selection",
-    "action_taking",
-    "segment",
-    "contract",
-    "curator",
-]
+DECISION_ADAPTERS = ["skill_selection", "action_taking"]
+SKILLBANK_ADAPTERS = ["segment", "contract", "curator"]
+ADAPTER_NAMES = DECISION_ADAPTERS + SKILLBANK_ADAPTERS
+
+ADAPTER_SUBDIR = {name: "decision" for name in DECISION_ADAPTERS}
+ADAPTER_SUBDIR.update({name: "skillbank" for name in SKILLBANK_ADAPTERS})
+
+
+def _save_one_bank(agent: Any, path: Path, label: str = "") -> None:
+    try:
+        bank = getattr(agent, "bank", agent)
+        if hasattr(bank, "save"):
+            bank.save(str(path))
+            logger.info("Saved bank%s to %s", f" [{label}]" if label else "", path)
+    except Exception as exc:
+        logger.warning("Bank save failed%s: %s", f" [{label}]" if label else "", exc)
+
+
+def _load_one_bank(agent: Any, path: Path, label: str = "") -> None:
+    try:
+        bank = getattr(agent, "bank", agent)
+        if hasattr(bank, "load"):
+            bank.load(str(path))
+            logger.info("Restored bank%s from %s", f" [{label}]" if label else "", path)
+    except Exception as exc:
+        logger.warning("Bank restore failed%s: %s", f" [{label}]" if label else "", exc)
 
 
 def save_checkpoint(
@@ -34,38 +53,43 @@ def save_checkpoint(
     step: int,
     *,
     bank_agent: Any = None,
+    bank_agents: Optional[Dict[str, Any]] = None,
     adapter_dir: str = "runs/lora_adapters",
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """Save a co-evolution checkpoint.
 
     Creates ``{checkpoint_dir}/step_{step:04d}/`` with:
-      - ``skill_bank.jsonl`` — current bank state
+      - Per-game skill banks in ``banks/{game}/skill_bank.jsonl``
+        (or legacy ``skill_bank.jsonl`` for a single agent)
       - ``adapters/{name}/`` — LoRA adapter weights for each adapter
       - ``metadata.json`` — step info, bank version, metrics
     """
     ckpt_path = Path(checkpoint_dir) / f"step_{step:04d}"
     ckpt_path.mkdir(parents=True, exist_ok=True)
 
-    # Save skill bank
-    if bank_agent is not None:
-        bank_path = ckpt_path / "skill_bank.jsonl"
-        try:
-            bank = getattr(bank_agent, "bank", bank_agent)
-            if hasattr(bank, "save"):
-                bank.save(str(bank_path))
-                logger.info("Saved bank to %s", bank_path)
-        except Exception as exc:
-            logger.warning("Bank save failed: %s", exc)
+    if bank_agents:
+        banks_dir = ckpt_path / "banks"
+        banks_dir.mkdir(exist_ok=True)
+        for game, agent in bank_agents.items():
+            if agent is None:
+                continue
+            game_dir = banks_dir / game
+            game_dir.mkdir(exist_ok=True)
+            _save_one_bank(agent, game_dir / "skill_bank.jsonl", label=game)
+    elif bank_agent is not None:
+        _save_one_bank(bank_agent, ckpt_path / "skill_bank.jsonl")
 
-    # Copy LoRA adapters
+    # Copy LoRA adapters (preserving decision/ and skillbank/ subdirs)
     adapters_dir = ckpt_path / "adapters"
     adapters_dir.mkdir(exist_ok=True)
     src_dir = Path(adapter_dir)
     for name in ADAPTER_NAMES:
-        src = src_dir / name
+        sub = ADAPTER_SUBDIR[name]
+        src = src_dir / sub / name
         if src.exists() and src.is_dir():
-            dst = adapters_dir / name
+            dst = adapters_dir / sub / name
+            dst.parent.mkdir(parents=True, exist_ok=True)
             try:
                 if dst.exists():
                     shutil.rmtree(dst)
@@ -95,11 +119,12 @@ def load_checkpoint(
     *,
     adapter_dir: str = "runs/lora_adapters",
     bank_agent: Any = None,
+    bank_agents: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Load a co-evolution checkpoint.
 
     Restores adapter weights to ``adapter_dir`` and optionally reloads
-    the skill bank.
+    the skill bank(s).
 
     Returns the metadata dict.
     """
@@ -107,21 +132,23 @@ def load_checkpoint(
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
-    # Load metadata
     meta_path = ckpt_path / "metadata.json"
     metadata: Dict[str, Any] = {}
     if meta_path.exists():
         with open(meta_path, "r", encoding="utf-8") as f:
             metadata = json.load(f)
 
-    # Restore adapters
     adapters_dir = ckpt_path / "adapters"
     dst_dir = Path(adapter_dir)
     dst_dir.mkdir(parents=True, exist_ok=True)
     for name in ADAPTER_NAMES:
-        src = adapters_dir / name
+        sub = ADAPTER_SUBDIR[name]
+        src = adapters_dir / sub / name
+        if not src.exists():
+            src = adapters_dir / name  # backward compat: flat layout
         if src.exists() and src.is_dir():
-            dst = dst_dir / name
+            dst = dst_dir / sub / name
+            dst.parent.mkdir(parents=True, exist_ok=True)
             try:
                 if dst.exists():
                     shutil.rmtree(dst)
@@ -130,16 +157,18 @@ def load_checkpoint(
             except Exception as exc:
                 logger.warning("Adapter restore failed for '%s': %s", name, exc)
 
-    # Restore skill bank
-    bank_path = ckpt_path / "skill_bank.jsonl"
-    if bank_path.exists() and bank_agent is not None:
-        try:
-            bank = getattr(bank_agent, "bank", bank_agent)
-            if hasattr(bank, "load"):
-                bank.load(str(bank_path))
-                logger.info("Restored bank from checkpoint: %s", bank_path)
-        except Exception as exc:
-            logger.warning("Bank restore failed: %s", exc)
+    banks_dir = ckpt_path / "banks"
+    if banks_dir.exists() and bank_agents:
+        for game, agent in bank_agents.items():
+            if agent is None:
+                continue
+            bp = banks_dir / game / "skill_bank.jsonl"
+            if bp.exists():
+                _load_one_bank(agent, bp, label=game)
+    else:
+        bank_path = ckpt_path / "skill_bank.jsonl"
+        if bank_path.exists() and bank_agent is not None:
+            _load_one_bank(bank_agent, bank_path)
 
     logger.info("Checkpoint loaded: step %d from %s", step, ckpt_path)
     return metadata

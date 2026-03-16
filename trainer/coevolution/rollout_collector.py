@@ -10,13 +10,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from trainer.coevolution.config import (
     CoEvolutionConfig,
-    EMULATOR_GAMES,
     GAME_DURATION_ORDER,
     GAME_MAX_STEPS,
 )
@@ -33,6 +32,7 @@ class EpisodeSpec:
     max_steps: int
     episode_idx: int
     estimated_duration_s: float = 0.0
+    eval_only: bool = False
 
 
 def build_lpt_schedule(
@@ -52,7 +52,7 @@ def build_lpt_schedule(
         reverse=True,
     )
 
-    PER_STEP_S = 1.5
+    PER_STEP_S = 1.0
     buckets: Dict[str, List[EpisodeSpec]] = {}
     for g in sorted_games:
         ms = GAME_MAX_STEPS.get(g, 200)
@@ -75,37 +75,56 @@ async def collect_rollouts(
     config: CoEvolutionConfig,
     vllm_client: AsyncVLLMClient,
     skill_bank: Any = None,
+    skill_banks: Optional[Dict[str, Any]] = None,
     *,
     on_episode_done: Optional[Callable[[EpisodeResult], None]] = None,
     thread_executor: Optional[ThreadPoolExecutor] = None,
-    process_executor: Optional[ProcessPoolExecutor] = None,
 ) -> List[EpisodeResult]:
     """Collect rollouts for all games with LPT scheduling and concurrency cap.
 
     Parameters
     ----------
+    skill_bank : object | None
+        Legacy single shared bank (used if *skill_banks* is not provided).
+    skill_banks : dict | None
+        Per-game banks: ``{game_name: bank_object}``.  Takes priority
+        over *skill_bank* when both are provided.
     on_episode_done : callable | None
         Called (synchronously) each time an episode finishes.  Used by the
         orchestrator to feed completed trajectories into the skill bank
         pipeline concurrently (cross-system overlap, Strategy E).
     """
     schedule = build_lpt_schedule(config.games, config.episodes_per_game)
+
+    eval_games = getattr(config, "eval_games", [])
+    eval_eps = getattr(config, "eval_episodes_per_game", 3)
+    if eval_games:
+        eval_schedule = build_lpt_schedule(eval_games, eval_eps)
+        for spec in eval_schedule:
+            spec.eval_only = True
+        schedule.extend(eval_schedule)
+
     semaphore = asyncio.Semaphore(config.max_concurrent_episodes)
 
     results: List[EpisodeResult] = []
     results_lock = asyncio.Lock()
 
+    def _bank_for(game: str) -> Any:
+        if skill_banks:
+            return skill_banks.get(game)
+        return skill_bank
+
     async def _run_one(spec: EpisodeSpec) -> None:
         async with semaphore:
+            game_bank = _bank_for(spec.game)
             try:
                 result = await run_episode_async(
                     game=spec.game,
                     max_steps=spec.max_steps,
                     vllm_client=vllm_client,
-                    skill_bank=skill_bank,
+                    skill_bank=game_bank,
                     temperature=config.temperature,
                     executor=thread_executor,
-                    process_executor=process_executor,
                     stuck_window=config.stuck_window,
                     min_steps_before_stuck=config.min_steps_before_stuck_check,
                 )
@@ -116,6 +135,7 @@ async def collect_rollouts(
                     episode_id=f"{spec.game}_FAILED_{spec.episode_idx}",
                 )
 
+            result.eval_only = spec.eval_only
             async with results_lock:
                 results.append(result)
 

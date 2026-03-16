@@ -311,6 +311,7 @@ class GamingAgentNLWrapper:
         obs, reward, terminated, truncated, info = self._env.step(action)
         self._step_count += 1
         self._last_reward = float(reward)
+        self._action_names = info.get("action_names", self._action_names)
         nl = self._obs_to_nl(obs, info)
         info["state_natural_language"] = nl
         info["action_names"] = self._action_names
