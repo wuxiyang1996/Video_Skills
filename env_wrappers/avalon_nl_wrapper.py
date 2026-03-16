@@ -27,9 +27,13 @@ Usage (single-agent):
     obs, reward, term, trunc, info = env.step("approve")
 """
 
+import itertools
+import logging
 import re
 import random
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
+_log = logging.getLogger(__name__)
 
 try:
     from games.games.avalon.engine import AvalonBasicConfig, AvalonGameEnvironment
@@ -335,6 +339,121 @@ def _random_partner_action(env, roles, player_id, phase_id):
     return 0
 
 
+def _retrieve_skill_hint(skill_bank: Any, obs_text: str, game: str = "avalon") -> str:
+    """Fast CPU-only top-1 skill retrieval.  Returns a short hint or ''."""
+    if skill_bank is None:
+        return ""
+    try:
+        has_items = (
+            (hasattr(skill_bank, "__len__") and len(skill_bank) > 0)
+            or (hasattr(skill_bank, "skill_ids")
+                and len(list(skill_bank.skill_ids)) > 0)
+        )
+        if not has_items:
+            return ""
+        from scripts.qwen3_decision_agent import get_top_k_skill_candidates
+        candidates = get_top_k_skill_candidates(
+            skill_bank, obs_text, game_name=game, top_k=1,
+        )
+        if candidates:
+            name = candidates[0].get("skill_name", "")
+            hint = candidates[0].get("execution_hint", "")
+            if name or hint:
+                return f"Strategy hint: {name}. {hint}".strip()[:200]
+    except Exception:
+        pass
+    return ""
+
+
+def _make_llm_partner_policy(
+    base_urls: List[str],
+    model_name: str,
+    adapter_name: str = "action_taking",
+    skill_bank: Any = None,
+    game_name: str = "avalon",
+) -> Callable:
+    """Create an LLM-based partner policy that queries vLLM for actions.
+
+    Returns a callable with the same signature as ``_random_partner_action``.
+    Uses round-robin across *base_urls* for load balancing.
+    Opponents use the ``action_taking`` LoRA so they improve alongside the
+    controlled agent (self-play dynamics) without the skill-selection overhead.
+    When a *skill_bank* is provided the top-1 skill hint is injected into the
+    prompt (CPU-only retrieval, zero extra LLM calls).
+    Falls back to random on any failure.
+    """
+    import requests as _requests
+
+    _url_cycle = itertools.cycle(base_urls)
+
+    def _llm_partner_action(env, roles, player_id, phase_id):
+        try:
+            obs = state_to_natural_language(env, roles, player_id=player_id)
+            obs_short = obs[:1500]
+            phase_name = _PHASE_NAMES.get(phase_id, f"Phase {phase_id}")
+            num_players = len(roles)
+
+            skill_line = _retrieve_skill_hint(skill_bank, obs_short, game_name)
+            skill_prefix = f"{skill_line}\n" if skill_line else ""
+
+            if phase_id == 0:
+                team_size = env.num_players_for_quest[env.turn]
+                prompt = (
+                    f"{obs_short}\n\n{skill_prefix}"
+                    f"Pick {team_size} players for the quest team. "
+                    f"Reply with just the player numbers separated by commas "
+                    f"(e.g. \"0,2,3\").\nTeam:"
+                )
+            elif phase_id == 1:
+                prompt = (
+                    f"{obs_short}\n\n{skill_prefix}"
+                    f"Vote: approve or reject this team. "
+                    f"Reply with just one word.\nVote:"
+                )
+            elif phase_id == 2:
+                prompt = (
+                    f"{obs_short}\n\n{skill_prefix}"
+                    f"Quest vote: pass or fail. "
+                    f"Reply with just one word.\nVote:"
+                )
+            elif phase_id == 3:
+                prompt = (
+                    f"{obs_short}\n\n{skill_prefix}"
+                    f"Choose a player to assassinate (0 to {num_players - 1}). "
+                    f"Reply with just the player number.\nTarget:"
+                )
+            else:
+                return _random_partner_action(env, roles, player_id, phase_id)
+
+            url = next(_url_cycle)
+            resp = _requests.post(
+                f"{url}/completions",
+                json={
+                    "model": adapter_name,
+                    "prompt": prompt,
+                    "max_tokens": 16,
+                    "temperature": 0.4,
+                    "stop": ["\n"],
+                },
+                timeout=15,
+            )
+            text = resp.json()["choices"][0]["text"].strip()
+
+            if phase_id == 0:
+                team_size = env.num_players_for_quest[env.turn]
+                return parse_team(text, num_players, team_size)
+            elif phase_id in (1, 2):
+                return parse_vote(text)
+            elif phase_id == 3:
+                return parse_target(text, num_players)
+
+        except Exception as exc:
+            _log.debug("LLM partner action failed for player %d: %s", player_id, exc)
+            return _random_partner_action(env, roles, player_id, phase_id)
+
+    return _llm_partner_action
+
+
 # ---------------------------------------------------------------------------
 # Wrapper class
 # ---------------------------------------------------------------------------
@@ -368,6 +487,9 @@ class AvalonNLWrapper:
         mordred: bool = False,
         oberon: bool = False,
         seed: Optional[int] = None,
+        vllm_base_urls: Optional[List[str]] = None,
+        model_name: Optional[str] = None,
+        skill_bank: Any = None,
     ):
         """
         Args:
@@ -376,9 +498,13 @@ class AvalonNLWrapper:
                 If None, multi-agent mode (all players controlled externally).
             partner_policy: Callable(env, roles, player_id, phase_id) -> action
                 for non-controlled players in single-agent mode.
-                If None, uses random policy.
+                If None and vllm_base_urls is set, uses LLM policy.
+                If None and no URLs, uses random policy.
             merlin..oberon: Role flags passed to AvalonBasicConfig.
             seed: Optional random seed for reproducibility.
+            vllm_base_urls: vLLM server URLs for LLM-based partner policy.
+            model_name: Model name for vLLM requests.
+            skill_bank: Per-game skill bank for opponent skill hints.
         """
         if AvalonBasicConfig is None:
             raise ImportError(
@@ -388,7 +514,15 @@ class AvalonNLWrapper:
         self._num_players = num_players
         self._controlled_player = controlled_player
         self._multi_agent = controlled_player is None
-        self._partner_policy = partner_policy or _random_partner_action
+        if partner_policy is not None:
+            self._partner_policy = partner_policy
+        elif vllm_base_urls and model_name:
+            self._partner_policy = _make_llm_partner_policy(
+                vllm_base_urls, model_name,
+                skill_bank=skill_bank, game_name="avalon",
+            )
+        else:
+            self._partner_policy = _random_partner_action
         self._role_flags = dict(
             merlin=merlin, percival=percival,
             morgana=morgana, mordred=mordred, oberon=oberon,

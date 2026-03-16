@@ -123,17 +123,20 @@ def parse_args() -> argparse.Namespace:
         help="Max generation tokens (default: 512)",
     )
 
-    # GPU allocation (phase-swap)
+    # GPU allocation (split: vLLM on some GPUs, GRPO on others)
     parser.add_argument(
-        "--gpu-ids", nargs="+", type=int, default=[0, 1, 2, 3, 4, 5, 6, 7],
-        help="All available GPU IDs — shared between inference (vLLM) "
-             "and GRPO training (FSDP). Default: 0 1 2 3 4 5 6 7",
+        "--vllm-gpus", nargs="+", type=int, default=[0, 1, 2, 3],
+        help="GPU IDs for persistent vLLM inference servers (TP=1 each). "
+             "Default: 0 1 2 3",
+    )
+    parser.add_argument(
+        "--grpo-devices", nargs="+", type=int, default=[4, 5, 6, 7],
+        help="GPU devices for GRPO FSDP training. Default: 4 5 6 7",
     )
     parser.add_argument(
         "--no-manage-vllm", action="store_true",
         help="Disable managed vLLM lifecycle. Use when running vLLM "
-             "externally. In this mode, --vllm-url and --grpo-devices "
-             "control GPU allocation.",
+             "externally. In this mode, --vllm-url controls the endpoint.",
     )
     parser.add_argument(
         "--vllm-url", type=str, default="http://localhost:8000/v1",
@@ -154,11 +157,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-grpo", action="store_true",
         help="Disable GRPO training (rollout + skill bank only)",
-    )
-    parser.add_argument(
-        "--grpo-devices", nargs="+", type=int, default=[4, 5, 6, 7],
-        help="GPU devices for GRPO training (only with --no-manage-vllm). "
-             "When managed, all --gpu-ids are used. Default: 4 5 6 7",
     )
 
     # Directories
@@ -309,7 +307,8 @@ def main() -> None:
         episodes_per_game=args.episodes_per_game,
         max_concurrent_episodes=args.max_concurrent,
         total_steps=args.total_steps,
-        gpu_ids=args.gpu_ids,
+        vllm_gpu_ids=args.vllm_gpus,
+        grpo_devices=args.grpo_devices,
         manage_vllm=manage_vllm,
         vllm_base_url=args.vllm_url,
         vllm_base_port=args.vllm_base_port,
@@ -318,7 +317,6 @@ def main() -> None:
         temperature=args.temperature,
         max_tokens=args.max_tokens,
         grpo_enabled=not args.no_grpo,
-        grpo_devices=args.grpo_devices,
         checkpoint_interval=args.checkpoint_interval,
         wandb_enabled=not args.no_wandb,
         wandb_project=args.wandb_project,
@@ -358,13 +356,11 @@ def main() -> None:
     print(f"  Eps/game:     {config.episodes_per_game}")
     print(f"  Concurrent:   {config.max_concurrent_episodes}")
     print(f"  Model:        {config.model_name}")
-    print(f"  GPUs:         {config.gpu_ids}")
     if config.manage_vllm:
-        print(f"  vLLM:         MANAGED — {len(config.gpu_ids)} × TP=1 "
-              f"(ports {config.vllm_base_port}–"
-              f"{config.vllm_base_port + len(config.gpu_ids) - 1})")
-        print(f"  GPU sharing:  rollout → all GPUs (vLLM) | "
-              f"GRPO → all GPUs (FSDP)")
+        print(f"  vLLM GPUs:    {config.vllm_gpu_ids} — "
+              f"{len(config.vllm_gpu_ids)} × TP=1 (persistent, "
+              f"ports {config.vllm_base_port}–"
+              f"{config.vllm_base_port + len(config.vllm_gpu_ids) - 1})")
     else:
         print(f"  vLLM:         EXTERNAL — {config.vllm_base_url}")
     print(f"  GRPO:         {'enabled' if config.grpo_enabled else 'disabled'}")

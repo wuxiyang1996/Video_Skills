@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ======================================================================
-#  Co-Evolution: Launch training with dynamic GPU sharing.
+#  Co-Evolution: Launch training with split GPU allocation.
 #
 #  Default mode (MANAGE_VLLM=1):
 #    The Python orchestrator manages vLLM instances automatically:
-#    - Before each rollout: starts 8 × TP=1 vLLM servers (all GPUs)
-#    - Before GRPO training: kills vLLM, runs 8-GPU FSDP training
-#    - After training: restarts vLLM with updated adapter weights
+#    - GPUs 0-3: 4 × persistent TP=1 vLLM servers (started once)
+#    - GPUs 4-7: 4-GPU FSDP GRPO training
+#    - After each GRPO step, adapters are hot-reloaded via API
 #
 #  Legacy mode (MANAGE_VLLM=0):
 #    Launches a single external vLLM server (GPUs 0-3, TP=4) and
@@ -60,7 +60,7 @@ GPU_UTIL="${VLLM_GPU_UTIL:-0.90}"
 MANAGE_VLLM="${MANAGE_VLLM:-1}"
 
 TOTAL_STEPS="${TOTAL_STEPS:-100}"
-EPISODES="${EPISODES_PER_GAME:-8}"
+EPISODES="${EPISODES_PER_GAME:-4}"
 CKPT_INTERVAL="${CKPT_INTERVAL:-5}"
 WANDB_PROJECT="${WANDB_PROJECT:-game-ai-coevolution}"
 RUN_DIR="${RUN_DIR:-}"
@@ -68,7 +68,8 @@ RESUME="${RESUME:-}"
 FROM_SCRATCH="${FROM_SCRATCH:-}"
 LOAD_ADAPTERS_FROM="${LOAD_ADAPTERS_FROM:-}"
 DEBUG_IO="${DEBUG_IO:-}"
-GPU_IDS="${GPU_IDS:-0 1 2 3 4 5 6 7}"
+VLLM_GPUS="${VLLM_GPUS:-0 1 2 3}"
+GRPO_GPUS="${GRPO_GPUS:-4 5 6 7}"
 
 # ── Cleanup on exit (only for legacy mode) ────────────────────────────
 VLLM_PID=""
@@ -95,8 +96,9 @@ echo "  Total steps:   ${TOTAL_STEPS}"
 echo "  Eps/game:      ${EPISODES}"
 echo "  Checkpoint:    every ${CKPT_INTERVAL} steps"
 if [ "${MANAGE_VLLM}" = "1" ]; then
-    echo "  GPU mode:      MANAGED (all GPUs shared, phase-swap)"
-    echo "  GPUs:          ${GPU_IDS}"
+    echo "  GPU mode:      MANAGED (persistent vLLM + FSDP)"
+    echo "  vLLM GPUs:     ${VLLM_GPUS}"
+    echo "  GRPO GPUs:     ${GRPO_GPUS}"
 else
     echo "  GPU mode:      LEGACY (vLLM TP=${TP} + separate GRPO GPUs)"
     echo "  vLLM port:     ${PORT}"
@@ -172,9 +174,10 @@ fi
 # Launch
 # ======================================================================
 if [ "${MANAGE_VLLM}" = "1" ]; then
-    # ── Managed mode: orchestrator handles vLLM lifecycle ─────────
+    # ── Managed mode: orchestrator handles persistent vLLM ────────
     # shellcheck disable=SC2086
-    TRAIN_ARGS+=(--gpu-ids ${GPU_IDS})
+    TRAIN_ARGS+=(--vllm-gpus ${VLLM_GPUS})
+    TRAIN_ARGS+=(--grpo-devices ${GRPO_GPUS})
     TRAIN_ARGS+=(--vllm-base-port "${PORT}")
     TRAIN_ARGS+=(--vllm-gpu-util "${GPU_UTIL}")
 

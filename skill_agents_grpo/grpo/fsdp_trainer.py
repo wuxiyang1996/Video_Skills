@@ -228,6 +228,71 @@ def _fsdp_train_worker(rank: int, args: Dict[str, Any]) -> None:
         trainable_params = [p for p in model.parameters() if p.requires_grad]
         optimizer = torch.optim.AdamW(trainable_params, lr=lr)
 
+        # ── 5.5. Pre-tokenize & compute reference log-probs ──────
+        # Compute log-probs under the *current* policy (before any
+        # gradient steps) to serve as the PPO/GRPO reference.
+        # Without this, ratio = exp(new - old) is always 1.0 and the
+        # clipping / KL penalty has no effect.
+        #
+        # Pre-tokenize everything first (CPU-only), then run a single
+        # batched no-grad forward pass.  This is ~5-10x faster than
+        # processing samples one-by-one.
+        t_ref = time.time()
+        ref_data: list = [None] * n_my
+        tokenized: list = [None] * n_my
+        for i in range(n_my):
+            full_text = my_prompts[i] + my_completions[i]
+            enc = tokenizer(
+                full_text, return_tensors="pt", truncation=True,
+            )
+            penc = tokenizer(my_prompts[i], return_tensors="pt")
+            plen = penc["input_ids"].shape[1]
+            if plen >= enc["input_ids"].shape[1]:
+                continue
+            tokenized[i] = {
+                "input_ids": enc["input_ids"],
+                "attn_mask": enc["attention_mask"],
+                "plen": plen,
+            }
+
+        ref_batch_size = batch_size * 2
+        model.eval()
+        with torch.no_grad():
+            for mb_s in range(0, n_my, ref_batch_size):
+                mb_e = min(mb_s + ref_batch_size, n_my)
+                for i in range(mb_s, mb_e):
+                    tk = tokenized[i]
+                    if tk is None:
+                        continue
+                    input_ids = tk["input_ids"].to(device)
+                    attn_mask = tk["attn_mask"].to(device)
+                    plen = tk["plen"]
+
+                    out = model(input_ids=input_ids, attention_mask=attn_mask)
+                    logits = out.logits[:, plen - 1:-1, :]
+                    target = input_ids[:, plen:]
+                    lp = torch.log_softmax(logits, dim=-1)
+                    per_tok = lp.gather(
+                        -1, target.unsqueeze(-1),
+                    ).squeeze(-1).squeeze(0)
+
+                    if per_tok.numel() == 0:
+                        continue
+                    ref_data[i] = {
+                        "input_ids": input_ids.cpu(),
+                        "attn_mask": attn_mask.cpu(),
+                        "plen": plen,
+                        "ref_lp": per_tok.cpu(),
+                    }
+        model.train()
+
+        if is_main:
+            n_valid = sum(1 for r in ref_data if r is not None)
+            logger.info(
+                "Reference log-probs: %d/%d valid (%.1fs)",
+                n_valid, n_my, time.time() - t_ref,
+            )
+
         # ── 6. Training loop ───────────────────────────────────────
         total_loss = 0.0
         total_tokens = 0
@@ -246,17 +311,14 @@ def _fsdp_train_worker(rank: int, args: Dict[str, Any]) -> None:
                 mb_losses: list = []
 
                 for i in range(mb_start, mb_end):
-                    full_text = my_prompts[i] + my_completions[i]
-                    enc = tokenizer(
-                        full_text, return_tensors="pt", truncation=True,
-                    )
-                    input_ids = enc["input_ids"].to(device)
-                    attn_mask = enc["attention_mask"].to(device)
-
-                    penc = tokenizer(my_prompts[i], return_tensors="pt")
-                    plen = penc["input_ids"].shape[1]
-                    if plen >= input_ids.shape[1]:
+                    rd = ref_data[i]
+                    if rd is None:
                         continue
+
+                    input_ids = rd["input_ids"].to(device)
+                    attn_mask = rd["attn_mask"].to(device)
+                    plen = rd["plen"]
+                    old_lp = rd["ref_lp"].to(device)
 
                     with torch.enable_grad():
                         out = model(
@@ -269,12 +331,6 @@ def _fsdp_train_worker(rank: int, args: Dict[str, Any]) -> None:
                         per_tok = lp.gather(
                             -1, target.unsqueeze(-1),
                         ).squeeze(-1).squeeze(0)
-
-                    if per_tok.numel() == 0:
-                        continue
-
-                    with torch.no_grad():
-                        old_lp = per_tok.detach().clone()
 
                     ratio = torch.exp(per_tok - old_lp)
                     clipped = torch.clamp(

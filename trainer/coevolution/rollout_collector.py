@@ -127,6 +127,8 @@ async def collect_rollouts(
                     executor=thread_executor,
                     stuck_window=config.stuck_window,
                     min_steps_before_stuck=config.min_steps_before_stuck_check,
+                    vllm_base_urls=config.vllm_base_urls,
+                    model_name=config.model_name,
                 )
             except Exception as exc:
                 logger.error("Episode %s/%d failed: %s", spec.game, spec.episode_idx, exc)

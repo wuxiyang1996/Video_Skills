@@ -82,7 +82,7 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
             logger.warning("W&B init failed: %s", exc)
             wandb = None
 
-    # ── vLLM lifecycle manager (phase-swap architecture) ─────────
+    # ── vLLM lifecycle manager (persistent on dedicated GPUs) ────
     vllm_manager = None
     if config.manage_vllm:
         from trainer.coevolution.vllm_server import VLLMServerManager
@@ -91,17 +91,18 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
         vllm_manager = VLLMServerManager(
             model_name=config.model_name,
             adapter_dir=config.adapter_dir,
-            gpu_ids=config.gpu_ids,
+            gpu_ids=config.vllm_gpu_ids,
             base_port=config.vllm_base_port,
             gpu_util=config.vllm_gpu_util,
             log_dir=vllm_log_dir,
         )
         logger.info(
             "vLLM managed mode: %d × TP=1 instances on GPUs %s, "
-            "ports %d–%d",
-            len(config.gpu_ids), config.gpu_ids,
+            "ports %d–%d  |  GRPO on GPUs %s",
+            len(config.vllm_gpu_ids), config.vllm_gpu_ids,
             config.vllm_base_port,
-            config.vllm_base_port + len(config.gpu_ids) - 1,
+            config.vllm_base_port + len(config.vllm_gpu_ids) - 1,
+            config.grpo_devices,
         )
 
     # ── vLLM client (supports multiple backends) ──────────────
@@ -234,6 +235,20 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
         len(config.games), config.episodes_per_game,
     )
 
+    # ── Start persistent vLLM instances (once) ─────────────────────
+    if vllm_manager:
+        logger.info(
+            "Starting %d persistent vLLM instances...",
+            vllm_manager.n_instances,
+        )
+        vllm_manager.start()
+        healthy = await vllm_manager.wait_healthy()
+        if not healthy:
+            raise RuntimeError(
+                "vLLM instances failed to start — check "
+                f"{Path(config.run_dir) / 'vllm_logs'} for details"
+            )
+
     # ==================================================================
     # MAIN LOOP
     # ==================================================================
@@ -260,20 +275,6 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
         vllm_client.reset_stats()
         if config.debug_io:
             vllm_client.set_io_step(step)
-
-        # ── Start vLLM instances for inference ────────────────────
-        if vllm_manager:
-            logger.info(
-                "Starting %d vLLM instances for rollout phase...",
-                vllm_manager.n_instances,
-            )
-            vllm_manager.start()
-            healthy = await vllm_manager.wait_healthy()
-            if not healthy:
-                raise RuntimeError(
-                    "vLLM instances failed to start — check "
-                    f"{Path(config.run_dir) / 'vllm_logs'} for details"
-                )
 
         # ── Phase A + B: Rollout collection with cross-system overlap ──
         phase_ab_t0 = time.monotonic()
@@ -401,13 +402,7 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
         phase_b_time = time.monotonic() - phase_b_t0
         logger.info("Phase B finalize: %.1fs (%d game banks)", phase_b_time, len(sb_update_results))
 
-        # ── Stop vLLM to free GPUs for GRPO training ─────────────────
-        if vllm_manager and config.grpo_enabled:
-            logger.info("Stopping vLLM instances for GRPO training...")
-            vllm_manager.stop()
-            await asyncio.sleep(3)
-
-        # ── Phase C: GRPO training ───────────────────────────────────
+        # ── Phase C: GRPO training (on dedicated GPUs) ───────────────
         grpo_result: Optional[GRPOStepResult] = None
         phase_c_time = 0.0
         if config.grpo_enabled:
@@ -431,6 +426,13 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                     pass
             phase_c_time = time.monotonic() - phase_c_t0
             logger.info("Phase C (GRPO): %.1fs", phase_c_time)
+
+            # ── Hot-reload adapters on persistent vLLM instances ──────
+            if vllm_manager and grpo_result:
+                try:
+                    await vllm_manager.reload_adapters()
+                except Exception as exc:
+                    logger.warning("Adapter hot-reload failed: %s", exc)
 
             # ── Export GRPO training data ─────────────────────────────
             if grpo_result:

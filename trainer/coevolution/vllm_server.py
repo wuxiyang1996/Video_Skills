@@ -1,17 +1,18 @@
-"""vLLM server lifecycle manager for phase-swapped GPU sharing.
+"""vLLM server lifecycle manager.
 
-Manages N independent vLLM instances (one per GPU, TP=1) that are
-started before rollout phases and killed before training phases.
-This allows the same GPUs to be used for both inference and FSDP
-training, maximizing hardware utilization.
+Manages N independent vLLM instances (one per GPU, TP=1) that run
+persistently throughout training.  After each GRPO step, LoRA adapters
+are hot-reloaded via the vLLM REST API — no restart required.
 
-Typical lifecycle per co-evolution step::
+Typical lifecycle::
 
-    manager.start()              # Launch 8 × TP=1 instances
+    manager.start()              # Launch 4 × TP=1 instances (once)
     await manager.wait_healthy() # Wait for all to respond
-    # ... Phase A+B: rollouts + skill bank ...
-    manager.stop()               # Kill all, free GPU memory
-    # ... Phase C: FSDP GRPO training on all 8 GPUs ...
+    for step in range(total_steps):
+        # ... Phase A+B: rollouts + skill bank ...
+        # ... Phase C: FSDP GRPO training on other GPUs ...
+        await manager.reload_adapters()  # hot-reload updated weights
+    manager.stop()               # Cleanup at end
 
 Memory budget per instance (Qwen3-14B, A100-80GB, TP=1):
   - Model weights (bf16):    ~28 GB
@@ -45,6 +46,7 @@ class VLLMServerManager:
         base_port: int = 8000,
         gpu_util: float = 0.90,
         max_num_seqs: int = 32,
+        enforce_eager: bool = True,
         log_dir: Optional[str] = None,
     ):
         self.model_name = model_name
@@ -53,6 +55,7 @@ class VLLMServerManager:
         self.base_port = base_port
         self.gpu_util = gpu_util
         self.max_num_seqs = max_num_seqs
+        self.enforce_eager = enforce_eager
         self.log_dir = log_dir
         self._processes: List[subprocess.Popen] = []
         self._log_files: list = []
@@ -114,22 +117,21 @@ class VLLMServerManager:
                 "--gpu-memory-utilization", str(self.gpu_util),
                 "--enable-lora", "--max-loras", "5", "--max-lora-rank", "64",
                 "--enable-prefix-caching",
-                "--enable-chunked-prefill",
                 "--max-num-seqs", str(self.max_num_seqs),
-                "--max-num-batched-tokens", "8192",
                 "--port", str(port),
                 "--trust-remote-code",
             ]
 
+            if self.enforce_eager:
+                cmd.append("--enforce-eager")
+
             if lora_modules:
                 cmd.extend(["--lora-modules"] + lora_modules)
 
-            stderr_target = subprocess.DEVNULL
             log_fh = None
             if log_dir_path:
                 log_path = log_dir_path / f"vllm_gpu{gpu_id}.log"
                 log_fh = open(log_path, "w")
-                stderr_target = log_fh
 
             logger.info(
                 "Starting vLLM [%d/%d]: GPU %d → port %d",
@@ -138,7 +140,8 @@ class VLLMServerManager:
 
             proc = subprocess.Popen(
                 cmd, env=env,
-                stdout=subprocess.DEVNULL, stderr=stderr_target,
+                stdout=log_fh or subprocess.DEVNULL,
+                stderr=subprocess.STDOUT if log_fh else subprocess.DEVNULL,
             )
             self._processes.append(proc)
             if log_fh:
@@ -202,7 +205,7 @@ class VLLMServerManager:
 
     async def wait_healthy(
         self,
-        timeout: float = 300,
+        timeout: float = 600,
         poll_interval: float = 5,
     ) -> bool:
         """Wait for all instances to pass health checks.
@@ -215,6 +218,7 @@ class VLLMServerManager:
         start = time.monotonic()
         healthy: set = set()
         n_total = self.n_instances
+        last_progress_log = start
 
         async with _httpx.AsyncClient(timeout=10.0) as client:
             while time.monotonic() - start < timeout:
@@ -257,6 +261,17 @@ class VLLMServerManager:
                     )
                     return True
 
+                # Periodic progress logging
+                now = time.monotonic()
+                if now - last_progress_log >= 30:
+                    elapsed = now - start
+                    logger.info(
+                        "Waiting for vLLM: %d/%d healthy (%.0fs elapsed, "
+                        "%.0fs timeout)",
+                        len(healthy), n_total, elapsed, timeout,
+                    )
+                    last_progress_log = now
+
                 await asyncio.sleep(poll_interval)
 
         missing_ports = [
@@ -267,6 +282,75 @@ class VLLMServerManager:
             timeout, len(missing_ports), n_total, missing_ports,
         )
         return False
+
+    async def reload_adapters(self) -> None:
+        """Hot-reload all LoRA adapters on every running vLLM instance.
+
+        For each adapter found on disk, issues an unload + load cycle
+        via the vLLM REST API so the instance picks up freshly-trained
+        weights without a full restart.
+        """
+        import httpx as _httpx
+
+        adapter_groups = [
+            ("decision", ["skill_selection", "action_taking"]),
+            ("skillbank", ["segment", "contract", "curator"]),
+        ]
+
+        adapters_to_reload: list[tuple[str, str]] = []
+        for sub, names in adapter_groups:
+            for name in names:
+                path = Path(self.adapter_dir) / sub / name
+                if (path / "adapter_config.json").exists():
+                    adapters_to_reload.append((name, str(path)))
+
+        if not adapters_to_reload:
+            logger.warning("No adapters found on disk to reload")
+            return
+
+        n_ok, n_fail = 0, 0
+        async with _httpx.AsyncClient(timeout=30.0) as client:
+            for port in self.ports:
+                base = f"http://localhost:{port}"
+                for adapter_name, adapter_path in adapters_to_reload:
+                    try:
+                        await client.post(
+                            f"{base}/v1/unload_lora_adapter",
+                            json={"lora_name": adapter_name},
+                        )
+                    except Exception:
+                        pass
+
+                    try:
+                        resp = await client.post(
+                            f"{base}/v1/load_lora_adapter",
+                            json={
+                                "lora_name": adapter_name,
+                                "lora_path": adapter_path,
+                            },
+                        )
+                        if resp.status_code == 200:
+                            n_ok += 1
+                        else:
+                            logger.warning(
+                                "Reload %s on port %d: HTTP %d — %s",
+                                adapter_name, port,
+                                resp.status_code, resp.text[:200],
+                            )
+                            n_fail += 1
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to reload %s on port %d: %s",
+                            adapter_name, port, exc,
+                        )
+                        n_fail += 1
+
+        logger.info(
+            "Adapter hot-reload: %d/%d successful across %d instances "
+            "(%d adapters)",
+            n_ok, n_ok + n_fail, len(self.ports),
+            len(adapters_to_reload),
+        )
 
     def __del__(self):
         try:

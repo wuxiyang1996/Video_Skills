@@ -25,14 +25,14 @@ SKILL_BANK_GAMES = [
 # Evaluation-only: rollouts collected for metrics but NOT fed into GRPO training.
 # pokemon_red: PyBoy emulator race condition under concurrent episode init.
 # super_mario: nes_py 8.2.1 + NumPy 2.x incompatibility.
-EVAL_ONLY_GAMES: List[str] = ["pokemon_red"]
+EVAL_ONLY_GAMES: List[str] = []
 
 GAME_MAX_STEPS: Dict[str, int] = {
     "pokemon_red": 200,
-    "diplomacy": 50,
+    "diplomacy": 20,
     "twenty_forty_eight": 200,
     "tetris": 200,
-    "avalon": 200,
+    "avalon": 50,
     "sokoban": 200,
     "candy_crush": 50,
     "super_mario": 500,  # kept for reference if re-enabled
@@ -85,16 +85,20 @@ class CoEvolutionConfig:
 
     games: List[str] = field(default_factory=lambda: list(SKILL_BANK_GAMES))
     eval_games: List[str] = field(default_factory=lambda: list(EVAL_ONLY_GAMES))
-    episodes_per_game: int = 8
+    episodes_per_game: int = 4
     eval_episodes_per_game: int = 3
     max_concurrent_episodes: int = 64
     total_steps: int = 30
 
-    # GPU allocation — all GPUs are shared between inference and training.
-    # During rollout: one vLLM TP=1 instance per GPU.
-    # During GRPO: FSDP training uses all GPUs.
-    gpu_ids: List[int] = field(
-        default_factory=lambda: [0, 1, 2, 3, 4, 5, 6, 7],
+    # GPU allocation — split between persistent vLLM and FSDP training.
+    # vLLM instances (TP=1) run on vllm_gpu_ids and stay up for the
+    # entire training run.  After each GRPO step, adapters are hot-reloaded
+    # via the vLLM API (no restart required).
+    vllm_gpu_ids: List[int] = field(
+        default_factory=lambda: [0, 1, 2, 3],
+    )
+    grpo_devices: List[int] = field(
+        default_factory=lambda: [4, 5, 6, 7],
     )
 
     # vLLM inference
@@ -105,9 +109,8 @@ class CoEvolutionConfig:
     vllm_base_port: int = 8000
     vllm_gpu_util: float = 0.90
 
-    # When True, the orchestrator manages vLLM server lifecycle:
-    # starts N×TP=1 instances before rollout, kills them before GRPO,
-    # and restarts after training with freshly-updated adapters.
+    # When True, the orchestrator manages vLLM server lifecycle
+    # (persistent instances on vllm_gpu_ids, hot-reload after GRPO).
     manage_vllm: bool = True
 
     # Skill bank EM
@@ -116,7 +119,6 @@ class CoEvolutionConfig:
 
     # GRPO
     grpo_enabled: bool = True
-    grpo_devices: List[int] = field(default_factory=lambda: [4, 5, 6, 7])  # used when manage_vllm=False
     # Deprecated: kept for backward compat only.
     grpo_decision_devices: List[int] = field(default_factory=list)
     grpo_skillbank_devices: List[int] = field(default_factory=list)
@@ -226,26 +228,20 @@ class CoEvolutionConfig:
 
     @property
     def effective_grpo_devices(self) -> List[int]:
-        """GPU IDs used for GRPO training (FSDP data-parallel).
-
-        When manage_vllm=True, all GPUs are used (vLLM is stopped
-        before training).  Otherwise, falls back to grpo_devices.
-        """
-        if self.manage_vllm:
-            return list(self.gpu_ids)
+        """GPU IDs used for GRPO training (FSDP data-parallel)."""
         return self.grpo_devices
 
     @property
     def vllm_base_urls(self) -> List[str]:
         """vLLM base URLs for the inference client.
 
-        Returns one URL per GPU when managed, or a single URL when
-        the user runs vLLM externally.
+        Returns one URL per vLLM GPU when managed, or a single URL
+        when the user runs vLLM externally.
         """
         if self.manage_vllm:
             return [
                 f"http://localhost:{self.vllm_base_port + i}/v1"
-                for i in range(len(self.gpu_ids))
+                for i in range(len(self.vllm_gpu_ids))
             ]
         return [self.vllm_base_url]
 

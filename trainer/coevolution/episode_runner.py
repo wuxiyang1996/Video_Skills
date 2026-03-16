@@ -154,6 +154,7 @@ class _AvalonAdapter:
 
     def __init__(self, env):
         self._env = env
+        self._last_info: dict = {}
 
     def reset(self):
         obs, info = self._env.reset()
@@ -663,6 +664,8 @@ async def run_episode_async(
     executor: Optional[ThreadPoolExecutor] = None,
     stuck_window: int = 15,
     min_steps_before_stuck: int = 20,
+    vllm_base_urls: Optional[List[str]] = None,
+    model_name: Optional[str] = None,
 ) -> EpisodeResult:
     """Run one game episode asynchronously.
 
@@ -673,6 +676,10 @@ async def run_episode_async(
     ----------
     skill_bank : object | None
         ``None`` triggers cold-start mode (no skill selection).
+    vllm_base_urls : list[str] | None
+        Base URLs for vLLM instances (used for LLM opponent policies).
+    model_name : str | None
+        Model name for LLM opponent policy requests.
     """
     imp = _lazy_imports()
     GAME_CONFIGS = imp["GAME_CONFIGS"]
@@ -713,14 +720,22 @@ async def run_episode_async(
             ["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"]
         )
         logger.info("Diplomacy: controlling %s this episode", power)
-        env = _DiplomacyAdapter(DiplomacyNLWrapper(controlled_power=power, max_phases=50))
+        env = _DiplomacyAdapter(DiplomacyNLWrapper(
+            controlled_power=power, max_phases=20,
+            vllm_base_urls=vllm_base_urls, model_name=model_name,
+            skill_bank=skill_bank,
+        ))
 
     elif game == "avalon":
         if AvalonNLWrapper is None:
             raise ImportError("AvalonNLWrapper not available")
         player = random.randint(0, 4)
         logger.info("Avalon: controlling player %d this episode", player)
-        env = _AvalonAdapter(AvalonNLWrapper(num_players=5, controlled_player=player))
+        env = _AvalonAdapter(AvalonNLWrapper(
+            num_players=5, controlled_player=player,
+            vllm_base_urls=vllm_base_urls, model_name=model_name,
+            skill_bank=skill_bank,
+        ))
 
     else:
         if exe:

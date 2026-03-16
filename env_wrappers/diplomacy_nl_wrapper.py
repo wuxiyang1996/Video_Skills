@@ -35,8 +35,12 @@ Negotiation mode:
     Or set auto_negotiate=True to skip negotiation (default).
 """
 
+import itertools
+import logging
 import random
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
+_log = logging.getLogger(__name__)
 
 # Prefer local AI_Diplomacy/diplomacy package so "from diplomacy import Game" finds it
 import sys
@@ -353,6 +357,122 @@ def _random_partner_orders(game: "Game", power_name: str) -> List[str]:
     return orders
 
 
+def _retrieve_skill_hint(skill_bank: Any, obs_text: str, game: str = "diplomacy") -> str:
+    """Fast CPU-only top-1 skill retrieval.  Returns a short hint or ''."""
+    if skill_bank is None:
+        return ""
+    try:
+        has_items = (
+            (hasattr(skill_bank, "__len__") and len(skill_bank) > 0)
+            or (hasattr(skill_bank, "skill_ids")
+                and len(list(skill_bank.skill_ids)) > 0)
+        )
+        if not has_items:
+            return ""
+        from scripts.qwen3_decision_agent import get_top_k_skill_candidates
+        candidates = get_top_k_skill_candidates(
+            skill_bank, obs_text, game_name=game, top_k=1,
+        )
+        if candidates:
+            name = candidates[0].get("skill_name", "")
+            hint = candidates[0].get("execution_hint", "")
+            if name or hint:
+                return f"Strategy hint: {name}. {hint}".strip()[:200]
+    except Exception:
+        pass
+    return ""
+
+
+def _make_llm_partner_policy(
+    base_urls: List[str],
+    model_name: str,
+    adapter_name: str = "action_taking",
+    skill_bank: Any = None,
+    game_name: str = "diplomacy",
+) -> Callable:
+    """Create an LLM-based partner policy that queries vLLM for orders.
+
+    Returns a callable with the same signature as ``_random_partner_orders``.
+    Uses round-robin across *base_urls* for load balancing.
+    Opponents use the ``action_taking`` LoRA so they improve alongside the
+    controlled agent (self-play dynamics) without the skill-selection overhead.
+    When a *skill_bank* is provided the top-1 skill hint is injected into the
+    prompt (CPU-only retrieval, zero extra LLM calls).
+    Falls back to random for any unparseable orders.
+    """
+    import requests as _requests
+
+    _url_cycle = itertools.cycle(base_urls)
+
+    def _llm_partner_orders(game: "Game", power_name: str) -> List[str]:
+        try:
+            obs = state_to_natural_language(game, power_name)
+            obs_short = obs[:2000]
+
+            possible_orders = game.get_all_possible_orders()
+            orderable_locs = game.get_orderable_locations(power_name) or []
+            if not orderable_locs:
+                return []
+
+            loc_options = []
+            for loc in orderable_locs:
+                if loc in possible_orders and possible_orders[loc]:
+                    opts = possible_orders[loc][:10]
+                    loc_options.append(f"  {loc}: {opts}")
+            options_str = "\n".join(loc_options)
+
+            skill_line = _retrieve_skill_hint(skill_bank, obs_short, game_name)
+            skill_prefix = f"{skill_line}\n" if skill_line else ""
+
+            prompt = (
+                f"{obs_short}\n\n{skill_prefix}"
+                f"Pick one order per unit from these options:\n"
+                f"{options_str}\n\n"
+                f"Reply with one order per line, nothing else.\nOrders:\n"
+            )
+
+            url = next(_url_cycle)
+            resp = _requests.post(
+                f"{url}/completions",
+                json={
+                    "model": adapter_name,
+                    "prompt": prompt,
+                    "max_tokens": 128,
+                    "temperature": 0.4,
+                    "stop": ["\n\n"],
+                },
+                timeout=15,
+            )
+            text = resp.json()["choices"][0]["text"].strip()
+
+            valid_set: set = set()
+            for loc in orderable_locs:
+                if loc in possible_orders:
+                    valid_set.update(possible_orders[loc])
+
+            parsed = [line.strip() for line in text.split("\n") if line.strip()]
+            valid_orders = [o for o in parsed if o in valid_set]
+
+            covered_locs = set()
+            for o in valid_orders:
+                for loc in orderable_locs:
+                    if loc in possible_orders and o in possible_orders[loc]:
+                        covered_locs.add(loc)
+                        break
+
+            for loc in orderable_locs:
+                if loc not in covered_locs and loc in possible_orders and possible_orders[loc]:
+                    valid_orders.append(random.choice(possible_orders[loc]))
+
+            return valid_orders
+
+        except Exception as exc:
+            _log.debug("LLM partner orders failed for %s: %s", power_name, exc)
+            return _random_partner_orders(game, power_name)
+
+    return _llm_partner_orders
+
+
 # ---------------------------------------------------------------------------
 # Wrapper class
 # ---------------------------------------------------------------------------
@@ -384,16 +504,23 @@ class DiplomacyNLWrapper:
         map_name: str = "standard",
         max_phases: int = 100,
         seed: int = 42,
+        vllm_base_urls: Optional[List[str]] = None,
+        model_name: Optional[str] = None,
+        skill_bank: Any = None,
     ):
         """
         Args:
             controlled_power: If set (e.g. "FRANCE"), single-agent mode.
                 If None, multi-agent mode (all 7 powers controlled externally).
             partner_policy: Callable(game, power_name) -> List[str] for non-controlled
-                powers in single-agent mode. If None, uses random orders.
+                powers in single-agent mode. If None and vllm_base_urls is set,
+                uses LLM policy. If None and no URLs, uses random orders.
             map_name: Diplomacy map name (default "standard").
             max_phases: Maximum number of phases before truncation.
             seed: Random seed.
+            vllm_base_urls: vLLM server URLs for LLM-based partner policy.
+            model_name: Model name for vLLM requests.
+            skill_bank: Per-game skill bank for opponent skill hints.
         """
         if Game is None:
             _msg = (
@@ -408,7 +535,15 @@ class DiplomacyNLWrapper:
             raise ImportError(_msg)
         self._controlled_power = controlled_power.upper() if controlled_power else None
         self._multi_agent = controlled_power is None
-        self._partner_policy = partner_policy or _random_partner_orders
+        if partner_policy is not None:
+            self._partner_policy = partner_policy
+        elif vllm_base_urls and model_name:
+            self._partner_policy = _make_llm_partner_policy(
+                vllm_base_urls, model_name,
+                skill_bank=skill_bank, game_name="diplomacy",
+            )
+        else:
+            self._partner_policy = _random_partner_orders
         self._map_name = map_name
         self._max_phases = max_phases
         self._seed = seed
