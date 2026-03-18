@@ -613,6 +613,206 @@ The Skill Bank Agent processes trajectory rollouts from the Decision Agent throu
 
 See [skill_agents_grpo/README.md](skill_agents_grpo/README.md) for the full GRPO skill bank pipeline and [TODO_Lists/SKILLBANK_GRPO_PLAN.md](TODO_Lists/SKILLBANK_GRPO_PLAN.md) for the training plan.
 
+### LoRA input / output examples (illustrative)
+
+Formats match runtime prompts in [`episode_runner.py`](trainer/coevolution/episode_runner.py) (decision) and [`skill_agents_grpo/`](skill_agents_grpo/) (skill bank). Training concatenates prompt + completion as a single SFT text or GRPO (prompt, completion) pair.
+
+---
+
+#### 1. `skill_selection` (Decision — pick one strategy)
+
+**Input (user message = system instructions + state + candidates):** the model first sees the strict format rule, then game state, intention, and numbered strategies (name, strategy, plan, confidence).
+
+```
+You are an expert game strategist. Given the current game state and a set of candidate strategies, choose the ONE strategy most likely to make progress.
+
+Output format (strict):
+REASONING: <1-2 sentences why this strategy fits the current state>
+SKILL: <number>
+
+Game state:
+board=4x4 | max_tile=128 | empty=6 | note=corner strategy
+
+Current intention: [OPTIMIZE] build toward 2048
+
+Available strategies (pick ONE by number):
+  1. merge_high_tiles
+     Strategy: Combine large tiles on one edge
+     Plan: sweep -> compress -> merge -> ...
+     Confidence: 0.72
+  2. recover_from_stall
+     Strategy: Unblock when no moves along primary edge
+     Plan: probe -> rotate focus -> ...
+     Confidence: 0.55
+
+Choose the best strategy. Output REASONING then SKILL number.
+```
+
+**Output (assistant):**
+
+```
+REASONING: State still has room to stack high tiles on the bottom row; primary strategy matches current layout.
+SKILL: 1
+```
+
+---
+
+#### 2. `action_taking` (Decision — subgoal + primitive action)
+
+**Input:** expert rules, optional **Active skill** block (protocol steps, progress, success/abort), then game state, previous subgoal, recent actions/rewards, numbered env actions.
+
+```
+You are an expert game-playing agent. You receive a game state and must choose exactly one action by its NUMBER.
+...
+Output format (strict):
+SUBGOAL: [TAG] <your immediate objective in ≤15 words>
+REASONING: <1-2 sentences>
+ACTION: <number>
+
+--- Active Skill ---
+Skill: merge_high_tiles
+Preconditions: empty_cells >= 1
+Progress: 2/4 plan steps done
+Plan:
+  1. [done] Press primary direction to align
+  2. [current] Merge same-rank adjacent tiles
+  ...
+Success: max_tile increased OR board more ordered
+Abort: no legal moves for 3 steps
+
+Game state:
+...
+
+Previous subgoal: [OPTIMIZE] keep high tile in corner
+Active skill: merge_high_tiles — stack and merge on bottom edge
+
+Recent: left(+4), left(0), down(+8)
+
+Available actions (pick ONE by number):
+  1. up
+  2. down
+  3. left
+  4. right
+
+Subgoal tags: SETUP|EXECUTE|OPTIMIZE|...
+First state your SUBGOAL, then choose the best action.
+Output SUBGOAL, REASONING, then ACTION number.
+```
+
+**Output (assistant):**
+
+```
+SUBGOAL: [EXECUTE] merge the two 64s on the bottom row
+REASONING: Down aligns the pair so the next left merge clears the row.
+ACTION: 2
+```
+
+---
+
+#### 3. `segment` (Skill bank — Stage 2 segmentation preferences)
+
+**Input:** segment span, observations/actions, predicates, candidate skill IDs (with optional descriptions). Same family as [`_build_segment_ranking_prompt`](skill_agents_grpo/infer_segmentation/llm_teacher.py) / pairwise variants.
+
+```
+You are an expert at recognizing skills in agent trajectories.
+
+A trajectory segment spans timesteps 12 to 28 (length 17).
+
+Observations:
+['grid 4x4 ...', 'score=120', ...]
+
+Actions:
+['left', 'left', 'down', ...]
+
+State at segment start: {"empty": "6", "max": "32"}
+State at segment end:   {"empty": "4", "max": "64"}
+
+Candidate skills:
+  - "SKILL_A": clear_bottom_row
+  - "SKILL_B": build_corner_stack
+  - "__NEW__"
+
+Rank ALL candidate skills from best fit to worst fit for this segment.
+...
+Return ONLY a JSON object (no extra text):
+{"ranking": ["best_skill", "second_best", ...], "reasoning": "brief explanation"}
+```
+
+**Output (assistant):**
+
+```json
+{"ranking": ["SKILL_B", "SKILL_A", "__NEW__"], "reasoning": "Actions consistently push tiles toward one corner before merging."}
+```
+
+(Pairwise mode returns `{"choice": "A" or "B", "evidence": "..."}`.)
+
+---
+
+#### 4. `contract` (Skill bank — Stage 3 effect summary)
+
+**Input:** from [`_CONTRACT_PROMPT_TEMPLATE`](skill_agents_grpo/stage3_mvp/llm_contract.py).
+
+```
+You are analyzing skill effects from game trajectory segments.
+
+Skill: SKILL_B
+Number of instances: 8
+
+Representative segment observations:
+"max=32 empty=6"; "max=64 empty=4"; ...
+
+State predicates at segment start: ["empty=6", "max=32"]
+State predicates at segment end: ["empty=4", "max=64"]
+
+Summarize the effects of this skill as a JSON object:
+{"eff_add": ["predicates that become true"], "eff_del": ["predicates that become false"], "description": "one-line description"}
+```
+
+**Output (assistant):**
+
+```json
+{"eff_add": ["max_tile_increased", "tiles_merged"], "eff_del": [], "description": "Increases highest tile by merging aligned same-value cells."}
+```
+
+---
+
+#### 5. `curator` (Skill bank — Stage 4 maintenance filter)
+
+**Input:** from [`_CURATOR_PROMPT_TEMPLATE`](skill_agents_grpo/bank_maintenance/llm_curator.py).
+
+```
+You are a skill bank maintenance curator. Review the proposed actions and decide whether to approve, veto, or defer each one.
+
+## Bank Summary
+Total skills: 42
+Mean pass rate: 0.71
+Skills with low pass rate (<0.60): 5
+
+## Proposed Actions
+
+  Action 0: MERGE on SKILL_A
+    Skill score: 0.88
+    Pass rate: 0.75
+    Instances: 12
+    ...
+
+  Action 1: MATERIALIZE on __NEW__
+    Instances: 8
+    ...
+
+For each action, respond with a JSON object:
+{"decisions": [{"idx": 0, "verdict": "approve|veto|defer", "reason": "brief reason"}, ...]}
+...
+```
+
+**Output (assistant):**
+
+```json
+{"decisions": [{"idx": 0, "verdict": "approve", "reason": "Strong metrics and clear duplicate behavior with SKILL_B."}, {"idx": 1, "verdict": "defer", "reason": "Only 8 instances; wait for more evidence."}]}
+```
+
+---
+
 ## Co-Evolution Pipeline
 
 The co-evolution loop alternates between training both agents. Each iteration: collect rollouts → update Skill Bank → train Decision Agent → repeat.
