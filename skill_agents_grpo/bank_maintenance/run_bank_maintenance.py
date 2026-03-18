@@ -244,9 +244,13 @@ def build_transition_bigrams(
     return dict(bigrams)
 
 
-def _collect_curator_candidates(result: BankMaintenanceResult) -> List[Dict[str, Any]]:
+def _collect_curator_candidates(
+    result: BankMaintenanceResult,
+    bank: Optional[SkillBankMVP] = None,
+) -> List[Dict[str, Any]]:
     """Summarize all maintenance actions as curator candidates.
 
+    Covers all 5 action types: split, merge, refine, materialize, promote.
     Uses ``"type"`` as the key for the action kind, matching
     ``_format_action`` in ``llm_curator.py``.
     """
@@ -282,6 +286,30 @@ def _collect_curator_candidates(result: BankMaintenanceResult) -> List[Dict[str,
                     "added": rr.added_literals[:5] if rr.added_literals else [],
                 },
             })
+    for mid in result.materialized_ids:
+        skill = bank.get_skill(mid) if bank else None
+        candidates.append({
+            "type": "materialize",
+            "skill_id": mid,
+            "trigger": "recurring pattern",
+            "n_instances": len(getattr(skill, "sub_episodes", [])) if skill else 0,
+            "details": {
+                "name": getattr(skill, "name", mid) if skill else mid,
+            },
+        })
+    for pid in result.promoted_ids:
+        skill = bank.get_skill(pid) if bank else None
+        report = bank.get_report(pid) if bank else None
+        candidates.append({
+            "type": "promote",
+            "skill_id": pid,
+            "trigger": "proto-skill qualified",
+            "pass_rate": report.overall_pass_rate if report else 0,
+            "n_instances": getattr(skill, "n_instances", 0) if skill else 0,
+            "details": {
+                "name": getattr(skill, "name", pid) if skill else pid,
+            },
+        })
     return candidates
 
 
@@ -608,7 +636,7 @@ def run_bank_maintenance(
     # ── 4b. CURATOR — LLM filtering of maintenance actions ──────
     # Summarize all proposed actions and call the curator so GRPO
     # training data is generated for the curator adapter.
-    curator_candidates = _collect_curator_candidates(result)
+    curator_candidates = _collect_curator_candidates(result, bank=bank)
     if curator_candidates:
         try:
             from skill_agents_grpo.bank_maintenance.llm_curator import filter_candidates

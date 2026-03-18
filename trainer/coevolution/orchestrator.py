@@ -9,6 +9,13 @@ Phases A and B overlap via cross-system batching: as short-game episodes
 complete, their trajectories are immediately fed into the skill bank
 pipeline while longer games continue running.
 
+Phase C is **pipelined**: GRPO for step N runs on GPUs 4-7 concurrently
+with rollout for step N+1 on GPUs 0-3 (vLLM inference).  Rollout N+1
+uses adapter weights from step N-1 (one step behind), which is acceptable
+for RL since GRPO uses importance sampling ratios to correct for
+off-policy data.  This hides ~14 min of GRPO time behind ~22 min of
+rollout, saving ~14 min per step.
+
 Checkpoints every ``checkpoint_interval`` steps and logs all metrics
 to Weights & Biases.
 """
@@ -258,9 +265,186 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                 f"{Path(config.run_dir) / 'vllm_logs'} for details"
             )
 
+    # ── Helper: finalize a completed step (deferred until GRPO done) ──
+
+    async def _finalize_step(ctx, grpo_result, phase_c_time):
+        """Log metrics, export GRPO data, and checkpoint a completed step.
+
+        All mutable per-step data is pre-captured in *ctx* so this can
+        run safely after the next step has begun.
+        """
+        _step = ctx['step']
+        _mode = ctx['mode']
+        _phase_ab_time = ctx['phase_ab_time']
+        _phase_b_time = ctx['phase_b_time']
+        _ep_metrics = ctx['episode_metrics']
+        _sb_results = ctx['sb_update_results']
+        _new_skills = ctx['total_new_skills']
+        _vstats = ctx['vllm_stats']
+        _sk_counts = ctx['skill_counts']
+        _n_skills = sum(_sk_counts.values())
+
+        if grpo_result:
+            try:
+                grpo_step_dir = Path(config.grpo_data_dir) / f"step_{_step:04d}"
+                grpo_step_dir.mkdir(parents=True, exist_ok=True)
+                for _aname, _recs in grpo_result.records.items():
+                    _out = grpo_step_dir / f"{_aname}.jsonl"
+                    with open(_out, "w", encoding="utf-8") as f:
+                        for rec in _recs:
+                            f.write(json.dumps(rec, default=str) + "\n")
+                logger.debug("GRPO data exported: %s", grpo_step_dir)
+            except Exception as exc:
+                logger.warning("GRPO data export failed: %s", exc)
+
+        step_elapsed = _phase_ab_time + _phase_b_time + phase_c_time
+        step_summary = {
+            "step": _step,
+            "mode": _mode,
+            "wall_time_s": step_elapsed,
+            "phase_ab_time_s": _phase_ab_time,
+            "phase_b_finalize_time_s": _phase_b_time,
+            "phase_c_grpo_time_s": phase_c_time,
+            "n_episodes": _ep_metrics["aggregate"]["n_episodes"],
+            "total_steps_played": _ep_metrics["aggregate"]["total_steps"],
+            "mean_reward": _ep_metrics["aggregate"]["mean_reward"],
+            "n_skills": _n_skills,
+            "n_new_skills": _new_skills,
+            "skills_per_game": _sk_counts,
+            "vllm_calls": _vstats["call_count"],
+            "vllm_prompt_tokens": _vstats["total_prompt_tokens"],
+            "vllm_completion_tokens": _vstats["total_completion_tokens"],
+        }
+
+        logger.info(
+            "Step %d complete: %.1fs | %d eps | mean_reward=%.2f | "
+            "%d skills (+%d) across %d games | %d vLLM calls",
+            _step, step_elapsed,
+            step_summary["n_episodes"], step_summary["mean_reward"],
+            _n_skills, _new_skills,
+            sum(1 for c in _sk_counts.values() if c > 0),
+            step_summary["vllm_calls"],
+        )
+
+        if wandb is not None:
+            log_dict = {
+                "step": _step,
+                "wall_time_s": step_elapsed,
+                "phase_ab_time_s": _phase_ab_time,
+                "phase_b_finalize_time_s": _phase_b_time,
+                "phase_c_grpo_time_s": phase_c_time,
+                "mode": 0 if _mode == "cold-start" else 1,
+                "n_skills": _n_skills,
+                "n_new_skills": _new_skills,
+                "vllm/calls": _vstats["call_count"],
+                "vllm/prompt_tokens": _vstats["total_prompt_tokens"],
+                "vllm/completion_tokens": _vstats["total_completion_tokens"],
+            }
+            for game, m in _ep_metrics["per_game"].items():
+                log_dict[f"reward/{game}/mean"] = m["mean_reward"]
+                log_dict[f"reward/{game}/max"] = m["max_reward"]
+                log_dict[f"reward/{game}/min"] = m["min_reward"]
+                log_dict[f"reward/{game}/std"] = m["std_reward"]
+                log_dict[f"reward/{game}/n_episodes"] = m["n_episodes"]
+                log_dict[f"reward/{game}/mean_steps"] = m["mean_steps"]
+            log_dict["reward/mean"] = _ep_metrics["aggregate"]["mean_reward"]
+            log_dict["reward/max"] = _ep_metrics["aggregate"]["max_reward"]
+            log_dict["reward/min"] = _ep_metrics["aggregate"]["min_reward"]
+            log_dict["reward/std"] = _ep_metrics["aggregate"]["std_reward"]
+            log_dict["reward/total_steps"] = _ep_metrics["aggregate"]["total_steps"]
+            for game, cnt in _sk_counts.items():
+                log_dict[f"skillbank/{game}/n_skills"] = cnt
+            for game, result in _sb_results.items():
+                for stage, t in result.stage_times.items():
+                    log_dict[f"skillbank/{game}/{stage}_time_s"] = t
+            if grpo_result:
+                for adapter, stats in grpo_result.decision_stats.items():
+                    log_dict[f"grpo/decision/{adapter}/loss"] = stats.mean_loss
+                    log_dict[f"grpo/decision/{adapter}/n_samples"] = stats.n_samples
+                for adapter, stats in grpo_result.skillbank_stats.items():
+                    log_dict[f"grpo/skillbank/{adapter}/loss"] = stats.mean_loss
+                    log_dict[f"grpo/skillbank/{adapter}/n_samples"] = stats.n_samples
+                log_dict["grpo/wall_time_s"] = grpo_result.wall_time_s
+            try:
+                wandb.log(log_dict, step=_step)
+            except Exception as exc:
+                logger.warning("W&B log failed: %s", exc)
+
+        if tb_writer is not None:
+            try:
+                tb_writer.add_scalar("timing/wall_time_s", step_elapsed, _step)
+                tb_writer.add_scalar("timing/phase_ab_s", _phase_ab_time, _step)
+                tb_writer.add_scalar("timing/phase_b_finalize_s", _phase_b_time, _step)
+                tb_writer.add_scalar("timing/phase_c_grpo_s", phase_c_time, _step)
+                tb_writer.add_scalar("reward/mean", _ep_metrics["aggregate"]["mean_reward"], _step)
+                tb_writer.add_scalar("reward/max", _ep_metrics["aggregate"]["max_reward"], _step)
+                tb_writer.add_scalar("reward/min", _ep_metrics["aggregate"]["min_reward"], _step)
+                tb_writer.add_scalar("reward/std", _ep_metrics["aggregate"]["std_reward"], _step)
+                tb_writer.add_scalar("reward/total_steps", _ep_metrics["aggregate"]["total_steps"], _step)
+                for game, m in _ep_metrics["per_game"].items():
+                    tb_writer.add_scalar(f"reward/{game}/mean", m["mean_reward"], _step)
+                    tb_writer.add_scalar(f"reward/{game}/max", m["max_reward"], _step)
+                    tb_writer.add_scalar(f"reward/{game}/min", m["min_reward"], _step)
+                    tb_writer.add_scalar(f"reward/{game}/std", m["std_reward"], _step)
+                tb_writer.add_scalar("skillbank/n_skills", _n_skills, _step)
+                tb_writer.add_scalar("skillbank/n_new_skills", _new_skills, _step)
+                for game, cnt in _sk_counts.items():
+                    tb_writer.add_scalar(f"skillbank/{game}/n_skills", cnt, _step)
+                for game, result in _sb_results.items():
+                    for stage, t in result.stage_times.items():
+                        tb_writer.add_scalar(f"skillbank/{game}/{stage}_time_s", t, _step)
+                tb_writer.add_scalar("vllm/calls", _vstats["call_count"], _step)
+                tb_writer.add_scalar("vllm/prompt_tokens", _vstats["total_prompt_tokens"], _step)
+                tb_writer.add_scalar("vllm/completion_tokens", _vstats["total_completion_tokens"], _step)
+                if grpo_result:
+                    for adapter, stats in grpo_result.decision_stats.items():
+                        tb_writer.add_scalar(f"grpo/decision/{adapter}/loss", stats.mean_loss, _step)
+                        tb_writer.add_scalar(f"grpo/decision/{adapter}/n_samples", stats.n_samples, _step)
+                    for adapter, stats in grpo_result.skillbank_stats.items():
+                        tb_writer.add_scalar(f"grpo/skillbank/{adapter}/loss", stats.mean_loss, _step)
+                        tb_writer.add_scalar(f"grpo/skillbank/{adapter}/n_samples", stats.n_samples, _step)
+                    tb_writer.add_scalar("grpo/wall_time_s", grpo_result.wall_time_s, _step)
+                tb_writer.flush()
+            except Exception as exc:
+                logger.warning("TensorBoard log failed: %s", exc)
+
+        try:
+            with open(step_log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(step_summary, default=str) + "\n")
+        except Exception:
+            pass
+
+        should_checkpoint = (
+            (_step + 1) % config.checkpoint_interval == 0
+            or _step == 0
+            or _step == config.total_steps - 1
+        )
+        if should_checkpoint:
+            try:
+                ckpt_metadata = {
+                    "n_skills": _n_skills,
+                    "skills_per_game": _sk_counts,
+                    "n_new_skills": _new_skills,
+                    "mean_reward": step_summary["mean_reward"],
+                    "n_episodes": step_summary["n_episodes"],
+                    "mode": _mode,
+                }
+                save_checkpoint(
+                    config.checkpoint_dir, _step,
+                    bank_agents=sb_manager.get_agents(),
+                    adapter_dir=config.adapter_dir,
+                    metadata=ckpt_metadata,
+                )
+                cleanup_old_checkpoints(config.checkpoint_dir, keep_last=10)
+                logger.info("Checkpoint saved at step %d", _step)
+            except Exception as exc:
+                logger.error("Checkpoint save failed: %s", exc)
+
     # ==================================================================
-    # MAIN LOOP
+    # MAIN LOOP — pipelined: GRPO(N) overlaps with rollout(N+1)
     # ==================================================================
+    _pending_grpo = None  # (asyncio.Task, step_ctx) or None
+
     for step in range(start_step, config.total_steps):
         step_t0 = time.monotonic()
         is_cold_start = (step == 0)
@@ -361,6 +545,31 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
         )
         consumer_task = asyncio.create_task(skill_bank_consumer())
 
+        # ── Await previous step's GRPO (concurrent with rollout above) ──
+        _prev_grpo_result = None
+        _prev_phase_c_time = 0.0
+        if _pending_grpo is not None:
+            _prev_task, _prev_ctx = _pending_grpo
+            try:
+                _prev_grpo_result = await _prev_task
+            except Exception as exc:
+                logger.error(
+                    "GRPO training failed (step %d): %s",
+                    _prev_ctx['step'], exc, exc_info=True,
+                )
+                try:
+                    import torch as _torch
+                    import gc as _gc
+                    _gc.collect()
+                    _torch.cuda.empty_cache()
+                except Exception:
+                    pass
+            _prev_phase_c_time = time.monotonic() - _prev_ctx['phase_c_t0']
+            logger.info(
+                "Phase C (GRPO, step %d): %.1fs",
+                _prev_ctx['step'], _prev_phase_c_time,
+            )
+
         rollout_results: List[EpisodeResult] = await rollout_task
 
         # Signal consumer to drain remaining
@@ -374,6 +583,19 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
             "Phase A+B: %.1fs, %d episodes collected, %d consumed by skill bank",
             phase_ab_time, len(rollout_results), n_consumed,
         )
+
+        # ── Finalize previous step (hot-reload + metrics + checkpoint) ──
+        if _pending_grpo is not None:
+            _, _prev_ctx = _pending_grpo
+            if vllm_manager and _prev_grpo_result:
+                try:
+                    await vllm_manager.reload_adapters()
+                except Exception as exc:
+                    logger.warning("Adapter hot-reload failed: %s", exc)
+            await _finalize_step(
+                _prev_ctx, _prev_grpo_result, _prev_phase_c_time,
+            )
+            _pending_grpo = None
 
         # ── Export per-episode rewards ────────────────────────────────
         try:
@@ -411,222 +633,66 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
         phase_b_time = time.monotonic() - phase_b_t0
         logger.info("Phase B finalize: %.1fs (%d game banks)", phase_b_time, len(sb_update_results))
 
-        # ── Phase C: GRPO training (on dedicated GPUs) ───────────────
-        grpo_result: Optional[GRPOStepResult] = None
-        phase_c_time = 0.0
-        if config.grpo_enabled:
-            phase_c_t0 = time.monotonic()
-            try:
-                grpo_result = await run_grpo_training(
-                    rollout_results,
-                    sb_manager.grpo_data,
-                    config,
-                    step=step,
-                    executor=thread_executor,
-                )
-            except Exception as exc:
-                logger.error("GRPO training failed: %s", exc, exc_info=True)
-                try:
-                    import torch, gc
-                    gc.collect()
-                    torch.cuda.empty_cache()
-                    logger.info("GPU memory cache cleared after GRPO failure")
-                except Exception:
-                    pass
-            phase_c_time = time.monotonic() - phase_c_t0
-            logger.info("Phase C (GRPO): %.1fs", phase_c_time)
-
-            # ── Hot-reload adapters on persistent vLLM instances ──────
-            if vllm_manager and grpo_result:
-                try:
-                    await vllm_manager.reload_adapters()
-                except Exception as exc:
-                    logger.warning("Adapter hot-reload failed: %s", exc)
-
-            # ── Export GRPO training data ─────────────────────────────
-            if grpo_result:
-                try:
-                    grpo_step_dir = Path(config.grpo_data_dir) / f"step_{step:04d}"
-                    grpo_step_dir.mkdir(parents=True, exist_ok=True)
-                    for adapter_name, records in grpo_result.records.items():
-                        out_path = grpo_step_dir / f"{adapter_name}.jsonl"
-                        with open(out_path, "w", encoding="utf-8") as f:
-                            for rec in records:
-                                f.write(json.dumps(rec, default=str) + "\n")
-                    logger.debug("GRPO data exported: %s", grpo_step_dir)
-                except Exception as exc:
-                    logger.warning("GRPO data export failed: %s", exc)
-
-        # ── Metrics ──────────────────────────────────────────────────
-        step_elapsed = time.monotonic() - step_t0
-        episode_metrics = compute_episode_metrics(rollout_results)
-
-        skill_counts = sb_manager.skill_counts()
-        n_skills = sum(skill_counts.values())
-
-        vllm_stats = vllm_client.stats()
-
-        step_summary = {
-            "step": step,
-            "mode": mode,
-            "wall_time_s": step_elapsed,
-            "phase_ab_time_s": phase_ab_time,
-            "phase_b_finalize_time_s": phase_b_time,
-            "phase_c_grpo_time_s": phase_c_time,
-            "n_episodes": episode_metrics["aggregate"]["n_episodes"],
-            "total_steps_played": episode_metrics["aggregate"]["total_steps"],
-            "mean_reward": episode_metrics["aggregate"]["mean_reward"],
-            "n_skills": n_skills,
-            "n_new_skills": total_new_skills,
-            "skills_per_game": skill_counts,
-            "vllm_calls": vllm_stats["call_count"],
-            "vllm_prompt_tokens": vllm_stats["total_prompt_tokens"],
-            "vllm_completion_tokens": vllm_stats["total_completion_tokens"],
+        # ── Snapshot step context for deferred finalization ─────────
+        step_ctx = {
+            'step': step,
+            'mode': mode,
+            'phase_ab_time': phase_ab_time,
+            'phase_b_time': phase_b_time,
+            'episode_metrics': compute_episode_metrics(rollout_results),
+            'sb_update_results': sb_update_results,
+            'total_new_skills': total_new_skills,
+            'vllm_stats': vllm_client.stats(),
+            'skill_counts': sb_manager.skill_counts(),
         }
 
-        logger.info(
-            "Step %d complete: %.1fs | %d eps | mean_reward=%.2f | "
-            "%d skills (+%d) across %d games | %d vLLM calls",
-            step, step_elapsed,
-            step_summary["n_episodes"], step_summary["mean_reward"],
-            n_skills, total_new_skills,
-            sum(1 for c in skill_counts.values() if c > 0),
-            step_summary["vllm_calls"],
-        )
+        # ── Phase C: Launch GRPO in background (overlaps with next rollout) ──
+        if config.grpo_enabled:
+            step_ctx['phase_c_t0'] = time.monotonic()
+            _pending_grpo = (
+                asyncio.create_task(
+                    run_grpo_training(
+                        rollout_results,
+                        sb_manager.grpo_data,
+                        config,
+                        step=step,
+                        executor=thread_executor,
+                    )
+                ),
+                step_ctx,
+            )
+            logger.info("Phase C: GRPO launched in background for step %d", step)
+        else:
+            await _finalize_step(step_ctx, None, 0.0)
 
-        # ── W&B logging ──────────────────────────────────────────────
-        if wandb is not None:
-            log_dict = {
-                "step": step,
-                "wall_time_s": step_elapsed,
-                "phase_ab_time_s": phase_ab_time,
-                "phase_b_finalize_time_s": phase_b_time,
-                "phase_c_grpo_time_s": phase_c_time,
-                "mode": 0 if mode == "cold-start" else 1,
-                "n_skills": n_skills,
-                "n_new_skills": total_new_skills,
-                "vllm/calls": vllm_stats["call_count"],
-                "vllm/prompt_tokens": vllm_stats["total_prompt_tokens"],
-                "vllm/completion_tokens": vllm_stats["total_completion_tokens"],
-            }
-
-            # Per-game rewards
-            for game, m in episode_metrics["per_game"].items():
-                log_dict[f"reward/{game}/mean"] = m["mean_reward"]
-                log_dict[f"reward/{game}/max"] = m["max_reward"]
-                log_dict[f"reward/{game}/min"] = m["min_reward"]
-                log_dict[f"reward/{game}/std"] = m["std_reward"]
-                log_dict[f"reward/{game}/n_episodes"] = m["n_episodes"]
-                log_dict[f"reward/{game}/mean_steps"] = m["mean_steps"]
-
-            # Aggregate reward
-            log_dict["reward/mean"] = episode_metrics["aggregate"]["mean_reward"]
-            log_dict["reward/max"] = episode_metrics["aggregate"]["max_reward"]
-            log_dict["reward/min"] = episode_metrics["aggregate"]["min_reward"]
-            log_dict["reward/std"] = episode_metrics["aggregate"]["std_reward"]
-            log_dict["reward/total_steps"] = episode_metrics["aggregate"]["total_steps"]
-
-            # Per-game skill counts
-            for game, cnt in skill_counts.items():
-                log_dict[f"skillbank/{game}/n_skills"] = cnt
-
-            # Skill bank stage times (aggregated across games)
-            for game, result in sb_update_results.items():
-                for stage, t in result.stage_times.items():
-                    log_dict[f"skillbank/{game}/{stage}_time_s"] = t
-
-            # GRPO metrics
-            if grpo_result:
-                for adapter, stats in grpo_result.decision_stats.items():
-                    log_dict[f"grpo/decision/{adapter}/loss"] = stats.mean_loss
-                    log_dict[f"grpo/decision/{adapter}/n_samples"] = stats.n_samples
-                for adapter, stats in grpo_result.skillbank_stats.items():
-                    log_dict[f"grpo/skillbank/{adapter}/loss"] = stats.mean_loss
-                    log_dict[f"grpo/skillbank/{adapter}/n_samples"] = stats.n_samples
-                log_dict["grpo/wall_time_s"] = grpo_result.wall_time_s
-
-            try:
-                wandb.log(log_dict, step=step)
-            except Exception as exc:
-                logger.warning("W&B log failed: %s", exc)
-
-        # ── TensorBoard logging ──────────────────────────────────────
-        if tb_writer is not None:
-            try:
-                tb_writer.add_scalar("timing/wall_time_s", step_elapsed, step)
-                tb_writer.add_scalar("timing/phase_ab_s", phase_ab_time, step)
-                tb_writer.add_scalar("timing/phase_b_finalize_s", phase_b_time, step)
-                tb_writer.add_scalar("timing/phase_c_grpo_s", phase_c_time, step)
-
-                tb_writer.add_scalar("reward/mean", episode_metrics["aggregate"]["mean_reward"], step)
-                tb_writer.add_scalar("reward/max", episode_metrics["aggregate"]["max_reward"], step)
-                tb_writer.add_scalar("reward/min", episode_metrics["aggregate"]["min_reward"], step)
-                tb_writer.add_scalar("reward/std", episode_metrics["aggregate"]["std_reward"], step)
-                tb_writer.add_scalar("reward/total_steps", episode_metrics["aggregate"]["total_steps"], step)
-                for game, m in episode_metrics["per_game"].items():
-                    tb_writer.add_scalar(f"reward/{game}/mean", m["mean_reward"], step)
-                    tb_writer.add_scalar(f"reward/{game}/max", m["max_reward"], step)
-                    tb_writer.add_scalar(f"reward/{game}/min", m["min_reward"], step)
-                    tb_writer.add_scalar(f"reward/{game}/std", m["std_reward"], step)
-
-                tb_writer.add_scalar("skillbank/n_skills", n_skills, step)
-                tb_writer.add_scalar("skillbank/n_new_skills", total_new_skills, step)
-                for game, cnt in skill_counts.items():
-                    tb_writer.add_scalar(f"skillbank/{game}/n_skills", cnt, step)
-                for game, result in sb_update_results.items():
-                    for stage, t in result.stage_times.items():
-                        tb_writer.add_scalar(f"skillbank/{game}/{stage}_time_s", t, step)
-
-                tb_writer.add_scalar("vllm/calls", vllm_stats["call_count"], step)
-                tb_writer.add_scalar("vllm/prompt_tokens", vllm_stats["total_prompt_tokens"], step)
-                tb_writer.add_scalar("vllm/completion_tokens", vllm_stats["total_completion_tokens"], step)
-
-                if grpo_result:
-                    for adapter, stats in grpo_result.decision_stats.items():
-                        tb_writer.add_scalar(f"grpo/decision/{adapter}/loss", stats.mean_loss, step)
-                        tb_writer.add_scalar(f"grpo/decision/{adapter}/n_samples", stats.n_samples, step)
-                    for adapter, stats in grpo_result.skillbank_stats.items():
-                        tb_writer.add_scalar(f"grpo/skillbank/{adapter}/loss", stats.mean_loss, step)
-                        tb_writer.add_scalar(f"grpo/skillbank/{adapter}/n_samples", stats.n_samples, step)
-                    tb_writer.add_scalar("grpo/wall_time_s", grpo_result.wall_time_s, step)
-
-                tb_writer.flush()
-            except Exception as exc:
-                logger.warning("TensorBoard log failed: %s", exc)
-
-        # ── Step log (JSONL) ─────────────────────────────────────────
+    # ── Finalize last step ────────────────────────────────────────
+    if _pending_grpo is not None:
+        _last_task, _last_ctx = _pending_grpo
+        _last_result = None
+        _last_phase_c_time = 0.0
         try:
-            with open(step_log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(step_summary, default=str) + "\n")
-        except Exception:
-            pass
-
-        # ── Checkpoint ───────────────────────────────────────────────
-        should_checkpoint = (
-            (step + 1) % config.checkpoint_interval == 0
-            or step == 0
-            or step == config.total_steps - 1
-        )
-        if should_checkpoint:
+            _last_result = await _last_task
+        except Exception as exc:
+            logger.error("Final GRPO training failed: %s", exc, exc_info=True)
             try:
-                ckpt_metadata = {
-                    "n_skills": n_skills,
-                    "skills_per_game": skill_counts,
-                    "n_new_skills": total_new_skills,
-                    "mean_reward": step_summary["mean_reward"],
-                    "n_episodes": step_summary["n_episodes"],
-                    "mode": mode,
-                }
-                save_checkpoint(
-                    config.checkpoint_dir, step,
-                    bank_agents=sb_manager.get_agents(),
-                    adapter_dir=config.adapter_dir,
-                    metadata=ckpt_metadata,
-                )
-                cleanup_old_checkpoints(config.checkpoint_dir, keep_last=10)
-                logger.info("Checkpoint saved at step %d", step)
+                import torch as _torch
+                import gc as _gc
+                _gc.collect()
+                _torch.cuda.empty_cache()
+            except Exception:
+                pass
+        _last_phase_c_time = time.monotonic() - _last_ctx['phase_c_t0']
+        logger.info(
+            "Phase C (GRPO, step %d): %.1fs",
+            _last_ctx['step'], _last_phase_c_time,
+        )
+        if vllm_manager and _last_result:
+            try:
+                await vllm_manager.reload_adapters()
             except Exception as exc:
-                logger.error("Checkpoint save failed: %s", exc)
+                logger.warning("Adapter hot-reload failed: %s", exc)
+        await _finalize_step(_last_ctx, _last_result, _last_phase_c_time)
+        _pending_grpo = None
 
     # ── Cleanup ───────────────────────────────────────────────────
     if vllm_manager:

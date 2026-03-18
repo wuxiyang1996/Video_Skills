@@ -303,6 +303,39 @@ class MultiLoraSkillBankLLM:
                 f"Adapter '{name}' not loaded and allow_fallback_to_base_model=False"
             )
 
+    # ── Chat template helpers ────────────────────────────────────────
+
+    def _wrap_prompt(self, prompt: str) -> str:
+        """Wrap a raw prompt in the model's chat template (user turn +
+        generation prompt) so inference matches the SFT training format."""
+        if hasattr(self._tokenizer, "apply_chat_template"):
+            try:
+                return self._tokenizer.apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            except Exception:
+                pass
+        return prompt
+
+    def _wrap_prompt_completion(self, prompt: str, completion: str) -> str:
+        """Wrap (prompt, completion) in the chat template so GRPO
+        log-prob computation matches the SFT training format."""
+        if hasattr(self._tokenizer, "apply_chat_template"):
+            try:
+                return self._tokenizer.apply_chat_template(
+                    [
+                        {"role": "user", "content": prompt},
+                        {"role": "assistant", "content": completion},
+                    ],
+                    tokenize=False,
+                    add_generation_prompt=False,
+                )
+            except Exception:
+                pass
+        return prompt + completion
+
     # ── Generation ───────────────────────────────────────────────────
 
     def generate(
@@ -317,12 +350,16 @@ class MultiLoraSkillBankLLM:
     ) -> str:
         """Generate text using the adapter for *function*.
 
+        The raw *prompt* is wrapped in the model's chat template (as a
+        user turn with a generation prompt) so the tokenisation matches
+        the SFT / GRPO training format.
+
         Parameters
         ----------
         function : SkillFunction
             Selects which LoRA adapter to use.
         prompt : str
-            The input text.
+            The input text (raw, without chat wrapping).
         max_new_tokens, temperature, top_p :
             Override config defaults per call.
 
@@ -342,7 +379,8 @@ class MultiLoraSkillBankLLM:
 
         import torch
 
-        inputs = self._tokenizer(prompt, return_tensors="pt")
+        chat_prompt = self._wrap_prompt(prompt)
+        inputs = self._tokenizer(chat_prompt, return_tensors="pt")
         dev = self._input_device
         input_ids = inputs["input_ids"].to(dev)
         attention_mask = inputs.get("attention_mask", None)
@@ -384,10 +422,9 @@ class MultiLoraSkillBankLLM:
     ) -> "torch.Tensor":
         """Compute per-token log-probs of *completion* given *prompt* with gradients.
 
-        Used by the GRPO training phase: the rollout phase collects
-        (prompt, completion, reward) tuples in inference mode, then
-        this method recomputes log-probs with gradients enabled so that
-        the GRPO policy-gradient loss can backprop into the LoRA adapter.
+        Both *prompt* and *completion* are raw strings (no chat wrapping).
+        This method applies the same chat template used by SFT and
+        :meth:`generate` so the token boundaries are consistent.
 
         Returns
         -------
@@ -404,7 +441,7 @@ class MultiLoraSkillBankLLM:
 
         import torch
 
-        full_text = prompt + completion
+        full_text = self._wrap_prompt_completion(prompt, completion)
         inputs = self._tokenizer(full_text, return_tensors="pt")
         dev = self._input_device
         input_ids = inputs["input_ids"].to(dev)
@@ -412,7 +449,8 @@ class MultiLoraSkillBankLLM:
         if attention_mask is not None:
             attention_mask = attention_mask.to(dev)
 
-        prompt_inputs = self._tokenizer(prompt, return_tensors="pt")
+        chat_prompt = self._wrap_prompt(prompt)
+        prompt_inputs = self._tokenizer(chat_prompt, return_tensors="pt")
         prompt_len = prompt_inputs["input_ids"].shape[1]
 
         if prompt_len >= input_ids.shape[1]:
@@ -423,8 +461,6 @@ class MultiLoraSkillBankLLM:
                 input_ids=input_ids,
                 attention_mask=attention_mask,
             )
-            # logits[:, prompt_len-1:-1, :] aligns with target tokens
-            # starting at position prompt_len
             logits = outputs.logits[:, prompt_len - 1 : -1, :]
             target_ids = input_ids[:, prompt_len:]
             token_log_probs = torch.log_softmax(logits, dim=-1)
@@ -441,9 +477,8 @@ class MultiLoraSkillBankLLM:
     ) -> List["torch.Tensor"]:
         """Batched version of :meth:`log_probs`.
 
-        Pads all (prompt + completion) sequences to the same length and
-        runs a single forward pass.  Returns a list of per-sample
-        log-prob tensors, each with its own computation graph.
+        Applies chat template wrapping to match SFT / generate() format,
+        then pads all sequences and runs a single forward pass.
         """
         if not self.is_loaded:
             self.load()
@@ -455,7 +490,10 @@ class MultiLoraSkillBankLLM:
         import torch
 
         dev = self._input_device
-        full_texts = [p + c for p, c in zip(prompts, completions)]
+        full_texts = [
+            self._wrap_prompt_completion(p, c)
+            for p, c in zip(prompts, completions)
+        ]
         batch_enc = self._tokenizer(
             full_texts, return_tensors="pt", padding=True, truncation=True,
         )
@@ -464,7 +502,8 @@ class MultiLoraSkillBankLLM:
 
         prompt_lens = []
         for p in prompts:
-            penc = self._tokenizer(p, return_tensors="pt")
+            chat_p = self._wrap_prompt(p)
+            penc = self._tokenizer(chat_p, return_tensors="pt")
             prompt_lens.append(penc["input_ids"].shape[1])
 
         with torch.enable_grad():

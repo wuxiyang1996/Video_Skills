@@ -154,6 +154,23 @@ def _parse_json_from_response(response: str) -> Optional[dict]:
 
 # ── Ranking prompts ──────────────────────────────────────────────────
 
+def _format_skill_candidates(
+    skill_names: List[str],
+    skill_descriptions: Optional[Dict[str, str]] = None,
+) -> str:
+    """Format candidate skills, enriching with descriptions when available."""
+    if not skill_descriptions:
+        return "[" + ", ".join(f'"{s}"' for s in skill_names) + "]"
+    lines: List[str] = []
+    for sid in skill_names:
+        desc = skill_descriptions.get(sid, "")
+        if desc:
+            lines.append(f'  - "{sid}": {desc[:150]}')
+        else:
+            lines.append(f'  - "{sid}"')
+    return "\n".join(lines)
+
+
 def _build_segment_ranking_prompt(
     observations: Sequence,
     actions: Sequence,
@@ -162,17 +179,19 @@ def _build_segment_ranking_prompt(
     segment_end: int,
     predicates_start: Optional[dict] = None,
     predicates_end: Optional[dict] = None,
+    skill_descriptions: Optional[Dict[str, str]] = None,
 ) -> str:
     """
     Ask the LLM to rank skills for one segment (best fit first).
 
-    The LLM considers behavior fit, duration plausibility, and state-change
-    consistency holistically — but returns a ranking, not scores.
+    When *skill_descriptions* is provided (mapping ``skill_id`` to a
+    short summary), each candidate is shown with its description so the
+    model can make an informed ranking.
     """
     obs_str = str(list(observations))
     act_str = str(list(actions))
     length = len(observations)
-    skills_str = ", ".join(f'"{s}"' for s in skill_names)
+    candidates_block = _format_skill_candidates(skill_names, skill_descriptions)
     preds_s = str(predicates_start) if predicates_start else "N/A"
     preds_e = str(predicates_end) if predicates_end else "N/A"
 
@@ -189,7 +208,7 @@ def _build_segment_ranking_prompt(
         f"State at segment start: {preds_s}\n"
         f"State at segment end:   {preds_e}\n"
         f"\n"
-        f"Candidate skills: [{skills_str}]\n"
+        f"Candidate skills:\n{candidates_block}\n"
         f"\n"
         f"Rank ALL candidate skills from best fit to worst fit for this "
         f"segment.  Consider:\n"
@@ -206,18 +225,22 @@ def _build_segment_ranking_prompt(
 def _build_transition_ranking_prompt(
     prev_skill: str,
     skill_names: List[str],
+    skill_descriptions: Optional[Dict[str, str]] = None,
 ) -> str:
     """
     Ask the LLM to rank which skills most naturally follow prev_skill.
     """
-    skills_str = ", ".join(f'"{s}"' for s in skill_names)
+    candidates_block = _format_skill_candidates(skill_names, skill_descriptions)
+    prev_desc = ""
+    if skill_descriptions and prev_skill in skill_descriptions:
+        prev_desc = f" ({skill_descriptions[prev_skill][:100]})"
 
     return (
         f"You are an expert at modeling skill sequences in agent trajectories.\n"
         f"\n"
-        f"The agent just finished executing skill: \"{prev_skill}\"\n"
+        f"The agent just finished executing skill: \"{prev_skill}\"{prev_desc}\n"
         f"\n"
-        f"Candidate next skills: [{skills_str}]\n"
+        f"Candidate next skills:\n{candidates_block}\n"
         f"\n"
         f"Rank ALL candidate skills from most likely to follow to least "
         f"likely.  Consider natural task ordering, common behavior patterns, "
@@ -236,6 +259,7 @@ def _build_pairwise_prompt(
     skill_b: str,
     segment_start: int,
     segment_end: int,
+    skill_descriptions: Optional[Dict[str, str]] = None,
 ) -> str:
     """
     Ask the LLM which of two skills better fits this segment.
@@ -243,6 +267,9 @@ def _build_pairwise_prompt(
     """
     obs_str = str(list(observations))
     act_str = str(list(actions))
+
+    desc_a = f" ({skill_descriptions[skill_a][:100]})" if skill_descriptions and skill_a in skill_descriptions else ""
+    desc_b = f" ({skill_descriptions[skill_b][:100]})" if skill_descriptions and skill_b in skill_descriptions else ""
 
     return (
         f"You are an expert at recognizing skills in agent trajectories.\n"
@@ -252,8 +279,8 @@ def _build_pairwise_prompt(
         f"Actions:\n{act_str}\n"
         f"\n"
         f"Which skill better explains this segment?\n"
-        f"  A: \"{skill_a}\"\n"
-        f"  B: \"{skill_b}\"\n"
+        f"  A: \"{skill_a}\"{desc_a}\n"
+        f"  B: \"{skill_b}\"{desc_b}\n"
         f"\n"
         f"Return ONLY a JSON object:\n"
         f'{{"choice": "A" or "B", "evidence": "brief explanation"}}\n'
@@ -301,6 +328,7 @@ def _collect_one_segment_prefs(
     predicates: Optional[List[Optional[dict]]],
     cfg: LLMTeacherConfig,
     ask,
+    skill_descriptions: Optional[Dict[str, str]] = None,
 ) -> list:
     """Get pairwise preferences for a single segment (used by batch workers)."""
     seg_obs = observations[start: end + 1]
@@ -309,6 +337,7 @@ def _collect_one_segment_prefs(
     p_end = predicates[end] if predicates and end < len(predicates) else None
     prompt = _build_segment_ranking_prompt(
         seg_obs, seg_act, skill_names, start, end, p_start, p_end,
+        skill_descriptions=skill_descriptions,
     )
     t0 = _time.time()
     response = ask(
@@ -349,14 +378,16 @@ def collect_segment_preferences(
     skill_names: List[str],
     predicates: Optional[List[Optional[dict]]] = None,
     config: Optional[LLMTeacherConfig] = None,
+    skill_descriptions: Optional[Dict[str, str]] = None,
     **_kw: Any,
 ) -> list:
     """
     Proactive preference collection: ask the LLM to rank skills for
     each segment.  Used for cold-start before any scorer is trained.
 
-    When config.max_workers > 1, LLM calls are run in parallel to reduce
-    wall-clock time.
+    When *skill_descriptions* is provided, each candidate skill is shown
+    with its name and strategic description so the model can make an
+    informed ranking.
 
     Parameters
     ----------
@@ -369,6 +400,8 @@ def collect_segment_preferences(
     predicates : list[dict], optional
         Per-timestep predicates.
     config : LLMTeacherConfig, optional
+    skill_descriptions : dict, optional
+        Mapping ``skill_id`` → short summary string.
 
     Returns
     -------
@@ -383,16 +416,15 @@ def collect_segment_preferences(
     ask = _get_ask_model()
     max_workers = getattr(cfg, "max_workers", None)
     if max_workers is None or max_workers <= 1:
-        # Sequential
         all_prefs = []
         for start, end in segments:
             prefs = _collect_one_segment_prefs(
                 start, end, observations, actions, skill_names, predicates, cfg, ask,
+                skill_descriptions=skill_descriptions,
             )
             all_prefs.extend(prefs)
         return all_prefs
 
-    # Parallel batch; cap concurrent LLM calls if set (e.g. local GPU)
     max_concurrent = getattr(cfg, "max_concurrent_llm_calls", None)
     if max_concurrent is not None and max_concurrent > 0:
         ask = _wrap_ask_with_semaphore(ask, max_concurrent)
@@ -402,6 +434,7 @@ def collect_segment_preferences(
             executor.submit(
                 _collect_one_segment_prefs,
                 start, end, observations, actions, skill_names, predicates, cfg, ask,
+                skill_descriptions,
             ): (start, end)
             for start, end in segments
         }
@@ -419,11 +452,14 @@ def _collect_one_transition_prefs(
     skill_names: List[str],
     cfg: LLMTeacherConfig,
     ask,
+    skill_descriptions: Optional[Dict[str, str]] = None,
 ) -> list:
     """Get transition preferences for one prev_skill (used by batch workers)."""
     from skill_agents_grpo.infer_segmentation.preference import PreferenceExample
 
-    prompt = _build_transition_ranking_prompt(prev_skill, skill_names)
+    prompt = _build_transition_ranking_prompt(
+        prev_skill, skill_names, skill_descriptions=skill_descriptions,
+    )
     t0 = _time.time()
     response = ask(
         prompt, model=cfg.model,
@@ -467,6 +503,7 @@ def _collect_one_transition_prefs(
 def collect_transition_preferences(
     skill_names: List[str],
     config: Optional[LLMTeacherConfig] = None,
+    skill_descriptions: Optional[Dict[str, str]] = None,
 ) -> list:
     """
     Ask the LLM to rank transition likelihoods for each skill.
@@ -484,7 +521,9 @@ def collect_transition_preferences(
         all_prefs = []
         for prev_skill in skill_names:
             all_prefs.extend(
-                _collect_one_transition_prefs(prev_skill, skill_names, cfg, ask),
+                _collect_one_transition_prefs(
+                    prev_skill, skill_names, cfg, ask, skill_descriptions,
+                ),
             )
         return all_prefs
 
@@ -494,7 +533,10 @@ def collect_transition_preferences(
     all_prefs = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(_collect_one_transition_prefs, ps, skill_names, cfg, ask): ps
+            executor.submit(
+                _collect_one_transition_prefs,
+                ps, skill_names, cfg, ask, skill_descriptions,
+            ): ps
             for ps in skill_names
         }
         for future in as_completed(futures):

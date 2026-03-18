@@ -667,11 +667,15 @@ def get_skill_guidance(
 def format_skill_guidance_for_prompt(
     guidance: Optional[Dict[str, Any]],
     protocol_step_idx: int = 0,
+    progress_summary: str = "",
 ) -> str:
     """Format skill guidance as text to inject into LLM prompts.
 
     When *protocol_step_idx* > 0 the current step is highlighted with
     ``>>`` so the LLM knows where it is in the protocol sequence.
+
+    When *progress_summary* is provided (from ``_SkillTracker``), it is
+    included to give the model context on completed vs remaining steps.
     """
     if guidance is None or not guidance.get("skill_id"):
         return ""
@@ -679,6 +683,9 @@ def format_skill_guidance_for_prompt(
     parts = [f"\n--- Active Skill: {guidance.get('skill_name', guidance['skill_id'])} ---"]
     if guidance.get("execution_hint"):
         parts.append(f"  Strategy: {guidance['execution_hint'][:200]}")
+
+    if progress_summary:
+        parts.append(f"  Progress: {progress_summary}")
 
     protocol = guidance.get("protocol", {})
     steps = protocol.get("steps", []) if isinstance(protocol, dict) else []
@@ -978,15 +985,9 @@ SYSTEM_PROMPT = (
     "- NEVER repeat the same action more than 2 times in a row — try something different.\n"
     "- If recent actions got zero reward, change strategy.\n\n"
     "Output format (strict):\n"
+    "SUBGOAL: [TAG] <your immediate objective in \u226415 words>\n"
     "REASONING: <1-2 sentences>\n"
     "ACTION: <number>\n"
-)
-
-USER_TEMPLATE = (
-    "Game state:\n\n{state}\n\n"
-    "{recent_context}"
-    "Available actions (pick ONE by number):\n{actions}\n\n"
-    "Choose the best action. Output REASONING then ACTION number."
 )
 
 MAX_REPEAT_ACTIONS = 2
@@ -1176,14 +1177,28 @@ def _fuzzy_match_action(raw: str, valid_actions: List[str]) -> Optional[str]:
     return None
 
 
-def parse_qwen_response(reply: str, valid_actions: List[str]) -> Tuple[str, Optional[str]]:
-    """Parse Qwen response to extract action and reasoning with fuzzy matching."""
+def parse_qwen_response(
+    reply: str, valid_actions: List[str],
+) -> Tuple[str, Optional[str], Optional[str]]:
+    """Parse SUBGOAL + REASONING + ACTION response (matches co-evolution format).
+
+    Returns (action, reasoning, intention).
+    """
     if not reply:
-        return (valid_actions[0] if valid_actions else "stay"), None
+        return (valid_actions[0] if valid_actions else "stay"), None, None
 
     cleaned = strip_think_tags(reply)
     if not cleaned:
         cleaned = reply
+
+    intention = None
+    subgoal_m = re.search(
+        r"SUBGOAL\s*:\s*(.+?)(?=\nREASONING|\nACTION|\Z)",
+        cleaned, re.DOTALL | re.IGNORECASE,
+    )
+    if subgoal_m:
+        raw_sg = subgoal_m.group(1).strip().split("\n")[0].strip()
+        intention = _normalize_intention(raw_sg)[:150] if raw_sg else None
 
     reasoning = None
     reasoning_m = re.search(r"REASONING\s*:\s*(.+?)(?=\nACTION|\Z)", cleaned, re.DOTALL | re.IGNORECASE)
@@ -1195,7 +1210,7 @@ def parse_qwen_response(reply: str, valid_actions: List[str]) -> Tuple[str, Opti
         raw_action = action_m.group(1).strip()
         matched = _fuzzy_match_action(raw_action, valid_actions)
         if matched:
-            return matched, reasoning
+            return matched, reasoning, intention
 
     for pattern in [
         r"(?:choose|select|pick|answer)\s*(?:is\s*)?:?\s*(.+?)(?:\n|$)",
@@ -1205,24 +1220,23 @@ def parse_qwen_response(reply: str, valid_actions: List[str]) -> Tuple[str, Opti
         if m:
             matched = _fuzzy_match_action(m.group(1).strip(), valid_actions)
             if matched:
-                return matched, reasoning
+                return matched, reasoning, intention
 
     extracted = extract_action(cleaned, GAME_GAMINGAGENT, "Valid actions: " + ", ".join(valid_actions))
     if extracted:
-        return extracted, reasoning
+        return extracted, reasoning, intention
 
     for a in valid_actions:
         if len(a) >= 3 and a.lower() in cleaned.lower():
-            return a, reasoning
+            return a, reasoning, intention
 
-    # RAG embedding similarity as final semantic fallback
     action_m_text = re.search(r"ACTION\s*:\s*(.+?)(?:\n|$)", cleaned, re.IGNORECASE)
     raw_for_rag = action_m_text.group(1).strip() if action_m_text else cleaned[-200:]
     rag_match = _action_matcher.match(raw_for_rag, valid_actions)
     if rag_match:
-        return rag_match, reasoning
+        return rag_match, reasoning, intention
 
-    return (valid_actions[0] if valid_actions else "stay"), reasoning
+    return (valid_actions[0] if valid_actions else "stay"), reasoning, intention
 
 
 def _format_numbered_actions(action_names: List[str]) -> str:
@@ -1255,39 +1269,53 @@ def qwen3_action(
     protocol_step_idx: int = 0,
     summary_state: str = "",
     intention: str = "",
-) -> Tuple[str, Optional[str], Optional[str]]:
+    progress_summary: str = "",
+) -> Tuple[str, Optional[str], Optional[str], Optional[str]]:
     """LLM call #2 (action_taking LoRA): choose an action.
 
-    Returns (action, reasoning, raw_prompt) — prompt is returned for
-    GRPO I/O recording.
+    Returns (action, reasoning, raw_prompt, parsed_intention).
+    The parsed_intention is the SUBGOAL extracted from the LLM response,
+    which the caller can use as the new intention for the next step.
     """
     recent_context = _build_recent_context(
         recent_actions or [], recent_rewards or [],
     )
 
     state_text = summary_state if summary_state else state_nl[:4000]
-    intention_line = f"Current intention: {intention}\n\n" if intention else ""
+    prev_line = f"Previous subgoal: {intention}\n" if intention else ""
+    skill_context = ""
+    if skill_guidance and skill_guidance.get("skill_id"):
+        sk_name = skill_guidance.get("skill_name", skill_guidance["skill_id"])
+        sk_hint = skill_guidance.get("execution_hint", "")
+        skill_context = f"Active skill: {sk_name}"
+        if sk_hint:
+            skill_context += f" \u2014 {sk_hint[:100]}"
+        skill_context += "\n"
 
+    tags_str = "|".join(SUBGOAL_TAGS)
     user_content = (
         f"Game state:\n\n{state_text}\n\n"
-        f"{intention_line}"
-        f"{recent_context}"
+        f"{prev_line}{skill_context}{recent_context}"
         f"Available actions (pick ONE by number):\n"
         f"{_format_numbered_actions(action_names)}\n\n"
-        f"Choose the best action. Output REASONING then ACTION number."
+        f"Subgoal tags: {tags_str}\n"
+        f"First state your SUBGOAL, then choose the best action.\n"
+        f"Output SUBGOAL, REASONING, then ACTION number."
     )
 
-    skill_text = format_skill_guidance_for_prompt(skill_guidance, protocol_step_idx)
+    skill_text = format_skill_guidance_for_prompt(
+        skill_guidance, protocol_step_idx, progress_summary=progress_summary,
+    )
     prompt = SYSTEM_PROMPT + skill_text + "\n" + user_content
 
     reply = _dual_lora.call_action_taking(
         prompt, model=model, temperature=temperature, max_tokens=512,
     )
     if reply and not reply.startswith("Error"):
-        action, reasoning = parse_qwen_response(reply, action_names)
-        return action, reasoning, prompt
+        action, reasoning, parsed_intention = parse_qwen_response(reply, action_names)
+        return action, reasoning, prompt, parsed_intention
 
-    return (action_names[0] if action_names else "stay"), None, prompt
+    return (action_names[0] if action_names else "stay"), None, prompt, None
 
 
 # ---------------------------------------------------------------------------
@@ -1304,6 +1332,14 @@ class _SkillTracker:
     - **Apply**: tracks progress through protocol steps, checks
       success/abort criteria each step, and exposes the current protocol
       step index for richer prompt injection.
+
+    Uses predicate-based criteria (``predicate_success``, ``predicate_abort``)
+    when available, falling back to legacy keyword matching on the free-text
+    ``success_criteria`` / ``abort_criteria``.
+
+    Step advancement uses ``step_checks`` when available: the step index
+    advances only when the check condition is met in the current state.
+    Falls back to time-based advancement (one step per timestep).
     """
 
     def __init__(self):
@@ -1318,6 +1354,9 @@ class _SkillTracker:
         self._protocol_step_idx: int = 0
         self._success_criteria: List[str] = []
         self._abort_criteria: List[str] = []
+        self._predicate_success: List[str] = []
+        self._predicate_abort: List[str] = []
+        self._step_checks: List[str] = []
         self._reselect_reason: str = ""
 
     @property
@@ -1334,6 +1373,29 @@ class _SkillTracker:
             return len(self._protocol.get("steps", []))
         return 0
 
+    def _check_criteria(self, state_text: str, is_abort: bool) -> Optional[str]:
+        """Check predicate or keyword criteria against state.
+
+        Returns a reason string if triggered, None otherwise.
+        """
+        from decision_agents.protocol_utils import (
+            parse_summary_state, check_any_predicate, keyword_match,
+        )
+        preds = self._predicate_abort if is_abort else self._predicate_success
+        texts = self._abort_criteria if is_abort else self._success_criteria
+        label = "abort" if is_abort else "success"
+
+        if preds:
+            state_dict = parse_summary_state(state_text)
+            if check_any_predicate(preds, state_dict):
+                return f"{label}:predicate"
+
+        for crit in texts:
+            if keyword_match(crit, state_text):
+                return f"{label}:{crit[:40]}"
+
+        return None
+
     def should_reselect(
         self,
         guidance: Optional[Dict[str, Any]],
@@ -1342,7 +1404,8 @@ class _SkillTracker:
         """Decide whether to force a skill re-selection.
 
         Checks (in order): no skill, duration exceeded, zero-reward stall,
-        abort criteria keyword match in current state, success criteria match.
+        abort criteria (predicate then keyword), success criteria
+        (predicate then keyword).
         """
         self._reselect_reason = ""
         if guidance is None or not guidance.get("skill_id"):
@@ -1360,24 +1423,27 @@ class _SkillTracker:
             self._reselect_reason = "zero_reward_stall"
             return True
 
-        state_lower = state_text.lower() if state_text else ""
-        if state_lower and self._abort_criteria:
-            for crit in self._abort_criteria:
-                tokens = [t for t in crit.lower().split() if len(t) >= 3]
-                if tokens and all(tok in state_lower for tok in tokens[:3]):
-                    self._reselect_reason = f"abort:{crit[:40]}"
-                    return True
+        if state_text:
+            abort_reason = self._check_criteria(state_text, is_abort=True)
+            if abort_reason:
+                self._reselect_reason = abort_reason
+                return True
 
-        if state_lower and self._success_criteria and self.steps_on_skill >= 2:
-            for crit in self._success_criteria:
-                tokens = [t for t in crit.lower().split() if len(t) >= 3]
-                if tokens and all(tok in state_lower for tok in tokens[:3]):
-                    self._reselect_reason = f"success:{crit[:40]}"
+            if self.steps_on_skill >= 2:
+                success_reason = self._check_criteria(state_text, is_abort=False)
+                if success_reason:
+                    self._reselect_reason = success_reason
                     return True
 
         return False
 
-    def update(self, skill_id: Optional[str], skill_name: str, reward: float):
+    def update(
+        self,
+        skill_id: Optional[str],
+        skill_name: str,
+        reward: float,
+        state_text: str = "",
+    ):
         if skill_id != self.active_skill_id:
             self.active_skill_id = skill_id
             self.active_skill_name = skill_name
@@ -1390,9 +1456,31 @@ class _SkillTracker:
             self.reward_on_skill += reward
             n_steps = self.total_protocol_steps
             if n_steps > 0:
-                self._protocol_step_idx = min(
-                    self._protocol_step_idx + 1, n_steps - 1,
+                from decision_agents.protocol_utils import (
+                    compute_step_advancement, parse_summary_state,
                 )
+                state_dict = parse_summary_state(state_text)
+                self._protocol_step_idx = compute_step_advancement(
+                    self._protocol_step_idx,
+                    self._step_checks,
+                    state_dict,
+                    n_steps,
+                )
+
+    def get_progress_summary(self, state_text: str = "") -> str:
+        """Build a short progress summary for prompt injection."""
+        if not self._protocol or not isinstance(self._protocol, dict):
+            return ""
+        steps = self._protocol.get("steps", [])
+        if not steps:
+            return ""
+        from decision_agents.protocol_utils import (
+            build_progress_summary, parse_summary_state,
+        )
+        state_dict = parse_summary_state(state_text)
+        return build_progress_summary(
+            steps, self._step_checks, self._protocol_step_idx, state_dict,
+        )
 
     def set_protocol(self, protocol: Optional[Dict[str, Any]]):
         """Load protocol and extract criteria for lifecycle checks."""
@@ -1400,6 +1488,9 @@ class _SkillTracker:
         self._protocol_step_idx = 0
         self._success_criteria = []
         self._abort_criteria = []
+        self._predicate_success = []
+        self._predicate_abort = []
+        self._step_checks = []
         if protocol and isinstance(protocol, dict):
             dur = protocol.get("expected_duration", 0)
             if isinstance(dur, (int, float)) and dur > 0:
@@ -1408,6 +1499,9 @@ class _SkillTracker:
                 self.max_skill_duration = 10
             self._success_criteria = protocol.get("success_criteria", []) or []
             self._abort_criteria = protocol.get("abort_criteria", []) or []
+            self._predicate_success = protocol.get("predicate_success", []) or []
+            self._predicate_abort = protocol.get("predicate_abort", []) or []
+            self._step_checks = protocol.get("step_checks", []) or []
         else:
             self.max_skill_duration = 10
 
@@ -1588,7 +1682,7 @@ def run_episode(
         current_intention = intention
 
         # ── 5. Action selection (action_taking LoRA) ────────────────
-        action, reasoning, action_prompt = qwen3_action(
+        action, reasoning, action_prompt, parsed_intention = qwen3_action(
             state_nl=obs_nl,
             action_names=step_actions,
             model=model,
@@ -1599,7 +1693,10 @@ def run_episode(
             protocol_step_idx=skill_tracker.protocol_step_idx,
             summary_state=summary_state,
             intention=current_intention,
+            progress_summary=skill_tracker.get_progress_summary(summary_state),
         )
+        if parsed_intention:
+            current_intention = parsed_intention
 
         action = _apply_anti_repetition(action, step_actions, recent_actions, recent_rewards)
 
@@ -1619,7 +1716,7 @@ def run_episode(
 
         skill_id = guidance.get("skill_id") if guidance else None
         skill_name_val = guidance.get("skill_name", "") if guidance else ""
-        skill_tracker.update(skill_id, skill_name_val, float(reward))
+        skill_tracker.update(skill_id, skill_name_val, float(reward), state_text=summary_state)
 
         # ── 6. Record GRPO I/O ─────────────────────────────────────
         # Action-taking GRPO record
@@ -1628,7 +1725,8 @@ def run_episode(
                 action_num = step_actions.index(action) + 1
             except ValueError:
                 action_num = 1
-            action_completion = f"REASONING: {reasoning or 'Expert play.'}\nACTION: {action_num}"
+            subgoal_line = f"SUBGOAL: {current_intention}\n" if current_intention else ""
+            action_completion = f"{subgoal_line}REASONING: {reasoning or 'Expert play.'}\nACTION: {action_num}"
             act_rec = GRPOStepRecord("action_taking", game, episode_id, step_count)
             act_rec.prompt = action_prompt
             act_rec.completion = action_completion

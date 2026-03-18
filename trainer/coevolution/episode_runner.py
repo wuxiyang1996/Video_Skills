@@ -397,12 +397,18 @@ def _build_recent_context(recent_actions: List[str], recent_rewards: List[float]
     return "\n".join(lines) + "\n"
 
 
-def _format_skill_guidance_for_prompt(guidance: Optional[Dict[str, Any]], protocol_step_idx: int = 0) -> str:
+def _format_skill_guidance_for_prompt(
+    guidance: Optional[Dict[str, Any]],
+    protocol_step_idx: int = 0,
+    progress_summary: str = "",
+) -> str:
     if guidance is None or not guidance.get("skill_id"):
         return ""
     parts = [f"\n--- Active Skill: {guidance.get('skill_name', guidance['skill_id'])} ---"]
     if guidance.get("execution_hint"):
         parts.append(f"  Strategy: {guidance['execution_hint'][:200]}")
+    if progress_summary:
+        parts.append(f"  Progress: {progress_summary}")
     protocol = guidance.get("protocol", {})
     steps = protocol.get("steps", []) if isinstance(protocol, dict) else []
     if steps:
@@ -566,6 +572,12 @@ def _apply_anti_repetition(
 # ---------------------------------------------------------------------------
 
 class _SkillTracker:
+    """Protocol-aware skill lifecycle tracker (co-evolution variant).
+
+    Uses predicate-based criteria when available, with keyword fallback.
+    Step advancement is condition-based when ``step_checks`` are present.
+    """
+
     def __init__(self):
         self.active_skill_id: Optional[str] = None
         self.active_skill_name: str = ""
@@ -577,6 +589,9 @@ class _SkillTracker:
         self._protocol_step_idx: int = 0
         self._success_criteria: List[str] = []
         self._abort_criteria: List[str] = []
+        self._predicate_success: List[str] = []
+        self._predicate_abort: List[str] = []
+        self._step_checks: List[str] = []
         self._reselect_reason: str = ""
 
     @property
@@ -588,6 +603,25 @@ class _SkillTracker:
         if self._protocol and isinstance(self._protocol, dict):
             return len(self._protocol.get("steps", []))
         return 0
+
+    def _check_criteria(self, state_text: str, is_abort: bool) -> Optional[str]:
+        from decision_agents.protocol_utils import (
+            parse_summary_state, check_any_predicate, keyword_match,
+        )
+        preds = self._predicate_abort if is_abort else self._predicate_success
+        texts = self._abort_criteria if is_abort else self._success_criteria
+        label = "abort" if is_abort else "success"
+
+        if preds:
+            state_dict = parse_summary_state(state_text)
+            if check_any_predicate(preds, state_dict):
+                return f"{label}:predicate"
+
+        for crit in texts:
+            if keyword_match(crit, state_text):
+                return f"{label}:{crit[:40]}"
+
+        return None
 
     def should_reselect(self, guidance: Optional[Dict[str, Any]], state_text: str = "") -> bool:
         self._reselect_reason = ""
@@ -603,22 +637,20 @@ class _SkillTracker:
         if self.steps_on_skill >= 4 and self.reward_on_skill <= 0:
             self._reselect_reason = "zero_reward_stall"
             return True
-        state_lower = state_text.lower() if state_text else ""
-        if state_lower and self._abort_criteria:
-            for crit in self._abort_criteria:
-                tokens = [t for t in crit.lower().split() if len(t) >= 3]
-                if tokens and all(tok in state_lower for tok in tokens[:3]):
-                    self._reselect_reason = f"abort:{crit[:40]}"
-                    return True
-        if state_lower and self._success_criteria and self.steps_on_skill >= 2:
-            for crit in self._success_criteria:
-                tokens = [t for t in crit.lower().split() if len(t) >= 3]
-                if tokens and all(tok in state_lower for tok in tokens[:3]):
-                    self._reselect_reason = f"success:{crit[:40]}"
+        if state_text:
+            abort_reason = self._check_criteria(state_text, is_abort=True)
+            if abort_reason:
+                self._reselect_reason = abort_reason
+                return True
+            if self.steps_on_skill >= 2:
+                success_reason = self._check_criteria(state_text, is_abort=False)
+                if success_reason:
+                    self._reselect_reason = success_reason
                     return True
         return False
 
-    def update(self, skill_id: Optional[str], skill_name: str, reward: float):
+    def update(self, skill_id: Optional[str], skill_name: str, reward: float,
+               state_text: str = ""):
         if skill_id != self.active_skill_id:
             self.active_skill_id = skill_id
             self.active_skill_name = skill_name
@@ -631,13 +663,36 @@ class _SkillTracker:
             self.reward_on_skill += reward
             n_steps = self.total_protocol_steps
             if n_steps > 0:
-                self._protocol_step_idx = min(self._protocol_step_idx + 1, n_steps - 1)
+                from decision_agents.protocol_utils import (
+                    compute_step_advancement, parse_summary_state,
+                )
+                state_dict = parse_summary_state(state_text)
+                self._protocol_step_idx = compute_step_advancement(
+                    self._protocol_step_idx, self._step_checks, state_dict, n_steps,
+                )
+
+    def get_progress_summary(self, state_text: str = "") -> str:
+        if not self._protocol or not isinstance(self._protocol, dict):
+            return ""
+        steps = self._protocol.get("steps", [])
+        if not steps:
+            return ""
+        from decision_agents.protocol_utils import (
+            build_progress_summary, parse_summary_state,
+        )
+        state_dict = parse_summary_state(state_text)
+        return build_progress_summary(
+            steps, self._step_checks, self._protocol_step_idx, state_dict,
+        )
 
     def set_protocol(self, protocol: Optional[Dict[str, Any]]):
         self._protocol = protocol
         self._protocol_step_idx = 0
         self._success_criteria = []
         self._abort_criteria = []
+        self._predicate_success = []
+        self._predicate_abort = []
+        self._step_checks = []
         if protocol and isinstance(protocol, dict):
             dur = protocol.get("expected_duration", 0)
             if isinstance(dur, (int, float)) and dur > 0:
@@ -646,6 +701,9 @@ class _SkillTracker:
                 self.max_skill_duration = 10
             self._success_criteria = protocol.get("success_criteria", []) or []
             self._abort_criteria = protocol.get("abort_criteria", []) or []
+            self._predicate_success = protocol.get("predicate_success", []) or []
+            self._predicate_abort = protocol.get("predicate_abort", []) or []
+            self._step_checks = protocol.get("step_checks", []) or []
         else:
             self.max_skill_duration = 10
 
@@ -805,8 +863,9 @@ async def run_episode_async(
             f"Key strategic note about the current threat or opportunity "
             f"(max 10 words, be specific to what changed).\nNote:"
         )
-        summary_coro = vllm_client.generate(
-            summary_prompt, adapter="base", temperature=0.2, max_tokens=25,
+        summary_coro = vllm_client.generate_chat(
+            [{"role": "user", "content": summary_prompt}],
+            adapter="base", temperature=0.2, max_tokens=25,
             stop=["\n"],
         )
 
@@ -839,8 +898,9 @@ async def run_episode_async(
                     f"Choose the best strategy. Output REASONING then SKILL number."
                 )
                 skill_select_prompt = SKILL_SELECTION_SYSTEM_PROMPT + "\n" + user_content
-                skill_coro = vllm_client.generate(
-                    skill_select_prompt, adapter="skill_selection",
+                skill_coro = vllm_client.generate_chat(
+                    [{"role": "user", "content": skill_select_prompt}],
+                    adapter="skill_selection",
                     temperature=temperature, max_tokens=128,
                     stop=["\n\nAvailable", "\n\nGame state", "\n\n---"],
                 )
@@ -907,7 +967,10 @@ async def run_episode_async(
 
         recent_context = _build_recent_context(recent_actions, recent_rewards)
         summary_for_action = summary_state if summary_state else obs_nl[:4000]
-        skill_text = _format_skill_guidance_for_prompt(guidance, skill_tracker.protocol_step_idx)
+        skill_text = _format_skill_guidance_for_prompt(
+            guidance, skill_tracker.protocol_step_idx,
+            progress_summary=skill_tracker.get_progress_summary(summary_state),
+        )
 
         imp_tags = imp["SUBGOAL_TAGS"]
         tags_str = "|".join(imp_tags)
@@ -921,8 +984,9 @@ async def run_episode_async(
         )
         action_prompt = SYSTEM_PROMPT + skill_text + "\n" + action_user
 
-        action_result = await vllm_client.generate(
-            action_prompt, adapter="action_taking",
+        action_result = await vllm_client.generate_chat(
+            [{"role": "user", "content": action_prompt}],
+            adapter="action_taking",
             temperature=temperature, max_tokens=256,
             stop=["\n\nAvailable", "\n\nGame state", "\n\n---"],
         )
@@ -954,7 +1018,8 @@ async def run_episode_async(
 
         skill_id = guidance.get("skill_id") if guidance else None
         skill_name_val = guidance.get("skill_name", "") if guidance else ""
-        skill_tracker.update(skill_id, skill_name_val, float(reward))
+        skill_tracker.update(skill_id, skill_name_val, float(reward),
+                             state_text=summary_state)
 
         # ── 7. Record GRPO I/O ───────────────────────────────────
         if action_prompt:

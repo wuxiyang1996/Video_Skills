@@ -327,6 +327,21 @@ class SkillBankAgent:
 
         store = self._get_or_create_preference_store()
 
+        _skill_descs: Optional[Dict[str, str]] = None
+        if _skill_names and len(self.bank) > 0:
+            _skill_descs = {}
+            for sid in _skill_names:
+                sk = self.bank.get_skill(sid)
+                if sk is None:
+                    continue
+                parts = []
+                if sk.name:
+                    parts.append(sk.name)
+                if sk.strategic_description:
+                    parts.append(sk.strategic_description)
+                if parts:
+                    _skill_descs[sid] = " — ".join(parts)
+
         if _skill_names:
             result, sub_episodes, store = infer_and_segment(
                 episode,
@@ -340,6 +355,7 @@ class SkillBankAgent:
                 extractor_kwargs=_extractor_kwargs,
                 compat_fn=_compat_fn,
                 game_name=_game,
+                skill_descriptions=_skill_descs,
             )
             self._preference_store = store
         else:
@@ -761,6 +777,57 @@ class SkillBankAgent:
             self._invalidate_query_engine()
         return updated
 
+    def refine_low_pass_protocols(
+        self,
+        pass_rate_threshold: float = 0.4,
+        min_episodes: int = 3,
+    ) -> int:
+        """Re-synthesize protocols for skills with a low success rate.
+
+        Called periodically (e.g. every N co-evolution iterations) to give
+        struggling skills a chance to improve their protocols using the
+        latest sub-episode evidence.
+
+        Only re-synthesizes if the skill already has a protocol and at
+        least *min_episodes* sub-episodes.  The new protocol replaces the
+        old one.
+
+        Returns the number of protocols re-synthesized.
+        """
+        from skill_agents_grpo.stage3_mvp.schemas import Skill
+
+        refined = 0
+        for sid in self.bank.skill_ids:
+            skill = self.bank.get_skill(sid)
+            if skill is None:
+                continue
+            if not skill.protocol or not skill.protocol.steps:
+                continue
+            if skill.success_rate >= pass_rate_threshold:
+                continue
+            if len(skill.sub_episodes) < min_episodes:
+                continue
+
+            all_eps = sorted(
+                skill.sub_episodes, key=lambda se: se.quality_score, reverse=True,
+            )
+            best_eps = all_eps[:max(3, len(all_eps) // 2)]
+
+            new_protocol = self._synthesize_protocol(skill, best_eps)
+            if new_protocol is not None:
+                skill.bump_version()
+                skill.protocol = new_protocol
+                self.bank.add_or_update_skill(skill)
+                refined += 1
+                logger.info(
+                    "Refined protocol for low-pass skill %s (rate=%.2f, v%d)",
+                    sid, skill.success_rate, skill.version,
+                )
+
+        if refined:
+            self._invalidate_query_engine()
+        return refined
+
     def _synthesize_protocol(
         self,
         skill: Skill,
@@ -791,7 +858,8 @@ class SkillBankAgent:
         avg_len = 0
         if high_quality_eps:
             lengths = [se.length for se in high_quality_eps]
-            avg_len = sum(lengths) // len(lengths)
+            from decision_agents.protocol_utils import compute_expected_duration
+            avg_len = compute_expected_duration(lengths)
 
         # Collect evidence for LLM synthesis
         summaries = [se.summary for se in high_quality_eps if se.summary]
@@ -808,8 +876,10 @@ class SkillBankAgent:
 
         # Try LLM-based synthesis (model-agnostic: routes to GPT or Qwen)
         llm_model = self.config.llm_model or self.config.extractor_model
+        action_vocab = getattr(self.config, "action_vocab", None) or []
         protocol = self._llm_synthesize_protocol(
-            skill, summaries, effects_desc, llm_model
+            skill, summaries, effects_desc, llm_model,
+            action_vocab=action_vocab,
         )
         if protocol is not None:
             protocol.expected_duration = max(1, avg_len)
@@ -867,6 +937,7 @@ class SkillBankAgent:
         summaries: List[str],
         effects_desc: str,
         model: Optional[str],
+        action_vocab: Optional[List[str]] = None,
     ) -> Optional:
         """Use ask_model (model-agnostic) to generate a structured protocol.
 
@@ -890,23 +961,44 @@ class SkillBankAgent:
         evidence = "\n".join(f"  - {s}" for s in summaries[:5]) if summaries else "(none)"
         skill_name = skill.name or skill.skill_id
 
+        action_block = ""
+        if action_vocab:
+            action_block = (
+                f"\nAvailable game actions: {', '.join(action_vocab[:20])}\n"
+                f"IMPORTANT: Reference these exact action names in your steps.\n"
+            )
+
         prompt = (
             f"You are a game-AI protocol designer. Generate a concrete execution "
             f"protocol for the skill below.\n\n"
             f"Skill: {skill_name}\n"
             f"Description: {skill.strategic_description or '(none)'}\n"
             f"Effects: {effects_desc or '(none)'}\n"
-            f"Evidence from successful executions:\n{evidence}\n\n"
+            f"Evidence from successful executions:\n{evidence}\n"
+            f"{action_block}\n"
             f"Generate a structured protocol as JSON with these exact keys:\n"
             f'{{"preconditions": ["..."], "steps": ["..."], '
-            f'"success_criteria": ["..."], "abort_criteria": ["..."]}}\n'
+            f'"step_checks": ["..."], '
+            f'"success_criteria": ["..."], "abort_criteria": ["..."], '
+            f'"predicate_success": ["key=value", ...], '
+            f'"predicate_abort": ["key>N", ...]}}\n'
             f"Rules:\n"
             f"- preconditions: 1-3 specific conditions (game situation, state) "
             f"that must hold before starting\n"
             f"- steps: 2-7 concrete action steps (imperative, game-specific). "
-            f"Do NOT write generic steps like 'Achieve: X' or 'Execute skill'.\n"
-            f"- success_criteria: 1-3 observable conditions proving the skill worked\n"
-            f"- abort_criteria: 1-2 specific conditions to stop early\n"
+            f"Do NOT write generic steps like 'Achieve: X' or 'Execute skill'. "
+            f"Reference actual game actions when possible.\n"
+            f"- step_checks: one entry per step — a key=value condition from "
+            f"the game state that indicates the step is complete "
+            f"(e.g. 'stack_h<5', 'quest=2'). Use empty string '' if no "
+            f"specific check applies.\n"
+            f"- success_criteria: 1-3 human-readable descriptions of success\n"
+            f"- abort_criteria: 1-2 human-readable conditions to stop early\n"
+            f"- predicate_success: 1-3 machine-checkable key=value or key<N "
+            f"conditions from the game state (e.g. 'phase=endgame', "
+            f"'holes<5')\n"
+            f"- predicate_abort: 1-2 machine-checkable conditions "
+            f"(e.g. 'stack_h>18', 'moves<3')\n"
             f"Reply with ONLY the JSON object."
         )
         try:
@@ -962,11 +1054,19 @@ class SkillBankAgent:
                 skill_id=skill.skill_id,
             ))
 
+            steps = data.get("steps", [])[:7]
+            step_checks = data.get("step_checks", [])[:7]
+            if step_checks and len(step_checks) < len(steps):
+                step_checks.extend([""] * (len(steps) - len(step_checks)))
             return Protocol(
                 preconditions=data.get("preconditions", [])[:5],
-                steps=data.get("steps", [])[:7],
+                steps=steps,
                 success_criteria=data.get("success_criteria", [])[:5],
                 abort_criteria=data.get("abort_criteria", [])[:3],
+                step_checks=step_checks,
+                predicate_success=data.get("predicate_success", [])[:5],
+                predicate_abort=data.get("predicate_abort", [])[:3],
+                action_vocab=action_vocab or [],
             )
         except Exception as exc:
             logger.debug("LLM protocol synthesis failed: %s", exc)
@@ -1250,10 +1350,10 @@ class SkillBankAgent:
                 )
         return verified
 
-    def promote_proto_skills(self) -> int:
+    def promote_proto_skills(self) -> List[str]:
         """Promote qualifying proto-skills to real skills.
 
-        Returns the number of skills promoted.
+        Returns the list of promoted skill IDs.
         """
         promoted = self._proto_mgr.promote_ready(self.bank)
         if promoted:
@@ -1261,18 +1361,18 @@ class SkillBankAgent:
             self._invalidate_query_engine()
             if self.config.bank_path:
                 self.bank.save(self.config.bank_path)
-        return len(promoted)
+        return promoted or []
 
     # ── Materialize NEW ──────────────────────────────────────────────
 
-    def materialize_new_skills(self) -> int:
+    def materialize_new_skills(self) -> List[str]:
         """Promote qualifying ``__NEW__`` clusters to real skills.
 
         Uses the ``NewPoolManager`` for rich clustering (effect similarity,
         consistency, separability).  Falls back to the legacy signature-based
         approach only when the pool manager is empty but _new_pool has records.
 
-        Returns the number of new skills created.
+        Returns the list of newly created skill IDs.
         """
         from skill_agents_grpo.infer_segmentation.config import LLMTeacherConfig
 
@@ -1305,14 +1405,14 @@ class SkillBankAgent:
             if created_ids and self.config.bank_path:
                 self.bank.save(self.config.bank_path)
             self._invalidate_query_engine()
-            return len(created_ids)
+            return created_ids or []
 
         if len(self._new_pool) < self.config.min_new_cluster_size:
             logger.info(
                 "NEW pool too small (%d < %d), skipping materialization.",
                 len(self._new_pool), self.config.min_new_cluster_size,
             )
-            return 0
+            return []
 
         logger.info(
             "NEW pool: %d legacy records, running legacy promotion.",
@@ -1320,7 +1420,7 @@ class SkillBankAgent:
         )
         return self._materialize_legacy()
 
-    def _materialize_legacy(self) -> int:
+    def _materialize_legacy(self) -> List[str]:
         """Legacy promotion: cluster by exact effect_signature string."""
         from skill_agents_grpo.stage3_mvp.run_stage3_mvp import (
             run_stage3_mvp,
@@ -1333,14 +1433,14 @@ class SkillBankAgent:
             sig = rec.effect_signature()
             by_sig[sig].append(rec)
 
-        created = 0
+        created_ids: List[str] = []
         ts = int(time.time())
 
         for sig, cluster in by_sig.items():
             if len(cluster) < self.config.min_new_cluster_size:
                 continue
 
-            new_id = f"S_new_{ts}_{created}"
+            new_id = f"S_new_{ts}_{len(created_ids)}"
             for rec in cluster:
                 rec.skill_label = new_id
 
@@ -1371,7 +1471,7 @@ class SkillBankAgent:
             if new_id in summary.skill_results:
                 sr = summary.skill_results[new_id]
                 if sr.get("pass_rate", 0) >= self.config.split_pass_rate_threshold:
-                    created += 1
+                    created_ids.append(new_id)
                     for rec in cluster:
                         if rec in self._new_pool:
                             self._new_pool.remove(rec)
@@ -1380,10 +1480,10 @@ class SkillBankAgent:
                     for rec in cluster:
                         rec.skill_label = "__NEW__"
 
-        if created and self.config.bank_path:
+        if created_ids and self.config.bank_path:
             self.bank.save(self.config.bank_path)
         self._invalidate_query_engine()
-        return created
+        return created_ids
 
     # ── Skill evaluation ─────────────────────────────────────────────
 
@@ -1449,16 +1549,50 @@ class SkillBankAgent:
         n_proto = self.form_proto_skills()
         if n_proto > 0:
             self.verify_proto_skills()
-        n_promoted = self.promote_proto_skills()
+        promoted_ids = self.promote_proto_skills()
 
-        n_mat = self.materialize_new_skills()
+        materialized_ids = self.materialize_new_skills()
+
+        # Curator pass for materialize/promote actions
+        if materialized_ids or promoted_ids:
+            self._curator_review_materialize_promote(materialized_ids, promoted_ids)
 
         # Phase 5: distill execution hints for skills with enough evidence
         self.distill_execution_hints()
 
-        snap = self._take_snapshot(n_materialized=n_mat + n_promoted)
+        snap = self._take_snapshot(
+            n_materialized=len(materialized_ids) + len(promoted_ids),
+        )
         self._history.append(snap)
         return snap
+
+    def _curator_review_materialize_promote(
+        self,
+        materialized_ids: List[str],
+        promoted_ids: List[str],
+    ) -> None:
+        """Run a curator pass on materialize/promote actions.
+
+        Creates synthetic BankMaintenanceResult entries so
+        ``_collect_curator_candidates`` includes them, then calls the
+        curator filter to generate GRPO training data.
+        """
+        from skill_agents_grpo.bank_maintenance.run_bank_maintenance import (
+            BankMaintenanceResult, _collect_curator_candidates,
+        )
+        result = BankMaintenanceResult()
+        result.materialized_ids = list(materialized_ids)
+        result.promoted_ids = list(promoted_ids)
+
+        candidates = _collect_curator_candidates(result, bank=self.bank)
+        if not candidates:
+            return
+
+        try:
+            from skill_agents_grpo.bank_maintenance.llm_curator import filter_candidates
+            filter_candidates(candidates, self.bank)
+        except Exception as exc:
+            logger.debug("Curator filtering for materialize/promote skipped: %s", exc)
 
     def _take_snapshot(self, n_materialized: int = 0, maint_result=None) -> IterationSnapshot:
         n_new = sum(1 for s in self._all_segments if s.skill_label in ("__NEW__", "NEW"))

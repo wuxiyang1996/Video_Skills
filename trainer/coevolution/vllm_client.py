@@ -237,8 +237,9 @@ class AsyncVLLMClient:
         adapter: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        stop: Optional[List[str]] = None,
     ) -> GenerateResult:
-        """Chat-completion variant for skill bank stages that use chat format."""
+        """Chat-completion variant that lets vLLM apply the chat template."""
         t0 = time.monotonic()
         temp = temperature if temperature is not None else self.default_temperature
         mtok = max_tokens if max_tokens is not None else self.default_max_tokens
@@ -248,6 +249,10 @@ class AsyncVLLMClient:
         if adapter and adapter in ADAPTER_MAP and ADAPTER_MAP[adapter] is not None:
             model_id = ADAPTER_MAP[adapter]
 
+        extra_kwargs: Dict[str, Any] = {}
+        if stop:
+            extra_kwargs["stop"] = stop
+
         client = self._next_client()
         try:
             resp = await client.chat.completions.create(
@@ -255,6 +260,7 @@ class AsyncVLLMClient:
                 messages=messages,
                 temperature=temp,
                 max_tokens=mtok,
+                **extra_kwargs,
             )
         except Exception as exc:
             if adapter and model_id != self.model and _is_adapter_missing(exc):
@@ -269,6 +275,7 @@ class AsyncVLLMClient:
                         messages=messages,
                         temperature=temp,
                         max_tokens=mtok,
+                        **extra_kwargs,
                     )
                 except Exception as exc2:
                     logger.warning("vLLM chat base-model fallback failed: %s", exc2)

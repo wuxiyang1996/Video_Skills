@@ -27,7 +27,7 @@ from __future__ import annotations
 import sys
 import threading
 from pathlib import Path
-from typing import Callable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from skill_agents_grpo.infer_segmentation.config import SegmentationConfig
 from skill_agents_grpo.infer_segmentation.scorer import SegmentScorer
@@ -351,6 +351,7 @@ def infer_and_segment(
     extractor_kwargs=None,
     compat_fn=None,
     game_name: Optional[str] = None,
+    skill_descriptions: Optional[Dict[str, str]] = None,
 ) -> Tuple[SegmentationResult, list, PreferenceStore]:
     """
     Inference pipeline with LLM (e.g. GPT-5):
@@ -451,12 +452,14 @@ def infer_and_segment(
         segment_prefs = collect_segment_preferences(
             segments, observations, actions, skill_names,
             predicates=predicates, config=cfg.llm_teacher,
+            skill_descriptions=skill_descriptions,
         ) or []
         store.add_batch(segment_prefs)
 
         if cfg.preference.collect_transitions:
             transition_prefs = collect_transition_preferences(
                 skill_names, config=cfg.llm_teacher,
+                skill_descriptions=skill_descriptions,
             )
             store.add_batch(transition_prefs)
 

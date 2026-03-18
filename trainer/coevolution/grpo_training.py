@@ -169,13 +169,14 @@ class DecisionGRPOTrainer:
         self.kl_coeff = kl_coeff
         self.io_log_dir = io_log_dir
 
-    def train_step(
+    def build_jobs(
         self,
         records: Dict[str, List[GRPORecord]],
-    ) -> Dict[str, GRPOTrainStats]:
-        """Run FSDP GRPO for all decision adapters in a single spawn."""
-        from skill_agents_grpo.grpo.fsdp_trainer import run_fsdp_grpo_multi
+    ) -> tuple:
+        """Build FSDP job dicts for all decision adapters.
 
+        Returns ``(jobs, names)`` without launching training.
+        """
         adapter_configs = {
             "skill_selection": {
                 "lr": self.lr * 0.6,
@@ -216,13 +217,23 @@ class DecisionGRPOTrainer:
                 "advantages": advantages,
                 "lr": cfg["lr"],
                 "epochs": cfg["epochs"],
-                "batch_size": 8,
+                "batch_size": 32,
                 "clip_ratio": 0.2,
                 "kl_coeff": cfg["kl_coeff"],
                 "save_dir": adapter_path,
             })
             job_names.append(adapter_name)
 
+        return jobs, job_names
+
+    def train_step(
+        self,
+        records: Dict[str, List[GRPORecord]],
+    ) -> Dict[str, GRPOTrainStats]:
+        """Run FSDP GRPO for all decision adapters in a single spawn."""
+        from skill_agents_grpo.grpo.fsdp_trainer import run_fsdp_grpo_multi
+
+        jobs, job_names = self.build_jobs(records)
         if not jobs:
             return {}
 
@@ -280,18 +291,14 @@ class SkillBankGRPOTrainer:
         self.kl_coeff = kl_coeff
         self.io_log_dir = io_log_dir
 
-    def train_step(
+    def build_jobs(
         self,
         grpo_data: Dict[str, List[Dict[str, Any]]],
-    ) -> Dict[str, GRPOTrainStats]:
-        """Run FSDP GRPO for each skill bank adapter in its own spawn.
+    ) -> tuple:
+        """Build FSDP job dicts for all skill bank adapters.
 
-        Each adapter gets a fresh ``mp.spawn`` with clean GPU memory,
-        avoiding the fragmentation / SIGABRT that occurs when multiple
-        adapters are trained sequentially inside a single process group.
+        Returns ``(jobs, names)`` without launching training.
         """
-        from skill_agents_grpo.grpo.fsdp_trainer import run_fsdp_grpo
-
         adapter_configs = {
             "segment": {
                 "lr": self.lr * 0.6,
@@ -310,7 +317,8 @@ class SkillBankGRPOTrainer:
             },
         }
 
-        result: Dict[str, GRPOTrainStats] = {}
+        jobs: List[Dict] = []
+        job_names: List[str] = []
 
         for adapter_name, cfg in adapter_configs.items():
             samples = grpo_data.get(adapter_name, [])
@@ -328,33 +336,45 @@ class SkillBankGRPOTrainer:
                 adapter_name, len(prompts), len(self.devices),
             )
 
-            stats = run_fsdp_grpo(
-                gpu_ids=self.devices,
-                model_name=self.model_name,
-                adapter_dir=adapter_path,
-                adapter_name=adapter_name,
-                prompts=prompts,
-                completions=completions,
-                advantages=advantages,
-                lr=cfg["lr"],
-                epochs=cfg["epochs"],
-                batch_size=8,
-                clip_ratio=0.2,
-                kl_coeff=cfg["kl_coeff"],
-                save_dir=adapter_path,
-                io_log_dir=self.io_log_dir,
-            )
+            jobs.append({
+                "adapter_dir": adapter_path,
+                "adapter_name": adapter_name,
+                "prompts": prompts,
+                "completions": completions,
+                "advantages": advantages,
+                "lr": cfg["lr"],
+                "epochs": cfg["epochs"],
+                "batch_size": 32,
+                "clip_ratio": 0.2,
+                "kl_coeff": cfg["kl_coeff"],
+                "save_dir": adapter_path,
+            })
+            job_names.append(adapter_name)
 
-            import gc
-            gc.collect()
-            try:
-                import torch
-                torch.cuda.empty_cache()
-            except Exception:
-                pass
+        return jobs, job_names
 
-            result[adapter_name] = GRPOTrainStats(
-                adapter=adapter_name,
+    def train_step(
+        self,
+        grpo_data: Dict[str, List[Dict[str, Any]]],
+    ) -> Dict[str, GRPOTrainStats]:
+        """Run FSDP GRPO for all skill bank adapters in a single spawn."""
+        from skill_agents_grpo.grpo.fsdp_trainer import run_fsdp_grpo_multi
+
+        jobs, job_names = self.build_jobs(grpo_data)
+        if not jobs:
+            return {}
+
+        all_stats = run_fsdp_grpo_multi(
+            gpu_ids=self.devices,
+            model_name=self.model_name,
+            jobs=jobs,
+            io_log_dir=self.io_log_dir,
+        )
+
+        result: Dict[str, GRPOTrainStats] = {}
+        for name, stats in zip(job_names, all_stats):
+            result[name] = GRPOTrainStats(
+                adapter=name,
                 n_samples=stats.get("n_samples", 0),
                 n_tokens=stats.get("n_tokens", 0),
                 mean_loss=stats.get("mean_loss", 0.0),
@@ -384,10 +404,10 @@ async def run_grpo_training(
 ) -> GRPOStepResult:
     """Run GRPO training for both decision agent and skill bank.
 
-    Decision and skill bank adapters train **sequentially** on the
-    same GPUs using FSDP data parallelism.  Each adapter spawns N
-    worker processes (one per GPU) that load the model shard, train
-    on their data slice, and exit.
+    All adapters (decision + skill bank) are trained in a **single**
+    FSDP process spawn.  The persistent model is loaded once and LoRA
+    weights are swapped between adapters, eliminating redundant model
+    loads (~20-30 s saved per step).
 
     Parameters
     ----------
@@ -398,6 +418,7 @@ async def run_grpo_training(
         Used to run blocking FSDP training off the event loop.
     """
     import asyncio
+    import functools
 
     t0 = time.monotonic()
     loop = asyncio.get_running_loop()
@@ -416,53 +437,73 @@ async def run_grpo_training(
 
     train_results = [r for r in rollout_results if not r.eval_only]
     decision_records = _collect_grpo_records(train_results)
-    has_decision_data = any(len(v) > 0 for v in decision_records.values())
-    has_skillbank_data = any(len(v) > 0 for v in skillbank_grpo_data.values())
+
+    # ── Build unified job list from both trainers ──
+    all_jobs: List[Dict] = []
+    job_categories: List[tuple] = []
+
+    decision_trainer = DecisionGRPOTrainer(
+        model_name=config.model_name,
+        adapter_dir=config.decision_adapter_dir,
+        devices=devices,
+        lr=lr,
+        temperature=temperature,
+        kl_coeff=kl_coeff,
+        io_log_dir=io_dir,
+    )
+    d_jobs, d_names = decision_trainer.build_jobs(decision_records)
+    all_jobs.extend(d_jobs)
+    job_categories.extend(("decision", n) for n in d_names)
+
+    skillbank_trainer = SkillBankGRPOTrainer(
+        model_name=config.model_name,
+        adapter_dir=config.skillbank_adapter_dir,
+        devices=devices,
+        lr=lr,
+        temperature=temperature,
+        kl_coeff=kl_coeff,
+        io_log_dir=io_dir,
+    )
+    s_jobs, s_names = skillbank_trainer.build_jobs(skillbank_grpo_data)
+    all_jobs.extend(s_jobs)
+    job_categories.extend(("skillbank", n) for n in s_names)
 
     decision_stats: Dict[str, GRPOTrainStats] = {}
     skillbank_stats: Dict[str, GRPOTrainStats] = {}
 
-    # Run decision and skillbank SEQUENTIALLY (both use all GPUs via FSDP)
+    # ── Single FSDP spawn for all adapters ──
+    if all_jobs:
+        from skill_agents_grpo.grpo.fsdp_trainer import run_fsdp_grpo_multi
 
-    if has_decision_data:
-        logger.info("Phase C.1: Decision agent GRPO on GPUs %s", devices)
-        trainer = DecisionGRPOTrainer(
-            model_name=config.model_name,
-            adapter_dir=config.decision_adapter_dir,
-            devices=devices,
-            lr=lr,
-            temperature=temperature,
-            kl_coeff=kl_coeff,
-            io_log_dir=io_dir,
-        )
-        decision_stats = await loop.run_in_executor(
-            executor, trainer.train_step, decision_records,
+        logger.info(
+            "Phase C: GRPO training %d adapters on GPUs %s",
+            len(all_jobs), devices,
         )
 
-    if has_decision_data and has_skillbank_data:
-        import gc, time as _time
-        gc.collect()
-        try:
-            import torch
-            torch.cuda.empty_cache()
-        except Exception:
-            pass
-        _time.sleep(5)
+        all_stats = await loop.run_in_executor(
+            executor,
+            functools.partial(
+                run_fsdp_grpo_multi,
+                gpu_ids=devices,
+                model_name=config.model_name,
+                jobs=all_jobs,
+                io_log_dir=io_dir,
+            ),
+        )
 
-    if has_skillbank_data:
-        logger.info("Phase C.2: Skill bank GRPO on GPUs %s", devices)
-        trainer = SkillBankGRPOTrainer(
-            model_name=config.model_name,
-            adapter_dir=config.skillbank_adapter_dir,
-            devices=devices,
-            lr=lr,
-            temperature=temperature,
-            kl_coeff=kl_coeff,
-            io_log_dir=io_dir,
-        )
-        skillbank_stats = await loop.run_in_executor(
-            executor, trainer.train_step, skillbank_grpo_data,
-        )
+        for (cat, name), stats in zip(job_categories, all_stats):
+            stat = GRPOTrainStats(
+                adapter=name,
+                n_samples=stats.get("n_samples", 0),
+                n_tokens=stats.get("n_tokens", 0),
+                mean_loss=stats.get("mean_loss", 0.0),
+                epochs=stats.get("epochs", 0),
+                wall_time_s=stats.get("wall_time_s", 0.0),
+            )
+            if cat == "decision":
+                decision_stats[name] = stat
+            else:
+                skillbank_stats[name] = stat
 
     # Collect serializable records for disk export
     all_records: Dict[str, List[Dict[str, Any]]] = {}

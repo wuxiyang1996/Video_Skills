@@ -274,6 +274,24 @@ class Protocol:
     Contains preconditions (when to invoke), ordered steps, success/abort
     criteria, and expected duration.  Updated when new high-quality
     sub-episodes provide better strategies.
+
+    Extended fields (all optional, backward-compatible):
+
+    ``step_checks``
+        Per-step completion conditions (same length as ``steps``).  Each
+        entry is a ``key=value`` predicate or short observable condition
+        that must be true before the agent advances to the next step.
+        Empty string means "advance after one timestep".
+
+    ``predicate_success`` / ``predicate_abort``
+        Machine-checkable ``key=value`` or ``key<N`` / ``key>N``
+        conditions evaluated against the parsed ``summary_state`` dict.
+        Used *alongside* the free-text ``success_criteria`` /
+        ``abort_criteria`` (which remain for prompt display).
+
+    ``action_vocab``
+        The set of primitive action names available in this game,
+        recorded so protocol steps can reference real actions.
     """
 
     preconditions: List[str] = field(default_factory=list)
@@ -282,14 +300,28 @@ class Protocol:
     abort_criteria: List[str] = field(default_factory=list)
     expected_duration: int = 10
 
+    step_checks: List[str] = field(default_factory=list)
+    predicate_success: List[str] = field(default_factory=list)
+    predicate_abort: List[str] = field(default_factory=list)
+    action_vocab: List[str] = field(default_factory=list)
+
     def to_dict(self) -> dict:
-        return {
+        d = {
             "preconditions": self.preconditions,
             "steps": self.steps,
             "success_criteria": self.success_criteria,
             "abort_criteria": self.abort_criteria,
             "expected_duration": self.expected_duration,
         }
+        if self.step_checks:
+            d["step_checks"] = self.step_checks
+        if self.predicate_success:
+            d["predicate_success"] = self.predicate_success
+        if self.predicate_abort:
+            d["predicate_abort"] = self.predicate_abort
+        if self.action_vocab:
+            d["action_vocab"] = self.action_vocab
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> Protocol:
@@ -301,6 +333,10 @@ class Protocol:
             success_criteria=d.get("success_criteria", []),
             abort_criteria=d.get("abort_criteria", []),
             expected_duration=d.get("expected_duration", 10),
+            step_checks=d.get("step_checks", []),
+            predicate_success=d.get("predicate_success", []),
+            predicate_abort=d.get("predicate_abort", []),
+            action_vocab=d.get("action_vocab", []),
         )
 
 

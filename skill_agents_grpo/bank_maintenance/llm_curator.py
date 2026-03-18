@@ -35,10 +35,14 @@ Skills with low pass rate (<0.60): {n_low_pass}
 For each action, respond with a JSON object:
 {{"decisions": [{{"idx": 0, "verdict": "approve|veto|defer", "reason": "brief reason"}}, ...]}}
 
+Action types: SPLIT, MERGE, REFINE, MATERIALIZE, PROMOTE.
+
 Guidelines:
 - APPROVE actions that improve bank quality with clear evidence.
 - VETO actions where the evidence is contradictory or the risk outweighs benefit.
 - DEFER when evidence is insufficient (fewer than 5 instances, marginal metrics).
+- For MATERIALIZE: approve if the recurring pattern is distinct from existing skills.
+- For PROMOTE: approve if the proto-skill has a reasonable pass rate and enough instances.
 - Prefer conservative decisions — a deferred action can be reconsidered later.
 """
 

@@ -37,6 +37,7 @@ This repository provides a framework for enhancing agentic decision-making in mu
   - **Query & storage**: [SkillQueryEngine](skill_agents/query.py) (RAG + keyword/effect; `select()` for rich selection), [SkillBankMVP](skill_agents/skill_bank/bank.py) (+ `compat_fn`), [tool_call_reward](skill_agents/tool_call_reward.py), [skill_evaluation/](skill_agents/skill_evaluation/).
 
 - **🏋️ Training** — [trainer/](trainer/): Co-evolution of both agents via VERL.
+  - **SFT Cold-Start** ([trainer/SFT/](trainer/SFT/)): Train all 5 LoRA adapters (skill_selection, action_taking, segment, contract, curator) from teacher-labelled cold-start data before GRPO. Launch: `bash scripts/run_sft_coldstart.sh`.
   - **Agent A (Decision)**: GRPO — primitives + `QUERY_MEM` / `QUERY_SKILL` / `CALL_SKILL`; reward = r_env + shaping + costs + tool-call reward.
   - **Agent B (SkillBank)**: Hard-EM (decode → update → gate); all four stages packed as a tool pipeline in the [co-evolution callback](trainer/decision/coevolution_callback.py). Trajectory segmentations stored and updated via `SegmentationStore`.
   - **Co-evolution callback**: [coevolution_callback.py](trainer/decision/coevolution_callback.py) — `SkillBankCoEvolutionCallback` + `SkillAgentToolPipeline` + `SegmentationStore`; integrates `skill_agents.tool_call_reward` into reward shaping. On accepted EM update, [launch_coevolution.py](trainer/launch_coevolution.py) passes the training model into `SkillBankAgent` for protocol synthesis (same `ask_model` routing as inference). [launch_train](trainer/decision/launch_train.py) initializes `SkillQueryEngine` when loading the bank so training rollouts use the same retrieval path as inference.
@@ -483,20 +484,334 @@ Iteration 2+:
 
 **Standalone orchestrator**: [trainer/launch_coevolution.py](trainer/launch_coevolution.py) — runs Decision GRPO continuously; every N episodes freezes a rollout batch, runs SkillBank EM, gates with fixed-seed eval, then commits or rolls back the bank.
 
+### SFT Cold-Start Training
+
+Before running co-evolution GRPO, all 5 LoRA adapters can be warm-started via **supervised fine-tuning** on teacher-labelled cold-start data. This gives the GRPO loop a non-random starting point, significantly improving early-step performance.
+
+**Module:** [`trainer/SFT/`](trainer/SFT/) — `SFTConfig`, `load_all_adapter_datasets`, `train_all_adapters`
+
+**LoRA config** is identical to the co-evolution GRPO pipeline so adapters load directly without conversion:
+
+| Parameter | Value |
+|-----------|-------|
+| Base model | Qwen/Qwen3-8B |
+| LoRA rank / alpha | 16 / 32 |
+| Dropout | 0.05 |
+| Target modules | `q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj` |
+| Batch size / grad accum | 4 / 4 (effective 16) |
+| Max sequence length | 2048 |
+| Warmup | 5% |
+| Precision | bf16 |
+
+**Per-adapter training settings** — epochs and LR scale inversely with dataset size so small-data adapters get enough gradient steps while large decision adapters don't over-train:
+
+| Adapter | Category | Examples | Epochs | LR | Data source |
+|---------|----------|----------|--------|-----|-------------|
+| `skill_selection` | Decision | ~34k | 3 | 2e-4 | [`grpo_coldstart/*/skill_selection.jsonl`](labeling/output/gpt54_skill_labeled/grpo_coldstart/) |
+| `action_taking` | Decision | ~34k | 3 | 2e-4 | [`grpo_coldstart/*/action_taking.jsonl`](labeling/output/gpt54_skill_labeled/grpo_coldstart/) |
+| `segment` | Skill Bank | ~2.7k | 8 | 2e-4 | [`gpt54_skillbank_grpo/*/teacher_io_coldstart.jsonl`](skill_agents_grpo/extract_skillbank/output/gpt54_skillbank_grpo/) |
+| `contract` | Skill Bank | ~1.6k | 10 | 2e-4 | [`gpt54_skillbank_grpo/*/coldstart_io_all.jsonl`](skill_agents_grpo/extract_skillbank/output/gpt54_skillbank_grpo/) (modules: `boundary_proposal`, `pipeline`) |
+| `curator` | Skill Bank | ~216 | 15 | 1e-4 | [`gpt54_skillbank_grpo/*/coldstart_io_all.jsonl`](skill_agents_grpo/extract_skillbank/output/gpt54_skillbank_grpo/) (module: `skill_naming`) |
+
+**Data format alignment with co-evolution** — the SFT data loader transforms cold-start data so each adapter's prompt/completion format exactly matches what it will see during co-evolution GRPO:
+
+| Adapter | Co-evolution I/O format | Cold-start alignment |
+|---------|------------------------|----------------------|
+| `skill_selection` | `REASONING: <text>\nSKILL: <N>` | Exact match — same prompt builder |
+| `action_taking` | `SUBGOAL: [TAG] <objective>\nREASONING: <text>\nACTION: <N>` | Transformed at load time: SUBGOAL instructions injected into prompt, `intention` metadata prepended to completion (cold-start labels lack SUBGOAL) |
+| `segment` | `segment_ranking` / `transition_ranking` / `pairwise_choice` → JSON ranking | Exact match — same `_build_segment_ranking_prompt` generates both |
+| `contract` | `_CONTRACT_PROMPT_TEMPLATE` → `{"eff_add": [...], "eff_del": [...], "description": "..."}` | Proxy data: cold-start extraction did not run Stage 3 contract learning, so predicate analysis (`boundary_proposal`) and protocol synthesis (`pipeline`) provide domain-proximate training; GRPO refines to the actual task |
+| `curator` | `_CURATOR_PROMPT_TEMPLATE` → `{"decisions": [{"idx": N, "verdict": "approve\|veto\|defer", "reason": "..."}]}` | Proxy data: cold-start extraction did not run bank maintenance, so skill naming data provides approximate domain overlap; GRPO refines to the actual curation task |
+
+**SFT data examples** — one sample per adapter showing the prompt → completion format the model learns:
+
+<details>
+<summary><b>skill_selection</b> — pick the best strategy from candidates</summary>
+
+**Prompt:**
+```
+You are an expert game strategist. Given the current game state and
+candidate strategies, choose the ONE strategy most likely to make progress.
+
+Output format (strict):
+REASONING: <1-2 sentences why this strategy fits>
+SKILL: <number>
+
+Game state:
+game=candy crush | phase=opening | step=0/50 | score=0 | moves=50 | board=8x8 | pairs=18 | reward=+3
+
+Current intention: [CLEAR] Make the immediate match-producing swap for quick points and flexible board structure
+
+Available strategies (pick ONE by number):
+  1. Clear Immediate Match
+     Strategy: Swap two adjacent candies to make an immediate 3+ match already
+       available on the board. Use this in the endgame when a clear, guaranteed
+       match helps clear remaining objectives without wasting moves.
+     Plan: Scan the board row by row and column by column for near-matches where
+       moving one adjacent candy completes a 3+ line → Execute the swap →
+       Confirm the match and check for cascades.
+  2. Build Cascade Setup
+     ...
+  3. Quick Opening Match
+     ...
+
+Choose the best strategy.
+```
+
+**Completion:**
+```
+REASONING: The game is at the opening state, and strategy 3 is the only one
+explicitly grounded in the same opening condition, making it the best fit
+for immediate progress.
+SKILL: 3
+```
+</details>
+
+<details>
+<summary><b>action_taking</b> — select a game action given a skill plan</summary>
+
+**Prompt:**
+```
+You are a game-playing agent. Pick the best action for the current state.
+
+Output SUBGOAL, REASONING, then ACTION number.
+
+--- Active Skill: Make Immediate Match ---
+  Strategy: game=candy crush | phase=opening | step=0/50 | score=0 |
+    moves=50 | board=8x8 ...
+--- end skill ---
+
+Game state:
+
+game=candy crush | phase=opening | step=0/50 | score=0 | moves=50
+Board (8×8): ...
+
+Available actions:
+  0. Swap (0,0)↔(0,1)
+  1. Swap (0,1)↔(0,2)
+  ...
+  5. Swap (1,2)↔(2,2)
+  ...
+```
+
+**Completion:**
+```
+SUBGOAL: [CLEAR] Make the immediate match-producing swap for quick points
+  and flexible board structure
+REASONING: Expert play.
+ACTION: 5
+```
+</details>
+
+<details>
+<summary><b>segment</b> — rank skills that best explain a trajectory segment</summary>
+
+**Prompt:**
+```
+You are an expert at recognizing skills in agent trajectories.
+
+A trajectory segment spans timesteps 7 to 18 (length 12).
+
+Observations:
+['game=tetris | phase=opening | step=7/86 | stack_h=6 | holes=8 | piece=J
+  | next=Z,T,S,L | level=1 | reward=+1', ...]
+
+Actions:
+['move_right', 'rotate_clockwise', 'hard_drop', ...]
+
+State at segment start: {'intention': '[SETUP] Place J to support upcoming
+  pieces', ...}
+State at segment end:   {'intention': '[POSITION] Use T to patch holes and
+  stabilize', ...}
+
+Candidate skills:
+  - "endgame:CLEAR": Tuck T Smoothly — Use a T piece to slide into a tight
+      notch under an overhang, flattening the surface while preserving access
+  - "endgame:SURVIVE": Keep Stack Safe — Use this when the stack is tall or
+      messy: place pieces to flatten the surface, seal exposed holes
+  - "midgame:CLEAR": Lay Z Flat — Place the Z piece horizontally on a flat,
+      even surface so it doesn't create overhangs or new holes
+  - "midgame:POSITION": Keep Surfaces Flat — Place pieces to keep the stack
+      low and the top surface as even as possible
+  - "opening:SETUP": Keep Stack Low — In the opening, place pieces flat and
+      clear singles or doubles early to keep the stack only 2-3 rows high
+  ...
+
+Rank ALL candidate skills from best fit to worst fit for this segment. Consider:
+  - Do the actions match what this skill would produce?
+  - Is the segment length reasonable for this skill?
+  - Is the state change consistent with this skill's purpose?
+
+Return ONLY a JSON object (no extra text):
+{"ranking": ["best_skill", "second_best", ...], "reasoning": "brief explanation"}
+```
+
+**Completion:**
+```json
+{"ranking": ["opening:SETUP", "midgame:POSITION", "midgame:SETUP",
+  "midgame:NAVIGATE", "midgame:CLEAR", "midgame:SURVIVE", "midgame:DEFEND",
+  "midgame:OPTIMIZE", "endgame:CLEAR", "endgame:SURVIVE"],
+ "reasoning": "This is in the opening phase with board-shaping goals: placing
+  J to support upcoming pieces, then using T to patch holes and stabilize."}
+```
+</details>
+
+<details>
+<summary><b>contract</b> — generate execution protocols (proxy task for effect summarization)</summary>
+
+**Prompt:**
+```
+You are a game-AI protocol designer. Generate a concrete execution protocol
+for the skill below.
+
+Skill: mid_quests:SETUP
+Description: (none)
+Effects: achieves: phase=endgame, quest=4, quest=5;
+         removes: phase=midgame, quest=3, team_size=2
+Evidence from successful executions:
+  - game=avalon | phase=opening | step=6/26 | quest=2 | round=2 | role=Merlin
+
+Generate a structured protocol as JSON with these exact keys:
+{"preconditions": ["..."], "steps": ["..."],
+ "success_criteria": ["..."], "abort_criteria": ["..."]}
+```
+
+**Completion:**
+```json
+{"preconditions": ["The game is Avalon and the table is transitioning out
+  of the opening into the midgame, with quest 2 resolved.",
+  "Current state still reflects midgame setup conditions: quest 3 is not
+  yet locked in.", "At least one of quests 4 or 5 has not yet been staged."],
+ "steps": ["Evaluate previous quest outcomes to identify suspect players.",
+  "Propose a 3-player team excluding suspects.", ...],
+ "success_criteria": ["Phase transitions to endgame.",
+  "Quest 4 or 5 is resolved."],
+ "abort_criteria": ["Two consecutive failed quests."]}
+```
+
+*Note:* Cold-start extraction did not run Stage 3 contract learning.
+This proxy data (boundary analysis + protocol synthesis) teaches structured
+JSON generation in the game domain; GRPO refines to the actual effect
+summarization task.
+</details>
+
+<details>
+<summary><b>curator</b> — name and summarize skills (proxy task for approve/veto/defer)</summary>
+
+**Prompt:**
+```
+Game: avalon
+Skill ID: early_quests:POSITION
+Effects added: quest=2
+Effects removed: team_size=2
+Events: none
+Sample intentions from segments:
+  [SETUP] Interpret Player 2's opening team proposal [2,0] to gauge alignment
+  [CLEAR] Assess Player 0's motives and alignment from opening-team context
+  [SETUP] Lead quest 1 with yourself and one other to gather early information
+
+Generate:
+1. A short skill name (2-5 words, imperative verb phrase)
+2. A compact RAG summary in key=value format for embedding retrieval
+
+Reply in this exact format:
+NAME: <skill name>
+SUMMARY: game=<game> | skill=<name> | effects=... | context=...
+```
+
+**Completion:**
+```
+NAME: Read Opening Team
+SUMMARY: game=avalon | skill=Read Opening Team | effects=quest=2 |
+  context=opening 2-player quest; assess proposer motives/alignment from
+  first team proposal and approve/select a team to gather early information
+```
+
+*Note:* Cold-start extraction did not run bank maintenance (curation).
+Skill naming shares domain overlap (evaluating skills) but differs from the
+co-evolution approve/veto/defer format; GRPO bridges this gap.
+</details>
+
+**Output layout** (matches co-evolution `adapter_dir` structure):
+
+```
+runs/sft_coldstart/
+├── decision/
+│   ├── skill_selection/   # adapter_config.json + adapter_model.safetensors
+│   └── action_taking/
+└── skillbank/
+    ├── segment/
+    ├── contract/
+    └── curator/
+```
+
+**Run SFT cold-start training:**
+
+```bash
+# Sequential: train all 5 adapters one after another (1 GPU)
+bash scripts/run_sft_coldstart.sh
+
+# PARALLEL: train all 5 adapters simultaneously (1 GPU per adapter, ~5x faster)
+SFT_PARALLEL=1 bash scripts/run_sft_coldstart.sh
+
+# Parallel on specific GPUs
+SFT_PARALLEL=1 SFT_GPUS="0 1 2 3 4" bash scripts/run_sft_coldstart.sh
+
+# Custom settings
+SFT_EPOCHS=5 SFT_LR=1e-4 SFT_PARALLEL=1 bash scripts/run_sft_coldstart.sh
+
+# Train a subset in parallel
+SFT_PARALLEL=1 SFT_ADAPTERS="segment contract curator" bash scripts/run_sft_coldstart.sh
+
+# Or use the Python module directly
+python -m trainer.SFT.train --parallel                         # all 5, auto-detect GPUs
+python -m trainer.SFT.train --parallel --gpus 0 1 2 3 4        # explicit GPU assignment
+python -m trainer.SFT.train --adapters segment curator --parallel
+```
+
+Parallel mode spawns one subprocess per adapter, each pinned to a separate GPU via `CUDA_VISIBLE_DEVICES`. Qwen3-8B in bf16 uses ~16GB, so each adapter fits on a single GPU. With 5+ GPUs, wall-clock time equals the slowest adapter (~34k-example decision adapters) rather than the sum of all five. Per-adapter logs are saved to `<output_dir>/sft_gpu<N>.log`.
+
+If fewer GPUs than adapters are available, the launcher automatically distributes multiple adapters per GPU (trained sequentially on that GPU, in parallel with other GPUs).
+
+**Feed SFT adapters into co-evolution GRPO:**
+
+```bash
+python scripts/run_coevolution.py \
+    --load-decision-adapters  runs/sft_coldstart/decision \
+    --load-skillbank-adapters runs/sft_coldstart/skillbank
+```
+
+**Programmatic usage:**
+
+```python
+from trainer.SFT import SFTConfig, train_all_adapters
+
+config = SFTConfig(output_dir="runs/sft_coldstart", epochs=3, lr=2e-4)
+results = train_all_adapters(config)            # sequential
+results = train_all_adapters(config, gpu=2)     # sequential on specific GPU
+```
+
 ### Training Scripts
 
 | Script | Purpose |
 |--------|---------|
+| [`scripts/run_sft_coldstart.sh`](scripts/run_sft_coldstart.sh) | SFT cold-start: train all 5 LoRA adapters from teacher-labelled data (run before co-evolution) |
 | [`scripts/coevolution_train.sh`](scripts/coevolution_train.sh) | Main loop: cold-start rollouts → Skill Bank v1 → Decision Agent v1 → iterate (default 6 iterations) |
 | [`scripts/decision_agent_train.sh`](scripts/decision_agent_train.sh) | GRPO training for Decision Agent (Qwen3-8B) on GPUs 0-3 via VERL |
 | [`scripts/skillbank_agent_train.sh`](scripts/skillbank_agent_train.sh) | LoRA training + Hard-EM for Skill Bank Agent (Qwen3-8B) on GPUs 4-7 |
 | [`cold_start/run_100_rollouts.py`](cold_start/run_100_rollouts.py) | Batch rollout generation (100 episodes per game) |
 
 ```bash
-# Default: Qwen3-8B decision + Qwen3-8B skill bank, 6 iterations
+# Full pipeline: SFT cold-start → co-evolution GRPO
+bash scripts/run_sft_coldstart.sh
+python scripts/run_coevolution.py \
+    --load-decision-adapters  runs/sft_coldstart/decision \
+    --load-skillbank-adapters runs/sft_coldstart/skillbank
+
+# Or skip SFT and train from scratch (gaussian LoRA init)
 bash scripts/coevolution_train.sh
 
-# Custom:
+# Custom co-evolution:
 Decision_base_model=Qwen/Qwen3-8B \
 SkillBank_base_model=Qwen/Qwen3-8B \
 NUM_ITERATIONS=10 TRAIN_STEPS=30 \
@@ -537,6 +852,60 @@ The following bugs prevented the co-evolution training pipeline from completing 
 cd runs/coevolution
 rm -f rollouts/*_rollouts_v0.jsonl
 rm -rf temp_results/* lora_adapters/* logs/skillbank/*
+```
+
+---
+
+## Protocol feasibility improvements
+
+The protocol system was extended to produce more actionable, verifiable
+guidance for the decision agent.  All changes are **backward-compatible** —
+existing skill banks with old-format protocols continue to work without
+modification.
+
+### Changes overview
+
+| # | Problem | Solution | Key file(s) |
+|---|---------|----------|-------------|
+| 1 | Steps didn't reference real game actions | LLM synthesis prompt now includes `action_vocab` when available | `pipeline.py` (`_llm_synthesize_protocol`) |
+| 2 | Success/abort used fragile keyword matching | New `predicate_success` / `predicate_abort` fields (key=value, key<N, key>N) checked against `summary_state`; keyword matching is kept as fallback | `protocol_utils.py`, `_SkillTracker` |
+| 3 | Steps advanced every timestep regardless of progress | New `step_checks` field — per-step conditions that must be met before advancing | `protocol_utils.py`, `_SkillTracker.update()` |
+| 4 | `expected_duration` was arithmetic mean (outlier-sensitive) | Now uses **median** of sub-episode lengths, capped between 3 and 30 | `protocol_utils.compute_expected_duration` |
+| 5 | Protocols were never revised after initial creation | `refine_low_pass_protocols()` re-synthesizes for skills with success rate < 40% | `pipeline.py` |
+| 6 | Action prompt had no progress context | `build_progress_summary()` injects "Steps 1-2 done. Current: step 3 — ..." into the prompt | `protocol_utils.py`, `_format_skill_guidance_for_prompt` |
+
+### New Protocol fields
+
+All new fields are optional with empty-list defaults — old code that doesn't
+know about them is unaffected.
+
+```python
+@dataclass
+class Protocol:
+    # ... existing fields ...
+    step_checks: List[str]        # per-step completion predicates
+    predicate_success: List[str]  # machine-checkable success conditions
+    predicate_abort: List[str]    # machine-checkable abort conditions
+    action_vocab: List[str]       # game actions available during synthesis
+```
+
+### Predicate format
+
+Predicates are `key=value`, `key!=value`, `key>N`, `key<N`, `key>=N`, or
+`key<=N`.  They are checked against the parsed `summary_state` string
+(format: `key=value | key=value | ...`).
+
+### Protocol refinement
+
+Call `pipeline.refine_low_pass_protocols()` periodically (e.g. every 5
+co-evolution iterations) to automatically re-synthesize protocols for
+under-performing skills:
+
+```python
+refined = pipeline.refine_low_pass_protocols(
+    pass_rate_threshold=0.4,
+    min_episodes=3,
+)
 ```
 
 ---

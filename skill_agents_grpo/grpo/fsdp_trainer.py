@@ -59,6 +59,424 @@ def _detect_wrap_cls(model):
     return set()
 
 
+def _wrap_for_chat(tokenizer, prompts, completions):
+    """Apply the model's chat template to (prompt, completion) pairs.
+
+    Returns ``(chat_full_texts, chat_prompts)`` where each full text is
+    ``[user: prompt][assistant: completion]`` and each chat prompt is
+    ``[user: prompt]<generation_prompt>`` — matching the SFT training
+    format.  Falls back to raw concatenation when the tokenizer has no
+    ``apply_chat_template``.
+    """
+    has_template = hasattr(tokenizer, "apply_chat_template")
+    chat_full: list = []
+    chat_prompts: list = []
+    for p, c in zip(prompts, completions):
+        if has_template:
+            try:
+                full = tokenizer.apply_chat_template(
+                    [{"role": "user", "content": p},
+                     {"role": "assistant", "content": c}],
+                    tokenize=False, add_generation_prompt=False,
+                )
+                cprompt = tokenizer.apply_chat_template(
+                    [{"role": "user", "content": p}],
+                    tokenize=False, add_generation_prompt=True,
+                )
+                chat_full.append(full)
+                chat_prompts.append(cprompt)
+                continue
+            except Exception:
+                pass
+        chat_full.append(p + c)
+        chat_prompts.append(p)
+    return chat_full, chat_prompts
+
+
+def _run_grpo_training_loop(
+    model,
+    tokenizer,
+    rank: int,
+    device: "torch.device",
+    is_main: bool,
+    world_size: int,
+    adapter_name: str,
+    prompts: list,
+    completions: list,
+    advantages: list,
+    lr: float,
+    epochs: int,
+    batch_size: int,
+    clip_ratio: float,
+    kl_coeff: float,
+) -> "Optional[Dict[str, Any]]":
+    """Execute GRPO training on an already-wrapped FSDP model.
+
+    Handles data sharding, tokenization, reference log-prob computation,
+    and the PPO-style training loop.  The caller is responsible for model
+    lifecycle (loading, FSDP wrapping, saving weights, cleanup).
+
+    Returns a dict of training statistics, or ``None`` if training was
+    skipped (no valid samples).
+    """
+    import torch
+    import torch.distributed as dist
+
+    n_total = len(prompts)
+    per_rank = n_total // world_size
+    start_idx = rank * per_rank
+    end_idx = start_idx + per_rank if rank < world_size - 1 else n_total
+    my_prompts = prompts[start_idx:end_idx]
+    my_completions = completions[start_idx:end_idx]
+    my_advantages = advantages[start_idx:end_idx]
+    n_my = len(my_prompts)
+
+    if is_main:
+        logger.info(
+            "FSDP GRPO [%s]: %d samples → %d/rank, %d epochs, bs=%d",
+            adapter_name, n_total, n_my, epochs, batch_size,
+        )
+
+    t_ref = time.time()
+    tokenized: list = []
+    if n_my > 0:
+        chat_full, chat_prompts = _wrap_for_chat(
+            tokenizer, my_prompts, my_completions,
+        )
+        enc_batch = tokenizer(
+            chat_full, truncation=True, padding=False, return_tensors=None,
+        )
+        penc_batch = tokenizer(
+            chat_prompts, truncation=True, padding=False,
+            return_tensors=None,
+        )
+        for i in range(n_my):
+            ids = enc_batch["input_ids"][i]
+            mask = enc_batch["attention_mask"][i]
+            plen = len(penc_batch["input_ids"][i])
+            if plen >= len(ids):
+                continue
+            tokenized.append({
+                "input_ids": torch.tensor([ids]),
+                "attn_mask": torch.tensor([mask]),
+                "plen": plen,
+                "adv": my_advantages[i],
+            })
+
+    n_valid_local = torch.tensor(
+        len(tokenized), device=device, dtype=torch.long,
+    )
+    n_valid_max = n_valid_local.clone()
+    dist.all_reduce(n_valid_max, op=dist.ReduceOp.MAX)
+    n_valid_max_val = int(n_valid_max.item())
+
+    if n_valid_max_val == 0:
+        if is_main:
+            logger.warning("All samples filtered out, skipping training")
+        return None
+
+    dummy_entry = tokenized[0] if tokenized else {
+        "input_ids": torch.ones(1, 2, dtype=torch.long),
+        "attn_mask": torch.ones(1, 2, dtype=torch.long),
+        "plen": 1,
+        "adv": 0.0,
+    }
+    while len(tokenized) < n_valid_max_val:
+        tokenized.append(None)
+
+    # ── Reference log-probabilities ──
+    ref_data: list = [None] * len(tokenized)
+    pad_id = tokenizer.pad_token_id or 0
+    ref_batch = batch_size * 2
+
+    model.eval()
+    with torch.no_grad():
+        for batch_start in range(0, len(tokenized), ref_batch):
+            batch_end = min(batch_start + ref_batch, len(tokenized))
+            batch_items = tokenized[batch_start:batch_end]
+            real_flags = [tk is not None for tk in batch_items]
+            entries = [tk if tk is not None else dummy_entry
+                       for tk in batch_items]
+
+            max_len = max(e["input_ids"].shape[1] for e in entries)
+            bsz = len(entries)
+            batch_ids = torch.full(
+                (bsz, max_len), pad_id, dtype=torch.long,
+            )
+            batch_attn = torch.zeros(bsz, max_len, dtype=torch.long)
+            for j, e in enumerate(entries):
+                slen = e["input_ids"].shape[1]
+                batch_ids[j, :slen] = e["input_ids"][0]
+                batch_attn[j, :slen] = e["attn_mask"][0]
+
+            batch_ids = batch_ids.to(device)
+            batch_attn = batch_attn.to(device)
+
+            out = model(input_ids=batch_ids, attention_mask=batch_attn)
+
+            for j, e in enumerate(entries):
+                if not real_flags[j]:
+                    continue
+                plen = e["plen"]
+                slen = e["input_ids"].shape[1]
+                logits_j = out.logits[j, plen - 1:slen - 1, :]
+                target_j = batch_ids[j, plen:slen]
+                lp = torch.log_softmax(logits_j, dim=-1)
+                per_tok = lp.gather(
+                    -1, target_j.unsqueeze(-1),
+                ).squeeze(-1)
+
+                if per_tok.numel() == 0:
+                    continue
+                ref_data[batch_start + j] = {
+                    "input_ids": e["input_ids"],
+                    "attn_mask": e["attn_mask"],
+                    "plen": plen,
+                    "ref_lp": per_tok.cpu(),
+                    "adv": e["adv"],
+                }
+            del out
+    model.train()
+
+    ref_data = [rd for rd in ref_data if rd is not None]
+
+    n_train_local = torch.tensor(
+        len(ref_data), device=device, dtype=torch.long,
+    )
+    n_train_max = n_train_local.clone()
+    dist.all_reduce(n_train_max, op=dist.ReduceOp.MAX)
+    n_train_max_val = int(n_train_max.item())
+
+    if n_train_max_val == 0:
+        if is_main:
+            logger.warning("No valid ref data, skipping training")
+        return None
+
+    if is_main:
+        logger.info(
+            "Reference log-probs: %d/%d valid (%.1fs)",
+            len(ref_data), n_my, time.time() - t_ref,
+        )
+
+    dummy_rd = ref_data[0] if ref_data else None
+    while len(ref_data) < n_train_max_val:
+        ref_data.append(None)
+
+    # ── Training loop ──
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable_params, lr=lr)
+
+    total_loss = 0.0
+    total_tokens = 0
+    n_my_train = len(ref_data)
+    n_mini = max(1, (n_my_train + batch_size - 1) // batch_size)
+    t_train = time.time()
+
+    for epoch in range(epochs):
+        optimizer.zero_grad()
+        epoch_loss = 0.0
+        epoch_samples = 0
+        t_epoch = time.time()
+
+        for mb in range(n_mini):
+            mb_start = mb * batch_size
+            mb_end = min(mb_start + batch_size, n_my_train)
+            batch_items = ref_data[mb_start:mb_end]
+            real_flags = [rd is not None for rd in batch_items]
+            entries = [rd if rd is not None else dummy_rd
+                       for rd in batch_items]
+
+            max_len = max(e["input_ids"].shape[1] for e in entries)
+            bsz = len(entries)
+            batch_ids = torch.full(
+                (bsz, max_len), pad_id, dtype=torch.long,
+            )
+            batch_attn = torch.zeros(bsz, max_len, dtype=torch.long)
+            for j, e in enumerate(entries):
+                slen = e["input_ids"].shape[1]
+                batch_ids[j, :slen] = e["input_ids"][0]
+                batch_attn[j, :slen] = e["attn_mask"][0]
+
+            batch_ids = batch_ids.to(device)
+            batch_attn = batch_attn.to(device)
+
+            with torch.enable_grad():
+                out = model(
+                    input_ids=batch_ids,
+                    attention_mask=batch_attn,
+                )
+
+            mb_losses: list = []
+            for j, e in enumerate(entries):
+                if not real_flags[j]:
+                    mb_losses.append(out.logits[j, 0, 0] * 0.0)
+                    continue
+
+                plen = e["plen"]
+                slen = e["input_ids"].shape[1]
+                old_lp = e["ref_lp"].to(device)
+
+                logits_j = out.logits[j, plen - 1:slen - 1, :]
+                target_j = batch_ids[j, plen:slen]
+                lp = torch.log_softmax(logits_j, dim=-1)
+                per_tok = lp.gather(
+                    -1, target_j.unsqueeze(-1),
+                ).squeeze(-1)
+
+                ratio = torch.exp(per_tok - old_lp)
+                clipped = torch.clamp(
+                    ratio, 1.0 - clip_ratio, 1.0 + clip_ratio,
+                )
+                adv_t = torch.tensor(
+                    e["adv"], device=device, dtype=per_tok.dtype,
+                )
+                if not torch.isfinite(adv_t).all():
+                    mb_losses.append(out.logits[j, 0, 0] * 0.0)
+                    continue
+                surr = torch.min(ratio * adv_t, clipped * adv_t)
+                loss = -surr.mean() + kl_coeff * (old_lp - per_tok).mean()
+                if not torch.isfinite(loss):
+                    mb_losses.append(out.logits[j, 0, 0] * 0.0)
+                    continue
+
+                mb_losses.append(loss)
+                epoch_loss += loss.item()
+                epoch_samples += 1
+                total_tokens += per_tok.numel()
+
+            if mb_losses:
+                torch.stack(mb_losses).mean().backward()
+
+            del out
+            torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0)
+            optimizer.step()
+            optimizer.zero_grad()
+
+        total_loss += epoch_loss / max(epoch_samples, 1)
+
+        if is_main:
+            elapsed = time.time() - t_epoch
+            rate = n_my / elapsed if elapsed > 0 else 0
+            logger.info(
+                "  FSDP [%s] epoch %d/%d: loss=%.4f (%.1f samples/s, %.1fs)",
+                adapter_name, epoch + 1, epochs,
+                epoch_loss / max(epoch_samples, 1), rate, elapsed,
+            )
+
+    train_time = time.time() - t_train
+    del optimizer
+
+    return {
+        "n_samples": n_total,
+        "n_tokens": total_tokens,
+        "mean_loss": total_loss / max(epochs, 1),
+        "epochs": epochs,
+        "train_time_s": train_time,
+    }
+
+
+def _save_lora_under_fsdp(model, adapter_name, save_dir, is_main):
+    """Save LoRA weights efficiently using ``summon_full_params``.
+
+    Only gathers parameters temporarily (no CPU offload of the full 16 GB
+    base model), then copies only the small LoRA tensors to CPU for saving.
+    """
+    import re
+
+    import torch
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+    t0 = time.time()
+    with FSDP.summon_full_params(model, writeback=False, rank0_only=True):
+        if is_main:
+            save_path = Path(save_dir)
+            save_path.mkdir(parents=True, exist_ok=True)
+
+            _adapter_key_re = re.compile(
+                r"(lora_[AB])\." + re.escape(adapter_name) + r"\.(weight)"
+            )
+            lora_state = {}
+            for name, param in model.named_parameters():
+                if "lora_" not in name:
+                    continue
+                clean_key = _adapter_key_re.sub(r"\1.\2", name)
+                lora_state[clean_key] = param.detach().cpu().clone()
+
+            if lora_state:
+                try:
+                    from safetensors.torch import save_file
+                    save_file(
+                        lora_state,
+                        str(save_path / "adapter_model.safetensors"),
+                    )
+                except ImportError:
+                    torch.save(
+                        lora_state,
+                        str(save_path / "adapter_model.bin"),
+                    )
+                logger.info(
+                    "Saved %d LoRA tensors → %s (%.1fs)",
+                    len(lora_state), save_path, time.time() - t0,
+                )
+            else:
+                logger.warning("No LoRA parameters found to save!")
+
+
+def _load_or_init_lora_under_fsdp(
+    model, adapter_dir, adapter_name, device, is_main,
+):
+    """Swap LoRA weights inside an FSDP-wrapped model.
+
+    Uses ``summon_full_params(writeback=True)`` to temporarily unshard all
+    parameters, copies new LoRA values from disk (or re-initialises them),
+    then re-shards on context exit.
+    """
+    import math
+    import re
+
+    import torch
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+    t0 = time.time()
+    adapter_path = Path(adapter_dir)
+    has_saved = (adapter_path / "adapter_config.json").exists()
+
+    saved_state: dict = {}
+    if has_saved:
+        sf = adapter_path / "adapter_model.safetensors"
+        bf = adapter_path / "adapter_model.bin"
+        if sf.exists():
+            from safetensors.torch import load_file
+            saved_state = load_file(str(sf), device="cpu")
+        elif bf.exists():
+            saved_state = torch.load(str(bf), map_location="cpu")
+
+    _adapter_key_re = re.compile(
+        r"(lora_[AB])\." + re.escape(adapter_name) + r"\.(weight)"
+    )
+
+    with FSDP.summon_full_params(model, writeback=True, rank0_only=False):
+        for name, param in model.named_parameters():
+            if "lora_" not in name:
+                continue
+            clean = _adapter_key_re.sub(r"\1.\2", name)
+            if clean in saved_state:
+                param.data.copy_(
+                    saved_state[clean].to(param.dtype).to(param.device)
+                )
+            elif "lora_A" in name:
+                torch.nn.init.kaiming_uniform_(param.data, a=math.sqrt(5))
+            elif "lora_B" in name:
+                torch.nn.init.zeros_(param.data)
+
+    if is_main:
+        src = "disk" if saved_state else "fresh init"
+        logger.info(
+            "LoRA weights swapped to '%s' (%s, %.1fs)",
+            adapter_name, src, time.time() - t0,
+        )
+
+
 def _train_one_adapter(
     rank: int,
     device: "torch.device",
@@ -178,7 +596,7 @@ def _train_one_adapter(
     model = FSDP(
         model,
         auto_wrap_policy=auto_policy,
-        sharding_strategy=ShardingStrategy.FULL_SHARD,
+        sharding_strategy=ShardingStrategy.SHARD_GRAD_OP,
         mixed_precision=bf16_policy,
         device_id=rank,
         use_orig_params=True,
@@ -214,21 +632,29 @@ def _train_one_adapter(
 
     t_ref = time.time()
     tokenized: list = []
-    for i in range(n_my):
-        full_text = my_prompts[i] + my_completions[i]
-        enc = tokenizer(
-            full_text, return_tensors="pt", truncation=True,
+    if n_my > 0:
+        chat_full, chat_prompts = _wrap_for_chat(
+            tokenizer, my_prompts, my_completions,
         )
-        penc = tokenizer(my_prompts[i], return_tensors="pt")
-        plen = penc["input_ids"].shape[1]
-        if plen >= enc["input_ids"].shape[1]:
-            continue
-        tokenized.append({
-            "input_ids": enc["input_ids"],
-            "attn_mask": enc["attention_mask"],
-            "plen": plen,
-            "adv": my_advantages[i],
-        })
+        enc_batch = tokenizer(
+            chat_full, truncation=True, padding=False, return_tensors=None,
+        )
+        penc_batch = tokenizer(
+            chat_prompts, truncation=True, padding=False,
+            return_tensors=None,
+        )
+        for i in range(n_my):
+            ids = enc_batch["input_ids"][i]
+            mask = enc_batch["attention_mask"][i]
+            plen = len(penc_batch["input_ids"][i])
+            if plen >= len(ids):
+                continue
+            tokenized.append({
+                "input_ids": torch.tensor([ids]),
+                "attn_mask": torch.tensor([mask]),
+                "plen": plen,
+                "adv": my_advantages[i],
+            })
 
     n_valid_local = torch.tensor(
         len(tokenized), device=device, dtype=torch.long,
@@ -263,41 +689,56 @@ def _train_one_adapter(
         tokenized.append(None)
 
     ref_data: list = [None] * len(tokenized)
+    pad_id = tokenizer.pad_token_id or 0
+    ref_batch = batch_size * 2
 
     model.eval()
     with torch.no_grad():
-        for i in range(len(tokenized)):
-            tk = tokenized[i]
-            is_dummy = tk is None
-            if is_dummy:
-                tk = dummy_entry
+        for batch_start in range(0, len(tokenized), ref_batch):
+            batch_end = min(batch_start + ref_batch, len(tokenized))
+            batch_items = tokenized[batch_start:batch_end]
+            real_flags = [tk is not None for tk in batch_items]
+            entries = [tk if tk is not None else dummy_entry
+                       for tk in batch_items]
 
-            input_ids = tk["input_ids"].to(device)
-            attn_mask = tk["attn_mask"].to(device)
-            plen = tk["plen"]
+            max_len = max(e["input_ids"].shape[1] for e in entries)
+            bsz = len(entries)
+            batch_ids = torch.full(
+                (bsz, max_len), pad_id, dtype=torch.long,
+            )
+            batch_attn = torch.zeros(bsz, max_len, dtype=torch.long)
+            for j, e in enumerate(entries):
+                slen = e["input_ids"].shape[1]
+                batch_ids[j, :slen] = e["input_ids"][0]
+                batch_attn[j, :slen] = e["attn_mask"][0]
 
-            out = model(input_ids=input_ids, attention_mask=attn_mask)
+            batch_ids = batch_ids.to(device)
+            batch_attn = batch_attn.to(device)
 
-            if is_dummy:
-                del out
-                continue
+            out = model(input_ids=batch_ids, attention_mask=batch_attn)
 
-            logits = out.logits[:, plen - 1:-1, :]
-            target = input_ids[:, plen:]
-            lp = torch.log_softmax(logits, dim=-1)
-            per_tok = lp.gather(
-                -1, target.unsqueeze(-1),
-            ).squeeze(-1).squeeze(0)
+            for j, e in enumerate(entries):
+                if not real_flags[j]:
+                    continue
+                plen = e["plen"]
+                slen = e["input_ids"].shape[1]
+                logits_j = out.logits[j, plen - 1:slen - 1, :]
+                target_j = batch_ids[j, plen:slen]
+                lp = torch.log_softmax(logits_j, dim=-1)
+                per_tok = lp.gather(
+                    -1, target_j.unsqueeze(-1),
+                ).squeeze(-1)
 
-            if per_tok.numel() == 0:
-                continue
-            ref_data[i] = {
-                "input_ids": input_ids.cpu(),
-                "attn_mask": attn_mask.cpu(),
-                "plen": plen,
-                "ref_lp": per_tok.cpu(),
-                "adv": tk["adv"],
-            }
+                if per_tok.numel() == 0:
+                    continue
+                ref_data[batch_start + j] = {
+                    "input_ids": e["input_ids"],
+                    "attn_mask": e["attn_mask"],
+                    "plen": plen,
+                    "ref_lp": per_tok.cpu(),
+                    "adv": e["adv"],
+                }
+            del out
     model.train()
 
     ref_data = [rd for rd in ref_data if rd is not None]
@@ -350,49 +791,62 @@ def _train_one_adapter(
         for mb in range(n_mini):
             mb_start = mb * batch_size
             mb_end = min(mb_start + batch_size, n_my_train)
+            batch_items = ref_data[mb_start:mb_end]
+            real_flags = [rd is not None for rd in batch_items]
+            entries = [rd if rd is not None else dummy_rd
+                       for rd in batch_items]
+
+            max_len = max(e["input_ids"].shape[1] for e in entries)
+            bsz = len(entries)
+            batch_ids = torch.full(
+                (bsz, max_len), pad_id, dtype=torch.long,
+            )
+            batch_attn = torch.zeros(bsz, max_len, dtype=torch.long)
+            for j, e in enumerate(entries):
+                slen = e["input_ids"].shape[1]
+                batch_ids[j, :slen] = e["input_ids"][0]
+                batch_attn[j, :slen] = e["attn_mask"][0]
+
+            batch_ids = batch_ids.to(device)
+            batch_attn = batch_attn.to(device)
+
+            with torch.enable_grad():
+                out = model(
+                    input_ids=batch_ids,
+                    attention_mask=batch_attn,
+                )
+
             mb_losses: list = []
-
-            for i in range(mb_start, mb_end):
-                rd = ref_data[i]
-                is_dummy = rd is None
-                if is_dummy:
-                    rd = dummy_rd
-
-                input_ids = rd["input_ids"].to(device)
-                attn_mask = rd["attn_mask"].to(device)
-                plen = rd["plen"]
-                old_lp = rd["ref_lp"].to(device)
-
-                with torch.enable_grad():
-                    out = model(
-                        input_ids=input_ids,
-                        attention_mask=attn_mask,
-                    )
-                    logits = out.logits[:, plen - 1:-1, :]
-                    target = input_ids[:, plen:]
-                    lp = torch.log_softmax(logits, dim=-1)
-                    per_tok = lp.gather(
-                        -1, target.unsqueeze(-1),
-                    ).squeeze(-1).squeeze(0)
-
-                if is_dummy:
-                    mb_losses.append(per_tok.sum() * 0.0)
+            for j, e in enumerate(entries):
+                if not real_flags[j]:
+                    mb_losses.append(out.logits[j, 0, 0] * 0.0)
                     continue
+
+                plen = e["plen"]
+                slen = e["input_ids"].shape[1]
+                old_lp = e["ref_lp"].to(device)
+
+                logits_j = out.logits[j, plen - 1:slen - 1, :]
+                target_j = batch_ids[j, plen:slen]
+                lp = torch.log_softmax(logits_j, dim=-1)
+                per_tok = lp.gather(
+                    -1, target_j.unsqueeze(-1),
+                ).squeeze(-1)
 
                 ratio = torch.exp(per_tok - old_lp)
                 clipped = torch.clamp(
                     ratio, 1.0 - clip_ratio, 1.0 + clip_ratio,
                 )
                 adv_t = torch.tensor(
-                    rd["adv"], device=device, dtype=per_tok.dtype,
+                    e["adv"], device=device, dtype=per_tok.dtype,
                 )
                 if not torch.isfinite(adv_t).all():
-                    mb_losses.append(per_tok.sum() * 0.0)
+                    mb_losses.append(out.logits[j, 0, 0] * 0.0)
                     continue
                 surr = torch.min(ratio * adv_t, clipped * adv_t)
                 loss = -surr.mean() + kl_coeff * (old_lp - per_tok).mean()
                 if not torch.isfinite(loss):
-                    mb_losses.append(per_tok.sum() * 0.0)
+                    mb_losses.append(out.logits[j, 0, 0] * 0.0)
                     continue
 
                 mb_losses.append(loss)
@@ -403,6 +857,7 @@ def _train_one_adapter(
             if mb_losses:
                 torch.stack(mb_losses).mean().backward()
 
+            del out
             torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0)
             optimizer.step()
             optimizer.zero_grad()
@@ -515,13 +970,27 @@ def _fsdp_train_worker(rank: int, args: Dict[str, Any]) -> None:
 
 
 def _fsdp_train_worker_multi(rank: int, args: Dict[str, Any]) -> None:
-    """Per-GPU worker that trains multiple adapters sequentially.
+    """Per-GPU worker that trains multiple adapters with a persistent model.
 
-    The NCCL process group is initialized once and reused across all
-    adapter jobs, and subsequent model loads benefit from OS page cache.
+    The base model is loaded and FSDP-wrapped **once**.  For each adapter
+    job, LoRA weights are swapped in-place via ``summon_full_params`` and
+    saved efficiently (only LoRA tensors, no full state-dict gather).
+
+    This eliminates per-adapter overhead of model loading (~12 s),
+    FSDP wrapping (~60-80 s) and full state-dict save (~100 s), reducing
+    skill-bank Phase C.2 from ~12 min to ~2-3 min.
     """
+    import functools
+
     import torch
     import torch.distributed as dist
+    from torch.distributed.fsdp import (
+        FullyShardedDataParallel as FSDP,
+        MixedPrecision,
+        ShardingStrategy,
+    )
+    from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+    from transformers import AutoModelForCausalLM, AutoTokenizer
 
     torch.cuda.set_device(rank)
     device = torch.device(f"cuda:{rank}")
@@ -531,19 +1000,195 @@ def _fsdp_train_worker_multi(rank: int, args: Dict[str, Any]) -> None:
     dist.init_process_group("nccl", rank=rank, world_size=args["world_size"])
 
     is_main = rank == 0
+    world_size = args["world_size"]
+    model_name = args["model_name"]
+    jobs = args["jobs"]
 
     try:
-        for job_idx, job in enumerate(args["jobs"]):
+        # ── Phase 1: load model + FSDP wrap (done ONCE) ──────────────
+        t_init = time.time()
+
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype=torch.bfloat16,
+            device_map={"": rank},
+            trust_remote_code=True,
+        )
+        model.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False},
+        )
+
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_name, trust_remote_code=True,
+        )
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+        from peft import LoraConfig, PeftModel, TaskType, get_peft_model
+
+        first_job = jobs[0]
+        first_adapter = first_job["adapter_name"]
+        adapter_path = Path(first_job["adapter_dir"])
+        adapter_config_file = adapter_path / "adapter_config.json"
+
+        if adapter_config_file.exists():
+            model = PeftModel.from_pretrained(
+                model, str(adapter_path),
+                adapter_name=first_adapter,
+                is_trainable=True,
+            )
             if is_main:
                 logger.info(
-                    "Multi-adapter job %d/%d: '%s'",
-                    job_idx + 1, len(args["jobs"]), job["adapter_name"],
+                    "Loaded adapter '%s' from %s", first_adapter, adapter_path,
                 )
-            _train_one_adapter(
-                rank, device, is_main, args["world_size"],
-                args["model_name"], job,
+        else:
+            lora_cfg = LoraConfig(
+                task_type=TaskType.CAUSAL_LM,
+                r=16,
+                lora_alpha=32,
+                lora_dropout=0.05,
+                target_modules=[
+                    "q_proj", "k_proj", "v_proj", "o_proj",
+                    "gate_proj", "up_proj",
+                ],
+                inference_mode=False,
             )
+            model = get_peft_model(model, lora_cfg, adapter_name=first_adapter)
+            if is_main:
+                logger.info(
+                    "Created fresh adapter '%s' (r=16, alpha=32)",
+                    first_adapter,
+                )
+
+        for n, p in model.named_parameters():
+            is_lora = "lora" in n.lower()
+            p.requires_grad = is_lora
+            if is_lora and p.dtype != torch.bfloat16:
+                p.data = p.data.to(torch.bfloat16)
+        model.train()
+
+        wrap_cls = _detect_wrap_cls(model)
+        if wrap_cls:
+            auto_policy = functools.partial(
+                transformer_auto_wrap_policy,
+                transformer_layer_cls=wrap_cls,
+            )
+        else:
+            auto_policy = None
+
+        bf16_policy = MixedPrecision(
+            param_dtype=torch.bfloat16,
+            reduce_dtype=torch.bfloat16,
+            buffer_dtype=torch.bfloat16,
+        )
+
+        model = FSDP(
+            model,
+            auto_wrap_policy=auto_policy,
+            sharding_strategy=ShardingStrategy.SHARD_GRAD_OP,
+            mixed_precision=bf16_policy,
+            device_id=rank,
+            use_orig_params=True,
+        )
+
+        torch.set_float32_matmul_precision("high")
+        try:
+            torch._dynamo.config.cache_size_limit = 64
+            torch._dynamo.config.suppress_errors = True
+            model = torch.compile(model, dynamic=True)
+            if is_main:
+                logger.info("torch.compile(dynamic=True) applied to persistent FSDP model")
+        except Exception as exc:
+            if is_main:
+                logger.warning(
+                    "torch.compile unavailable, continuing without: %s", exc,
+                )
+
+        init_time = time.time() - t_init
+        if is_main:
+            n_trainable = sum(
+                p.numel() for p in model.parameters() if p.requires_grad
+            )
+            logger.info(
+                "Persistent FSDP model ready (%d GPUs, %s trainable, "
+                "%.1fs init)",
+                world_size, f"{n_trainable:,}", init_time,
+            )
+
+        # ── Phase 2: train each adapter ──────────────────────────────
+        for job_idx, job in enumerate(jobs):
+            adapter_name = job["adapter_name"]
+
+            if is_main:
+                logger.info(
+                    "Persistent job %d/%d: '%s' (%d samples)",
+                    job_idx + 1, len(jobs), adapter_name,
+                    len(job.get("prompts", [])),
+                )
+
+            if job_idx > 0:
+                _load_or_init_lora_under_fsdp(
+                    model, job["adapter_dir"], first_adapter,
+                    device, is_main,
+                )
+
+            t_job = time.time()
+            stats = _run_grpo_training_loop(
+                model, tokenizer, rank, device, is_main, world_size,
+                adapter_name,
+                job["prompts"], job["completions"], job["advantages"],
+                job["lr"], job["epochs"], job["batch_size"],
+                job["clip_ratio"], job["kl_coeff"],
+            )
+
+            if stats is None:
+                stats = {
+                    "n_samples": 0, "n_tokens": 0,
+                    "mean_loss": 0.0, "epochs": 0, "train_time_s": 0.0,
+                }
+
+            _save_lora_under_fsdp(
+                model, first_adapter, job["save_dir"], is_main,
+            )
+
+            job_time = time.time() - t_job
+            stats["wall_time_s"] = job_time
+            stats["load_time_s"] = init_time if job_idx == 0 else 0.0
+            stats["n_gpus"] = world_size
+            if stats["train_time_s"] > 0:
+                stats["throughput"] = (
+                    stats["n_samples"] * stats["epochs"]
+                    / stats["train_time_s"]
+                )
+            else:
+                stats["throughput"] = 0.0
+
+            if is_main:
+                result_file = job["result_file"]
+                with open(result_file, "w") as f:
+                    json.dump(stats, f)
+
+                io_log_dir = job.get("io_log_dir")
+                if io_log_dir:
+                    _write_debug_io(
+                        io_log_dir, adapter_name,
+                        job["prompts"], job["completions"],
+                        job["advantages"],
+                    )
+
+                logger.info(
+                    "FSDP GRPO [%s] done: %.1fs (train %.1fs)",
+                    adapter_name, job_time,
+                    stats.get("train_time_s", 0),
+                )
+
             dist.barrier()
+
+        # ── Phase 3: cleanup ─────────────────────────────────────────
+        del model, tokenizer
+        gc.collect()
+        torch.cuda.empty_cache()
+
     finally:
         if dist.is_initialized():
             dist.destroy_process_group()
