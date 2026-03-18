@@ -685,3 +685,8 @@ def run_episode_vlm_agent(
     )
     episode.set_outcome()
     return episode
+
+
+# LLM-first aliases (class name VLMDecisionAgent kept for backward compatibility)
+LLMDecisionAgent = VLMDecisionAgent
+run_episode_llm_agent = run_episode_vlm_agent

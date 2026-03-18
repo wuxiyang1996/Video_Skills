@@ -1,4 +1,4 @@
-# Decision agents: dummy language agent and VLM decision-making agent.
+# Decision agents: dummy language agent and LLM decision-making agent.
 
 from .dummy_agent import (
     language_agent_action,
@@ -28,9 +28,11 @@ from .agent_helper import (
 
 from .agent import (
     VLMDecisionAgent,
+    LLMDecisionAgent,
     AgentState,
     run_tool,
     run_episode_vlm_agent,
+    run_episode_llm_agent,
     TOOL_TAKE_ACTION,
     TOOL_GET_STATE_SUMMARY,
     TOOL_GET_INTENTION,
@@ -67,9 +69,11 @@ __all__ = [
     "select_skill_from_bank",
     "query_skill_bank",
     "VLMDecisionAgent",
+    "LLMDecisionAgent",
     "AgentState",
     "run_tool",
     "run_episode_vlm_agent",
+    "run_episode_llm_agent",
     "TOOL_TAKE_ACTION",
     "TOOL_GET_STATE_SUMMARY",
     "TOOL_GET_INTENTION",

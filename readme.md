@@ -4,7 +4,7 @@
 
 ## Overview
 
-This repository provides a framework for enhancing agentic decision-making in multi-player, long-horizon games through unsupervised experience. The framework integrates with multiple game environments and supports both training-free (RAG-based) and trainable (RL-based) agent architectures. This readme outlines each module and aims to ease integration and debugging.
+This repository provides a framework for enhancing agentic decision-making in multi-player, long-horizon games through unsupervised experience. The framework integrates with multiple game environments and supports both training-free (RAG-based) and trainable (RL-based) **text LLM** agent architectures (observations are **text** summaries; the default decision and training stack is **LLM-only**). This readme outlines each module and aims to ease integration and debugging.
 
 **No external repos are bundled.** This repository contains only Game-AI-Agent code. For Avalon/Diplomacy you need [AgentEvolver](https://github.com/modelscope/AgentEvolver) (clone as sibling or on `PYTHONPATH`). For GamingAgent evaluation, clone that repo as a sibling when needed; see [evaluate_gamingagent/setup_gamingagent_eval_env.md](evaluate_gamingagent/setup_gamingagent_eval_env.md).
 
@@ -22,10 +22,10 @@ This repository provides a framework for enhancing agentic decision-making in mu
   - [Avalon](env_wrappers/avalon_nl_wrapper.py) · [Diplomacy](env_wrappers/diplomacy_nl_wrapper.py) — require **AgentEvolver** (external; [AgentEvolver Games](https://github.com/modelscope/AgentEvolver/blob/main/games/README.md)); eval: [evaluation_evolver/](evaluation_evolver/)
   - [GamingAgent](env_wrappers/gamingagent_nl_wrapper.py) — LMGame-Bench (2048, Sokoban, Tetris); requires **GamingAgent** (external); eval: [evaluate_gamingagent/](evaluate_gamingagent/)
 
-- **🔍 RAG & Embeddings** — [rag/](rag/): Text (default [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)), multimodal (default [Qwen3-VL-Embedding-2B](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B)); config: `RAG_EMBEDDING_MODEL`, `MULTIMODAL_EMBEDDING_MODEL`. [rag/README.md](rag/README.md)
+- **🔍 RAG & Embeddings** — [rag/](rag/): **Text** embeddings for retrieval (default [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)); this matches the **LLM-only** decision pipeline. Optional `MULTIMODAL_EMBEDDING_MODEL` is only for extended RAG corpora beyond plain text; the shipped decision and co-evolution paths do not require it. [rag/README.md](rag/README.md)
 
-- **🎮 Decision Agent** — [decision_agents/](decision_agents/): VLM step-by-step play with a **two-turn micro-loop** per timestep: (1) **take_action** — primitives or `QUERY_MEM` / `QUERY_SKILL` / `CALL_SKILL`; (2) **reward** — composite reward. **Per-step protocol:** `get_state_summary` (required) → optional `query_skill` or `query_memory` (budget-limited) → `take_action` (required) → `get_intention` (required) → `reward` (required). Skill bank supplies **protocol store** (name, steps, preconditions) for planning and **contract** (eff_add) for r_follow; `select_skill_from_bank` / `query_skill_bank` return protocol steps and use `bank.get_contract(skill_id)` for reward. **Model-agnostic:** same code path for GPT, Qwen, etc.; pass `model="gpt-4o-mini"` or `model="Qwen/Qwen3-8B"`; callers should pass an explicit `model`. See [decision_agents/README.md](decision_agents/README.md).
-  - **Core**: [agent.py](decision_agents/agent.py) — `VLMDecisionAgent`, `run_tool()`, `run_episode_vlm_agent()`; [dummy_agent.py](decision_agents/dummy_agent.py) — game detection, action extraction.
+- **🎮 Decision Agent** — [decision_agents/](decision_agents/): **LLM** step-by-step play on **text** state summaries with a **two-turn micro-loop** per timestep: (1) **take_action** — primitives or `QUERY_MEM` / `QUERY_SKILL` / `CALL_SKILL`; (2) **reward** — composite reward. **Per-step protocol:** `get_state_summary` (required) → optional `query_skill` or `query_memory` (budget-limited) → `take_action` (required) → `get_intention` (required) → `reward` (required). Skill bank supplies **protocol store** (name, steps, preconditions) for planning and **contract** (eff_add) for r_follow; `select_skill_from_bank` / `query_skill_bank` return protocol steps and use `bank.get_contract(skill_id)` for reward. **Model-agnostic:** same code path for GPT, Qwen, etc.; pass `model="gpt-4o-mini"` or `model="Qwen/Qwen3-8B"`; callers should pass an explicit `model`. See [decision_agents/README.md](decision_agents/README.md).
+  - **Core**: [agent.py](decision_agents/agent.py) — `LLMDecisionAgent`, `run_tool()`, `run_episode_llm_agent()`; [dummy_agent.py](decision_agents/dummy_agent.py) — game detection, action extraction.
   - **Helpers**: [agent_helper.py](decision_agents/agent_helper.py) — `get_state_summary()`, `build_rag_summary()`, `extract_game_facts()`, `infer_intention()` ([TAG] phrase), `EpisodicMemoryStore`, `skill_bank_to_text()`, `query_skill_bank()` / `select_skill_from_bank()`, `_get_protocol_for_skill()`, `SUBGOAL_TAGS`.
   - **Reward**: [reward_func.py](decision_agents/reward_func.py) — `RewardConfig`, `RewardComputer`; **r_total** = r_env + w_follow×r_follow + r_cost (query_mem_cost, query_skill_cost, call_skill_cost, skill_switch_cost).
   - **Tools**: `take_action`, `reward`, `get_state_summary`, `get_intention`, `query_skill`, `query_memory`. Only `query_skill` and `query_memory` are optional (budget-limited); never call both in the same timestep.
@@ -45,7 +45,7 @@ This repository provides a framework for enhancing agentic decision-making in mu
   - **Co-evolution callback**: [coevolution_callback.py](trainer/decision/coevolution_callback.py) — `SkillBankCoEvolutionCallback` + `SkillAgentToolPipeline` + `SegmentationStore`; integrates `skill_agents.tool_call_reward` into reward shaping. On accepted EM update, [launch_coevolution.py](trainer/launch_coevolution.py) passes the training model into `SkillBankAgent` for protocol synthesis (same `ask_model` routing as inference). [launch_train](trainer/decision/launch_train.py) initializes `SkillQueryEngine` when loading the bank so training rollouts use the same retrieval path as inference.
   - Shared: [metrics](trainer/common/metrics.py), [reward_shaping](trainer/decision/reward_shaping.py), [eval_harness](trainer/common/eval_harness.py). Entry: [launch_train](trainer/decision/launch_train.py), [launch_coevolution](trainer/launch_coevolution.py). [trainer/README.md](trainer/README.md)
 
-- **▶️ Inference** — [inference/](inference/): Run the decision agent and store rollouts in [data_structure](data_structure/experience.py) format (`Episode` + `Experience`). **Unified skill bank path:** Both `scripts/run_inference.py` (any model via `--model`) and `scripts/run_qwen3_8b_eval.py` (Qwen, `--bank` optional) use the same `load_skill_bank()`, `select_skill_from_bank()`, and `skill_bank_to_text()`; only the LLM backend differs. `run_episode_vlm_agent()` returns `Episode` directly; `run_inference()` wraps it with buffer/save support. [inference/README.md](inference/README.md)
+- **▶️ Inference** — [inference/](inference/): Run the decision agent and store rollouts in [data_structure](data_structure/experience.py) format (`Episode` + `Experience`). **Unified skill bank path:** Both `scripts/run_inference.py` (any model via `--model`) and `scripts/run_qwen3_8b_eval.py` (Qwen, `--bank` optional) use the same `load_skill_bank()`, `select_skill_from_bank()`, and `skill_bank_to_text()`; only the LLM backend differs. `run_episode_llm_agent()` returns `Episode` directly; `run_inference()` wraps it with buffer/save support. [inference/README.md](inference/README.md)
 
 ---
 
@@ -76,7 +76,7 @@ All wrappers set `info["env_name"]` and `info["game_name"]` on every `reset()` a
 | OrakNLWrapper | `"orak"` | Registry key (e.g. `"super_mario"`, `"pokemon_red"`) | [evaluate_orak/](evaluate_orak/); cold-start: [cold_start/](cold_start/) |
 | ColdStartEnvWrapper | `"gamingagent"` | Registry key (e.g. `"sokoban"`, `"twenty_forty_eight"`) | Used in [cold_start/](cold_start/) |
 
-`run_episode_vlm_agent()` reads `info["env_name"]` and `info["game_name"]` to populate the `Episode`. Fallback chain: `info["game"]` → `detect_game(obs)` → `info["structured_state"]["game"]`.
+`run_episode_llm_agent()` reads `info["env_name"]` and `info["game_name"]` to populate the `Episode`. Fallback chain: `info["game"]` → `detect_game(obs)` → `info["structured_state"]["game"]`.
 
 ---
 
@@ -120,7 +120,7 @@ Two agents co-evolve: the **Decision Agent** (Qwen3-8B + LoRA, GRPO) plays games
 | **Training** | GRPO via **FSDP** (group size 8, LR 1e-5); optional VERL | Hard-EM with LoRA fine-tuning (LR 2e-4) |
 | **Provides** | Game play: primitive actions + tool calls (`QUERY_SKILL`, `CALL_SKILL`, `QUERY_MEM`) | Skill Bank: segmented trajectories, effect contracts, split/merge/refine |
 | **Consumes** | Skill bank (protocols for planning, contracts for reward shaping) | Raw episodes from Decision Agent rollouts |
-| **Interface** | `VLMDecisionAgent(skill_bank=..., model=...)` → `select_skill_from_bank()` / `query_skill_bank()` | `SkillBankAgent.select_skill(query, current_state)` / `SkillQueryEngine` |
+| **Interface** | `LLMDecisionAgent(skill_bank=..., model=...)` → `select_skill_from_bank()` / `query_skill_bank()` | `SkillBankAgent.select_skill(query, current_state)` / `SkillQueryEngine` |
 
 The decision agent’s `skill_bank` can be a **SkillBankMVP** (plain storage) or a **SkillBankAgent** (full pipeline). Helpers (`skill_bank_to_text`, `query_skill_bank`, `select_skill_from_bank`) accept both and use the richest API available.
 
@@ -143,7 +143,7 @@ Both agents use RAG embeddings (Qwen3-Embedding-0.6B) for retrieval, with gracef
    `skill_agent = SkillBankAgent(bank_path="..."); skill_agent.ingest_episodes(seed_episodes)`
 
 2. **Play** — run the Decision Agent with the bank:
-   `episode = run_episode_vlm_agent(env, agent=VLMDecisionAgent(skill_bank=skill_agent), task="...")`
+   `episode = run_episode_llm_agent(env, agent=LLMDecisionAgent(skill_bank=skill_agent), task="...")`
 
 3. **Feed back** — ingest trajectories into the skill pipeline:
    `skill_agent.ingest_episodes([episode])` then `skill_agent.run_until_stable()`
@@ -152,7 +152,7 @@ Both agents use RAG embeddings (Qwen3-Embedding-0.6B) for retrieval, with gracef
 
 **For training**: `bash scripts/coevolution_train.sh` runs this loop with GRPO + Hard-EM on 8 GPUs. See [Section 5](#5-trainer-code) for details.
 
-See [decision_agents/README.md](decision_agents/README.md) for the VLM agent API and [skill_agents/README.md](skill_agents/README.md) for the pipeline and query usage.
+See [decision_agents/README.md](decision_agents/README.md) for the LLM decision agent API and [skill_agents/README.md](skill_agents/README.md) for the pipeline and query usage.
 
 ### Reward (decision + skill agents)
 
@@ -176,7 +176,7 @@ Predicate satisfaction is **text-based**: tokenize the predicate (e.g. `onion_in
 This section defines how **experiences**, **episodes**, and **sub-episodes** are represented in code. Sub-episodes are the unit used to **generate skills**: the skill pipeline segments episodes into **SubTask_Experience** segments, then converts them to lightweight **SubEpisodeRef** pointers stored in each **Skill** (see [Skill agent](#3-skill-agent) and [skill_agents/](skill_agents/)). The skill bank format follows this readme: each skill has a **protocol store** (name, steps, preconditions) for the decision agent and a **contract** (eff_add, etc.) for reward and verification; evidence is a list of `SubEpisodeRef` from sub-episodes.
 
 - **Definitions** (classes, serialization): [data_structure/experience.py](data_structure/experience.py), [data_structure/helper.py](data_structure/helper.py).
-- **Producers**: [decision_agents/](decision_agents/) (`run_episode_vlm_agent()` → `Episode` with full `Experience` fields), [labeling/](labeling/) ([label_episodes_gpt54.py](labeling/label_episodes_gpt54.py) for cold-start; [labeling/readme.md](labeling/readme.md)).
+- **Producers**: [decision_agents/](decision_agents/) (`run_episode_llm_agent()` → `Episode` with full `Experience` fields), [labeling/](labeling/) ([label_episodes_gpt54.py](labeling/label_episodes_gpt54.py) for cold-start; [labeling/readme.md](labeling/readme.md)).
 - **Consumers**: [skill_agents/](skill_agents/) ingests `Episode`, segments into `SubTask_Experience`, and builds the skill bank (protocol + contract + `Skill.sub_episodes` as `SubEpisodeRef`).
 
 ## Experience
@@ -190,10 +190,10 @@ Structured formats (used by RAG and skill pipeline):
 | **summary_state** | `key=value \| key=value` (e.g. `game=tetris \| stack_h=14 \| holes=32`) | Deterministic; from `build_rag_summary()` (0 LLM). Retrieval and predicates. |
 | **summary** | `summary_state \| note=<strategic note>` | Facts + short LLM note (≤10 words); delta-aware. |
 | **intentions** | `[TAG] subgoal phrase` (e.g. `[CLEAR] Reduce holes before stack overflows`) | 13 tags: SETUP, CLEAR, MERGE, ATTACK, DEFEND, NAVIGATE, POSITION, COLLECT, BUILD, SURVIVE, OPTIMIZE, EXPLORE, EXECUTE. Used for skill boundaries and RAG. |
-| **reward_details** | `{r_env, r_follow, r_cost, r_total}` | Per-step breakdown from VLM reward tool. |
+| **reward_details** | `{r_env, r_follow, r_cost, r_total}` | Per-step breakdown from the LLM agent’s reward tool. |
 | **action_type** | `"primitive"`, `"QUERY_MEM"`, `"QUERY_SKILL"`, `"CALL_SKILL"` | Used by trainer and metrics. |
 
-`run_episode_vlm_agent()` fills these from agent state: `summary_state` ← `get_state_summary`, `intentions` ← `get_intention`, `sub_tasks` ← `active_skill_id`, `reward_details` / `action_type` from reward tool. Skill agents read `summary_state` and `intentions` for segmentation without extra conversion.
+`run_episode_llm_agent()` fills these from agent state: `summary_state` ← `get_state_summary`, `intentions` ← `get_intention`, `sub_tasks` ← `active_skill_id`, `reward_details` / `action_type` from reward tool. Skill agents read `summary_state` and `intentions` for segmentation without extra conversion.
 
 Serialization: `Experience.from_dict()` / `to_dict()`.
 
@@ -211,7 +211,7 @@ A time-ordered sequence of **Experience** with **task**, **outcome**, **summary*
 | **env_name** | `str` | Platform / wrapper | `"gamingagent"`, `"avalon"`, `"diplomacy"`, `"orak"` |
 | **game_name** | `str` | Game within platform | `"sokoban"`, `"tetris"`, `"avalon"`, `"super_mario"` |
 
-Filled by `run_episode_vlm_agent()` from wrapper `info`; persisted in `to_dict()` / `from_dict()`. **metadata** holds rollout info (e.g. `cumulative_reward`, `agent_state`, `done`, `steps`).
+Filled by `run_episode_llm_agent()` from wrapper `info`; persisted in `to_dict()` / `from_dict()`. **metadata** holds rollout info (e.g. `cumulative_reward`, `agent_state`, `done`, `steps`).
 
 ## Sub-episode (SubTask_Experience) → skills
 
@@ -311,11 +311,11 @@ Full API, pipelines (A vs B), and scoring details: [decision_agents/README.md](d
 
 ## Training-free agent
 
-This mode uses RAG to query experiences most relevant to the current situation and intentions from the experience buffer, using them as in-context learning to assist decision-making. The same **VLMDecisionAgent** is used with a **skill_bank** and optional **EpisodicMemoryStore**; no parameter updates — the backbone (e.g. GPT, Gemini, Claude) stays frozen.
+This mode uses RAG to query experiences most relevant to the current situation and intentions from the experience buffer, using them as in-context learning to assist decision-making. The same **LLMDecisionAgent** is used with a **skill_bank** and optional **EpisodicMemoryStore**; no parameter updates — the backbone (e.g. GPT, Gemini, Claude) stays frozen.
 
 ## Trainable agent
 
-This mode gathers experience via interaction and updates parameters with reinforcement learning. The **[trainer/](trainer/)** module implements it: the VLM Decision Agent is trained with **GRPO** (retrieval as first-class actions; reward = r_env + shaping + query/call costs), and the Skill Bank is updated via **Hard-EM**. See [trainer/README.md](trainer/README.md) and the “Trainer Code” section below.
+This mode gathers experience via interaction and updates parameters with reinforcement learning. The **[trainer/](trainer/)** module implements it: the **LLM Decision Agent** is trained with **GRPO** (retrieval as first-class actions; reward = r_env + shaping + query/call costs), and the Skill Bank is updated via **Hard-EM**. See [trainer/README.md](trainer/README.md) and the “Trainer Code” section below.
 
 ## Inference: run and store rollouts
 
@@ -348,11 +348,11 @@ episode = run_inference(
 )
 ```
 
-**`run_episode_vlm_agent` already returns an `Episode`:**
+**`run_episode_llm_agent` already returns an `Episode`:**
 ```python
-from decision_agents import run_episode_vlm_agent
+from decision_agents import run_episode_llm_agent
 
-episode = run_episode_vlm_agent(env, task="My task", max_steps=500)
+episode = run_episode_llm_agent(env, task="My task", max_steps=500)
 # episode.episode_id: auto-generated UUID
 # episode.env_name:   from wrapper info (e.g. "gamingagent", "avalon")
 # episode.game_name:  specific game (e.g. "sokoban", "2048", "avalon")
@@ -550,7 +550,7 @@ The training code lives in **[trainer/](trainer/)** and implements co-evolution 
 
 ## Decision Agent (Agent A) — Qwen3-8B + LoRA GRPO
 
-The Decision Agent selects primitive game actions and tool calls (`QUERY_SKILL`, `CALL_SKILL`, `QUERY_MEM`) against the current skill bank. **Default training:** **GRPO** with group-normalized advantages over frozen Qwen3-8B + LoRA, implemented as **multi-GPU FSDP** in [`skill_agents_grpo/grpo/fsdp_trainer.py`](skill_agents_grpo/grpo/fsdp_trainer.py) (invoked from [`trainer/coevolution/grpo_training.py`](trainer/coevolution/grpo_training.py)). **Optional:** VERL / `GameAITrainer` (`RayPPOTrainer`, `adv_estimator=grpo`) when using [verl-agent](https://github.com/verl-project/verl-agent).
+The Decision Agent is **LLM-only**: it consumes **text** state summaries from wrappers (NL observations, structured `key=value` fields), not raw images or a vision encoder. It selects primitive game actions and tool calls (`QUERY_SKILL`, `CALL_SKILL`, `QUERY_MEM`) against the current skill bank. **Default training:** **GRPO** with group-normalized advantages over frozen Qwen3-8B + LoRA, implemented as **multi-GPU FSDP** in [`skill_agents_grpo/grpo/fsdp_trainer.py`](skill_agents_grpo/grpo/fsdp_trainer.py) (invoked from [`trainer/coevolution/grpo_training.py`](trainer/coevolution/grpo_training.py)). **Optional:** VERL / `GameAITrainer` (`RayPPOTrainer`, `adv_estimator=grpo`) when using [verl-agent](https://github.com/verl-project/verl-agent).
 
 **Training settings** (targets; see co-evolution config and [`scripts/configs/decision_agent_grpo_80gb.yaml`](scripts/configs/decision_agent_grpo_80gb.yaml) for YAML-aligned hyperparameters):
 
