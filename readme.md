@@ -606,7 +606,7 @@ The Skill Bank Agent processes trajectory rollouts from the Decision Agent throu
 2. **Stage 1** — boundary proposal (predicate changes + surprisal signals, algorithmic)
 3. **Stage 2** — segmentation decode (DP/Viterbi with **SEGMENT** LoRA ranking, top-10 candidates, segments 3–100 steps)
 4. **Stage 3** — contract learning (**CONTRACT** LoRA generates effect summaries, verified against holdout, pass rate ≥ 0.6)
-5. **Stage 4** — bank maintenance (**CURATOR** LoRA approves/vetoes/defers merge, split, materialize proposals)
+5. **Stage 4** — bank maintenance (**CURATOR** LoRA approves/vetoes/defers **SPLIT, MERGE, REFINE, MATERIALIZE, PROMOTE** proposals)
 6. **SkillEval gating** — accept/reject: avg pass rate ≥ 0.6, NEW rate ≤ 0.3, margin regression tolerance 0.1
 
 **Components**: [trainer/skillbank/em_trainer.py](trainer/skillbank/em_trainer.py) (with segmentation store), [trainer/skillbank/stages/](trainer/skillbank/stages/), [trainer/skillbank/bank_io/](trainer/skillbank/bank_io/) (versioned store, indices, diff logger), [trainer/skillbank/learners/](trainer/skillbank/learners/) (boundary classifier, tie-breaker). LoRA routing via [skill_agents_grpo/lora/](skill_agents_grpo/lora/) — `SkillFunction` enum, `MultiLoraSkillBankLLM`, adapter routing. LLM calls use [skill_agents/_llm_compat.py](skill_agents/_llm_compat.py) for reasoning-model compatibility (`/no_think`, think-tag stripping).
@@ -778,7 +778,7 @@ Summarize the effects of this skill as a JSON object:
 
 #### 5. `curator` (Skill bank — Stage 4 maintenance filter)
 
-**Input:** from [`_CURATOR_PROMPT_TEMPLATE`](skill_agents_grpo/bank_maintenance/llm_curator.py).
+**Input:** from [`_CURATOR_PROMPT_TEMPLATE`](skill_agents_grpo/bank_maintenance/llm_curator.py). The pipeline proposes **five** action kinds: **SPLIT**, **MERGE**, **REFINE**, **MATERIALIZE**, **PROMOTE** — the curator sees a batch of proposed rows (often one candidate per type in a full maintenance pass, or any subset).
 
 ```
 You are a skill bank maintenance curator. Review the proposed actions and decide whether to approve, veto, or defer each one.
@@ -790,25 +790,48 @@ Skills with low pass rate (<0.60): 5
 
 ## Proposed Actions
 
-  Action 0: MERGE on SKILL_A
+  Action 0: SPLIT on SKILL_A
+    Trigger: bi-modal behavior in instances
+    Instances: 18
+    ...
+
+  Action 1: MERGE on SKILL_B
     Skill score: 0.88
     Pass rate: 0.75
     Instances: 12
     ...
 
-  Action 1: MATERIALIZE on __NEW__
+  Action 2: REFINE on SKILL_C
+    Pass rate: 0.52
+    Instances: 20
+    ...
+
+  Action 3: MATERIALIZE on __NEW__
     Instances: 8
     ...
+
+  Action 4: PROMOTE on __NEW__
+    Pass rate: 0.68
+    Instances: 11
+    ...
+
+Action types: SPLIT, MERGE, REFINE, MATERIALIZE, PROMOTE.
 
 For each action, respond with a JSON object:
 {"decisions": [{"idx": 0, "verdict": "approve|veto|defer", "reason": "brief reason"}, ...]}
 ...
 ```
 
-**Output (assistant):**
+**Output (assistant):** one verdict per proposed action (`idx` 0 … 4 when five are listed).
 
 ```json
-{"decisions": [{"idx": 0, "verdict": "approve", "reason": "Strong metrics and clear duplicate behavior with SKILL_B."}, {"idx": 1, "verdict": "defer", "reason": "Only 8 instances; wait for more evidence."}]}
+{"decisions": [
+  {"idx": 0, "verdict": "defer", "reason": "Need more segments before splitting."},
+  {"idx": 1, "verdict": "approve", "reason": "Clear duplicate with SKILL_D; metrics support merge."},
+  {"idx": 2, "verdict": "approve", "reason": "Low pass rate; refine contract is justified."},
+  {"idx": 3, "verdict": "defer", "reason": "Only 8 instances for MATERIALIZE."},
+  {"idx": 4, "verdict": "approve", "reason": "Proto-skill stable enough to promote."}
+]}
 ```
 
 ---
