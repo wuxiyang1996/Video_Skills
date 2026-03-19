@@ -18,14 +18,21 @@ import re
 from typing import Callable, Optional
 
 _REASONING_MODEL_PATTERNS = ("qwen3", "qwen-3", "qwq")
-_THINK_RE = re.compile(r"<think>[\s\S]*?</think>", re.DOTALL)
+_THINK_COMPLETE_RE = re.compile(r"<think>[\s\S]*?</think>", re.DOTALL)
+_THINK_OPEN_RE = re.compile(r"<think>[\s\S]*$", re.DOTALL)
 
 
 def strip_think_tags(text: str) -> str:
-    """Remove ``<think>…</think>`` blocks from reasoning-model output."""
+    """Remove ``<think>…</think>`` blocks from reasoning-model output.
+
+    Handles both complete and truncated (opened but never closed) blocks
+    that occur when ``max_tokens`` cuts off mid-thought.
+    """
     if not text or "<think>" not in text:
         return text
-    return _THINK_RE.sub("", text).strip()
+    result = _THINK_COMPLETE_RE.sub("", text)
+    result = _THINK_OPEN_RE.sub("", result)
+    return result.strip()
 
 
 def is_reasoning_model(model_name: Optional[str]) -> bool:

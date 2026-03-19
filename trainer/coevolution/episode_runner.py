@@ -463,14 +463,14 @@ async def _generate_intention(
     try:
         result = await vllm_client.generate_chat(
             [{"role": "user", "content": prompt}],
-            adapter="base", temperature=0.7, max_tokens=40,
-            stop=["\n\n"],
+            adapter="base", temperature=0.7, max_tokens=512,
         )
         text = result.text.strip() if result.text else ""
         if text:
             imp2 = _lazy_imports()
             text = imp2["strip_think_tags"](text).strip()
-            return _normalize_intention(text)[:150]
+            first_line = text.split("\n")[0].strip()
+            return _normalize_intention(first_line)[:150]
     except Exception as exc:
         logger.debug("Intention generation failed: %s", exc)
 

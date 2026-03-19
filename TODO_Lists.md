@@ -73,7 +73,61 @@ using actual rollout evidence from Qwen (local vLLM).
 
 ---
 
-## Phase 5: Protocol Quality Improvement (NEXT)
+## Phase 5: Learnable Intention LoRA (PLANNED)
+
+Train the action_taking LoRA to generate diverse intention tags via a dedicated
+GRPO signal, replacing the current base-model few-shot approach.
+
+### Background
+
+The action_taking LoRA collapsed to 100% `[SETUP]` tags because GRPO game
+reward doesn't differentiate tags. Current fix: a separate base-model call
+with few-shot examples generates diverse tags and injects them as
+`Assigned subgoal:` into the action prompt. This works but the base model
+(vanilla Qwen3-8B) has no game-specific training and never improves.
+
+### Design
+
+- [ ] **Dual-task SFT data** — add intention-only examples to action_taking SFT
+  - Prompt format: `state + delta + urgency + tags → [TAG] phrase`
+  - Source: extract from existing cold-start data (`grpo_coldstart/<game>/action_taking.jsonl`)
+  - Each row already has `intention` field with diverse tags
+  - Generate ~3k intention-only (prompt, completion) pairs per game
+  - Mix into action_taking SFT at ~30% ratio (intention) / 70% (action)
+- [ ] **Separate GRPO record type** for intention completions
+  - Record as `GRPORecord(adapter="action_taking", type="intention", ...)`
+  - Filter in `grpo_training.py` so intention and action records get different reward signals
+- [ ] **Tag-aware GRPO reward** for intention records
+  - Component 1: **Tag-state coherence** — did the chosen tag match game state?
+    (e.g., [SURVIVE] when stack_h > 14 should get bonus)
+  - Component 2: **Tag diversity bonus** — penalize repeating the same tag
+    for >60% of steps in an episode
+  - Component 3: **Skill-match reward** — bonus when the tag aligns with a
+    skill that the segmentation pipeline later assigns to that segment
+- [ ] **SFT replay to prevent collapse**
+  - Mix ~20% SFT intention examples into each GRPO batch
+  - Acts as a regularizer to maintain tag diversity during training
+  - Configurable via `INTENTION_SFT_REPLAY_RATIO` env var
+- [ ] **Adapter slot** — reuse action_taking LoRA (dual-task, no 6th adapter needed)
+  - The LoRA distinguishes tasks by prompt format (intention prompt vs action prompt)
+  - During coevolution: call LoRA with intention prompt → get tag, then call with action prompt → get action
+- [ ] **Evaluation metrics**
+  - Tag entropy per episode (target: >1.5 bits across 13 tags)
+  - Tag-state coherence score (% of tags matching game heuristics)
+  - Skill discovery rate (new skills per step, target: >0 by step 10)
+
+### Key Files
+
+| File | Changes |
+|------|---------|
+| `trainer/SFT/data_loader.py` | Generate intention-only SFT examples, mix ratio |
+| `trainer/coevolution/episode_runner.py` | Switch from base-model to LoRA intention call |
+| `trainer/coevolution/grpo_training.py` | Separate intention/action GRPO records, reward routing |
+| `skill_agents_grpo/grpo/rewards.py` | Tag-coherence + diversity reward functions |
+
+---
+
+## Phase 6: Protocol Quality Improvement
 
 Further improvements to make LLM-generated protocols more actionable.
 
@@ -88,7 +142,7 @@ Further improvements to make LLM-generated protocols more actionable.
   - Include action sequences (top-5 most common) in evidence
   - Include reward trajectory shape (rising, flat, declining)
 
-## Phase 6: Decision Agent Integration
+## Phase 7: Decision Agent Integration
 
 - [ ] Validate `_format_skill_guidance_for_prompt` handles LLM protocols correctly
   - Verify step_checks, predicate_success, predicate_abort are passed through
