@@ -39,27 +39,49 @@ class ReplayBuffer:
     Records from the current step get weight 1.0; older records are
     down-weighted so the gradient is dominated by fresh on-policy data
     while still benefiting from past experience.
+
+    An optional *per_game_cap* limits how many records any single game
+    can contribute when sampling, preventing high-step-count games
+    (e.g. 2048) from crowding out others.
+
+    Episode-length normalization: each sample is weighted by
+    ``1 / episode_length`` so that every *episode* contributes equal
+    total gradient mass regardless of its step count.  A 200-step
+    2048 episode and a 10-step tetris episode each contribute ~1.0
+    total weight instead of 200 vs 10.
     """
 
     STALENESS_WEIGHTS = {0: 1.0, 1: 0.7, 2: 0.5}
     DEFAULT_WEIGHT = 0.3
 
-    def __init__(self, max_size: int = 2000):
+    def __init__(self, max_size: int = 2000, per_game_cap: int = 400):
         self._buf: Deque[Tuple[GRPORecord, int]] = deque(maxlen=max_size)
+        self._per_game_cap = per_game_cap
 
     def add(self, records: List[GRPORecord], step: int) -> None:
         for rec in records:
             self._buf.append((rec, step))
 
     def sample_all(self, current_step: int) -> Tuple[List[GRPORecord], List[float]]:
-        """Return all records with their staleness weights."""
+        """Return all records with staleness + episode-length weights.
+
+        Applies per-game cap so no single game dominates the batch.
+        """
+        from collections import Counter
+        game_counts: Counter = Counter()
         records: List[GRPORecord] = []
         weights: List[float] = []
         for rec, rec_step in self._buf:
+            game = getattr(rec, "game", None) or ""
+            if self._per_game_cap and game_counts[game] >= self._per_game_cap:
+                continue
             age = current_step - rec_step
-            w = self.STALENESS_WEIGHTS.get(age, self.DEFAULT_WEIGHT)
+            staleness = self.STALENESS_WEIGHTS.get(age, self.DEFAULT_WEIGHT)
+            ep_len = getattr(rec, "episode_length", 1) or 1
+            length_weight = 1.0 / ep_len
             records.append(rec)
-            weights.append(w)
+            weights.append(staleness * length_weight)
+            game_counts[game] += 1
         return records, weights
 
     def __len__(self) -> int:
@@ -376,7 +398,7 @@ _skillbank_accum: Dict[str, List[Dict[str, Any]]] = {
 }
 
 _SKILLBANK_TRAIN_THRESHOLD = int(
-    os.environ.get("SKILLBANK_TRAIN_THRESHOLD", "32")
+    os.environ.get("SKILLBANK_TRAIN_THRESHOLD", "16")
 )
 _SKILLBANK_MAX_ACCUM = 512
 

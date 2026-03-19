@@ -33,6 +33,15 @@ def _is_llm_error_payload(text: str) -> bool:
     if s.startswith("Error"):
         return True
     low = s.lower()
+
+    # Only check error patterns in short responses (valid LLM JSON is typically
+    # longer than 60 chars).  Game data often embeds numbers like "score=500"
+    # that would false-positive against bare HTTP status codes.
+    if len(s) < 60:
+        short_needles = ("503", "502", "500")
+        if any(n in low for n in short_needles):
+            return True
+
     needles = (
         "connection error",
         "connection refused",
@@ -41,9 +50,12 @@ def _is_llm_error_payload(text: str) -> bool:
         "timeout",
         "timed out",
         "temporarily unavailable",
-        "503",
-        "502",
-        "500",
+        "http 503",
+        "http 502",
+        "http 500",
+        "status 503",
+        "status 502",
+        "status 500",
         "econnreset",
         "eof occurred",
         "broken pipe",

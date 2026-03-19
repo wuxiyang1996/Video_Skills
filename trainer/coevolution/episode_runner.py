@@ -279,6 +279,7 @@ class GRPORecord:
     prompt: str = ""
     completion: str = ""
     reward: float = 0.0
+    episode_length: int = 1
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -1144,6 +1145,9 @@ async def run_episode_async(
         env.close()
     except Exception:
         pass
+
+    for rec in grpo_records:
+        rec.episode_length = max(step_count, 1)
 
     wall_time = time.monotonic() - t0
     return EpisodeResult(

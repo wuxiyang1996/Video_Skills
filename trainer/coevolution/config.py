@@ -103,7 +103,7 @@ class CoEvolutionConfig:
 
     # vLLM inference
     model_name: str = "Qwen/Qwen3-8B"
-    temperature: float = 0.3
+    temperature: float = 0.5
     max_tokens: int = 512
     vllm_base_url: str = "http://localhost:8000/v1"  # used only when manage_vllm=False
     vllm_base_port: int = 8000
@@ -197,20 +197,21 @@ class CoEvolutionConfig:
         default_factory=lambda: {
             0: ["twenty_forty_eight", "tetris", "candy_crush"],
             10: ["twenty_forty_eight", "tetris", "candy_crush", "sokoban"],
-            15: ["twenty_forty_eight", "tetris", "candy_crush", "sokoban", "avalon", "diplomacy"],
+            15: ["twenty_forty_eight", "tetris", "candy_crush", "sokoban", "avalon"],
+            20: ["twenty_forty_eight", "tetris", "candy_crush", "sokoban", "avalon", "diplomacy"],
         }
     )
 
     # GRPO from-scratch schedule — higher exploration early, then anneal.
     # Only applied when start_mode == "from_scratch" (otherwise GRPO
     # configs use the default values from StageGRPOConfig).
-    scratch_warmup_steps: int = 5
+    scratch_warmup_steps: int = 15
     scratch_initial_lr: float = 1e-4
     scratch_steady_lr: float = 5e-5
     scratch_initial_temperature: float = 1.0
     scratch_steady_temperature: float = 0.7
     scratch_initial_kl_coeff: float = 0.01
-    scratch_steady_kl_coeff: float = 0.05
+    scratch_steady_kl_coeff: float = 0.03
 
     _resolved: bool = field(default=False, repr=False)
 

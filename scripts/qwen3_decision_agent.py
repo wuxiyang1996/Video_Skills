@@ -776,7 +776,29 @@ def get_top_k_skill_candidates(
     if candidates:
         return candidates
 
-    # Fallback: call select_skill_from_bank for a single result
+    # Fallback: build candidates from all active skills so that
+    # skill_selection GRPO can fire even without SkillQueryEngine.
+    try:
+        _bank = getattr(skill_bank, "_bank", None) or getattr(skill_bank, "bank", None) or skill_bank
+        if hasattr(_bank, "get_skills_for_decision_agent"):
+            all_views = _bank.get_skills_for_decision_agent()
+            if len(all_views) >= 2:
+                for v in all_views[:top_k]:
+                    d = dict(v)
+                    sid = d.get("skill_id")
+                    if sid:
+                        protocol = _get_protocol_for_skill(skill_bank, sid)
+                        d["protocol"] = protocol or d.get("protocol", {})
+                        d.setdefault("confidence", 0.5)
+                        d.setdefault("relevance", 0.5)
+                        _enrich_candidate(skill_bank, d)
+                        candidates.append(d)
+                if len(candidates) >= 2:
+                    return candidates
+    except Exception:
+        pass
+
+    # Final fallback: single best skill
     try:
         single = get_skill_guidance(
             skill_bank, state_text, game_name, intention, structured_state,

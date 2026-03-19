@@ -382,7 +382,12 @@ class AsyncSkillBankPipeline:
             from skill_agents_grpo.query import SkillQueryEngine
             self._query_engine = SkillQueryEngine(bank)
             return self._query_engine
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "SkillQueryEngine init failed for bank with %d skills: %s — "
+                "skill_selection GRPO will not fire (only single fallback candidate)",
+                len(bank), exc,
+            )
             return bank
 
     def get_agent(self) -> Any:
