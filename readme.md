@@ -126,6 +126,8 @@ The decision agent’s `skill_bank` can be a **SkillBankMVP** (plain storage) or
 
 **Skill bank: protocol store vs contract.** Each skill has two parts: (1) **Protocol store** — `name`, `strategic_description`, `protocol` (steps, preconditions, success_criteria, expected_duration), `confidence`; used for `skill_bank_to_text()` and `active_skill_plan`. (2) **Contract** — effects (`eff_add`, `eff_del`, `eff_event`) used for segmentation, verification, and reward shaping (r_follow). The agent **plans** from protocols and is **rewarded** for progress on the contract's eff_add predicates.
 
+**Per-game skill banks (current design).** The skill bank is **maintained separately per game**: co-evolution uses [`PerGameSkillBankManager`](trainer/coevolution/skillbank_pipeline.py) so each title gets its own `skill_bank.jsonl` under `<bank_dir>/<game>/` (skills from one game do not mix with another). **Skill-valued metrics**—pass rates, confidence, applicability/retrieval scores, GRPO rewards on bank stages, etc.—are **computed over that game’s bank and trajectories** for now, not pooled across games unless you explicitly merge or share a single bank path.
+
 **Skill protocols for select.** When the agent selects a skill, the result includes a **protocol**: **steps** (up to 7), **preconditions**, **success_criteria**, **expected_duration**. If no protocol exists, a **micro_plan** is built from `eff_add` literals. See [agent_helper.py](decision_agents/agent_helper.py).
 
 ### RAG retrieval ([rag/](rag/))

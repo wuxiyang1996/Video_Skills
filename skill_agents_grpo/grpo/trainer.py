@@ -128,7 +128,11 @@ class GRPOLoRATrainer:
         for sample in samples:
             if not sample.prompt or not sample.completions:
                 continue
-            group_advantages = self._compute_advantages(sample.rewards)
+            from skill_agents_grpo.grpo.advantage_utils import compute_grpo_group_advantages
+
+            group_advantages = compute_grpo_group_advantages(
+                sample.rewards, completions=sample.completions,
+            )
             for comp, adv in zip(sample.completions, group_advantages):
                 if comp:
                     prompts.append(sample.prompt)
@@ -285,15 +289,3 @@ class GRPOLoRATrainer:
         except Exception as exc:
             logger.warning("Failed to write GRPO debug I/O: %s", exc)
 
-    @staticmethod
-    def _compute_advantages(rewards: List[float]) -> List[float]:
-        """Group-normalize rewards to advantages (zero-mean, unit-variance)."""
-        if not rewards:
-            return []
-        n = len(rewards)
-        if n == 1:
-            return [0.0]
-        mean = sum(rewards) / n
-        var = sum((r - mean) ** 2 for r in rewards) / n
-        std = var ** 0.5 if var > 0 else 1.0
-        return [(r - mean) / std for r in rewards]

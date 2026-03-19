@@ -167,6 +167,24 @@ class TestCuratorRewardVariance:
 
 # ── SEGMENTATION REWARD ──────────────────────────────────────────────
 
+
+def test_segment_fingerprint_differs_on_raw_rollouts_only():
+    """Same parsed prefs + different raw LLM JSON → different fingerprint."""
+    from types import SimpleNamespace
+
+    from skill_agents_grpo.grpo.rewards import _preference_list_fingerprint
+    from skill_agents_grpo.infer_segmentation.preference import PreferenceListWithRollouts
+
+    prefs = [
+        SimpleNamespace(
+            segment_start=0, segment_end=1, skill_win="a", skill_lose="b", evidence="x",
+        ),
+    ]
+    a = PreferenceListWithRollouts(prefs, raw_rollouts=['{"ranking":["a","b"],"reasoning":"one"}'])
+    b = PreferenceListWithRollouts(prefs, raw_rollouts=['{"ranking":["a","b"],"reasoning":"two"}'])
+    assert _preference_list_fingerprint(a) != _preference_list_fingerprint(b)
+
+
 class TestSegmentationRewardVariance:
     """Segmentation: 4 different preference lists → 4 different rewards."""
 
@@ -253,6 +271,61 @@ class TestSegmentationRewardVariance:
         ]
         nd = _n_distinct(rewards)
         assert nd >= 2, f"Different preference counts should give different rewards, got {nd}: {rewards}"
+
+    def test_decode_path_pref_fingerprint_breaks_saturation_tie(self):
+        """Same decode outcome for different prefs → rewards must still differ."""
+        from types import SimpleNamespace
+
+        class _FakeSeg:
+            def __init__(self, skill: str, start: int = 0, end: int = 1, margin: float = 5.0):
+                self.assigned_skill = skill
+                self.start = start
+                self.end = end
+                self.margin = margin
+
+        class _FakeResult:
+            def __init__(self, skill: str):
+                self.segments = [_FakeSeg(skill)]
+                self.total_score = 50.0
+
+        def _fake_scorer_factory(_prefs):
+            return object()
+
+        def _fake_decode(_scorer, _segments, _obs, _actions, _skill_names, _preds):
+            # Ignores preferences — all samples look equally "good" to decode metrics
+            return _FakeResult("skill_a")
+
+        skill_names = ["skill_a", "skill_b", "__NEW__"]
+        segments = [(0, 1)]
+        per_step_rewards = [1.0, 1.0]
+        bank = {"skill_a": 0.8, "skill_b": 0.2}
+
+        prefs_a = [
+            SimpleNamespace(
+                segment_start=0, segment_end=1, skill_win="skill_a", skill_lose="skill_b",
+            ),
+        ]
+        prefs_b = [
+            SimpleNamespace(
+                segment_start=0, segment_end=1, skill_win="skill_b", skill_lose="skill_a",
+            ),
+        ]
+
+        ra = segmentation_reward(
+            prefs_a, segments, [], [], skill_names,
+            scorer_factory=_fake_scorer_factory, decode_fn=_fake_decode,
+            per_step_rewards=per_step_rewards, episode_total_reward=2.0,
+            bank_skill_scores=bank,
+        )
+        rb = segmentation_reward(
+            prefs_b, segments, [], [], skill_names,
+            scorer_factory=_fake_scorer_factory, decode_fn=_fake_decode,
+            per_step_rewards=per_step_rewards, episode_total_reward=2.0,
+            bank_skill_scores=bank,
+        )
+        assert abs(ra - rb) > 1e-6, (
+            f"Saturated decode path must differ when prefs differ: {ra=} {rb=}"
+        )
 
 
 # ── Run ───────────────────────────────────────────────────────────────

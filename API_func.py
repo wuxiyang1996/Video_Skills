@@ -203,7 +203,10 @@ def ask_vllm(question, model="Qwen/Qwen3-8B", temperature=0.7, max_tokens=2000):
 
     url = _next_vllm_url()
     try:
-        client = openai.OpenAI(base_url=url, api_key=VLLM_API_KEY)
+        _max_retries = int(os.environ.get("VLLM_OPENAI_MAX_RETRIES", "3"))
+        client = openai.OpenAI(
+            base_url=url, api_key=VLLM_API_KEY, max_retries=max(0, _max_retries),
+        )
         response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": question}],

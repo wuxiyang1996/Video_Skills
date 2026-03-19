@@ -481,6 +481,19 @@ def infer_and_segment(
 
     store = preference_store or PreferenceStore()
 
+    # Safety net: the pipeline should always provide ≥ 2 skill names
+    # (via game-stage default seeds), but guard in case called directly.
+    if len(skill_names) < 2:
+        if "__NEW__" not in skill_names:
+            skill_names = list(skill_names) + ["__NEW__"]
+        if len(skill_names) < 2:
+            skill_names = list(skill_names) + ["__EXPLORE__"]
+        logger.warning(
+            "skill_names had < 2 entries — padded to %d: %s.  "
+            "This likely means game-stage seeds are missing from the pipeline.",
+            len(skill_names), skill_names,
+        )
+
     # ── Build intention-fit signal from per-step compound labels ────
     _game = game_name or env_name
     intention_fit_fn = _build_intention_fit_fn(

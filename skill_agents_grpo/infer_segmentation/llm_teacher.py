@@ -347,7 +347,9 @@ def _collect_one_segment_prefs(
     predicates: Optional[List[Optional[dict]]],
     cfg: LLMTeacherConfig,
     ask,
+    *,
     skill_descriptions: Optional[Dict[str, str]] = None,
+    raw_sink: Optional[Dict[Tuple[int, int], str]] = None,
 ) -> list:
     """Get pairwise preferences for a single segment (used by batch workers)."""
     seg_obs = observations[start: end + 1]
@@ -364,6 +366,8 @@ def _collect_one_segment_prefs(
         temperature=cfg.temperature, max_tokens=cfg.max_tokens,
     )
     elapsed = _time.time() - t0
+    if raw_sink is not None:
+        raw_sink[(start, end)] = response if isinstance(response, str) else str(response)
     parsed = _parse_json_from_response(response)
 
     _record_teacher_io(TeacherIORecord(
@@ -437,17 +441,28 @@ def collect_segment_preferences(
 
     Returns
     -------
-    list[PreferenceExample]
-        Pairwise preferences derived from LLM rankings.
+    PreferenceListWithRollouts | list
+        Pairwise preferences derived from LLM rankings, normally wrapped as
+        ``PreferenceListWithRollouts`` (a ``list`` subclass) carrying
+        ``raw_rollouts`` — one raw LLM string per segment — for GRPO rewards.
     """
+    from skill_agents_grpo.infer_segmentation.preference import PreferenceListWithRollouts
+
     if len(skill_names) < 2:
-        return []
+        # With < 2 skills there is nothing to rank.  Return the typed container
+        # (not bare []) so GRPO fingerprinting never crashes on missing attribute.
+        return PreferenceListWithRollouts([], raw_rollouts=[])
     cfg = config or LLMTeacherConfig()
     if "temperature" in _kw:
         from copy import copy
         cfg = copy(cfg)
         cfg.temperature = _kw["temperature"]
     ask = _get_ask_model()
+    raw_by_seg: Dict[Tuple[int, int], str] = {}
+
+    def _ordered_rollouts() -> List[str]:
+        return [raw_by_seg[k] for k in sorted(raw_by_seg.keys())]
+
     max_workers = getattr(cfg, "max_workers", None)
     if max_workers is None or max_workers <= 1:
         all_prefs = []
@@ -455,9 +470,10 @@ def collect_segment_preferences(
             prefs = _collect_one_segment_prefs(
                 start, end, observations, actions, skill_names, predicates, cfg, ask,
                 skill_descriptions=skill_descriptions,
+                raw_sink=raw_by_seg,
             )
             all_prefs.extend(prefs)
-        return all_prefs
+        return PreferenceListWithRollouts(all_prefs, raw_rollouts=_ordered_rollouts())
 
     max_concurrent = getattr(cfg, "max_concurrent_llm_calls", None)
     if max_concurrent is not None and max_concurrent > 0:
@@ -468,7 +484,8 @@ def collect_segment_preferences(
             executor.submit(
                 _collect_one_segment_prefs,
                 start, end, observations, actions, skill_names, predicates, cfg, ask,
-                skill_descriptions,
+                skill_descriptions=skill_descriptions,
+                raw_sink=raw_by_seg,
             ): (start, end)
             for start, end in segments
         }
@@ -478,7 +495,7 @@ def collect_segment_preferences(
                 all_prefs.extend(prefs)
             except Exception:
                 pass  # skip failed segments
-    return all_prefs
+    return PreferenceListWithRollouts(all_prefs, raw_rollouts=_ordered_rollouts())
 
 
 def _collect_one_transition_prefs(

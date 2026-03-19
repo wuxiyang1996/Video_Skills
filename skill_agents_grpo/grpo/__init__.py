@@ -10,6 +10,7 @@ Wraps existing LLM call points with a generic GRPO sampler:
 """
 
 from skill_agents_grpo.grpo.buffer import GRPOBuffer, GRPOSample
+from skill_agents_grpo.grpo.grpo_outputs import SkillBankLLMOutput, default_grpo_training_completion
 from skill_agents_grpo.grpo.wrapper import GRPOCallWrapper
 from skill_agents_grpo.grpo.trainer import GRPOLoRATrainer
 from skill_agents_grpo.grpo.config import GRPOConfig
@@ -20,4 +21,6 @@ __all__ = [
     "GRPOCallWrapper",
     "GRPOLoRATrainer",
     "GRPOConfig",
+    "SkillBankLLMOutput",
+    "default_grpo_training_completion",
 ]

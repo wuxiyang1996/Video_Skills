@@ -281,6 +281,49 @@ class AsyncSkillBankPipeline:
         s4_result = await loop.run_in_executor(executor, _run_maintenance)
         stage_times["bank_maintenance"] = time.monotonic() - t_s4
 
+        # ── 4. Skill enrichment (protocols, hints, durations) ─────
+        t_enrich = time.monotonic()
+
+        def _enrich():
+            try:
+                from trainer.coevolution.skill_enrichment import (
+                    enrich_bank_after_update,
+                )
+                return enrich_bank_after_update(
+                    agent, episodes=self._pending_episodes,
+                )
+            except Exception as exc:
+                logger.warning("Skill enrichment failed: %s", exc)
+                return {}
+
+        enrich_result = await loop.run_in_executor(executor, _enrich)
+        stage_times["enrichment"] = time.monotonic() - t_enrich
+
+        # ── 5. LLM protocol synthesis (progressive) ──────────────────
+        t_proto = time.monotonic()
+
+        def _synthesize_protocols():
+            import os
+            try:
+                n_updated = agent.update_protocols()
+                n_refined = 0
+                iteration = getattr(agent, "_iteration_count", 0)
+                refine_every = int(os.environ.get("PROTOCOL_REFINE_EVERY", "3"))
+                if refine_every > 0 and iteration % refine_every == 0:
+                    n_refined = agent.refine_low_pass_protocols()
+                if n_updated or n_refined:
+                    logger.info(
+                        "Protocol synthesis: %d synthesized, %d refined",
+                        n_updated, n_refined,
+                    )
+                return {"synthesized": n_updated, "refined": n_refined}
+            except Exception as exc:
+                logger.warning("Protocol synthesis failed: %s", exc)
+                return {}
+
+        proto_result = await loop.run_in_executor(executor, _synthesize_protocols)
+        stage_times["protocol_synthesis"] = time.monotonic() - t_proto
+
         # ── Save bank ────────────────────────────────────────────────
         def _save_bank():
             try:

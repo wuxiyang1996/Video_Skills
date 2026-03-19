@@ -304,6 +304,7 @@ class Protocol:
     predicate_success: List[str] = field(default_factory=list)
     predicate_abort: List[str] = field(default_factory=list)
     action_vocab: List[str] = field(default_factory=list)
+    source: str = "template"
 
     def to_dict(self) -> dict:
         d = {
@@ -321,6 +322,8 @@ class Protocol:
             d["predicate_abort"] = self.predicate_abort
         if self.action_vocab:
             d["action_vocab"] = self.action_vocab
+        if self.source and self.source != "template":
+            d["source"] = self.source
         return d
 
     @classmethod
@@ -337,6 +340,7 @@ class Protocol:
             predicate_success=d.get("predicate_success", []),
             predicate_abort=d.get("predicate_abort", []),
             action_vocab=d.get("action_vocab", []),
+            source=d.get("source", "template"),
         )
 
 

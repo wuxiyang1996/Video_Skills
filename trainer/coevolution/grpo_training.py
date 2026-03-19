@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -92,25 +93,10 @@ class GRPOStepResult:
 
 
 def _compute_advantages(rewards: List[float]) -> List[float]:
-    """Group-normalize rewards to zero-mean, unit-variance advantages.
+    """Group-normalize rewards (decision-agent path: no per-group completions)."""
+    from skill_agents_grpo.grpo.advantage_utils import compute_grpo_group_advantages
 
-    Uses a std floor of 0.1 to prevent blow-up when all rewards are
-    nearly identical (common in constant-reward game environments).
-    """
-    if not rewards:
-        return []
-    finite = [r for r in rewards if math.isfinite(r)]
-    if not finite:
-        return [0.0] * len(rewards)
-    fallback = sum(finite) / len(finite)
-    sanitized = [r if math.isfinite(r) else fallback for r in rewards]
-    n = len(sanitized)
-    if n == 1:
-        return [0.0]
-    mean = sum(sanitized) / n
-    var = sum((r - mean) ** 2 for r in sanitized) / n
-    std = max(var ** 0.5, 0.1)
-    return [(r - mean) / std for r in sanitized]
+    return compute_grpo_group_advantages(rewards, completions=None)
 
 
 def _collect_grpo_records(results: List[EpisodeResult]) -> Dict[str, List[GRPORecord]]:
@@ -202,7 +188,9 @@ def _samples_to_training_data(
         rewards = s.get("rewards", [])
         if not prompt or not comps:
             continue
-        advs = _compute_advantages(rewards)
+        from skill_agents_grpo.grpo.advantage_utils import compute_grpo_group_advantages
+
+        advs = compute_grpo_group_advantages(rewards, completions=comps)
         for comp, adv in zip(comps, advs):
             if comp:
                 prompts.append(prompt)
@@ -387,7 +375,9 @@ _skillbank_accum: Dict[str, List[Dict[str, Any]]] = {
     "curator": [],
 }
 
-_SKILLBANK_TRAIN_THRESHOLD = 32
+_SKILLBANK_TRAIN_THRESHOLD = int(
+    os.environ.get("SKILLBANK_TRAIN_THRESHOLD", "32")
+)
 _SKILLBANK_MAX_ACCUM = 512
 
 

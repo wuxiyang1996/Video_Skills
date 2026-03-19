@@ -8,6 +8,12 @@ Build and maintain a **Skill Bank** from long-horizon game trajectories: segment
 
 **Reasoning-model compatibility:** When using Qwen3 or other reasoning models that emit `<think>` blocks, all LLM call sites are wrapped via [`_llm_compat.py`](_llm_compat.py): prompts get `/no_think` appended and responses are stripped of think tags. See [Reasoning-model compatibility](#reasoning-model-compatibility) below.
 
+**Transient vLLM / HTTP failures:** Contract and curator calls use [`_llm_retry.py`](_llm_retry.py) (`sync_ask_with_retry`) so bursts of `Connection error` or empty responses retry with backoff instead of immediately returning `None` (which GRPO logs as `0/4 non-empty` and reward `0.0`). Env: `SKILLBANK_LLM_RETRIES` (default 5), `SKILLBANK_LLM_RETRY_DELAY_S` (default 1.0), `VLLM_OPENAI_MAX_RETRIES` in [`API_func.py`](../API_func.py) `ask_vllm` (default 3).
+
+**Flat GRPO rewards → no gradient:** If every completion in a group gets the same reward, plain normalization gives **advantage 0 for all** (``r - mean`` is zero). Co-evolution and [`GRPOLoRATrainer`](grpo/trainer.py) therefore use [`compute_grpo_group_advantages`](grpo/advantage_utils.py): when variance is ~0, a small **completion tiebreak** (zero-mean from completion text) is added so LoRA still gets a learning signal. Disable with `GRPO_TIEBREAK_SCALE=0`; tune magnitude with default `0.08`.
+
+**GRPO training text vs parse:** Contract and curator returns are wrapped as [`SkillBankLLMOutput`](grpo/grpo_outputs.py) (a ``dict`` with the parsed JSON keys only). The **raw model string** lives in ``_grpo_raw_completion``; [`GRPOCallWrapper`](grpo/wrapper.py) stores that in ``completions`` for FSDP log-prob training (not ``str(dict)``). Segment uses ``PreferenceListWithRollouts.raw_rollouts`` joined with ``\\n---\\n``.
+
 ---
 
 ## Overview

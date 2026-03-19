@@ -32,6 +32,7 @@ from functools import wraps
 from typing import Any, Callable, Dict, List, Optional
 
 from skill_agents_grpo.grpo.buffer import GRPOBuffer, GRPOSample
+from skill_agents_grpo.grpo.grpo_outputs import default_grpo_training_completion
 from skill_agents_grpo.lora.skill_function import SkillFunction
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,10 @@ class GRPOCallWrapper:
     metadata_extractor : callable, optional
         ``metadata_extractor(*args, **kwargs) -> dict``
         Extracts context metadata (e.g. skill_id) for diagnostics.
+    training_completion_fn : callable, optional
+        ``training_completion_fn(sample_output) -> str``
+        String stored per GRPO sample for FSDP log-prob training.  Defaults to
+        :func:`default_grpo_training_completion` (raw LLM body when available).
     """
 
     def __init__(
@@ -72,6 +77,7 @@ class GRPOCallWrapper:
         temperature: float = 0.7,
         prompt_extractor: Optional[Callable[..., str]] = None,
         metadata_extractor: Optional[Callable[..., Dict[str, Any]]] = None,
+        training_completion_fn: Optional[Callable[[Any], str]] = None,
     ) -> None:
         self.adapter = adapter
         self.reward_fn = reward_fn
@@ -80,6 +86,9 @@ class GRPOCallWrapper:
         self.temperature = temperature
         self.prompt_extractor = prompt_extractor
         self.metadata_extractor = metadata_extractor
+        self.training_completion_fn = (
+            training_completion_fn or default_grpo_training_completion
+        )
         self._call_count = 0
         self._total_samples = 0
 
@@ -118,7 +127,11 @@ class GRPOCallWrapper:
             try:
                 out = original_fn(*args, **kwargs_sample)
                 samples.append(out)
-                completions.append(str(out) if out is not None else "")
+                try:
+                    tc = self.training_completion_fn(out)
+                except Exception:
+                    tc = str(out) if out is not None else ""
+                completions.append(tc if isinstance(tc, str) else str(tc))
             except Exception as exc:
                 n_failures += 1
                 if n_failures == 1:
@@ -175,11 +188,23 @@ class GRPOCallWrapper:
 
         non_empty = sum(1 for c in completions if c)
         n_unique = len({c for c in completions if c})
+        r_mean = sum(rewards) / max(len(rewards), 1)
+        r_var = sum((r - r_mean) ** 2 for r in rewards) / max(len(rewards), 1)
+        all_equal = r_var < 1e-12
         logger.info(
-            "GRPO[%s] call #%d: %d/%d non-empty, %d unique, rewards=%s, prompt_len=%d",
+            "GRPO[%s] call #%d: %d/%d non-empty, %d unique, rewards=%s, "
+            "r_mean=%.4f, r_var=%.6f, tied=%s, prompt_len=%d",
             self.adapter.value, self._call_count, non_empty, len(completions),
-            n_unique, [f"{r:.3f}" for r in rewards], len(prompt),
+            n_unique, [f"{r:.3f}" for r in rewards],
+            r_mean, r_var, all_equal, len(prompt),
         )
+        if non_empty == 0 and self.adapter.value in ("contract", "curator"):
+            logger.warning(
+                "GRPO[%s] all samples empty → reward 0.0 (often vLLM connection "
+                "errors or parse failures). Retries: set SKILLBANK_LLM_RETRIES / "
+                "SKILLBANK_LLM_RETRY_DELAY_S; vLLM: VLLM_OPENAI_MAX_RETRIES.",
+                self.adapter.value,
+            )
 
         best_idx = grpo_sample.best_index
         return samples[best_idx]

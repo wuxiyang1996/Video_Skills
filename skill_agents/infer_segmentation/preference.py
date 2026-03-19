@@ -40,7 +40,7 @@ class PreferenceExample:
     score_lose: float = 0.0
     evidence: str = ""
     source: str = "llm"  # "llm" | "human" | "agent"
-    timestamp: float = field(default_factory=time.time)
+    timestamp: float = field(default_factory=time.time, repr=False)
 
     @property
     def is_transition_pref(self) -> bool:

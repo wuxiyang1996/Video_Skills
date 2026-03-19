@@ -80,7 +80,12 @@ Summarize the effects of this skill as a JSON object:
 
 
 def _get_contract_ask_fn() -> Optional[Callable[..., str]]:
-    """Return a CONTRACT-routed ask function, or fallback to ask_model.
+    """Return a CONTRACT-routed ask function.
+
+    Resolution order:
+      1. CONTRACT LoRA adapter via ``MultiLoraSkillBankLLM``
+      2. Local vLLM (``ask_vllm``) — avoids OpenRouter rate limits
+      3. ``ask_model`` (routes through OpenRouter)
 
     The returned callable is wrapped for reasoning-model compatibility
     (Qwen3 ``/no_think``, think-tag stripping).
@@ -94,6 +99,13 @@ def _get_contract_ask_fn() -> Optional[Callable[..., str]]:
             return wrap_ask_for_reasoning_models(
                 llm.as_ask_fn(SkillFunction.CONTRACT),
             )
+    except Exception:
+        pass
+    try:
+        from API_func import ask_vllm, _probe_vllm
+        if _probe_vllm():
+            logger.debug("CONTRACT fallback: using local vLLM")
+            return wrap_ask_for_reasoning_models(ask_vllm)
     except Exception:
         pass
     from API_func import ask_model
@@ -160,11 +172,18 @@ def llm_summarize_contract(
     )
 
     try:
+        from skill_agents_grpo._llm_retry import sync_ask_with_retry
+
         t0 = _time.time()
         call_kwargs: Dict[str, Any] = {"temperature": temperature}
         if resolved_model:
             call_kwargs["model"] = resolved_model
-        raw = ask_fn(prompt, **call_kwargs)
+        raw = sync_ask_with_retry(
+            ask_fn,
+            prompt,
+            log_label=f"CONTRACT:{skill_id}",
+            **call_kwargs,
+        )
         elapsed = _time.time() - t0
         start = raw.find("{")
         end = raw.rfind("}") + 1
@@ -186,9 +205,13 @@ def llm_summarize_contract(
             error=None if parsed else "parse_failed",
         ))
 
-        return parsed
+        if parsed is not None:
+            from skill_agents_grpo.grpo.grpo_outputs import SkillBankLLMOutput
+
+            return SkillBankLLMOutput(dict(parsed), raw_completion=raw or "")
+        return None
     except Exception as exc:
-        logger.debug("CONTRACT call failed for %s: %s", skill_id, exc)
+        logger.warning("CONTRACT call failed for %s: %s", skill_id, exc)
 
     return None
 

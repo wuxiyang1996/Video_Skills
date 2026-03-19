@@ -225,15 +225,91 @@ class SkillBankAgent:
     def _invalidate_query_engine(self):
         self._query_engine = None
 
+    # Per-game default skill seeds: phase × relevant subgoal tags.
+    # Mirrors the naming scheme in labeling/extract_skillbank_gpt54.py
+    # so skill names are game-stage-aware from the first episode.
+    _GAME_DEFAULT_SEEDS: Dict[str, List[str]] = {
+        "tetris": [
+            "opening:SETUP", "opening:CLEAR", "opening:POSITION",
+            "midgame:SETUP", "midgame:CLEAR", "midgame:POSITION", "midgame:OPTIMIZE",
+            "endgame:CLEAR", "endgame:SURVIVE", "endgame:OPTIMIZE",
+        ],
+        "twenty_forty_eight": [
+            "opening:MERGE", "opening:SETUP", "opening:POSITION",
+            "midgame:MERGE", "midgame:POSITION", "midgame:OPTIMIZE",
+            "endgame:MERGE", "endgame:SURVIVE", "endgame:OPTIMIZE",
+        ],
+        "2048": [
+            "opening:MERGE", "opening:SETUP", "opening:POSITION",
+            "midgame:MERGE", "midgame:POSITION", "midgame:OPTIMIZE",
+            "endgame:MERGE", "endgame:SURVIVE", "endgame:OPTIMIZE",
+        ],
+        "candy_crush": [
+            "early:CLEAR", "early:SETUP", "early:POSITION",
+            "mid:CLEAR", "mid:OPTIMIZE", "mid:EXECUTE",
+            "late:CLEAR", "late:OPTIMIZE", "late:SURVIVE",
+        ],
+        "super_mario": [
+            "early_level:NAVIGATE", "early_level:COLLECT", "early_level:ATTACK",
+            "mid_level:NAVIGATE", "mid_level:SURVIVE", "mid_level:ATTACK",
+            "late_level:NAVIGATE", "late_level:SURVIVE", "late_level:EXECUTE",
+        ],
+        "sokoban": [
+            "explore:NAVIGATE", "explore:EXPLORE",
+            "setup:POSITION", "setup:SETUP",
+            "solving:NAVIGATE", "solving:EXECUTE",
+            "finishing:EXECUTE", "finishing:OPTIMIZE",
+        ],
+        "avalon": [
+            "early_quests:SETUP", "early_quests:DEFEND",
+            "mid_quests:ATTACK", "mid_quests:DEFEND",
+            "final_quest:EXECUTE", "final_quest:SURVIVE",
+            "team_building:SETUP", "discussion:EXPLORE",
+        ],
+        "diplomacy": [
+            "opening:SETUP", "opening:NAVIGATE", "opening:ATTACK",
+            "orders:ATTACK", "orders:DEFEND", "orders:NAVIGATE",
+            "retreat:DEFEND", "retreat:SURVIVE",
+            "adjustment:BUILD", "adjustment:OPTIMIZE",
+            "late_orders:ATTACK", "late_orders:DEFEND",
+        ],
+        "pokemon_red": [
+            "battle:ATTACK", "battle:DEFEND", "battle:SURVIVE",
+            "overworld:NAVIGATE", "overworld:EXPLORE", "overworld:COLLECT",
+            "menu:SETUP", "menu:OPTIMIZE",
+            "dialog:EXPLORE", "dialog:EXECUTE",
+        ],
+        "pokemon": [
+            "battle:ATTACK", "battle:DEFEND", "battle:SURVIVE",
+            "overworld:NAVIGATE", "overworld:EXPLORE", "overworld:COLLECT",
+            "menu:SETUP", "menu:OPTIMIZE",
+            "dialog:EXPLORE", "dialog:EXECUTE",
+        ],
+    }
+
+    # Generic seeds for unknown games: temporal phases × common tags.
+    _GENERIC_DEFAULT_SEEDS: List[str] = [
+        "early:SETUP", "early:EXECUTE", "early:EXPLORE",
+        "mid:EXECUTE", "mid:OPTIMIZE", "mid:NAVIGATE",
+        "late:EXECUTE", "late:SURVIVE", "late:OPTIMIZE",
+    ]
+
     @staticmethod
     def _seed_skills_from_intentions(
         episode, game_name: str = "generic",
     ) -> List[str]:
-        """Extract unique compound skill labels (phase:tag) from an episode.
+        """Extract unique compound skill labels (phase:tag) from an episode,
+        augmented with game-appropriate default seeds.
 
         Uses the phase detector to produce per-step phase labels, then
         combines them with intention tags via ``make_compound_label`` so
         that e.g. early-game MERGE and endgame MERGE become distinct seeds.
+
+        When the episode yields few labels (common in early training when
+        the LLM produces monotone intentions like ``[EXECUTE]`` on every
+        step), game-specific default seeds are added so the preference
+        ranker always has a diverse skill vocabulary to compare.  This
+        mirrors the naming scheme in ``labeling/extract_skillbank_gpt54.py``.
         """
         from skill_agents_grpo.boundary_proposal.signal_extractors import (
             parse_intention_tag,
@@ -252,6 +328,12 @@ class SkillBankAgent:
                 tag = parse_intention_tag(intent)
                 if tag != "UNKNOWN":
                     labels.add(make_compound_label(phase, tag))
+
+        defaults = SkillBankAgent._GAME_DEFAULT_SEEDS.get(
+            game_name, SkillBankAgent._GENERIC_DEFAULT_SEEDS,
+        )
+        labels.update(defaults)
+
         return sorted(labels)
 
     # ── Stage 1+2: Segment one episode ───────────────────────────────
@@ -761,37 +843,49 @@ class SkillBankAgent:
         from skill_agents_grpo.stage3_mvp.schemas import Protocol, Skill
 
         updated = 0
+        from_template = 0
         for sid in self.bank.skill_ids:
             skill = self.bank.get_skill(sid)
             if skill is None:
                 continue
 
-            has_protocol = bool(skill.protocol and skill.protocol.steps)
-            q_threshold = 0.6 if has_protocol else 0.35
+            has_steps = bool(skill.protocol and skill.protocol.steps)
+            proto_source = getattr(skill.protocol, "source", "template") if skill.protocol else "template"
+            has_llm_protocol = has_steps and proto_source == "llm"
+
+            q_threshold = 0.6 if has_llm_protocol else 0.35
             high_quality = [se for se in skill.sub_episodes if se.quality_score >= q_threshold]
 
-            # For skills that already have a protocol, require strong evidence
-            # before overwriting.  For new/retired skills without a protocol,
-            # allow bootstrapping from fewer sub-episodes (min 1).
-            if has_protocol and len(high_quality) < 3:
+            # LLM protocols need strong evidence (3+) before re-synthesis.
+            # Template / deterministic protocols are eagerly upgraded with
+            # just 1 sub-episode of evidence.
+            if has_llm_protocol and len(high_quality) < 3:
+                continue
+            if not has_llm_protocol and len(high_quality) < 1:
                 continue
 
-            if not has_protocol and len(high_quality) < 1:
-                continue
-
+            old_source = proto_source
             protocol = self._synthesize_protocol(skill, high_quality)
             if protocol is not None:
                 skill.bump_version()
                 skill.protocol = protocol
                 self.bank.add_or_update_skill(skill)
                 updated += 1
+                if old_source == "template":
+                    from_template += 1
                 logger.info(
-                    "Updated protocol for skill %s (v%d, %d steps)",
+                    "Updated protocol for skill %s (v%d, %d steps, %s->%s, %d evidence)",
                     sid, skill.version, len(protocol.steps),
+                    old_source, protocol.source, len(high_quality),
                 )
 
         if updated:
             self._invalidate_query_engine()
+            if from_template:
+                logger.info(
+                    "Protocol synthesis: %d/%d upgraded from template to LLM",
+                    from_template, updated,
+                )
         return updated
 
     def refine_low_pass_protocols(
@@ -830,6 +924,7 @@ class SkillBankAgent:
             )
             best_eps = all_eps[:max(3, len(all_eps) // 2)]
 
+            old_source = getattr(skill.protocol, "source", "template")
             new_protocol = self._synthesize_protocol(skill, best_eps)
             if new_protocol is not None:
                 skill.bump_version()
@@ -837,8 +932,10 @@ class SkillBankAgent:
                 self.bank.add_or_update_skill(skill)
                 refined += 1
                 logger.info(
-                    "Refined protocol for low-pass skill %s (rate=%.2f, v%d)",
-                    sid, skill.success_rate, skill.version,
+                    "Refined protocol for low-pass skill %s "
+                    "(score=%.2f, v%d, %s->%s, %d evidence)",
+                    sid, skill.compute_skill_score(), skill.version,
+                    old_source, new_protocol.source, len(best_eps),
                 )
 
         if refined:
@@ -946,6 +1043,7 @@ class SkillBankAgent:
             success_criteria=success_criteria,
             abort_criteria=abort_criteria,
             expected_duration=max(1, avg_len),
+            source="deterministic",
         )
 
     def _llm_synthesize_protocol(
@@ -956,24 +1054,14 @@ class SkillBankAgent:
         model: Optional[str],
         action_vocab: Optional[List[str]] = None,
     ) -> Optional:
-        """Use ask_model (model-agnostic) to generate a structured protocol.
+        """Generate a structured protocol via LLM.
 
-        Works identically for GPT and Qwen because ask_model routes to the
-        correct backend based on the model name.  Reasoning models (Qwen3)
-        are handled transparently via ``wrap_ask_for_reasoning_models``.
+        Tries local vLLM (Qwen) first with retry, then falls back to
+        ``ask_model`` (OpenRouter/GPT).  Sets ``protocol.source`` to
+        ``"llm"`` on success so tag-based enrichment won't overwrite it.
         """
-        try:
-            from API_func import ask_model as _raw_ask
-        except ImportError:
-            return None
-        if _raw_ask is None or model is None:
-            return None
-
-        from skill_agents_grpo._llm_compat import wrap_ask_for_reasoning_models
         from skill_agents_grpo.stage3_mvp.schemas import Protocol
         import json as _json
-
-        _ask = wrap_ask_for_reasoning_models(_raw_ask, model_hint=model)
 
         evidence = "\n".join(f"  - {s}" for s in summaries[:5]) if summaries else "(none)"
         skill_name = skill.name or skill.skill_id
@@ -1018,28 +1106,17 @@ class SkillBankAgent:
             f"(e.g. 'stack_h>18', 'moves<3')\n"
             f"Reply with ONLY the JSON object."
         )
+
+        reply = self._ask_protocol_llm(prompt, model)
+        if not reply:
+            return None
+
         try:
             import time as _time_mod
             from skill_agents_grpo.coldstart_io import record_io, ColdStartRecord
 
             t0 = _time_mod.time()
-            reply = _ask(prompt, model=model, temperature=0.2, max_tokens=800)
-            elapsed = _time_mod.time() - t0
 
-            if not reply or reply.startswith("Error"):
-                record_io(ColdStartRecord(
-                    module="pipeline",
-                    function="protocol_synthesis",
-                    prompt=prompt,
-                    response=reply or "",
-                    model=model or "",
-                    temperature=0.2,
-                    max_tokens=800,
-                    elapsed_s=round(elapsed, 3),
-                    skill_id=skill.skill_id,
-                    error="empty_or_error_response",
-                ))
-                return None
             import re
             json_m = re.search(r"\{[\s\S]*\}", reply)
             if not json_m:
@@ -1048,10 +1125,10 @@ class SkillBankAgent:
                     function="protocol_synthesis",
                     prompt=prompt,
                     response=reply,
-                    model=model or "",
-                    temperature=0.2,
+                    model=model or "vllm",
+                    temperature=0.3,
                     max_tokens=800,
-                    elapsed_s=round(elapsed, 3),
+                    elapsed_s=0.0,
                     skill_id=skill.skill_id,
                     error="no_json_found",
                 ))
@@ -1064,10 +1141,10 @@ class SkillBankAgent:
                 prompt=prompt,
                 response=reply,
                 parsed=data,
-                model=model or "",
-                temperature=0.2,
+                model=model or "vllm",
+                temperature=0.3,
                 max_tokens=800,
-                elapsed_s=round(elapsed, 3),
+                elapsed_s=0.0,
                 skill_id=skill.skill_id,
             ))
 
@@ -1084,10 +1161,42 @@ class SkillBankAgent:
                 predicate_success=data.get("predicate_success", [])[:5],
                 predicate_abort=data.get("predicate_abort", [])[:3],
                 action_vocab=action_vocab or [],
+                source="llm",
             )
         except Exception as exc:
-            logger.debug("LLM protocol synthesis failed: %s", exc)
+            logger.warning("LLM protocol synthesis parse failed: %s", exc)
             return None
+
+    @staticmethod
+    def _ask_protocol_llm(prompt: str, model: Optional[str]) -> str:
+        """Try local vLLM with retry, fall back to ask_model."""
+        try:
+            from skill_agents_grpo._llm_retry import sync_ask_with_retry
+            from API_func import ask_vllm
+            reply = sync_ask_with_retry(
+                ask_vllm,
+                prompt,
+                log_label="protocol_synth_vllm",
+                temperature=0.3,
+                max_tokens=800,
+            )
+            if reply and not reply.startswith("Error"):
+                return reply
+        except Exception as exc:
+            logger.debug("vLLM protocol call failed, trying ask_model: %s", exc)
+
+        if model is None:
+            return ""
+        try:
+            from API_func import ask_model as _raw_ask
+            from skill_agents_grpo._llm_compat import wrap_ask_for_reasoning_models
+            _ask = wrap_ask_for_reasoning_models(_raw_ask, model_hint=model)
+            reply = _ask(prompt, model=model, temperature=0.3, max_tokens=800)
+            if reply and not reply.startswith("Error"):
+                return reply
+        except Exception as exc:
+            logger.warning("ask_model protocol fallback failed: %s", exc)
+        return ""
 
     # ── Phase 5: Distill execution hints ────────────────────────────
 

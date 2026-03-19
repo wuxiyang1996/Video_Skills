@@ -20,6 +20,26 @@ from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
+_RAW_BLEND = 0.08  # weight for raw-text fingerprint in contract / curator rewards
+
+
+def _raw_completion_fingerprint(llm_output: Any) -> float:
+    """Deterministic fingerprint in [0, 1] derived from raw LLM text.
+
+    When ``llm_output`` is a ``SkillBankLLMOutput`` carrying
+    ``_grpo_raw_completion``, the hash of that text is used so that
+    structurally identical (same parsed JSON) but textually different
+    completions get different rewards — critical for GRPO learning.
+    Falls back to 0.5 (neutral) when raw text is unavailable.
+    """
+    raw = getattr(llm_output, "_grpo_raw_completion", None) or ""
+    if not raw:
+        return 0.5
+    h = 0
+    for ch in raw:
+        h = (h * 31 + ord(ch)) & 0xFFFFFFFF
+    return (h % 10000) / 10000.0
+
 
 # ── Stage 3: CONTRACT reward ─────────────────────────────────────────
 #
@@ -60,17 +80,20 @@ def contract_reward(
     if not eff_add and not eff_del:
         return 0.05
 
+    r_raw = _raw_completion_fingerprint(llm_output)
+
     if holdout_instances is not None and verify_config is not None:
-        return _contract_reward_with_verification(
+        base = _contract_reward_with_verification(
             llm_output, skill_id, consensus_add, consensus_del,
             holdout_instances, verify_config, instance_rewards,
             predicates_start, predicates_end,
         )
+    else:
+        base = _contract_reward_start_end_coverage(
+            eff_add, eff_del, predicates_start, predicates_end,
+        )
 
-    # Fallback: evaluate coverage of start/end conditions directly
-    return _contract_reward_start_end_coverage(
-        eff_add, eff_del, predicates_start, predicates_end,
-    )
+    return max(0.0, min(1.0, base * (1.0 - _RAW_BLEND) + _RAW_BLEND * r_raw))
 
 
 def _contract_reward_start_end_coverage(
@@ -298,12 +321,16 @@ def curator_reward(
     if not decision_list:
         return 0.05
 
+    r_raw = _raw_completion_fingerprint(decisions)
+
     if action_outcomes is not None and len(action_outcomes) == len(candidates):
-        return _curator_reward_with_outcomes(
+        base = _curator_reward_with_outcomes(
             decision_list, candidates, action_outcomes,
         )
+    else:
+        base = _curator_reward_evidence(decision_list, candidates)
 
-    return _curator_reward_evidence(decision_list, candidates)
+    return max(0.0, min(1.0, base * (1.0 - _RAW_BLEND) + _RAW_BLEND * r_raw))
 
 
 def _curator_reward_evidence(
@@ -464,6 +491,65 @@ def _curator_reward_with_outcomes(
 # high-reward segments to high-quality existing skills, and only
 # proposes __NEW__ when existing skills genuinely don't fit.
 
+# When decode-based terms (reuse, margins, reward-capture) all saturate at
+# their maximum, every GRPO sample in a group can get reward 1.0 even if the
+# LLM produced different rankings.  Blend in a preference fingerprint so
+# group-normalized GRPO still sees spread (mirrors r_winner_fp on fallback).
+_SEGMENT_DECODE_PREF_BLEND = 0.14
+
+
+def _hash_raw_rollout_texts(texts: List[str]) -> int:
+    """Stable hash over multiset of raw LLM strings (order-independent)."""
+    h = 0
+    for t in sorted(texts or []):
+        body = t if isinstance(t, str) else str(t)
+        limit = min(len(body), 12000)
+        for i in range(limit):
+            h = (h * 137 + ord(body[i])) & 0xFFFFFFFF
+    return h
+
+
+def _preference_list_fingerprint(preference_list: list) -> float:
+    """Map preference_list to [0, 1] for GRPO tie-breaking.
+
+    Uses sorted rows of (segment, winner, loser, evidence_norm).  Including
+    **evidence** differentiates completions that fuzzy-map to the same
+    (win, lose) pairs but carry different LLM reasoning.
+
+    When ``preference_list`` is a :class:`PreferenceListWithRollouts`, also
+    hashes **raw JSON / text** from each segment LLM call.  Different
+    stochastic rollouts often collapse to identical parsed prefs; raw text
+    keeps GRPO rewards aligned with actual rollout diversity.
+    """
+    if not preference_list:
+        return 0.5
+    parts: List[tuple] = []
+    for p in preference_list:
+        try:
+            ev = getattr(p, "evidence", None) or ""
+            ev_norm = " ".join(str(ev).split())[:512]
+            parts.append(
+                (
+                    int(p.segment_start),
+                    int(p.segment_end),
+                    str(p.skill_win),
+                    str(p.skill_lose),
+                    ev_norm,
+                )
+            )
+        except Exception:
+            parts.append((str(type(p)), str(p), "", "", ""))
+    sig = tuple(sorted(parts))
+    h = 0
+    for tup in sig:
+        for x in tup:
+            h = (h * 31 + hash(x)) & 0xFFFFFFFF
+    raw_rollouts = getattr(preference_list, "raw_rollouts", None) or []
+    if raw_rollouts:
+        h = (h * 41 + _hash_raw_rollout_texts(list(raw_rollouts))) & 0xFFFFFFFF
+    return (h % 10000) / 10000.0
+
+
 def segmentation_reward(
     preference_list: list,
     segments: list,
@@ -544,15 +630,8 @@ def segmentation_reward(
         if quality_wins:
             r_quality_hint = sum(quality_wins) / len(quality_wins)
 
-    # r_winner_fingerprint: deterministic hash of the winning skill
-    # combination so that "skill_a wins all" differs from "skill_b wins all"
-    winner_sig = tuple(sorted(
-        (p.segment_start, p.segment_end, p.skill_win) for p in preference_list
-    ))
-    h = 0
-    for item in winner_sig:
-        h = (h * 31 + hash(item)) & 0xFFFFFFFF
-    r_winner_fp = (h % 10000) / 10000.0
+    # r_winner_fingerprint: align with decode-path fingerprint (incl. evidence)
+    r_winner_fp = _preference_list_fingerprint(preference_list)
 
     if bank_skill_scores:
         return max(0.0, min(1.0,
@@ -662,20 +741,26 @@ def _segmentation_reward_with_decode(
         logger.debug("Segmentation reward decode failed", exc_info=True)
         return 0.1
 
+    r_pref_fp = _preference_list_fingerprint(preference_list)
+    blend = _SEGMENT_DECODE_PREF_BLEND
     if bank_skill_scores:
-        return max(0.0, min(1.0,
+        base = max(0.0, min(1.0,
             0.15 * r_decode_score
             + 0.15 * r_reuse
             + 0.30 * r_reward_reuse
             + 0.25 * r_value_match
             + 0.15 * r_margin,
         ))
-    return max(0.0, min(1.0,
-        0.20 * r_decode_score
-        + 0.25 * r_reuse
-        + 0.35 * r_reward_reuse
-        + 0.20 * r_margin,
-    ))
+    else:
+        base = max(0.0, min(1.0,
+            0.20 * r_decode_score
+            + 0.25 * r_reuse
+            + 0.35 * r_reward_reuse
+            + 0.20 * r_margin,
+        ))
+    # Prefer structural signal, but never return identical rewards for every
+    # group member when the LLM outputs differ.
+    return max(0.0, min(1.0, base * (1.0 - blend) + blend * r_pref_fp))
 
 
 # ── Skill Selection reward (delayed, for decision-agent GRPO) ────────

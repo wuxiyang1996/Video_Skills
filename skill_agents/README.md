@@ -6,6 +6,8 @@ Build and maintain a **Skill Bank** from long-horizon game trajectories: segment
 
 **Reasoning-model compatibility:** When using Qwen3 or other reasoning models that emit internal `<think>` blocks, all LLM call sites in skill_agents are wrapped via [`_llm_compat.py`](_llm_compat.py): prompts get `/no_think` appended so the full token budget goes to structured output, and responses are stripped of think tags. This avoids generic or truncated names, descriptions, and protocols. See [Reasoning-model compatibility](#reasoning-model-compatibility) below.
 
+**Per-game banks:** In multi-game training, maintain **one skill bank per game** (e.g. separate JSONL per title under `bank_dir/<game>/` via [`PerGameSkillBankManager`](../trainer/coevolution/skillbank_pipeline.py)). **Skill statistics and reward-related values** are computed **within each game** (that game’s episodes and bank) for now—not aggregated across games unless you intentionally use a shared `bank_path`.
+
 ---
 
 ## Overview

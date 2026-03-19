@@ -107,7 +107,13 @@ def _format_action(idx: int, action: Dict[str, Any]) -> str:
 
 
 def _get_curator_ask_fn() -> Optional[Callable[..., str]]:
-    """Return a CURATOR-routed ask function, or fallback to ask_model."""
+    """Return a CURATOR-routed ask function.
+
+    Resolution order:
+      1. CURATOR LoRA adapter via ``MultiLoraSkillBankLLM``
+      2. Local vLLM (``ask_vllm``) — avoids OpenRouter rate limits
+      3. ``ask_model`` (routes through OpenRouter)
+    """
     from skill_agents_grpo._llm_compat import wrap_ask_for_reasoning_models
 
     try:
@@ -117,6 +123,13 @@ def _get_curator_ask_fn() -> Optional[Callable[..., str]]:
             return wrap_ask_for_reasoning_models(
                 llm.as_ask_fn(SkillFunction.CURATOR),
             )
+    except Exception:
+        pass
+    try:
+        from API_func import ask_vllm, _probe_vllm
+        if _probe_vllm():
+            logger.debug("CURATOR fallback: using local vLLM")
+            return wrap_ask_for_reasoning_models(ask_vllm)
     except Exception:
         pass
     from API_func import ask_model
@@ -204,8 +217,15 @@ def filter_candidates(
     prompt = _build_curator_prompt(candidates, summary)
 
     try:
+        from skill_agents_grpo._llm_retry import sync_ask_with_retry
+
         t0 = _time.time()
-        raw = ask_fn(prompt, temperature=temperature)
+        raw = sync_ask_with_retry(
+            ask_fn,
+            prompt,
+            log_label="CURATOR:filter_candidates",
+            temperature=temperature,
+        )
         elapsed = _time.time() - t0
         start = raw.find("{")
         end = raw.rfind("}") + 1
@@ -227,9 +247,11 @@ def filter_candidates(
         ))
 
         if parsed and "decisions" in parsed:
-            return parsed
+            from skill_agents_grpo.grpo.grpo_outputs import SkillBankLLMOutput
+
+            return SkillBankLLMOutput(dict(parsed), raw_completion=raw or "")
     except Exception as exc:
-        logger.debug("CURATOR adapter call failed: %s", exc)
+        logger.warning("CURATOR adapter call failed: %s", exc)
 
     return None
 

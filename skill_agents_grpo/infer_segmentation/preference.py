@@ -40,7 +40,10 @@ class PreferenceExample:
     score_lose: float = 0.0
     evidence: str = ""
     source: str = "llm"  # "llm" | "human" | "agent"
-    timestamp: float = field(default_factory=time.time)
+    # Omit from __repr__ so GRPO ``str([...PreferenceExample])`` reflects semantic
+    # prefs only — otherwise every sample gets a unique repr (new time.time() per
+    # object) while rewards correctly match identical rankings → confusing logs.
+    timestamp: float = field(default_factory=time.time, repr=False)
 
     @property
     def is_transition_pref(self) -> bool:
@@ -63,6 +66,19 @@ class PreferenceExample:
     @classmethod
     def from_dict(cls, d: dict) -> PreferenceExample:
         return cls(**d)
+
+
+class PreferenceListWithRollouts(list):
+    """Pairwise preferences plus raw LLM text (one entry per segment call).
+
+    ``collect_segment_preferences`` may return this instead of a plain ``list``
+    so GRPO rewards can distinguish **different JSON rollouts** that fuzzy-parse
+    to identical ``PreferenceExample`` rows (same ranking after normalization).
+    """
+
+    def __init__(self, iterable=(), *, raw_rollouts: Optional[List[str]] = None):
+        super().__init__(iterable)
+        self.raw_rollouts: List[str] = list(raw_rollouts or [])
 
 
 @dataclass
