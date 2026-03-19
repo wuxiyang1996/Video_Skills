@@ -47,8 +47,8 @@ class ScorerWeights:
 class DurationPriorConfig:
     """Parameters for the per-skill duration prior log p(l | k)."""
 
-    default_mean: float = 20.0
-    default_std: float = 10.0
+    default_mean: float = 8.0
+    default_std: float = 5.0
     min_length: int = 2
     max_length: int = 200
 

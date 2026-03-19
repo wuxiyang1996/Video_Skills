@@ -109,6 +109,7 @@ def _run_grpo_training_loop(
     batch_size: int,
     clip_ratio: float,
     kl_coeff: float,
+    accumulation_steps: int = 4,
 ) -> "Optional[Dict[str, Any]]":
     """Execute GRPO training on an already-wrapped FSDP model.
 
@@ -262,9 +263,10 @@ def _run_grpo_training_loop(
     while len(ref_data) < n_train_max_val:
         ref_data.append(None)
 
-    # ── Training loop ──
+    # ── Training loop (with gradient accumulation) ──
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(trainable_params, lr=lr)
+    accum = max(1, accumulation_steps)
 
     total_loss = 0.0
     total_tokens = 0
@@ -345,12 +347,15 @@ def _run_grpo_training_loop(
                 total_tokens += per_tok.numel()
 
             if mb_losses:
-                torch.stack(mb_losses).mean().backward()
+                (torch.stack(mb_losses).mean() / accum).backward()
 
             del out
-            torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0)
-            optimizer.step()
-            optimizer.zero_grad()
+
+            is_accum_boundary = ((mb + 1) % accum == 0) or (mb == n_mini - 1)
+            if is_accum_boundary:
+                torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0)
+                optimizer.step()
+                optimizer.zero_grad()
 
         total_loss += epoch_loss / max(epoch_samples, 1)
 
@@ -358,9 +363,9 @@ def _run_grpo_training_loop(
             elapsed = time.time() - t_epoch
             rate = n_my / elapsed if elapsed > 0 else 0
             logger.info(
-                "  FSDP [%s] epoch %d/%d: loss=%.4f (%.1f samples/s, %.1fs)",
+                "  FSDP [%s] epoch %d/%d: loss=%.4f (%.1f samples/s, %.1fs, accum=%d)",
                 adapter_name, epoch + 1, epochs,
-                epoch_loss / max(epoch_samples, 1), rate, elapsed,
+                epoch_loss / max(epoch_samples, 1), rate, elapsed, accum,
             )
 
     train_time = time.time() - t_train
@@ -776,6 +781,7 @@ def _train_one_adapter(
     while len(ref_data) < n_train_max_val:
         ref_data.append(None)
 
+    accum_single = max(1, 4)
     total_loss = 0.0
     total_tokens = 0
     n_my_train = len(ref_data)
@@ -855,12 +861,15 @@ def _train_one_adapter(
                 total_tokens += per_tok.numel()
 
             if mb_losses:
-                torch.stack(mb_losses).mean().backward()
+                (torch.stack(mb_losses).mean() / accum_single).backward()
 
             del out
-            torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0)
-            optimizer.step()
-            optimizer.zero_grad()
+
+            is_accum_boundary = ((mb + 1) % accum_single == 0) or (mb == n_mini - 1)
+            if is_accum_boundary:
+                torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0)
+                optimizer.step()
+                optimizer.zero_grad()
 
         total_loss += epoch_loss / max(epoch_samples, 1)
 
@@ -1139,6 +1148,7 @@ def _fsdp_train_worker_multi(rank: int, args: Dict[str, Any]) -> None:
                 job["prompts"], job["completions"], job["advantages"],
                 job["lr"], job["epochs"], job["batch_size"],
                 job["clip_ratio"], job["kl_coeff"],
+                accumulation_steps=job.get("accumulation_steps", 4),
             )
 
             if stats is None:
@@ -1402,6 +1412,9 @@ def run_fsdp_grpo_multi(
 
     original_cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(g) for g in gpu_ids)
+    os.environ.setdefault(
+        "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"
+    )
 
     t0 = time.time()
     try:

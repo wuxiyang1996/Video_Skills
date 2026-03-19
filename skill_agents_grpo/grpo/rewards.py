@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import logging
 import math
-from copy import deepcopy
 from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
@@ -146,14 +145,15 @@ def curator_reward(
     candidates: list,
     bank: Any,
     *args: Any,
-    compute_quality_fn: Optional[Any] = None,
-    execute_fn: Optional[Any] = None,
+    action_outcomes: Optional[List[Dict[str, Any]]] = None,
     **kwargs: Any,
 ) -> float:
     """Reward for curator filter decisions.
 
-    Compares bank quality after filtered execution vs. full execution.
-    Falls back to a heuristic if bank/execution functions aren't available.
+    When ``action_outcomes`` is provided (a list parallel to ``candidates``,
+    each with ``{"succeeded": bool, "quality_delta": float}``), the reward
+    measures how well the curator's approve/veto/defer decisions align with
+    actual maintenance results.  Otherwise falls back to a structural heuristic.
 
     Parameters
     ----------
@@ -163,10 +163,8 @@ def curator_reward(
         Candidate bank mutations (from the algorithmic proposer).
     bank : SkillBankMVP
         Current skill bank state.
-    compute_quality_fn : callable, optional
-        ``compute_quality_fn(bank) -> float`` — bank quality metric.
-    execute_fn : callable, optional
-        ``execute_fn(actions, bank) -> bank`` — execute actions on a bank copy.
+    action_outcomes : list[dict], optional
+        Per-candidate ground truth: ``{"succeeded": bool, "quality_delta": float}``.
     """
     if decisions is None:
         return 0.0
@@ -175,64 +173,70 @@ def curator_reward(
     if not decision_list:
         return 0.05
 
-    n_approve = sum(1 for d in decision_list if d.get("verdict") == "approve")
-    n_veto = sum(1 for d in decision_list if d.get("verdict") == "veto")
-    n_defer = sum(1 for d in decision_list if d.get("verdict") == "defer")
     n_total = len(decision_list)
 
-    # Full quality comparison (when bank operations available)
-    if compute_quality_fn is not None and execute_fn is not None:
-        return _curator_reward_with_quality(
-            decisions, candidates, bank, compute_quality_fn, execute_fn,
+    # Outcome-based reward (when ground truth available)
+    if action_outcomes is not None and len(action_outcomes) == len(candidates):
+        return _curator_reward_with_outcomes(
+            decision_list, candidates, action_outcomes,
         )
 
-    # Heuristic fallback: reward conservative but non-trivial filtering
+    # Heuristic fallback
+    n_approve = sum(1 for d in decision_list if d.get("verdict") == "approve")
+    n_defer = sum(1 for d in decision_list if d.get("verdict") == "defer")
+
     if n_total == 0:
         return 0.0
 
     approve_rate = n_approve / n_total
     has_reasons = all(d.get("reason") for d in decision_list)
     reason_bonus = 0.1 if has_reasons else 0.0
-
-    # Prefer moderate filtering (not all-approve, not all-veto)
+    reason_len = sum(len(d.get("reason", "")) for d in decision_list)
+    detail_bonus = min(0.1, reason_len / (n_total * 100.0))
     diversity = 1.0 - abs(approve_rate - 0.5) * 2.0
     conservative_bonus = 0.1 * (n_defer / n_total) if n_defer > 0 else 0.0
 
-    return 0.3 + 0.3 * diversity + conservative_bonus + reason_bonus
+    return min(1.0, 0.2 + 0.2 * diversity + conservative_bonus + reason_bonus + detail_bonus)
 
 
-def _curator_reward_with_quality(
-    decisions: Dict[str, Any],
+def _curator_reward_with_outcomes(
+    decision_list: List[Dict[str, Any]],
     candidates: list,
-    bank: Any,
-    compute_quality_fn: Any,
-    execute_fn: Any,
+    action_outcomes: List[Dict[str, Any]],
 ) -> float:
-    """Compute quality delta: q(filtered) - q(all)."""
-    decision_list = decisions.get("decisions", [])
-    approved_indices = {
-        d["idx"] for d in decision_list
-        if d.get("verdict") == "approve" and "idx" in d
-    }
+    """Reward based on alignment with actual maintenance outcomes."""
+    correct = 0.0
+    total = 0
 
-    filtered_actions = [c for i, c in enumerate(candidates) if i in approved_indices]
+    for d in decision_list:
+        idx = d.get("idx")
+        verdict = d.get("verdict", "")
+        if idx is None or not isinstance(idx, int) or idx >= len(action_outcomes):
+            continue
+        outcome = action_outcomes[idx]
+        succeeded = outcome.get("succeeded", True)
+        qd = outcome.get("quality_delta", 0.0)
+        total += 1
 
-    bank_filtered = deepcopy(bank)
-    execute_fn(filtered_actions, bank_filtered)
-    q_filtered = compute_quality_fn(bank_filtered)
+        if verdict == "approve" and succeeded:
+            correct += 1.0
+        elif verdict == "approve" and not succeeded:
+            correct += 0.0
+        elif verdict == "veto" and not succeeded:
+            correct += 1.0
+        elif verdict == "veto" and succeeded:
+            correct += 0.0
+        elif verdict == "defer":
+            correct += 0.3 if abs(qd) < 0.05 else 0.1
 
-    bank_all = deepcopy(bank)
-    execute_fn(candidates, bank_all)
-    q_all = compute_quality_fn(bank_all)
+    if total == 0:
+        return 0.05
 
-    quality_delta = q_filtered - q_all  # positive = filtering helped
+    accuracy = correct / total
+    has_reasons = all(d.get("reason") for d in decision_list)
+    reason_bonus = 0.1 if has_reasons else 0.0
 
-    n_total = len(decision_list)
-    n_defer = sum(1 for d in decision_list if d.get("verdict") == "defer")
-    conservative_bonus = 0.1 * (n_defer / max(n_total, 1))
-
-    # Combine: quality delta is primary, conservative bonus is secondary
-    return max(0.0, 0.5 + quality_delta) + conservative_bonus
+    return min(1.0, 0.3 + 0.5 * accuracy + reason_bonus)
 
 
 # ── Stage 2: SEGMENT reward ──────────────────────────────────────────
@@ -297,34 +301,60 @@ def _segmentation_reward_with_decode(
     decode_fn: Any,
     predicates: Optional[list],
 ) -> float:
-    """Build scorer from preferences, decode, evaluate diagnostics."""
+    """Build scorer from preferences, decode, evaluate diagnostics.
+
+    Combines preference-set quality metrics (which vary across GRPO
+    samples) with decode quality (which tends to saturate).
+    """
+    # ── Preference quality (varies between GRPO samples) ─────────
+    n_prefs = len(preference_list)
+    covered_segs = {(p.segment_start, p.segment_end) for p in preference_list}
+    coverage = len(covered_segs) / max(len(segments), 1)
+
+    unique_pairs = {(p.skill_win, p.skill_lose) for p in preference_list}
+    n_unique = len(unique_pairs)
+    max_pairs = len(skill_names) * (len(skill_names) - 1) // 2
+    richness = n_unique / max(max_pairs, 1)
+
+    pair_votes: Dict[tuple, str] = {}
+    contradictions = 0
+    for p in preference_list:
+        key = tuple(sorted([p.skill_win, p.skill_lose]))
+        if key not in pair_votes:
+            pair_votes[key] = p.skill_win
+        elif pair_votes[key] != p.skill_win:
+            contradictions += 1
+    consistency = 1.0 - contradictions / max(n_prefs, 1)
+
+    r_pref = 0.4 * coverage + 0.3 * min(1.0, richness) + 0.3 * consistency
+
+    # ── Decode quality (tends to saturate) ───────────────────────
+    r_decode = 0.5
     try:
         scorer = scorer_factory(preference_list)
         result = decode_fn(scorer, segments, observations, actions, skill_names, predicates)
+        if hasattr(result, "segments") and result.segments:
+            margins = []
+            n_new = 0
+            n_total = len(result.segments)
+            for seg in result.segments:
+                if hasattr(seg, "margin") and math.isfinite(seg.margin):
+                    margins.append(seg.margin)
+                if hasattr(seg, "skill") and seg.skill == "__NEW__":
+                    n_new += 1
+            avg_margin = (sum(margins) / len(margins)) if margins else 0.0
+            r_margin = min(1.0, avg_margin / 10.0) if avg_margin > 0 else 0.0
+            n_confident = sum(1 for m in margins if m > 1.0)
+            r_confident = n_confident / max(n_total, 1)
+            r_new_penalty = -0.3 * (n_new / max(n_total, 1))
+            r_decode = max(0.0, min(1.0,
+                0.4 * r_margin + 0.4 * r_confident + 0.1 + 0.1 * r_new_penalty,
+            ))
     except Exception:
         logger.debug("Segmentation reward decode failed", exc_info=True)
-        return 0.1
+        r_decode = 0.1
 
-    # Extract diagnostics from result
-    if hasattr(result, "segments") and result.segments:
-        margins = []
-        n_new = 0
-        n_total = len(result.segments)
-
-        for seg in result.segments:
-            if hasattr(seg, "margin") and math.isfinite(seg.margin):
-                margins.append(seg.margin)
-            if hasattr(seg, "skill") and seg.skill == "__NEW__":
-                n_new += 1
-
-        r_margin = (sum(margins) / len(margins) / 5.0) if margins else 0.0
-        r_new_penalty = -0.5 * (n_new / max(n_total, 1))
-        n_confident = sum(1 for m in margins if m > 1.0)
-        r_confident = n_confident / max(n_total, 1)
-
-        return max(0.0, 0.35 * r_margin + 0.35 * r_confident + 0.20 + 0.10 * r_new_penalty)
-
-    return 0.2  # decode succeeded but no segment diagnostics
+    return max(0.0, min(1.0, 0.6 * r_pref + 0.4 * r_decode))
 
 
 # ── Skill Selection reward (delayed, for decision-agent GRPO) ────────

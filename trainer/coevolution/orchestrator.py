@@ -145,6 +145,8 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
     thread_executor = ThreadPoolExecutor(
         max_workers=config.thread_workers, thread_name_prefix="coevo",
     )
+    from concurrent.futures import ProcessPoolExecutor as _PPE
+    process_executor = _PPE(max_workers=config.process_workers)
 
     # ── Per-game skill bank pipelines ────────────────────────────
     all_games = list(config.games) + list(getattr(config, "eval_games", []))
@@ -153,6 +155,8 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
         bank_dir=config.bank_dir,
         model_name=config.model_name,
         executor=thread_executor,
+        seed_bank_dir=getattr(config, "seed_bank_dir", None),
+        process_executor=process_executor,
     )
 
     # ── Determine start step ─────────────────────────────────────
@@ -298,6 +302,18 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                 logger.warning("GRPO data export failed: %s", exc)
 
         step_elapsed = _phase_ab_time + _phase_b_time + phase_c_time
+        per_game_rewards = {
+            game: {
+                "mean_reward": m["mean_reward"],
+                "max_reward": m["max_reward"],
+                "min_reward": m["min_reward"],
+                "std_reward": m["std_reward"],
+                "n_episodes": m["n_episodes"],
+                "mean_steps": m["mean_steps"],
+            }
+            for game, m in _ep_metrics["per_game"].items()
+        }
+
         step_summary = {
             "step": _step,
             "mode": _mode,
@@ -308,6 +324,7 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
             "n_episodes": _ep_metrics["aggregate"]["n_episodes"],
             "total_steps_played": _ep_metrics["aggregate"]["total_steps"],
             "mean_reward": _ep_metrics["aggregate"]["mean_reward"],
+            "reward_per_game": per_game_rewards,
             "n_skills": _n_skills,
             "n_new_skills": _new_skills,
             "skills_per_game": _sk_counts,
@@ -316,11 +333,15 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
             "vllm_completion_tokens": _vstats["total_completion_tokens"],
         }
 
+        per_game_summary = ", ".join(
+            f"{g}={m['mean_reward']:.1f}" for g, m in per_game_rewards.items()
+        )
         logger.info(
             "Step %d complete: %.1fs | %d eps | mean_reward=%.2f | "
-            "%d skills (+%d) across %d games | %d vLLM calls",
+            "per_game=[%s] | %d skills (+%d) across %d games | %d vLLM calls",
             _step, step_elapsed,
             step_summary["n_episodes"], step_summary["mean_reward"],
+            per_game_summary,
             _n_skills, _new_skills,
             sum(1 for c in _sk_counts.values() if c > 0),
             step_summary["vllm_calls"],
@@ -365,6 +386,9 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                     log_dict[f"grpo/skillbank/{adapter}/loss"] = stats.mean_loss
                     log_dict[f"grpo/skillbank/{adapter}/n_samples"] = stats.n_samples
                 log_dict["grpo/wall_time_s"] = grpo_result.wall_time_s
+                for adapter, game_counts in grpo_result.per_game_counts.items():
+                    for game, count in game_counts.items():
+                        log_dict[f"grpo/{adapter}/{game}/n_samples"] = count
             try:
                 wandb.log(log_dict, step=_step)
             except Exception as exc:
@@ -426,6 +450,7 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                     "skills_per_game": _sk_counts,
                     "n_new_skills": _new_skills,
                     "mean_reward": step_summary["mean_reward"],
+                    "reward_per_game": per_game_rewards,
                     "n_episodes": step_summary["n_episodes"],
                     "mode": _mode,
                 }
@@ -448,6 +473,15 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
     for step in range(start_step, config.total_steps):
         step_t0 = time.monotonic()
         is_cold_start = (step == 0)
+
+        if hasattr(config, "active_games"):
+            config.games = config.active_games(step)
+
+        try:
+            from skill_agents_grpo.stage3_mvp.schemas import ProtoSkill
+            ProtoSkill.set_relaxed(step <= 15)
+        except Exception:
+            pass
 
         skill_banks = sb_manager.get_banks()
         skill_counts = sb_manager.skill_counts()
@@ -553,9 +587,13 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
             try:
                 _prev_grpo_result = await _prev_task
             except Exception as exc:
+                _exc_name = type(exc).__name__
+                _is_oom = "OutOfMemory" in _exc_name or "CUDA out of memory" in str(exc)
                 logger.error(
-                    "GRPO training failed (step %d): %s",
-                    _prev_ctx['step'], exc, exc_info=True,
+                    "GRPO training failed (step %d, %s%s): %s",
+                    _prev_ctx['step'], _exc_name,
+                    " — CUDA OOM, consider reducing batch_size" if _is_oom else "",
+                    exc, exc_info=True,
                 )
                 try:
                     import torch as _torch

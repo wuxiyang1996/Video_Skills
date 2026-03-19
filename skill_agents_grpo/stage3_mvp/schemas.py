@@ -18,7 +18,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, ClassVar, Dict, List, Optional, Set
 
 
 @dataclass
@@ -630,9 +630,28 @@ class ProtoSkill:
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
+    _relaxed_thresholds: "ClassVar[bool]" = False
+
+    @classmethod
+    def set_relaxed(cls, relaxed: bool) -> None:
+        """Enable relaxed thresholds for early training steps (0-15).
+
+        When relaxed, support drops from 5 to 3, consistency from 0.5
+        to 0.35, and pass_rate from 0.6 to 0.4, allowing more
+        proto-skills to promote when data is scarce.
+        """
+        cls._relaxed_thresholds = relaxed
+
     @property
     def is_promotable(self) -> bool:
         """Whether the proto-skill has enough evidence for full promotion."""
+        if self._relaxed_thresholds:
+            return (
+                self.support >= 3
+                and self.consistency >= 0.35
+                and self.verification_pass_rate >= 0.4
+                and self.n_verifications >= 1
+            )
         return (
             self.support >= 5
             and self.consistency >= 0.5

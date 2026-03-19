@@ -64,6 +64,15 @@ class ProposalConfig:
     adaptive_merge: bool = True
     adaptive_merge_divisor: int = 8
 
+    # ── Minimum boundary density ────────────────────────────────────
+    # Target segment length in steps.  When signal-based candidates
+    # produce fewer boundaries than T // target_segment_length - 1,
+    # evenly-spaced fallback boundaries are added so the decoder has
+    # enough cut options (especially important for short trajectories).
+    target_segment_length: int = 5
+    # Set to 0 to disable fallback boundaries.
+    min_boundaries_enabled: bool = True
+
     # ── Intention-tag boundary signals ─────────────────────────────
     # Tag change → boundary candidate (tag proposes, Stage 2 decides)
     tag_min_segment_len: int = 3
@@ -492,8 +501,6 @@ def propose_boundary_candidates(
         )
 
     triggers = [(t, s) for t, s in triggers if 0 <= t < T]
-    if not triggers:
-        return []
 
     effective_radius = cfg.merge_radius
     if cfg.adaptive_merge:
@@ -501,6 +508,23 @@ def propose_boundary_candidates(
             cfg.merge_radius,
             max(1, T // cfg.adaptive_merge_divisor),
         )
+
+    # ── Minimum boundary density: add evenly-spaced fallbacks ─────
+    if cfg.min_boundaries_enabled and cfg.target_segment_length > 0:
+        min_boundaries = max(1, T // cfg.target_segment_length - 1)
+        existing_centers = {t for t, _ in triggers}
+        if len(existing_centers) < min_boundaries:
+            n_needed = min_boundaries
+            step = T / (n_needed + 1)
+            for k in range(1, n_needed + 1):
+                fb_t = int(round(k * step))
+                fb_t = max(1, min(fb_t, T - 2))
+                if fb_t not in existing_centers:
+                    triggers.append((fb_t, "uniform_fallback"))
+
+    triggers = [(t, s) for t, s in triggers if 0 <= t < T]
+    if not triggers:
+        return []
 
     candidates = _merge_and_window(
         triggers,

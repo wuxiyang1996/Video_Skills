@@ -608,6 +608,7 @@ class DiplomacyNLWrapper:
         self._phases_processed = 0
         self._phase_history = []
         self._negotiation_log = []
+        self._prev_centers = None
 
         obs = self._build_obs()
         info = self._build_info()
@@ -660,7 +661,9 @@ class DiplomacyNLWrapper:
             return obs, rewards, terminated, truncated, info
         else:
             cp = self._controlled_power
-            return obs, rewards.get(cp, 0.0), terminated, truncated, info
+            raw = rewards.get(cp, 0.0)
+            shaped = raw + self._shaping_delta(cp)
+            return obs, shaped, terminated, truncated, info
 
     def step_negotiate(
         self,
@@ -800,6 +803,24 @@ class DiplomacyNLWrapper:
             else:
                 rewards[power_name] = len(power.centers) / 18.0
         return rewards
+
+    def _shaping_delta(self, power_name: str) -> float:
+        """Potential-based shaping: reward delta for gaining/losing centers.
+
+        ``delta_centers * 0.5`` per phase so the agent gets dense signal
+        from territorial changes.  Policy-invariant (potential-based).
+        """
+        power = self.game.powers.get(power_name)
+        if power is None:
+            return 0.0
+        current = len(power.centers)
+        prev = getattr(self, "_prev_centers", None)
+        if prev is None:
+            self._prev_centers = current
+            return 0.0
+        delta = (current - prev) * 0.5
+        self._prev_centers = current
+        return delta
 
     # ---- Info ----
 

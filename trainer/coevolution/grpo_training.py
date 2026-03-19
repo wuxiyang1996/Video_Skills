@@ -20,13 +20,52 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from trainer.coevolution.episode_runner import EpisodeResult, GRPORecord
 
 logger = logging.getLogger(__name__)
+
+
+# ── Experience Replay Buffer ────────────────────────────────────────────
+
+class ReplayBuffer:
+    """Ring buffer of GRPORecords with importance-weighted staleness.
+
+    Records from the current step get weight 1.0; older records are
+    down-weighted so the gradient is dominated by fresh on-policy data
+    while still benefiting from past experience.
+    """
+
+    STALENESS_WEIGHTS = {0: 1.0, 1: 0.7, 2: 0.5}
+    DEFAULT_WEIGHT = 0.3
+
+    def __init__(self, max_size: int = 2000):
+        self._buf: Deque[Tuple[GRPORecord, int]] = deque(maxlen=max_size)
+
+    def add(self, records: List[GRPORecord], step: int) -> None:
+        for rec in records:
+            self._buf.append((rec, step))
+
+    def sample_all(self, current_step: int) -> Tuple[List[GRPORecord], List[float]]:
+        """Return all records with their staleness weights."""
+        records: List[GRPORecord] = []
+        weights: List[float] = []
+        for rec, rec_step in self._buf:
+            age = current_step - rec_step
+            w = self.STALENESS_WEIGHTS.get(age, self.DEFAULT_WEIGHT)
+            records.append(rec)
+            weights.append(w)
+        return records, weights
+
+    def __len__(self) -> int:
+        return len(self._buf)
+
+
+_decision_replay_buffers: Dict[str, ReplayBuffer] = {}
 
 
 @dataclass
@@ -45,13 +84,19 @@ class GRPOStepResult:
     skillbank_stats: Dict[str, GRPOTrainStats] = field(default_factory=dict)
     wall_time_s: float = 0.0
     records: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+    # Per-game sample counts: {adapter_name: {game: n_samples}}
+    per_game_counts: Dict[str, Dict[str, int]] = field(default_factory=dict)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────
 
 
 def _compute_advantages(rewards: List[float]) -> List[float]:
-    """Group-normalize rewards to zero-mean, unit-variance advantages."""
+    """Group-normalize rewards to zero-mean, unit-variance advantages.
+
+    Uses a std floor of 0.1 to prevent blow-up when all rewards are
+    nearly identical (common in constant-reward game environments).
+    """
     if not rewards:
         return []
     finite = [r for r in rewards if math.isfinite(r)]
@@ -64,7 +109,7 @@ def _compute_advantages(rewards: List[float]) -> List[float]:
         return [0.0]
     mean = sum(sanitized) / n
     var = sum((r - mean) ** 2 for r in sanitized) / n
-    std = var ** 0.5 if var > 0 else 1.0
+    std = max(var ** 0.5, 0.1)
     return [(r - mean) / std for r in sanitized]
 
 
@@ -84,32 +129,58 @@ def _collect_grpo_records(results: List[EpisodeResult]) -> Dict[str, List[GRPORe
 
 def _records_to_training_data(
     records: List[GRPORecord],
+    weights: Optional[List[float]] = None,
 ) -> tuple:
     """Convert GRPORecords to flat (prompts, completions, advantages) lists.
 
-    Advantages are computed per-episode (all steps within the same
-    episode form a group).  Within an episode, steps with above-average
-    rewards get positive advantages, below-average get negative.
+    Advantages are computed **per-game** so the baseline reflects
+    "average performance in this game" rather than "average within
+    this single episode".  This fixes two critical failure modes:
 
-    This replaces the earlier per-(episode, step) grouping which always
-    produced groups of size 1 and advantages of exactly 0.0.
+    1. **Constant-reward episodes** (e.g. Candy Crush returning 0.5
+       every step): per-episode normalization produces advantage=0 for
+       every sample, wasting all training data from that game.  Per-game
+       normalization uses the cross-episode mean, giving meaningful
+       signal when some episodes do better than others.
+
+    2. **Single-step episodes**: per-episode normalization always yields
+       advantage=0.  Per-game normalization gives a meaningful value
+       relative to other episodes.
+
+    When *weights* are provided (from experience replay), advantages are
+    scaled by the importance weight so stale records contribute less.
     """
-    by_episode: Dict[str, List[GRPORecord]] = {}
-    for rec in records:
-        by_episode.setdefault(rec.episode_id, []).append(rec)
+    if weights is None:
+        weights = [1.0] * len(records)
+
+    by_game: Dict[str, List[tuple]] = {}
+    for rec, w in zip(records, weights):
+        by_game.setdefault(rec.game, []).append((rec, w))
 
     prompts: List[str] = []
     completions: List[str] = []
     advantages: List[float] = []
 
-    for ep_records in by_episode.values():
-        rewards = [r.reward for r in ep_records]
+    for game, game_entries in sorted(by_game.items()):
+        game_records = [e[0] for e in game_entries]
+        game_weights = [e[1] for e in game_entries]
+        rewards = [r.reward for r in game_records]
         advs = _compute_advantages(rewards)
-        for rec, adv in zip(ep_records, advs):
+
+        n_nonzero = sum(1 for a in advs if abs(a) > 1e-6)
+        logger.debug(
+            "GRPO advantages [%s]: %d samples, mean_reward=%.4f, "
+            "%d/%d non-zero advantages",
+            game, len(rewards),
+            sum(rewards) / len(rewards) if rewards else 0.0,
+            n_nonzero, len(advs),
+        )
+
+        for rec, adv, w in zip(game_records, advs, game_weights):
             if rec.completion:
                 prompts.append(rec.prompt)
                 completions.append(rec.completion)
-                advantages.append(adv)
+                advantages.append(adv * w)
 
     return prompts, completions, advantages
 
@@ -169,24 +240,36 @@ class DecisionGRPOTrainer:
         self.kl_coeff = kl_coeff
         self.io_log_dir = io_log_dir
 
+    _MIN_SAMPLES = 16
+
     def build_jobs(
         self,
         records: Dict[str, List[GRPORecord]],
+        step: int = 0,
     ) -> tuple:
         """Build FSDP job dicts for all decision adapters.
 
+        Fresh records are added to per-adapter replay buffers, then
+        training data is drawn from the full buffer with staleness
+        weights so past experience is down-weighted.  Adapters with
+        fewer than ``_MIN_SAMPLES`` total are skipped.  Epoch count
+        scales inversely with sample count so small datasets get more
+        passes.
+
         Returns ``(jobs, names)`` without launching training.
         """
+        global _decision_replay_buffers
+
         adapter_configs = {
             "skill_selection": {
                 "lr": self.lr * 0.6,
                 "kl_coeff": min(self.kl_coeff, 0.02),
-                "epochs": 3,
+                "base_epochs": 3,
             },
             "action_taking": {
                 "lr": self.lr,
                 "kl_coeff": self.kl_coeff,
-                "epochs": 2,
+                "base_epochs": 2,
             },
         }
 
@@ -194,19 +277,50 @@ class DecisionGRPOTrainer:
         job_names: List[str] = []
 
         for adapter_name, cfg in adapter_configs.items():
-            recs = records.get(adapter_name, [])
-            if not recs:
+            fresh_recs = records.get(adapter_name, [])
+
+            if adapter_name not in _decision_replay_buffers:
+                _decision_replay_buffers[adapter_name] = ReplayBuffer(max_size=2000)
+            buf = _decision_replay_buffers[adapter_name]
+
+            if fresh_recs:
+                buf.add(fresh_recs, step)
+
+            all_recs, weights = buf.sample_all(step)
+            if not all_recs:
                 logger.info("No GRPO records for '%s', skipping", adapter_name)
                 continue
 
-            prompts, completions, advantages = _records_to_training_data(recs)
+            if len(all_recs) < self._MIN_SAMPLES:
+                logger.warning(
+                    "Decision GRPO [%s]: only %d samples (< %d min), skipping",
+                    adapter_name, len(all_recs), self._MIN_SAMPLES,
+                )
+                continue
+
+            prompts, completions, advantages = _records_to_training_data(
+                all_recs, weights=weights,
+            )
             if not prompts:
                 continue
 
+            n_samples = len(prompts)
+            epochs = max(2, min(8, 256 // n_samples))
+
+            from collections import Counter
+            game_counts = Counter(r.game for r in all_recs)
+            game_breakdown = ", ".join(
+                f"{g}={n}" for g, n in sorted(game_counts.items())
+            )
+            n_fresh = len(fresh_recs)
+            n_replay = len(all_recs) - n_fresh
+
             adapter_path = str(Path(self.adapter_dir) / adapter_name)
             logger.info(
-                "Decision GRPO [%s]: %d samples on %d GPUs",
-                adapter_name, len(prompts), len(self.devices),
+                "Decision GRPO [%s]: %d samples (%d fresh + %d replay), "
+                "%d epochs, on %d GPUs (%s)",
+                adapter_name, n_samples, n_fresh, n_replay,
+                epochs, len(self.devices), game_breakdown,
             )
 
             jobs.append({
@@ -216,7 +330,7 @@ class DecisionGRPOTrainer:
                 "completions": completions,
                 "advantages": advantages,
                 "lr": cfg["lr"],
-                "epochs": cfg["epochs"],
+                "epochs": epochs,
                 "batch_size": 32,
                 "clip_ratio": 0.2,
                 "kl_coeff": cfg["kl_coeff"],
@@ -267,11 +381,25 @@ class DecisionGRPOTrainer:
 # ── Skill Bank Trainer ──────────────────────────────────────────────────
 
 
+_skillbank_accum: Dict[str, List[Dict[str, Any]]] = {
+    "segment": [],
+    "contract": [],
+    "curator": [],
+}
+
+_SKILLBANK_TRAIN_THRESHOLD = 32
+_SKILLBANK_MAX_ACCUM = 512
+
+
 class SkillBankGRPOTrainer:
     """GRPO trainer for skill bank LoRAs (segment, contract, curator).
 
-    Launches FSDP training across all specified GPUs for each adapter
-    sequentially.
+    Uses a **cross-step accumulation buffer** (module-level) so that
+    sparse skill-bank data pools across co-evolution steps.  Training
+    fires only when an adapter has accumulated enough samples
+    (>= ``_SKILLBANK_TRAIN_THRESHOLD``), then the buffer is drained.
+    This avoids the problem of either gating out adapters that rarely
+    produce data (curator, contract) or overfitting tiny batches.
     """
 
     def __init__(
@@ -295,10 +423,17 @@ class SkillBankGRPOTrainer:
         self,
         grpo_data: Dict[str, List[Dict[str, Any]]],
     ) -> tuple:
-        """Build FSDP job dicts for all skill bank adapters.
+        """Build FSDP job dicts for skill bank adapters with enough data.
+
+        New samples from ``grpo_data`` are appended to the persistent
+        cross-step accumulation buffer.  An adapter is trained only when
+        its buffer reaches ``_SKILLBANK_TRAIN_THRESHOLD``; after
+        training, the consumed samples are removed.
 
         Returns ``(jobs, names)`` without launching training.
         """
+        global _skillbank_accum
+
         adapter_configs = {
             "segment": {
                 "lr": self.lr * 0.6,
@@ -317,23 +452,42 @@ class SkillBankGRPOTrainer:
             },
         }
 
+        for adapter_name in adapter_configs:
+            new_samples = grpo_data.get(adapter_name, [])
+            if new_samples:
+                _skillbank_accum[adapter_name].extend(new_samples)
+                if len(_skillbank_accum[adapter_name]) > _SKILLBANK_MAX_ACCUM:
+                    _skillbank_accum[adapter_name] = _skillbank_accum[adapter_name][-_SKILLBANK_MAX_ACCUM:]
+
         jobs: List[Dict] = []
         job_names: List[str] = []
 
         for adapter_name, cfg in adapter_configs.items():
-            samples = grpo_data.get(adapter_name, [])
-            if not samples:
-                logger.info("No GRPO data for '%s', skipping", adapter_name)
+            buf = _skillbank_accum[adapter_name]
+            n_new = len(grpo_data.get(adapter_name, []))
+            n_total = len(buf)
+
+            if n_total == 0:
                 continue
 
-            prompts, completions, advantages = _samples_to_training_data(samples)
+            if n_total < _SKILLBANK_TRAIN_THRESHOLD:
+                logger.info(
+                    "SkillBank GRPO [%s]: %d accumulated (+%d new), "
+                    "waiting for %d — deferring",
+                    adapter_name, n_total, n_new,
+                    _SKILLBANK_TRAIN_THRESHOLD,
+                )
+                continue
+
+            prompts, completions, advantages = _samples_to_training_data(buf)
             if not prompts:
                 continue
 
             adapter_path = str(Path(self.adapter_dir) / adapter_name)
             logger.info(
-                "SkillBank GRPO [%s]: %d samples on %d GPUs",
-                adapter_name, len(prompts), len(self.devices),
+                "SkillBank GRPO [%s]: training on %d accumulated samples "
+                "(+%d new this step) on %d GPUs",
+                adapter_name, n_total, n_new, len(self.devices),
             )
 
             jobs.append({
@@ -350,6 +504,8 @@ class SkillBankGRPOTrainer:
                 "save_dir": adapter_path,
             })
             job_names.append(adapter_name)
+
+            _skillbank_accum[adapter_name] = []
 
         return jobs, job_names
 
@@ -451,7 +607,7 @@ async def run_grpo_training(
         kl_coeff=kl_coeff,
         io_log_dir=io_dir,
     )
-    d_jobs, d_names = decision_trainer.build_jobs(decision_records)
+    d_jobs, d_names = decision_trainer.build_jobs(decision_records, step=step)
     all_jobs.extend(d_jobs)
     job_categories.extend(("decision", n) for n in d_names)
 
@@ -507,13 +663,18 @@ async def run_grpo_training(
 
     # Collect serializable records for disk export
     all_records: Dict[str, List[Dict[str, Any]]] = {}
+    per_game_counts: Dict[str, Dict[str, int]] = {}
+
     for adapter_name, recs in decision_records.items():
         all_records[adapter_name] = [
             {"prompt": r.prompt, "completion": r.completion,
              "reward": r.reward, "episode_id": r.episode_id,
-             "step": r.step, "adapter": r.adapter}
+             "step": r.step, "adapter": r.adapter, "game": r.game}
             for r in recs
         ]
+        from collections import Counter
+        per_game_counts[adapter_name] = dict(Counter(r.game for r in recs))
+
     for adapter_name, samples in skillbank_grpo_data.items():
         all_records[adapter_name] = list(samples)
 
@@ -523,4 +684,5 @@ async def run_grpo_training(
         skillbank_stats=skillbank_stats,
         wall_time_s=elapsed,
         records=all_records,
+        per_game_counts=per_game_counts,
     )

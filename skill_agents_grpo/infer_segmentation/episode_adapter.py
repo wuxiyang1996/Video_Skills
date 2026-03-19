@@ -24,10 +24,13 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
+
+logger = logging.getLogger(__name__)
 
 from skill_agents_grpo.infer_segmentation.config import SegmentationConfig
 from skill_agents_grpo.infer_segmentation.scorer import SegmentScorer
@@ -161,12 +164,22 @@ def _build_intention_fit_fn(
     experiences: list,
     game_name: str = "generic",
     skill_names: Optional[List[str]] = None,
+    skill_tags: Optional[Dict[str, List[str]]] = None,
 ) -> Optional["Callable[[str, int, int], float]"]:
     """Build a closure that scores intention-tag agreement for a segment.
 
     Uses the phase detector to produce per-step **compound labels**
     (``"phase:tag"``) so that the same raw tag in different game phases
     results in different skill assignments.
+
+    Parameters
+    ----------
+    skill_tags : dict, optional
+        Maps skill IDs to their associated tags (e.g.
+        ``{"skill_tetris_clear_0": ["CLEAR"]}``).  When a bank-sourced
+        skill (not a compound label) is scored, its tags are used to
+        match against the per-step compound labels so that seeded skills
+        integrate with the intention-fit signal.
 
     Returns ``None`` when no intention tags are available so the scorer
     degrades gracefully to LLM-only mode.
@@ -203,11 +216,34 @@ def _build_intention_fit_fn(
             if _tag in skill_names:
                 _has_compound_variant.add(_tag)
 
+    # Build a mapping from bank skill IDs to uppercase tag sets so that
+    # seeded skills (e.g. "skill_tetris_clear_0" → tags ["CLEAR"]) match
+    # compound labels containing "CLEAR".
+    _skill_tag_map: Dict[str, set] = {}
+    if skill_tags:
+        for sid, tags in skill_tags.items():
+            if tags:
+                _skill_tag_map[sid] = {t.upper() for t in tags}
+
     def _intention_fit(skill: str, i: int, j: int) -> float:
         seg_labels = compound_labels[i : j + 1]
         length = len(seg_labels)
         if length == 0:
             return 0.0
+
+        # Bank-sourced skills that aren't compound labels: match via tags
+        if skill in _skill_tag_map:
+            stags = _skill_tag_map[skill]
+            matches = sum(
+                1 for lb in seg_labels
+                if any(
+                    lb.upper() == t or lb.upper().endswith(f":{t}")
+                    for t in stags
+                )
+            )
+            match_frac = matches / length
+            return match_frac * length if match_frac > 0 else -0.3 * length
+
         if ":" in skill:
             matches = sum(1 for lb in seg_labels if lb == skill)
         elif skill in _has_compound_variant:
@@ -352,6 +388,7 @@ def infer_and_segment(
     compat_fn=None,
     game_name: Optional[str] = None,
     skill_descriptions: Optional[Dict[str, str]] = None,
+    skill_tags: Optional[Dict[str, List[str]]] = None,
 ) -> Tuple[SegmentationResult, list, PreferenceStore]:
     """
     Inference pipeline with LLM (e.g. GPT-5):
@@ -414,6 +451,15 @@ def infer_and_segment(
     )
     centers = candidate_centers_only(boundary_candidates)
 
+    _sources = {}
+    for bc in boundary_candidates:
+        for s in bc.source.split("+"):
+            _sources[s] = _sources.get(s, 0) + 1
+    logger.info(
+        "Segmentation T=%d: %d boundary candidates (sources: %s), centers=%s",
+        T, len(boundary_candidates), _sources, centers,
+    )
+
     observations, actions = _extract_obs_actions(experiences)
     predicates = _extract_predicates(experiences)
 
@@ -425,12 +471,18 @@ def infer_and_segment(
     if not segments:
         segments = [(0, T - 1)]
 
+    logger.info(
+        "Segmentation T=%d: %d segments, lengths=%s",
+        T, len(segments), [e - s for s, e in segments],
+    )
+
     store = preference_store or PreferenceStore()
 
     # ── Build intention-fit signal from per-step compound labels ────
     _game = game_name or env_name
     intention_fit_fn = _build_intention_fit_fn(
         experiences, game_name=_game, skill_names=skill_names,
+        skill_tags=skill_tags,
     )
 
     # Update GRPO episode context so the scorer_factory used by the GRPO
@@ -566,6 +618,7 @@ def infer_and_segment_offline(
     extractor_kwargs=None,
     compat_fn=None,
     game_name: Optional[str] = None,
+    skill_tags: Optional[Dict[str, List[str]]] = None,
 ) -> Tuple[SegmentationResult, list]:
     """
     Offline pipeline (no LLM): decode using provided scoring functions only.
@@ -601,6 +654,7 @@ def infer_and_segment_offline(
     _game = game_name or env_name
     intention_fit_fn = _build_intention_fit_fn(
         experiences, game_name=_game, skill_names=skill_names,
+        skill_tags=skill_tags,
     )
 
     result = infer_segmentation(

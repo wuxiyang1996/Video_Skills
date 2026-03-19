@@ -167,6 +167,8 @@ def weaken_contract(
     new_contract = SkillEffectsContract(
         skill_id=contract.skill_id,
         version=contract.version + 1,
+        name=contract.name,
+        description=contract.description,
         eff_add=new_add,
         eff_del=new_del,
         eff_event=new_event,
@@ -263,6 +265,8 @@ def strengthen_contract(
     new_contract = SkillEffectsContract(
         skill_id=contract.skill_id,
         version=contract.version + 1,
+        name=contract.name,
+        description=contract.description,
         eff_add=new_add,
         eff_del=new_del,
         eff_event=new_event,

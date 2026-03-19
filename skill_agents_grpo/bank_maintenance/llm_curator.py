@@ -16,9 +16,38 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+# ── Dynamic reward context (thread-safe) ─────────────────────────────
+
+_reward_ctx = threading.local()
+
+
+def set_curator_reward_context(
+    *,
+    action_outcomes: Optional[list] = None,
+) -> None:
+    """Update the per-thread curator reward context.
+
+    Called from the maintenance pipeline before ``filter_candidates``
+    so that the GRPO reward uses the outcome-based scoring path.
+
+    Parameters
+    ----------
+    action_outcomes : list[dict]
+        One entry per candidate: ``{"succeeded": bool, "quality_delta": float}``.
+    """
+    _reward_ctx.data = {
+        "action_outcomes": action_outcomes,
+    }
+
+
+def _get_curator_reward_context() -> dict:
+    return getattr(_reward_ctx, "data", {})
 
 _CURATOR_PROMPT_TEMPLATE = """\
 You are a skill bank maintenance curator. Review the proposed actions and decide \
@@ -224,26 +253,17 @@ def enable_curator_grpo(
     buffer: Any,
     group_size: int = 4,
     temperature: float = 0.7,
-    compute_quality_fn: Optional[Any] = None,
-    execute_fn: Optional[Any] = None,
 ) -> None:
     """Activate GRPO wrapping on ``filter_candidates``.
 
-    Parameters
-    ----------
-    buffer : GRPOBuffer
-    group_size : int
-    temperature : float
-    compute_quality_fn : callable
-        ``compute_quality_fn(bank) -> float``
-    execute_fn : callable
-        ``execute_fn(actions, bank) -> None``
+    Reward context (compute_quality_fn, execute_fn) is read dynamically
+    from the thread-local ``_reward_ctx`` at scoring time.  Call
+    :func:`set_curator_reward_context` before maintenance runs.
     """
     import skill_agents_grpo.bank_maintenance.llm_curator as _mod
     from skill_agents_grpo.grpo.rewards import curator_reward
     from skill_agents_grpo.grpo.wrapper import GRPOCallWrapper
     from skill_agents_grpo.lora.skill_function import SkillFunction
-    from functools import partial
 
     global _grpo_original_fn
 
@@ -253,11 +273,17 @@ def enable_curator_grpo(
 
     _grpo_original_fn = _mod.filter_candidates
 
-    bound_reward = partial(
-        curator_reward,
-        compute_quality_fn=compute_quality_fn,
-        execute_fn=execute_fn,
-    )
+    def _dynamic_curator_reward(decisions, *args, **kwargs):
+        ctx = _get_curator_reward_context()
+        passthrough = {
+            k: v for k, v in kwargs.items()
+            if k not in ("action_outcomes",)
+        }
+        return curator_reward(
+            decisions, *args,
+            action_outcomes=ctx.get("action_outcomes"),
+            **passthrough,
+        )
 
     def _prompt_extractor(
         candidates: List[Dict[str, Any]],
@@ -278,7 +304,7 @@ def enable_curator_grpo(
 
     wrapper = GRPOCallWrapper(
         adapter=SkillFunction.CURATOR,
-        reward_fn=bound_reward,
+        reward_fn=_dynamic_curator_reward,
         buffer=buffer,
         group_size=group_size,
         temperature=temperature,

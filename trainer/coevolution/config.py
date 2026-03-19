@@ -166,6 +166,12 @@ class CoEvolutionConfig:
     # Example: {"skill_selection": "prev_run/lora/skill_selection", ...}
     pretrained_adapter_paths: Dict[str, str] = field(default_factory=dict)
 
+    # Seed each per-game skill bank from a cold-start directory on first
+    # launch.  Expected layout: ``<seed_bank_dir>/<game>/skill_bank.jsonl``.
+    # Skills are copied only when the game's bank is empty; once the
+    # co-evolution loop adds its own skills, the seed is never re-applied.
+    seed_bank_dir: Optional[str] = None
+
     # Thread/process executors
     thread_workers: int = 64
     process_workers: int = 8
@@ -182,6 +188,18 @@ class CoEvolutionConfig:
     # "gaussian" → both A and B get small random init (better for GRPO)
     # True       → Kaiming A + zero B (standard LoRA, B gets no grad initially)
     lora_init_weights: Any = "gaussian"
+
+    # Curriculum learning — gradually introduce harder games.
+    # Maps step thresholds to game lists.  At each step, the active
+    # games are those from the highest threshold <= current step.
+    # None means use all games from step 0 (no curriculum).
+    curriculum_schedule: Optional[Dict[int, List[str]]] = field(
+        default_factory=lambda: {
+            0: ["twenty_forty_eight", "tetris", "candy_crush"],
+            10: ["twenty_forty_eight", "tetris", "candy_crush", "sokoban"],
+            15: ["twenty_forty_eight", "tetris", "candy_crush", "sokoban", "avalon", "diplomacy"],
+        }
+    )
 
     # GRPO from-scratch schedule — higher exploration early, then anneal.
     # Only applied when start_mode == "from_scratch" (otherwise GRPO
@@ -263,14 +281,29 @@ class CoEvolutionConfig:
             return str(Path(self.decision_adapter_dir) / name)
         return str(Path(self.skillbank_adapter_dir) / name)
 
+    def active_games(self, step: int) -> List[str]:
+        """Return the list of active games for the given training step.
+
+        Uses ``curriculum_schedule`` when set, otherwise returns all games.
+        """
+        if not self.curriculum_schedule:
+            return list(self.games)
+        thresholds = sorted(k for k in self.curriculum_schedule if k <= step)
+        if not thresholds:
+            return list(self.games)
+        return list(self.curriculum_schedule[thresholds[-1]])
+
     def grpo_schedule(self, step: int) -> Dict[str, float]:
         """Return GRPO hyperparameters for the current step.
 
         During from-scratch training, the first ``scratch_warmup_steps``
         use higher learning rate, higher sampling temperature (more
         exploration), and lower KL penalty (allow larger policy shifts).
-        After warmup, values anneal linearly to steady-state.
+        After warmup, LR follows cosine decay to a minimum of 10% of
+        steady-state.  Temperature and KL hold at steady values.
         """
+        import math as _math
+
         if self.start_mode != "from_scratch":
             return {
                 "lr": self.scratch_steady_lr,
@@ -279,16 +312,28 @@ class CoEvolutionConfig:
             }
 
         w = self.scratch_warmup_steps
+        total = self.total_steps
+
         if w <= 0 or step >= w:
-            alpha = 1.0
+            warmup_alpha = 1.0
         else:
-            alpha = step / w  # 0 → 1 over warmup
+            warmup_alpha = step / w
 
         def _lerp(init: float, steady: float) -> float:
-            return init + alpha * (steady - init)
+            return init + warmup_alpha * (steady - init)
+
+        if step < w:
+            lr = _lerp(self.scratch_initial_lr, self.scratch_steady_lr)
+        else:
+            decay_steps = max(1, total - w)
+            progress = min(1.0, (step - w) / decay_steps)
+            lr_min = self.scratch_steady_lr * 0.1
+            lr = lr_min + 0.5 * (self.scratch_steady_lr - lr_min) * (
+                1.0 + _math.cos(_math.pi * progress)
+            )
 
         return {
-            "lr": _lerp(self.scratch_initial_lr, self.scratch_steady_lr),
+            "lr": lr,
             "temperature": _lerp(
                 self.scratch_initial_temperature,
                 self.scratch_steady_temperature,
@@ -349,11 +394,35 @@ def prepare_adapters(config: CoEvolutionConfig) -> Dict[str, str]:
         if src is not None:
             src_path = Path(src)
             if not (src_path / "adapter_config.json").exists():
-                logger.warning(
-                    "Pre-trained adapter '%s' not found at %s — will random-init",
-                    name, src,
-                )
-                continue
+                # PEFT save_pretrained nests files under <adapter_name>/;
+                # check one level deeper before giving up.
+                nested = src_path / name
+                if (nested / "adapter_config.json").exists():
+                    logger.info(
+                        "Pre-trained adapter '%s': found nested layout at %s",
+                        name, nested,
+                    )
+                    src_path = nested
+                else:
+                    # Also try any single subdirectory that has the file
+                    found = False
+                    if src_path.is_dir():
+                        for child in src_path.iterdir():
+                            if child.is_dir() and (child / "adapter_config.json").exists():
+                                logger.info(
+                                    "Pre-trained adapter '%s': found nested layout at %s",
+                                    name, child,
+                                )
+                                src_path = child
+                                found = True
+                                break
+                    if not found:
+                        logger.warning(
+                            "Pre-trained adapter '%s' not found at %s "
+                            "(checked top-level and subdirectories) — will random-init",
+                            name, src,
+                        )
+                        continue
             if dst.exists():
                 shutil.rmtree(dst)
             shutil.copytree(str(src_path), str(dst))

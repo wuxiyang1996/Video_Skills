@@ -254,6 +254,14 @@ def parse_args() -> argparse.Namespace:
         help="Process pool size (default: 8)",
     )
 
+    # Skill bank seeding
+    parser.add_argument(
+        "--seed-bank-dir", type=str, default=None, metavar="DIR",
+        help="Seed empty per-game skill banks from DIR on first launch. "
+             "Expected layout: DIR/<game>/skill_bank.jsonl. "
+             "Skills are only copied when the game's bank is empty.",
+    )
+
     # Debug
     parser.add_argument(
         "--debug-io", action="store_true",
@@ -339,6 +347,9 @@ def main() -> None:
         process_workers=args.process_workers,
         debug_io=args.debug_io,
     )
+
+    if args.seed_bank_dir is not None:
+        config_kwargs["seed_bank_dir"] = args.seed_bank_dir
 
     if args.run_dir is not None:
         config_kwargs["run_dir"] = args.run_dir

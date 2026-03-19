@@ -328,8 +328,10 @@ class SkillBankAgent:
         store = self._get_or_create_preference_store()
 
         _skill_descs: Optional[Dict[str, str]] = None
+        _skill_tags: Optional[Dict[str, List[str]]] = None
         if _skill_names and len(self.bank) > 0:
             _skill_descs = {}
+            _skill_tags = {}
             for sid in _skill_names:
                 sk = self.bank.get_skill(sid)
                 if sk is None:
@@ -341,6 +343,8 @@ class SkillBankAgent:
                     parts.append(sk.strategic_description)
                 if parts:
                     _skill_descs[sid] = " — ".join(parts)
+                if sk.tags:
+                    _skill_tags[sid] = sk.tags
 
         if _skill_names:
             result, sub_episodes, store = infer_and_segment(
@@ -356,6 +360,7 @@ class SkillBankAgent:
                 compat_fn=_compat_fn,
                 game_name=_game,
                 skill_descriptions=_skill_descs,
+                skill_tags=_skill_tags,
             )
             self._preference_store = store
         else:

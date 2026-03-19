@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -378,7 +378,10 @@ class PerGameSkillBankManager:
         model_name: str = "Qwen/Qwen3-8B",
         executor: Optional[ThreadPoolExecutor] = None,
         grpo_group_size: int = 4,
+        seed_bank_dir: Optional[str] = None,
+        process_executor: Optional[ProcessPoolExecutor] = None,
     ):
+        self._process_executor = process_executor
         self._pipelines: Dict[str, AsyncSkillBankPipeline] = {}
         for game in games:
             game_dir = str(Path(bank_dir) / game)
@@ -397,9 +400,56 @@ class PerGameSkillBankManager:
             "segment": [], "contract": [], "curator": [],
         }
         logger.info(
-            "PerGameSkillBankManager: %d game banks under %s",
-            len(games), bank_dir,
+            "PerGameSkillBankManager: %d game banks under %s (process_pool=%s)",
+            len(games), bank_dir, process_executor is not None,
         )
+
+        if seed_bank_dir:
+            self._seed_from_coldstart(seed_bank_dir)
+
+    # ── Bank seeding ─────────────────────────────────────────────────
+
+    def _seed_from_coldstart(self, seed_dir: str) -> None:
+        """Copy skills from a cold-start bank into empty per-game banks.
+
+        Only seeds a game's bank when it currently contains zero skills,
+        so an in-progress run that already has its own skills is never
+        overwritten.
+
+        Works at the file level (via ``SkillBankMVP``) rather than
+        requiring the lazy ``SkillBankAgent`` to be initialised.
+        """
+        from skill_agents_grpo.skill_bank.bank import SkillBankMVP
+
+        seed_path = Path(seed_dir)
+        if not seed_path.is_dir():
+            logger.warning("seed_bank_dir %s does not exist — skipping seed", seed_dir)
+            return
+
+        for game, pipe in self._pipelines.items():
+            dest_file = Path(pipe.bank_dir) / "skill_bank.jsonl"
+
+            if dest_file.exists() and dest_file.stat().st_size > 0:
+                logger.info(
+                    "Seed skip %s: bank file already exists at %s", game, dest_file,
+                )
+                continue
+
+            candidate = seed_path / game / "skill_bank.jsonl"
+            if not candidate.exists():
+                logger.info("Seed skip %s: no seed file at %s", game, candidate)
+                continue
+
+            bank = SkillBankMVP(str(dest_file))
+            bank.load(str(candidate))
+            n = len(bank)
+            if n > 0:
+                bank.save()
+                logger.info(
+                    "Seeded %s bank with %d skills from %s", game, n, candidate,
+                )
+            else:
+                logger.info("Seed file %s was empty — nothing to load", candidate)
 
     # ── GRPO wrapper management ─────────────────────────────────────
 
@@ -418,12 +468,13 @@ class PerGameSkillBankManager:
         gs = self._grpo_group_size
 
         enable_segment_grpo(
-            buffer=self._grpo_buffer, group_size=gs, temperature=0.7,
+            buffer=self._grpo_buffer, group_size=gs, temperature=1.0,
             scorer_factory=grpo_scorer_factory,
             decode_fn=grpo_decode_fn,
         )
-        enable_contract_grpo(buffer=self._grpo_buffer, group_size=gs, temperature=0.7)
-        enable_curator_grpo(buffer=self._grpo_buffer, group_size=gs, temperature=0.7)
+        enable_contract_grpo(buffer=self._grpo_buffer, group_size=gs, temperature=0.8)
+        enable_curator_grpo(buffer=self._grpo_buffer, group_size=gs, temperature=0.8)
+        logger.info("Contract/Curator reward context is dynamic — set before each LLM call")
         logger.info("Skill-bank GRPO wrappers enabled (G=%d)", gs)
 
     def _disable_grpo_wrappers(self) -> None:
@@ -438,7 +489,11 @@ class PerGameSkillBankManager:
         logger.info("Skill-bank GRPO wrappers disabled")
 
     def _collect_grpo_data(self) -> Dict[str, List[Dict[str, Any]]]:
-        """Drain the shared GRPO buffer into the per-adapter dict format."""
+        """Drain the shared GRPO buffer into the per-adapter dict format.
+
+        Preserves ``metadata`` (including skill_id, game context) from
+        each sample for downstream logging and per-game diagnostics.
+        """
         from skill_agents_grpo.lora.skill_function import SkillFunction
 
         collected: Dict[str, List[Dict[str, Any]]] = {
@@ -459,6 +514,7 @@ class PerGameSkillBankManager:
                         "prompt": sample.prompt,
                         "completions": sample.completions,
                         "rewards": sample.rewards,
+                        "metadata": sample.metadata,
                     })
 
         n_total = sum(len(v) for v in collected.values())
@@ -528,7 +584,13 @@ class PerGameSkillBankManager:
             await asyncio.gather(*tasks)
 
     async def finalize_all(self) -> Dict[str, SkillBankUpdateResult]:
-        """Finalize all per-game banks and return per-game results."""
+        """Finalize all per-game banks and return per-game results.
+
+        When a ``ProcessPoolExecutor`` was provided, per-game finalization
+        runs in separate processes for true parallelism on CPU-bound
+        stages.  Otherwise falls back to asyncio tasks (concurrent but
+        GIL-bound).
+        """
         results: Dict[str, SkillBankUpdateResult] = {}
 
         async def _finalize_one(game: str, pipe: AsyncSkillBankPipeline):

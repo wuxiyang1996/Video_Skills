@@ -17,9 +17,42 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from typing import Any, Callable, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
+
+
+# ── Dynamic reward context (thread-safe) ─────────────────────────────
+# The pipeline sets this *before* each skill's LLM call so the GRPO
+# reward function can read it at scoring time rather than relying on
+# static partial-binding at enable time.
+
+_reward_ctx = threading.local()
+
+
+def set_contract_reward_context(
+    *,
+    consensus_add: Optional[Set[str]] = None,
+    consensus_del: Optional[Set[str]] = None,
+    holdout_instances: Optional[list] = None,
+    verify_config: Optional[Any] = None,
+) -> None:
+    """Update the per-thread contract reward context.
+
+    Called from the Stage 3 pipeline right before ``llm_summarize_contract``
+    so that the GRPO reward function uses the real verification path.
+    """
+    _reward_ctx.data = {
+        "consensus_add": consensus_add,
+        "consensus_del": consensus_del,
+        "holdout_instances": holdout_instances,
+        "verify_config": verify_config,
+    }
+
+
+def _get_contract_reward_context() -> dict:
+    return getattr(_reward_ctx, "data", {})
 
 _CONTRACT_PROMPT_TEMPLATE = """\
 You are analyzing skill effects from game trajectory segments.
@@ -160,10 +193,6 @@ def enable_contract_grpo(
     buffer: Any,
     group_size: int = 4,
     temperature: float = 0.7,
-    consensus_add: Optional[Set[str]] = None,
-    consensus_del: Optional[Set[str]] = None,
-    holdout_instances: Optional[list] = None,
-    verify_config: Optional[Any] = None,
 ) -> None:
     """Activate GRPO wrapping on ``llm_summarize_contract``.
 
@@ -171,21 +200,14 @@ def enable_contract_grpo(
     generates G samples, evaluates with ``contract_reward()``, stores
     data in *buffer*, and returns the best.
 
-    Parameters
-    ----------
-    buffer : GRPOBuffer
-    group_size : int
-    temperature : float
-    consensus_add, consensus_del : sets
-        Frequency consensus for union-merge in reward computation.
-    holdout_instances : list[SegmentRecord]
-    verify_config : Stage3MVPConfig
+    Reward context (holdout, consensus, verify_config) is read dynamically
+    from the thread-local ``_reward_ctx`` at scoring time.  Call
+    :func:`set_contract_reward_context` before each skill's LLM call.
     """
     import skill_agents_grpo.stage3_mvp.llm_contract as _mod
     from skill_agents_grpo.grpo.rewards import contract_reward
     from skill_agents_grpo.grpo.wrapper import GRPOCallWrapper
     from skill_agents_grpo.lora.skill_function import SkillFunction
-    from functools import partial
 
     global _grpo_original_fn
 
@@ -195,14 +217,21 @@ def enable_contract_grpo(
 
     _grpo_original_fn = _mod.llm_summarize_contract
 
-    # Bind verification context into the reward function
-    bound_reward = partial(
-        contract_reward,
-        consensus_add=consensus_add,
-        consensus_del=consensus_del,
-        holdout_instances=holdout_instances,
-        verify_config=verify_config,
-    )
+    def _dynamic_contract_reward(llm_output, *args, **kwargs):
+        ctx = _get_contract_reward_context()
+        passthrough = {
+            k: v for k, v in kwargs.items()
+            if k not in ("consensus_add", "consensus_del",
+                         "holdout_instances", "verify_config")
+        }
+        return contract_reward(
+            llm_output, *args,
+            consensus_add=ctx.get("consensus_add"),
+            consensus_del=ctx.get("consensus_del"),
+            holdout_instances=ctx.get("holdout_instances"),
+            verify_config=ctx.get("verify_config"),
+            **passthrough,
+        )
 
     def _prompt_extractor(
         skill_id: str,
@@ -221,7 +250,7 @@ def enable_contract_grpo(
 
     wrapper = GRPOCallWrapper(
         adapter=SkillFunction.CONTRACT,
-        reward_fn=bound_reward,
+        reward_fn=_dynamic_contract_reward,
         buffer=buffer,
         group_size=group_size,
         temperature=temperature,

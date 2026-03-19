@@ -174,10 +174,11 @@ class GRPOCallWrapper:
         self._total_samples += self.group_size
 
         non_empty = sum(1 for c in completions if c)
+        n_unique = len({c for c in completions if c})
         logger.info(
-            "GRPO[%s] call #%d: %d/%d non-empty, rewards=%s, prompt_len=%d",
+            "GRPO[%s] call #%d: %d/%d non-empty, %d unique, rewards=%s, prompt_len=%d",
             self.adapter.value, self._call_count, non_empty, len(completions),
-            [f"{r:.3f}" for r in rewards], len(prompt),
+            n_unique, [f"{r:.3f}" for r in rewards], len(prompt),
         )
 
         best_idx = grpo_sample.best_index

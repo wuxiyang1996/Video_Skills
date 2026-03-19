@@ -107,26 +107,93 @@ class VLLMServerManager:
                     modules.append(f"{name}={path}")
         return modules
 
+    def _has_shared_gpus(self) -> bool:
+        """True if any GPU hosts more than one instance."""
+        from collections import Counter
+        return max(Counter(self.gpu_ids).values()) > 1
+
     def start(self) -> None:
-        """Start one vLLM TP=1 instance per GPU."""
+        """Start one vLLM TP=1 instance per entry in gpu_ids.
+
+        When multiple instances share a GPU, they are launched in waves
+        (unique GPUs first, duplicates after the first wave is healthy)
+        to avoid OOM during the memory-heavy init phase.
+        """
         if self._processes:
             logger.warning("Instances already running — stopping first")
             self.stop()
 
         lora_modules = self._build_lora_args()
+        shared_gpus = self._has_shared_gpus()
 
         log_dir_path = Path(self.log_dir) if self.log_dir else None
         if log_dir_path:
             log_dir_path.mkdir(parents=True, exist_ok=True)
 
+        seen_gpus: set = set()
+        first_wave: list = []
+        second_wave: list = []
         for i, gpu_id in enumerate(self.gpu_ids):
+            entry = (i, gpu_id)
+            if gpu_id not in seen_gpus:
+                first_wave.append(entry)
+                seen_gpus.add(gpu_id)
+            else:
+                second_wave.append(entry)
+
+        self._launch_wave(first_wave, lora_modules, log_dir_path,
+                          shared_gpus)
+        self._first_wave_count = len(first_wave)
+        self._second_wave = second_wave
+        self._lora_modules = lora_modules
+        self._log_dir_path = log_dir_path
+        self._shared_gpus = shared_gpus
+
+        spec_msg = ""
+        if self.speculative_model:
+            spec_msg = (f", spec_decode={self.speculative_model} "
+                        f"({self.num_speculative_tokens} tok)")
+        if lora_modules:
+            logger.info(
+                "Wave 1: started %d vLLM instances (ports %d–%d) "
+                "with %d LoRA adapters%s",
+                len(first_wave),
+                self.base_port,
+                self.base_port + len(first_wave) - 1,
+                len(lora_modules),
+                spec_msg,
+            )
+        else:
+            logger.info(
+                "Wave 1: started %d vLLM instances (ports %d–%d), "
+                "no LoRA adapters yet%s",
+                len(first_wave),
+                self.base_port,
+                self.base_port + len(first_wave) - 1,
+                spec_msg,
+            )
+        if second_wave:
+            logger.info(
+                "Wave 2 (%d instances) will start after wave 1 is healthy",
+                len(second_wave),
+            )
+
+    def _launch_wave(
+        self,
+        entries: list,
+        lora_modules: list,
+        log_dir_path: Optional[Path],
+        shared_gpus: bool,
+    ) -> None:
+        for i, gpu_id in entries:
             port = self.base_port + i
 
             env = os.environ.copy()
             env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
             env["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "1"
             env.setdefault("HF_HOME", "/workspace/huggingface")
-            env.setdefault("HF_HUB_CACHE", os.path.join(env["HF_HOME"], "hub"))
+            env.setdefault("HF_HUB_CACHE",
+                           os.path.join(env["HF_HOME"], "hub"))
 
             cmd = [
                 "python", "-m", "vllm.entrypoints.openai.api_server",
@@ -141,7 +208,7 @@ class VLLMServerManager:
                 "--trust-remote-code",
             ]
 
-            if self.enforce_eager:
+            if self.enforce_eager or shared_gpus:
                 cmd.append("--enforce-eager")
 
             if self._speculative_config_json:
@@ -154,7 +221,7 @@ class VLLMServerManager:
 
             log_fh = None
             if log_dir_path:
-                log_path = log_dir_path / f"vllm_gpu{gpu_id}.log"
+                log_path = log_dir_path / f"vllm_{i}_gpu{gpu_id}.log"
                 log_fh = open(log_path, "w")
 
             logger.info(
@@ -232,27 +299,29 @@ class VLLMServerManager:
 
         logger.info("All %d vLLM instances stopped", n)
 
-    async def wait_healthy(
+    async def _wait_for_indices(
         self,
-        timeout: float = 600,
-        poll_interval: float = 5,
+        indices: list,
+        timeout: float,
+        poll_interval: float,
+        label: str = "",
     ) -> bool:
-        """Wait for all instances to pass health checks.
-
-        Returns True when all instances respond to /health, False on
-        timeout or if any process exits unexpectedly.
-        """
+        """Wait until the given instance indices all respond to /health."""
         import httpx as _httpx
 
         start = time.monotonic()
         healthy: set = set()
-        n_total = self.n_instances
+        n_target = len(indices)
         last_progress_log = start
 
         async with _httpx.AsyncClient(timeout=10.0) as client:
             while time.monotonic() - start < timeout:
-                # Check if any process died
-                for i, proc in enumerate(self._processes):
+                for i in indices:
+                    if i in healthy:
+                        continue
+                    if i >= len(self._processes):
+                        continue
+                    proc = self._processes[i]
                     if proc.poll() is not None:
                         logger.error(
                             "vLLM instance %d (GPU %d, port %d) exited "
@@ -262,9 +331,6 @@ class VLLMServerManager:
                         )
                         return False
 
-                for i in range(n_total):
-                    if i in healthy:
-                        continue
                     port = self.base_port + i
                     try:
                         resp = await client.get(
@@ -275,42 +341,83 @@ class VLLMServerManager:
                             elapsed = time.monotonic() - start
                             logger.info(
                                 "vLLM GPU %d (port %d) healthy "
-                                "[%d/%d, %.1fs]",
+                                "[%d/%d %s, %.1fs]",
                                 self.gpu_ids[i], port,
-                                len(healthy), n_total, elapsed,
+                                len(healthy), n_target, label, elapsed,
                             )
-                    except (_httpx.ConnectError, _httpx.TimeoutException):
+                    except Exception:
                         pass
 
-                if len(healthy) == n_total:
+                if len(healthy) >= n_target:
                     elapsed = time.monotonic() - start
                     logger.info(
-                        "All %d vLLM instances healthy (%.1fs)",
-                        n_total, elapsed,
+                        "All %d %s instances healthy (%.1fs)",
+                        n_target, label, elapsed,
                     )
                     return True
 
-                # Periodic progress logging
                 now = time.monotonic()
                 if now - last_progress_log >= 30:
                     elapsed = now - start
                     logger.info(
-                        "Waiting for vLLM: %d/%d healthy (%.0fs elapsed, "
-                        "%.0fs timeout)",
-                        len(healthy), n_total, elapsed, timeout,
+                        "Waiting for vLLM %s: %d/%d healthy (%.0fs elapsed)",
+                        label, len(healthy), n_target, elapsed,
                     )
                     last_progress_log = now
 
                 await asyncio.sleep(poll_interval)
 
-        missing_ports = [
-            self.base_port + i for i in range(n_total) if i not in healthy
-        ]
+        missing = [self.base_port + i for i in indices if i not in healthy]
         logger.error(
-            "Timeout (%.0fs): %d/%d instances not ready (ports %s)",
-            timeout, len(missing_ports), n_total, missing_ports,
+            "Timeout (%.0fs): %d %s instances not ready (ports %s)",
+            timeout, len(missing), label, missing,
         )
         return False
+
+    async def wait_healthy(
+        self,
+        timeout: float = 600,
+        poll_interval: float = 5,
+    ) -> bool:
+        """Wait for all instances to pass health checks.
+
+        When GPUs are shared (2+ instances per GPU), instances are
+        started in two waves to avoid OOM during init.  Wave 1
+        (one instance per unique GPU) must be healthy before wave 2
+        is launched.
+        """
+        first_count = getattr(self, "_first_wave_count", self.n_instances)
+        second_wave = getattr(self, "_second_wave", [])
+        wave1_indices = list(range(first_count))
+
+        ok = await self._wait_for_indices(
+            wave1_indices, timeout, poll_interval, label="wave-1",
+        )
+        if not ok:
+            return False
+
+        if second_wave:
+            logger.info(
+                "Wave 1 healthy — launching wave 2 (%d instances)...",
+                len(second_wave),
+            )
+            self._launch_wave(
+                second_wave,
+                getattr(self, "_lora_modules", []),
+                getattr(self, "_log_dir_path", None),
+                getattr(self, "_shared_gpus", False),
+            )
+            wave2_indices = [i for i, _ in second_wave]
+            ok = await self._wait_for_indices(
+                wave2_indices, timeout, poll_interval, label="wave-2",
+            )
+            if not ok:
+                return False
+
+        logger.info(
+            "All %d vLLM instances healthy", self.n_instances,
+        )
+        return True
 
     async def reload_adapters(self) -> None:
         """Hot-reload all LoRA adapters on every running vLLM instance.

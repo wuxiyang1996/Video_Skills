@@ -596,6 +596,7 @@ class _SkillTracker:
         self._just_switched: bool = False
         self._step_checks: List[str] = []
         self._reselect_reason: str = ""
+        self._intrinsic_bonus: float = 0.0
 
     @property
     def protocol_step_idx(self) -> int:
@@ -654,6 +655,7 @@ class _SkillTracker:
 
     def update(self, skill_id: Optional[str], skill_name: str, reward: float,
                state_text: str = ""):
+        self._intrinsic_bonus = 0.0
         if skill_id != self.active_skill_id:
             self._prev_reward_on_skill = self.reward_on_skill
             self._prev_steps_on_skill = self.steps_on_skill
@@ -668,6 +670,7 @@ class _SkillTracker:
             self._just_switched = False
             self.steps_on_skill += 1
             self.reward_on_skill += reward
+            prev_step_idx = self._protocol_step_idx
             n_steps = self.total_protocol_steps
             if n_steps > 0:
                 from decision_agents.protocol_utils import (
@@ -677,6 +680,16 @@ class _SkillTracker:
                 self._protocol_step_idx = compute_step_advancement(
                     self._protocol_step_idx, self._step_checks, state_dict, n_steps,
                 )
+                if self._protocol_step_idx > prev_step_idx:
+                    self._intrinsic_bonus += 0.1
+
+            if state_text and self.active_skill_id:
+                success = self._check_criteria(state_text, is_abort=False)
+                abort = self._check_criteria(state_text, is_abort=True)
+                if success:
+                    self._intrinsic_bonus += 0.3
+                if abort:
+                    self._intrinsic_bonus -= 0.1
 
     def get_progress_summary(self, state_text: str = "") -> str:
         if not self._protocol or not isinstance(self._protocol, dict):
@@ -940,12 +953,18 @@ async def run_episode_async(
                 last_chosen_idx = chosen_idx
                 last_skill_reasoning = skill_reasoning
                 skill_tracker.set_protocol(guidance.get("protocol"))
+                _chosen_sid = guidance.get("skill_id")
+                if _chosen_sid and hasattr(skill_bank, "selection_tracker"):
+                    skill_bank.selection_tracker.increment(_chosen_sid)
             elif candidates:
                 guidance = candidates[0]
                 last_candidates = candidates
                 last_chosen_idx = 0
                 last_skill_reasoning = "only one candidate"
                 skill_tracker.set_protocol(guidance.get("protocol"))
+                _chosen_sid = guidance.get("skill_id")
+                if _chosen_sid and hasattr(skill_bank, "selection_tracker"):
+                    skill_bank.selection_tracker.increment(_chosen_sid)
             else:
                 guidance = None
                 last_candidates = []
@@ -973,7 +992,7 @@ async def run_episode_async(
             skill_context += "\n"
 
         recent_context = _build_recent_context(recent_actions, recent_rewards)
-        summary_for_action = summary_state if summary_state else obs_nl[:4000]
+        summary_for_action = current_summary if current_summary else obs_nl[:4000]
         skill_text = _format_skill_guidance_for_prompt(
             guidance, skill_tracker.protocol_step_idx,
             progress_summary=skill_tracker.get_progress_summary(summary_state),
@@ -1036,15 +1055,17 @@ async def run_episode_async(
                 action_num = 1
             subgoal_line = f"SUBGOAL: {current_intention}\n" if current_intention else ""
             action_completion = f"{subgoal_line}REASONING: {reasoning or 'Expert play.'}\nACTION: {action_num}"
+            _action_reward = float(reward) + skill_tracker._intrinsic_bonus
             grpo_records.append(GRPORecord(
                 adapter="action_taking", game=game, episode_id=episode_id, step=step_count,
-                prompt=action_prompt, completion=action_completion, reward=float(reward),
+                prompt=action_prompt, completion=action_completion, reward=_action_reward,
                 metadata={
                     "chosen_action": str(action),
                     "available_actions": list(step_actions),
                     "summary_state": summary_state,
                     "intention": current_intention,
                     "active_skill": skill_id,
+                    "intrinsic_bonus": skill_tracker._intrinsic_bonus,
                 },
             ))
 
@@ -1054,11 +1075,21 @@ async def run_episode_async(
                 if last_skill_reasoning
                 else f"SKILL: {last_chosen_idx + 1}"
             )
-            # Delayed reward: normalized per-step env reward from the
-            # previous skill period (assigned at skill-switch time).
+            # Protocol-aware delayed reward at skill-switch time.
+            # Uses the multi-signal reward from rewards.py instead of
+            # a simple clamped env reward, incorporating efficiency,
+            # success/abort criteria, and RAG confidence.
             if skill_tracker._just_switched and skill_tracker._prev_steps_on_skill > 0:
-                sk_reward = min(1.0, max(0.0,
-                    skill_tracker._prev_reward_on_skill / skill_tracker._prev_steps_on_skill))
+                from skill_agents_grpo.grpo.rewards import skill_selection_reward
+                _reason = skill_tracker._reselect_reason
+                sk_reward = skill_selection_reward(
+                    reward_on_skill=skill_tracker._prev_reward_on_skill,
+                    steps_on_skill=skill_tracker._prev_steps_on_skill,
+                    max_skill_duration=skill_tracker.max_skill_duration,
+                    success_met=_reason.startswith("success:") if _reason else False,
+                    abort_triggered=_reason.startswith("abort:") if _reason else False,
+                    confidence=0.5,
+                )
             else:
                 sk_reward = min(1.0, max(0.0, float(reward)))
             grpo_records.append(GRPORecord(
@@ -1073,6 +1104,7 @@ async def run_episode_async(
                     ),
                     "summary_state": summary_state,
                     "intention": current_intention,
+                    "reselect_reason": skill_tracker._reselect_reason,
                 },
             ))
 

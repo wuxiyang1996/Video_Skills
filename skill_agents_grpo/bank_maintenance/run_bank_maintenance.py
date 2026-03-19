@@ -324,6 +324,70 @@ def _collect_curator_candidates(
     return candidates
 
 
+def _build_curator_outcomes(
+    candidates: List[Dict[str, Any]],
+    result: "BankMaintenanceResult",
+    bank: Optional[SkillBankMVP] = None,
+) -> List[Dict[str, Any]]:
+    """Build per-candidate ground-truth outcomes for curator reward.
+
+    Each entry: ``{"succeeded": bool, "quality_delta": float}``.
+    ``succeeded`` is True if the action improved or maintained bank quality
+    (accepted split with good child pass rates, accepted merge, etc.).
+    """
+    split_map = {sr.parent_id: sr for sr in result.split_results}
+    merge_map = {mr.canonical_id: mr for mr in result.merge_results}
+    refine_map = {rr.skill_id: rr for rr in result.refine_results}
+
+    outcomes: List[Dict[str, Any]] = []
+    for cand in candidates:
+        atype = cand.get("type", "")
+        sid = cand.get("skill_id", "")
+        succeeded = False
+        qd = 0.0
+
+        if atype == "split":
+            sr = split_map.get(sid)
+            if sr and sr.accepted and sr.children:
+                child_prs = [
+                    c.report.overall_pass_rate
+                    for c in sr.children if c.report
+                ]
+                if child_prs:
+                    succeeded = True
+                    qd = sum(child_prs) / len(child_prs) - cand.get("skill_score", 0.5)
+
+        elif atype == "merge":
+            mr = merge_map.get(sid)
+            if mr and mr.accepted and mr.report:
+                succeeded = mr.report.overall_pass_rate > 0.5
+                qd = mr.report.overall_pass_rate - cand.get("pass_rate", 0.5)
+
+        elif atype == "refine":
+            rr = refine_map.get(sid)
+            if rr and rr.new_contract is not None:
+                new_rpt = bank.get_report(sid) if bank else None
+                if new_rpt:
+                    succeeded = new_rpt.overall_pass_rate > cand.get("skill_score", 0.5)
+                    qd = new_rpt.overall_pass_rate - cand.get("skill_score", 0.5)
+                else:
+                    succeeded = True
+                    qd = 0.05
+
+        elif atype == "materialize":
+            succeeded = True
+            qd = 0.05
+
+        elif atype == "promote":
+            pr = cand.get("pass_rate", 0)
+            ni = cand.get("n_instances", 0)
+            succeeded = pr > 0.5 and ni >= 3
+            qd = pr - 0.5
+
+        outcomes.append({"succeeded": succeeded, "quality_delta": qd})
+    return outcomes
+
+
 # ═════════════════════════════════════════════════════════════════════
 # Main orchestrator
 # ═════════════════════════════════════════════════════════════════════
@@ -650,7 +714,15 @@ def run_bank_maintenance(
     curator_candidates = _collect_curator_candidates(result, bank=bank)
     if curator_candidates:
         try:
-            from skill_agents_grpo.bank_maintenance.llm_curator import filter_candidates
+            from skill_agents_grpo.bank_maintenance.llm_curator import (
+                filter_candidates,
+                set_curator_reward_context,
+            )
+
+            action_outcomes = _build_curator_outcomes(
+                curator_candidates, result, bank,
+            )
+            set_curator_reward_context(action_outcomes=action_outcomes)
             filter_candidates(curator_candidates, bank)
         except Exception as exc:
             logger.debug("Curator filtering skipped: %s", exc)

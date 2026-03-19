@@ -560,6 +560,7 @@ class AvalonNLWrapper:
         self.roles = self.env.get_roles()
         self._discussion_log = []
         self._last_vote_result = None
+        self._prev_potential = 0.0
 
         info = self._build_info()
         obs = self._build_obs()
@@ -596,6 +597,9 @@ class AvalonNLWrapper:
         info = self._build_info()
         obs = self._build_obs()
         rewards = self._build_rewards() if terminated else self._zero_rewards()
+
+        if not terminated and not self._multi_agent:
+            rewards = rewards + self._shaping_reward()
 
         if self._multi_agent:
             return obs, rewards, terminated, truncated, info
@@ -757,6 +761,27 @@ class AvalonNLWrapper:
             return {i: 0.0 for i in range(self._num_players)}
         else:
             return 0.0
+
+    def _shaping_reward(self) -> float:
+        """Potential-based intermediate reward for single-agent mode.
+
+        Tracks quest success/failure relative to the controlled player's
+        alignment.  Policy-invariant (potential-based) so it doesn't
+        change the optimal policy — only gives per-step signal.
+        """
+        if self.env is None or not self.env.quest_results:
+            return 0.0
+        cp = self._controlled_player
+        is_good = self.roles[cp][2] if cp is not None else True
+        good_wins = sum(self.env.quest_results)
+        evil_wins = len(self.env.quest_results) - good_wins
+        if is_good:
+            potential = (good_wins - evil_wins) * 0.1
+        else:
+            potential = (evil_wins - good_wins) * 0.1
+        prev = getattr(self, "_prev_potential", 0.0)
+        self._prev_potential = potential
+        return potential - prev
 
     # ---- Info ----
 

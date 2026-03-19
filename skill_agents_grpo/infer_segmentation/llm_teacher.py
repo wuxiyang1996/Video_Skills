@@ -152,6 +152,25 @@ def _parse_json_from_response(response: str) -> Optional[dict]:
     return None
 
 
+def _fuzzy_match_skill(name: str, skill_names: List[str]) -> Optional[str]:
+    """Match an LLM-produced skill name to canonical skill names.
+
+    Handles common LLM quirks: extra whitespace, casing differences,
+    surrounding quotes, underscores vs spaces.
+    """
+    cleaned = name.strip().strip('"').strip("'").strip()
+    if cleaned in skill_names:
+        return cleaned
+    lower_map = {s.lower(): s for s in skill_names}
+    if cleaned.lower() in lower_map:
+        return lower_map[cleaned.lower()]
+    normed = cleaned.lower().replace(" ", "_")
+    normed_map = {s.lower().replace(" ", "_"): s for s in skill_names}
+    if normed in normed_map:
+        return normed_map[normed]
+    return None
+
+
 # ── Ranking prompts ──────────────────────────────────────────────────
 
 def _format_skill_candidates(
@@ -364,7 +383,14 @@ def _collect_one_segment_prefs(
 
     if not parsed or "ranking" not in parsed:
         return []
-    ranking = [s for s in parsed["ranking"] if s in skill_names]
+    raw_ranking = parsed["ranking"] if isinstance(parsed["ranking"], list) else []
+    ranking = []
+    seen = set()
+    for s in raw_ranking:
+        matched = _fuzzy_match_skill(str(s), skill_names)
+        if matched and matched not in seen:
+            ranking.append(matched)
+            seen.add(matched)
     evidence = parsed.get("reasoning", "")
     if len(ranking) < 2:
         return []
@@ -408,6 +434,8 @@ def collect_segment_preferences(
     list[PreferenceExample]
         Pairwise preferences derived from LLM rankings.
     """
+    if len(skill_names) < 2:
+        return []
     cfg = config or LLMTeacherConfig()
     if "temperature" in _kw:
         from copy import copy
@@ -484,7 +512,14 @@ def _collect_one_transition_prefs(
 
     if not parsed or "ranking" not in parsed:
         return []
-    ranking = [s for s in parsed["ranking"] if s in skill_names]
+    raw_ranking = parsed["ranking"] if isinstance(parsed["ranking"], list) else []
+    ranking = []
+    seen: set = set()
+    for s in raw_ranking:
+        matched = _fuzzy_match_skill(str(s), skill_names)
+        if matched and matched not in seen:
+            ranking.append(matched)
+            seen.add(matched)
     evidence = parsed.get("reasoning", "")
     prefs = []
     for i in range(len(ranking)):

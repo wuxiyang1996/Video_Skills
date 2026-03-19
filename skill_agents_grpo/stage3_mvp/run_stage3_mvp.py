@@ -35,6 +35,20 @@ from skill_agents_grpo.stage3_mvp.contract_learn import learn_effects_contract
 from skill_agents_grpo.stage3_mvp.contract_verify import verify_effects_contract
 from skill_agents_grpo.stage3_mvp.contract_refine import refine_effects_contract
 
+import re as _re
+
+
+def _readable_name_from_id(skill_id: str) -> str:
+    """Derive a human-readable name from a compound skill label or skill ID.
+
+    ``"opening:EXECUTE"`` → ``"Opening Execute"``
+    ``"skill_tetris_clear_0"`` → ``"Skill Tetris Clear 0"``
+    ``"midgame:MERGE"`` → ``"Midgame Merge"``
+    """
+    text = skill_id.replace(":", " ").replace("_", " ")
+    text = _re.sub(r"\s+", " ", text).strip()
+    return text.title()
+
 
 # ── Segment specification (light input schema) ──────────────────────
 
@@ -210,12 +224,29 @@ def run_stage3_mvp(
 
         contract = learn_effects_contract(skill_id, instances, config, prev_ver)
 
-        # Collect cold-start I/O by also calling the LLM contract path.
-        # The algorithmic contract above does the real work; this LLM call
-        # only generates training data for the CONTRACT LoRA adapter.
+        # Call the LLM contract path to enrich the algorithmic contract
+        # with a human-readable description (and generate GRPO training
+        # data for the CONTRACT LoRA adapter).
         try:
             import skill_agents_grpo.stage3_mvp.llm_contract as _contract_mod
             _contract_fn = _contract_mod.llm_summarize_contract
+
+            # Set dynamic reward context so the GRPO reward uses the
+            # full verification path instead of the heuristic fallback.
+            n_holdout = max(1, len(instances) // 5)
+            _holdout = instances[-n_holdout:]
+            _train = instances[:-n_holdout] if n_holdout < len(instances) else instances
+            _consensus_add: set = set()
+            _consensus_del: set = set()
+            for _inst in _train:
+                _consensus_add.update(getattr(_inst, "eff_add", set()))
+                _consensus_del.update(getattr(_inst, "eff_del", set()))
+            _contract_mod.set_contract_reward_context(
+                consensus_add=_consensus_add,
+                consensus_del=_consensus_del,
+                holdout_instances=_holdout,
+                verify_config=config,
+            )
             sample_obs = []
             for inst in instances[:5]:
                 parts = []
@@ -229,7 +260,7 @@ def run_stage3_mvp(
                     parts.append(f"end={dict(top)}")
                 if parts:
                     sample_obs.append("; ".join(parts))
-            _contract_fn(
+            llm_result = _contract_fn(
                 skill_id=skill_id,
                 segment_observations=sample_obs,
                 predicates_start=contract.eff_add or set(),
@@ -237,11 +268,22 @@ def run_stage3_mvp(
                 n_instances=len(instances),
                 model=getattr(config, "model", ""),
             )
+            if isinstance(llm_result, dict):
+                if llm_result.get("description") and not contract.description:
+                    contract.description = llm_result["description"]
+                if llm_result.get("name") and not contract.name:
+                    contract.name = llm_result["name"]
         except Exception as _contract_exc:
             import logging as _log
             _log.getLogger(__name__).warning(
                 "Contract LLM call failed for %s: %s", skill_id, _contract_exc,
             )
+
+        # Fallback: derive a readable name from the skill_id when the
+        # LLM didn't produce one.  "opening:EXECUTE" → "Opening Execute",
+        # "skill_tetris_clear_0" → "Skill Tetris Clear 0".
+        if not contract.name:
+            contract.name = _readable_name_from_id(skill_id)
 
         # Step 4: verify
         report = verify_effects_contract(contract, instances, config)
