@@ -145,6 +145,22 @@ _TAG_ALIASES: Dict[str, str] = {
 }
 _TAG_RE = re.compile(r"\[(\w+)\]\s*")
 
+_TAG_KEYWORD_MAP: Dict[str, str] = {
+    "surviv": "SURVIVE", "clear": "CLEAR", "merge": "MERGE",
+    "setup": "SETUP", "position": "POSITION", "navigat": "NAVIGATE",
+    "optimiz": "OPTIMIZE", "defend": "DEFEND", "attack": "ATTACK",
+    "build": "BUILD", "explor": "EXPLORE", "collect": "COLLECT",
+}
+
+
+def _infer_tag_from_text(text: str) -> str:
+    """Scan for keyword stems and return the best-matching tag."""
+    low = text.lower()
+    for stem, tag in _TAG_KEYWORD_MAP.items():
+        if stem in low:
+            return tag
+    return "SETUP"
+
 
 # ---------------------------------------------------------------------------
 # Adapters for multi-agent / complex-action games
@@ -371,14 +387,16 @@ def _normalize_intention(raw: str) -> str:
     _SUBGOAL_TAG_SET = frozenset(imp["SUBGOAL_TAGS"])
     raw = raw.split("\n")[0].strip().strip('"').strip("'")
     if not raw.startswith("["):
-        return f"[EXECUTE] {raw}"
+        tag = _infer_tag_from_text(raw)
+        return f"[{tag}] {raw}"
     m = _TAG_RE.match(raw)
     if not m:
-        return f"[EXECUTE] {raw}"
+        tag = _infer_tag_from_text(raw)
+        return f"[{tag}] {raw}"
     tag = m.group(1).upper()
     rest = raw[m.end():].strip()
     if tag not in _SUBGOAL_TAG_SET:
-        tag = _TAG_ALIASES.get(tag, "EXECUTE")
+        tag = _TAG_ALIASES.get(tag, _infer_tag_from_text(rest))
     return f"[{tag}] {rest}" if rest else f"[{tag}]"
 
 
@@ -470,11 +488,15 @@ async def _generate_intention(
             imp2 = _lazy_imports()
             text = imp2["strip_think_tags"](text).strip()
             first_line = text.split("\n")[0].strip()
-            return _normalize_intention(first_line)[:150]
+            if first_line:
+                return _normalize_intention(first_line)[:150]
     except Exception as exc:
         logger.debug("Intention generation failed: %s", exc)
 
-    return prev_intention or "[EXECUTE] play"
+    if prev_intention and prev_intention != "[EXECUTE] play":
+        return prev_intention
+    fallback_tag = _infer_tag_from_text(urgency or summary_state or "")
+    return f"[{fallback_tag}] {game_label}"
 
 
 def _format_numbered_actions(action_names: List[str]) -> str:
@@ -984,8 +1006,7 @@ async def run_episode_async(
         )
         summary_coro = vllm_client.generate_chat(
             [{"role": "user", "content": summary_prompt}],
-            adapter="base", temperature=0.2, max_tokens=25,
-            stop=["\n"],
+            adapter="base", temperature=0.2, max_tokens=150,
         )
 
         # Intention generation — base model, no LoRA, higher temp
@@ -1135,7 +1156,7 @@ async def run_episode_async(
         action, reasoning, parsed_intention = _parse_action_response(
             action_result.text, step_actions,
         )
-        current_intention = parsed_intention or assigned_subgoal or prev_intention or "[EXECUTE] play"
+        current_intention = parsed_intention or assigned_subgoal or prev_intention or f"[SETUP] {game}"
         action = _apply_anti_repetition(action, step_actions, recent_actions, recent_rewards)
 
         # ── 6. env.step() (in executor) ─────────────────────────
