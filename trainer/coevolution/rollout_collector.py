@@ -114,28 +114,43 @@ async def collect_rollouts(
             return skill_banks.get(game)
         return skill_bank
 
+    max_retries = getattr(config, "max_episode_retries", 2)
+
     async def _run_one(spec: EpisodeSpec) -> None:
         async with semaphore:
             game_bank = _bank_for(spec.game)
-            try:
-                result = await run_episode_async(
-                    game=spec.game,
-                    max_steps=spec.max_steps,
-                    vllm_client=vllm_client,
-                    skill_bank=game_bank,
-                    temperature=config.temperature,
-                    executor=thread_executor,
-                    stuck_window=config.stuck_window,
-                    min_steps_before_stuck=config.min_steps_before_stuck_check,
-                    vllm_base_urls=config.vllm_base_urls,
-                    model_name=config.model_name,
-                )
-            except Exception as exc:
-                logger.error("Episode %s/%d failed: %s", spec.game, spec.episode_idx, exc)
-                result = EpisodeResult(
-                    game=spec.game,
-                    episode_id=f"{spec.game}_FAILED_{spec.episode_idx}",
-                )
+            result: Optional[EpisodeResult] = None
+            for attempt in range(1, max_retries + 1):
+                try:
+                    result = await run_episode_async(
+                        game=spec.game,
+                        max_steps=spec.max_steps,
+                        vllm_client=vllm_client,
+                        skill_bank=game_bank,
+                        temperature=config.temperature,
+                        executor=thread_executor,
+                        stuck_window=config.stuck_window,
+                        min_steps_before_stuck=config.min_steps_before_stuck_check,
+                        vllm_base_urls=config.vllm_base_urls,
+                        model_name=config.model_name,
+                    )
+                    break
+                except Exception as exc:
+                    if attempt < max_retries:
+                        logger.warning(
+                            "Episode %s/%d attempt %d/%d failed: %s — retrying",
+                            spec.game, spec.episode_idx, attempt, max_retries, exc,
+                        )
+                        await asyncio.sleep(2 ** attempt)
+                    else:
+                        logger.error(
+                            "Episode %s/%d failed after %d attempts: %s",
+                            spec.game, spec.episode_idx, max_retries, exc,
+                        )
+                        result = EpisodeResult(
+                            game=spec.game,
+                            episode_id=f"{spec.game}_FAILED_{spec.episode_idx}",
+                        )
 
             result.eval_only = spec.eval_only
             async with results_lock:

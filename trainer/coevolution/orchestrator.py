@@ -268,6 +268,7 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                 "vLLM instances failed to start — check "
                 f"{Path(config.run_dir) / 'vllm_logs'} for details"
             )
+        vllm_manager.start_health_monitor()
 
     # ── Helper: finalize a completed step (deferred until GRPO done) ──
 
@@ -475,7 +476,13 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
         is_cold_start = (step == 0)
 
         if hasattr(config, "active_games"):
+            prev_games = list(config.games)
             config.games = config.active_games(step)
+            if config.games != prev_games:
+                logger.info(
+                    "Curriculum transition at step %d: %s → %s",
+                    step, prev_games, config.games,
+                )
 
         try:
             from skill_agents_grpo.stage3_mvp.schemas import ProtoSkill
@@ -596,10 +603,8 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                     exc, exc_info=True,
                 )
                 try:
-                    import torch as _torch
                     import gc as _gc
                     _gc.collect()
-                    _torch.cuda.empty_cache()
                 except Exception:
                     pass
             _prev_phase_c_time = time.monotonic() - _prev_ctx['phase_c_t0']
@@ -713,10 +718,8 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
         except Exception as exc:
             logger.error("Final GRPO training failed: %s", exc, exc_info=True)
             try:
-                import torch as _torch
                 import gc as _gc
                 _gc.collect()
-                _torch.cuda.empty_cache()
             except Exception:
                 pass
         _last_phase_c_time = time.monotonic() - _last_ctx['phase_c_t0']

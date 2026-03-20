@@ -265,11 +265,16 @@ def run_stage3_mvp(
                     parts.append(f"end={dict(top)}")
                 if parts:
                     sample_obs.append("; ".join(parts))
+            agg_preds_start: set = set()
+            agg_preds_end: set = set()
+            for inst in instances[:10]:
+                agg_preds_start.update(getattr(inst, "B_start", set()))
+                agg_preds_end.update(getattr(inst, "B_end", set()))
             llm_result = _contract_fn(
                 skill_id=skill_id,
                 segment_observations=sample_obs,
-                predicates_start=contract.eff_add or set(),
-                predicates_end=contract.eff_del or set(),
+                predicates_start=agg_preds_start or (contract.eff_del or set()),
+                predicates_end=agg_preds_end or (contract.eff_add or set()),
                 n_instances=len(instances),
                 model=getattr(config, "model", ""),
             )

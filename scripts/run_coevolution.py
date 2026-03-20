@@ -61,6 +61,11 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("HF_HOME", "/workspace/huggingface")
 os.environ.setdefault("HF_HUB_CACHE", os.path.join(os.environ["HF_HOME"], "hub"))
 
+# Force the RAG embedding model onto CPU so it does not compete with
+# vLLM for GPU memory.  The orchestrator process must never allocate
+# CUDA tensors on vLLM GPUs (0-3).
+os.environ.setdefault("RAG_EMBEDDER_DEVICE", "cpu")
+
 import argparse
 import asyncio
 import logging
@@ -81,7 +86,12 @@ for p in [
     if Path(p).exists() and p not in sys.path:
         sys.path.insert(0, p)
 
-from trainer.coevolution.config import CoEvolutionConfig, SKILL_BANK_GAMES, EVAL_ONLY_GAMES
+from trainer.coevolution.config import (
+    CoEvolutionConfig,
+    CURRICULUM_PRESETS,
+    SKILL_BANK_GAMES,
+    EVAL_ONLY_GAMES,
+)
 from trainer.coevolution.orchestrator import co_evolution_loop
 
 
@@ -93,12 +103,19 @@ def parse_args() -> argparse.Namespace:
 
     # Core
     parser.add_argument(
-        "--total-steps", type=int, default=30,
-        help="Total co-evolution steps (default: 30)",
+        "--total-steps", type=int, default=60,
+        help="Total co-evolution steps (default: 60)",
     )
     parser.add_argument(
         "--games", nargs="+", default=None,
         help=f"Games to train on (default: all {len(SKILL_BANK_GAMES)})",
+    )
+    parser.add_argument(
+        "--curriculum", type=str, default="focused",
+        choices=list(CURRICULUM_PRESETS.keys()),
+        help="Curriculum preset: 'focused' = 4 games then Avalon+Diplomacy, "
+             "'gradual' = incrementally add games, "
+             "'none' = all games from step 0 (default: focused)",
     )
     parser.add_argument(
         "--episodes-per-game", type=int, default=8,
@@ -319,11 +336,14 @@ def main() -> None:
 
     manage_vllm = not args.no_manage_vllm
 
+    curriculum = CURRICULUM_PRESETS[args.curriculum]
+
     config_kwargs = dict(
         games=games,
         episodes_per_game=args.episodes_per_game,
         max_concurrent_episodes=args.max_concurrent,
         total_steps=args.total_steps,
+        curriculum_schedule=dict(curriculum) if curriculum else None,
         vllm_gpu_ids=args.vllm_gpus,
         grpo_devices=args.grpo_devices,
         manage_vllm=manage_vllm,
@@ -397,6 +417,7 @@ def main() -> None:
     print(f"  Log dir:      {config.log_dir}")
     print(f"  W&B:          {'enabled' if config.wandb_enabled else 'disabled'}")
     print(f"  Debug I/O:    {'enabled → ' + config.debug_io_dir if config.debug_io else 'disabled'}")
+    print(f"  Curriculum:   {config.curriculum_description()}")
     if config.start_mode == "from_scratch":
         print("  Start mode:   FROM SCRATCH (gaussian LoRA init, no checkpoint)")
         print(f"    Warmup:     {config.scratch_warmup_steps} steps "

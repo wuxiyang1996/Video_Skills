@@ -51,11 +51,26 @@ def _is_adapter_missing(exc: Exception) -> bool:
     return "not found" in msg or "does not exist" in msg or "unknown model" in msg
 
 
+def _is_connection_error(exc: Exception) -> bool:
+    """True if *exc* is a network-level failure (refused, reset, timeout)."""
+    from openai import APIConnectionError, APITimeoutError
+    if isinstance(exc, (APIConnectionError, APITimeoutError, ConnectionError, OSError)):
+        return True
+    msg = str(exc).lower()
+    return any(k in msg for k in ("connection", "refused", "reset", "timed out", "eof"))
+
+
+# How long (seconds) a client stays in the "suspect" pool after a connection failure.
+_HEALTH_PENALTY_S = float(os.environ.get("VLLM_HEALTH_PENALTY_S", "30"))
+
+
 class AsyncVLLMClient:
     """Thin async wrapper over vLLM's OpenAI-compatible API with multi-LoRA.
 
-    Supports multiple vLLM backends with round-robin load balancing
-    (one per GPU in the phase-swapped architecture).
+    Supports multiple vLLM backends with health-aware load balancing
+    (one per GPU in the phase-swapped architecture).  When a request
+    to one instance fails with a connection error, the request is
+    retried on the next healthy instance before giving up.
     """
 
     def __init__(
@@ -76,6 +91,7 @@ class AsyncVLLMClient:
         per_client_keepalive = max(16, 128 // n)
 
         self._clients: List[AsyncOpenAI] = []
+        self._client_urls: List[str] = list(urls)
         for url in urls:
             client = AsyncOpenAI(
                 base_url=url,
@@ -105,13 +121,40 @@ class AsyncVLLMClient:
         self._io_step: int = 0
         self._io_lock = asyncio.Lock()
 
-    def _next_client(self) -> AsyncOpenAI:
-        """Round-robin across vLLM instances."""
-        if len(self._clients) == 1:
-            return self._clients[0]
-        idx = self._rr_counter % len(self._clients)
+        # Health tracking: maps client index → timestamp of last connection failure.
+        # Clients with recent failures are deprioritised by _next_client().
+        self._last_fail: Dict[int, float] = {}
+
+    def _mark_failed(self, idx: int) -> None:
+        self._last_fail[idx] = time.monotonic()
+
+    def _mark_ok(self, idx: int) -> None:
+        self._last_fail.pop(idx, None)
+
+    def _is_suspect(self, idx: int) -> bool:
+        ts = self._last_fail.get(idx)
+        if ts is None:
+            return False
+        return (time.monotonic() - ts) < _HEALTH_PENALTY_S
+
+    def _next_client_idx(self) -> int:
+        """Pick the next client, preferring instances not recently failed."""
+        n = len(self._clients)
+        if n == 1:
+            return 0
+        start = self._rr_counter % n
         self._rr_counter += 1
-        return self._clients[idx]
+        if not self._is_suspect(start):
+            return start
+        for offset in range(1, n):
+            candidate = (start + offset) % n
+            if not self._is_suspect(candidate):
+                return candidate
+        return start  # all suspect — use round-robin anyway
+
+    def _next_client(self) -> AsyncOpenAI:
+        """Round-robin across vLLM instances, skipping recently-failed ones."""
+        return self._clients[self._next_client_idx()]
 
     def enable_io_logging(self, log_dir: str, step: int = 0) -> None:
         """Enable debug I/O logging: every LLM call is written to disk."""
@@ -161,37 +204,60 @@ class AsyncVLLMClient:
         if adapter and adapter in ADAPTER_MAP and ADAPTER_MAP[adapter] is not None:
             model_id = ADAPTER_MAP[adapter]
 
-        client = self._next_client()
-        try:
-            resp = await client.completions.create(
-                model=model_id,
-                prompt=prompt,
-                temperature=temp,
-                max_tokens=mtok,
-                stop=stop,
-            )
-        except Exception as exc:
-            # If the adapter isn't loaded yet (cold start), fall back to base model
-            if adapter and model_id != self.model and _is_adapter_missing(exc):
-                logger.info(
-                    "Adapter '%s' not loaded in vLLM, falling back to base model",
-                    adapter,
+        n_clients = len(self._clients)
+        last_exc: Optional[Exception] = None
+
+        for attempt in range(n_clients):
+            idx = self._next_client_idx()
+            client = self._clients[idx]
+            try:
+                resp = await client.completions.create(
+                    model=model_id,
+                    prompt=prompt,
+                    temperature=temp,
+                    max_tokens=mtok,
+                    stop=stop,
                 )
-                used_adapter = None
-                try:
-                    resp = await client.completions.create(
-                        model=self.model,
-                        prompt=prompt,
-                        temperature=temp,
-                        max_tokens=mtok,
-                        stop=stop,
+                self._mark_ok(idx)
+                break
+            except Exception as exc:
+                last_exc = exc
+                if adapter and model_id != self.model and _is_adapter_missing(exc):
+                    logger.info(
+                        "Adapter '%s' not loaded in vLLM, falling back to base model",
+                        adapter,
                     )
-                except Exception as exc2:
-                    logger.warning("vLLM base-model fallback failed: %s", exc2)
+                    used_adapter = None
+                    try:
+                        resp = await client.completions.create(
+                            model=self.model,
+                            prompt=prompt,
+                            temperature=temp,
+                            max_tokens=mtok,
+                            stop=stop,
+                        )
+                        self._mark_ok(idx)
+                        break
+                    except Exception as exc2:
+                        last_exc = exc2
+
+                if _is_connection_error(exc) and attempt + 1 < n_clients:
+                    self._mark_failed(idx)
+                    logger.debug(
+                        "vLLM instance %d connection error, trying next (adapter=%s)",
+                        idx, adapter,
+                    )
+                    continue
+                else:
+                    self._mark_failed(idx)
+                    logger.warning("vLLM call failed (adapter=%s): %s", adapter, exc)
                     return GenerateResult(text="", adapter=used_adapter)
-            else:
-                logger.warning("vLLM call failed (adapter=%s): %s", adapter, exc)
-                return GenerateResult(text="", adapter=used_adapter)
+        else:
+            logger.warning(
+                "All %d vLLM instances failed (adapter=%s): %s",
+                n_clients, adapter, last_exc,
+            )
+            return GenerateResult(text="", adapter=used_adapter)
 
         text = resp.choices[0].text if resp.choices else ""
         finish_reason = resp.choices[0].finish_reason if resp.choices else None
@@ -265,36 +331,60 @@ class AsyncVLLMClient:
         if effective_extra:
             extra_kwargs["extra_body"] = effective_extra
 
-        client = self._next_client()
-        try:
-            resp = await client.chat.completions.create(
-                model=model_id,
-                messages=messages,
-                temperature=temp,
-                max_tokens=mtok,
-                **extra_kwargs,
-            )
-        except Exception as exc:
-            if adapter and model_id != self.model and _is_adapter_missing(exc):
-                logger.info(
-                    "Adapter '%s' not loaded in vLLM (chat), falling back to base model",
-                    adapter,
+        n_clients = len(self._clients)
+        last_exc: Optional[Exception] = None
+
+        for attempt in range(n_clients):
+            idx = self._next_client_idx()
+            client = self._clients[idx]
+            try:
+                resp = await client.chat.completions.create(
+                    model=model_id,
+                    messages=messages,
+                    temperature=temp,
+                    max_tokens=mtok,
+                    **extra_kwargs,
                 )
-                used_adapter = None
-                try:
-                    resp = await client.chat.completions.create(
-                        model=self.model,
-                        messages=messages,
-                        temperature=temp,
-                        max_tokens=mtok,
-                        **extra_kwargs,
+                self._mark_ok(idx)
+                break
+            except Exception as exc:
+                last_exc = exc
+                if adapter and model_id != self.model and _is_adapter_missing(exc):
+                    logger.info(
+                        "Adapter '%s' not loaded in vLLM (chat), falling back to base model",
+                        adapter,
                     )
-                except Exception as exc2:
-                    logger.warning("vLLM chat base-model fallback failed: %s", exc2)
+                    used_adapter = None
+                    try:
+                        resp = await client.chat.completions.create(
+                            model=self.model,
+                            messages=messages,
+                            temperature=temp,
+                            max_tokens=mtok,
+                            **extra_kwargs,
+                        )
+                        self._mark_ok(idx)
+                        break
+                    except Exception as exc2:
+                        last_exc = exc2
+
+                if _is_connection_error(exc) and attempt + 1 < n_clients:
+                    self._mark_failed(idx)
+                    logger.debug(
+                        "vLLM instance %d connection error (chat), trying next (adapter=%s)",
+                        idx, adapter,
+                    )
+                    continue
+                else:
+                    self._mark_failed(idx)
+                    logger.warning("vLLM chat call failed (adapter=%s): %s", adapter, exc)
                     return GenerateResult(text="", adapter=used_adapter)
-            else:
-                logger.warning("vLLM chat call failed (adapter=%s): %s", adapter, exc)
-                return GenerateResult(text="", adapter=used_adapter)
+        else:
+            logger.warning(
+                "All %d vLLM instances failed (chat, adapter=%s): %s",
+                n_clients, adapter, last_exc,
+            )
+            return GenerateResult(text="", adapter=used_adapter)
 
         text = resp.choices[0].message.content if resp.choices else ""
         finish_reason = resp.choices[0].finish_reason if resp.choices else None

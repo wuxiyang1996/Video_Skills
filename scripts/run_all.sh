@@ -22,6 +22,9 @@
 #    # Override settings via env vars:
 #    VLLM_MODEL=Qwen/Qwen3-8B TOTAL_STEPS=50 bash scripts/run_all.sh
 #
+#    # Switch curriculum (focused=default, gradual, none):
+#    CURRICULUM=gradual TOTAL_STEPS=30 bash scripts/run_all.sh
+#
 #    # Train from scratch (gaussian random LoRA init):
 #    FROM_SCRATCH=1 bash scripts/run_all.sh
 #
@@ -64,7 +67,8 @@ TP="${VLLM_TP:-4}"
 GPU_UTIL="${VLLM_GPU_UTIL:-0.90}"
 MANAGE_VLLM="${MANAGE_VLLM:-1}"
 
-TOTAL_STEPS="${TOTAL_STEPS:-100}"
+TOTAL_STEPS="${TOTAL_STEPS:-60}"
+CURRICULUM="${CURRICULUM:-focused}"
 EPISODES="${EPISODES_PER_GAME:-4}"
 CKPT_INTERVAL="${CKPT_INTERVAL:-5}"
 WANDB_PROJECT="${WANDB_PROJECT:-game-ai-coevolution}"
@@ -102,6 +106,7 @@ echo "  Co-Evolution Training"
 echo "══════════════════════════════════════════════════════════════"
 echo "  Model:         ${MODEL}"
 echo "  Total steps:   ${TOTAL_STEPS}"
+echo "  Curriculum:    ${CURRICULUM}"
 echo "  Eps/game:      ${EPISODES}"
 echo "  Checkpoint:    every ${CKPT_INTERVAL} steps"
 if [ "${MANAGE_VLLM}" = "1" ]; then
@@ -165,6 +170,7 @@ echo "[run_all] Adapter dir: ${ADAPTER_DIR}"
 # ======================================================================
 TRAIN_ARGS=(
     --total-steps "${TOTAL_STEPS}"
+    --curriculum "${CURRICULUM}"
     --episodes-per-game "${EPISODES}"
     --checkpoint-interval "${CKPT_INTERVAL}"
     --model "${MODEL}"

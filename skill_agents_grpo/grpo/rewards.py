@@ -77,10 +77,10 @@ def contract_reward(
     eff_add = llm_output.get("eff_add", [])
     eff_del = llm_output.get("eff_del", [])
 
-    if not eff_add and not eff_del:
-        return 0.05
-
     r_raw = _raw_completion_fingerprint(llm_output)
+
+    if not eff_add and not eff_del:
+        return 0.05 * (1.0 - _RAW_BLEND) + _RAW_BLEND * r_raw
 
     if holdout_instances is not None and verify_config is not None:
         base = _contract_reward_with_verification(
@@ -318,10 +318,10 @@ def curator_reward(
         return 0.0
 
     decision_list = decisions.get("decisions", [])
-    if not decision_list:
-        return 0.05
-
     r_raw = _raw_completion_fingerprint(decisions)
+
+    if not decision_list:
+        return 0.05 * (1.0 - _RAW_BLEND) + _RAW_BLEND * r_raw
 
     if action_outcomes is not None and len(action_outcomes) == len(candidates):
         base = _curator_reward_with_outcomes(

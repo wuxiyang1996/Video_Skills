@@ -1,5 +1,6 @@
 """Text (RAG) embedding using Qwen3-Embedding by default, with support for other models."""
 
+import os
 from typing import Any, List, Optional, Union
 
 import numpy as np
@@ -25,12 +26,13 @@ class TextEmbedder(TextEmbedderBase):
         """
         Args:
             model_name_or_path: Hugging Face model id or path. Defaults to RAG_EMBEDDING_MODEL.
-            device: Device to run on (e.g. "cuda", "cpu"). Auto if None.
+            device: Device to run on (e.g. "cuda", "cpu"). ``None`` checks the
+                ``RAG_EMBEDDER_DEVICE`` env var, then falls back to SentenceTransformer auto.
             use_flash_attention: If True, enable flash_attention_2 when supported.
             **model_kwargs: Passed to SentenceTransformer (e.g. trust_remote_code=True).
         """
         self._model_name = model_name_or_path or RAG_EMBEDDING_MODEL
-        self._device = device
+        self._device = device or os.environ.get("RAG_EMBEDDER_DEVICE") or None
         self._use_flash_attention = use_flash_attention
         self._model_kwargs = model_kwargs
         self._model = None
@@ -86,12 +88,34 @@ class TextEmbedder(TextEmbedderBase):
         return model.get_sentence_embedding_dimension()
 
 
+_shared_cpu_embedder: Optional[TextEmbedder] = None
+
+
 def get_text_embedder(
     model_name_or_path: Optional[str] = None,
+    device: Optional[str] = None,
+    shared: bool = False,
     **kwargs: Any,
 ) -> TextEmbedder:
     """Factory: return a TextEmbedder with optional overrides.
 
     Uses RAG_EMBEDDING_MODEL (or env RAG_EMBEDDING_MODEL) when model_name_or_path is None.
+
+    Parameters
+    ----------
+    device : str, optional
+        Explicitly set the device (e.g. ``"cpu"``).  When *None*,
+        ``SentenceTransformer`` picks the default (usually ``cuda:0``).
+    shared : bool
+        If True and device is ``"cpu"``, return a module-level singleton
+        so multiple callers share one model instance.
     """
-    return TextEmbedder(model_name_or_path=model_name_or_path or RAG_EMBEDDING_MODEL, **kwargs)
+    global _shared_cpu_embedder
+    resolved_model = model_name_or_path or RAG_EMBEDDING_MODEL
+    if shared and device == "cpu":
+        if _shared_cpu_embedder is None:
+            _shared_cpu_embedder = TextEmbedder(
+                model_name_or_path=resolved_model, device="cpu", **kwargs,
+            )
+        return _shared_cpu_embedder
+    return TextEmbedder(model_name_or_path=resolved_model, device=device, **kwargs)

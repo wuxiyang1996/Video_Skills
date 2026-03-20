@@ -3,6 +3,7 @@
 
 import itertools as _itertools
 import os
+import time as _time_mod
 import threading as _threading
 
 import openai
@@ -40,17 +41,20 @@ def _next_vllm_url() -> str:
         return next(_vllm_url_cycle)
 
 
-# Cached vLLM reachability (None = not yet probed)
 _vllm_reachable: bool | None = None
+_vllm_probe_ts: float = 0.0
+_VLLM_PROBE_TTL_S = float(os.environ.get("VLLM_PROBE_TTL_S", "60"))
 
 
 def _probe_vllm() -> bool:
-    """One-shot TCP probe to check if any vLLM server is reachable.
+    """TCP probe to check if any vLLM server is reachable.
 
-    Result is cached so subsequent calls return instantly.
+    Result is cached for ``_VLLM_PROBE_TTL_S`` seconds so that a
+    temporarily-dead instance doesn't permanently disable local inference.
     """
-    global _vllm_reachable
-    if _vllm_reachable is not None:
+    global _vllm_reachable, _vllm_probe_ts
+    now = _time_mod.time()
+    if _vllm_reachable is not None and (now - _vllm_probe_ts) < _VLLM_PROBE_TTL_S:
         return _vllm_reachable
 
     with _vllm_url_lock:
@@ -66,11 +70,13 @@ def _probe_vllm() -> bool:
             sock = socket.create_connection((host, int(port_str)), timeout=2)
             sock.close()
             _vllm_reachable = True
+            _vllm_probe_ts = now
             return True
         except Exception:
             continue
 
     _vllm_reachable = False
+    _vllm_probe_ts = now
     print(f"[API_func] vLLM at {_VLLM_URLS} unreachable — "
           "Qwen calls will be routed through OpenRouter.")
     return _vllm_reachable
@@ -193,38 +199,49 @@ def ask_vllm(question, model="Qwen/Qwen3-8B", temperature=0.7, max_tokens=2000):
 
     Automatically strips ``<think>`` tags from reasoning models (Qwen3, QwQ, etc.).
 
-    Falls back to OpenRouter when the vLLM server is unreachable and
-    ``open_router_api_key`` is configured.
+    Tries each available vLLM URL before falling back to OpenRouter, so a
+    single dead instance doesn't disable all local inference.
     """
     if not _probe_vllm():
         return _ask_qwen_via_openrouter(
             question, model=model, temperature=temperature, max_tokens=max_tokens,
         )
 
-    url = _next_vllm_url()
-    try:
-        _max_retries = int(os.environ.get("VLLM_OPENAI_MAX_RETRIES", "3"))
-        client = openai.OpenAI(
-            base_url=url, api_key=VLLM_API_KEY, max_retries=max(0, _max_retries),
-        )
-        response = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": question}],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-        )
-        raw = response.choices[0].message.content or ""
-        return _strip_think_tags(raw)
-    except Exception as e:
-        global _vllm_reachable
-        _vllm_reachable = False
-        fallback = _ask_qwen_via_openrouter(
-            question, model=model, temperature=temperature, max_tokens=max_tokens,
-        )
-        if not fallback.startswith("Error"):
-            return fallback
-        return f"Error calling vLLM API at {url}: {str(e)}"
+    with _vllm_url_lock:
+        if not _VLLM_URLS:
+            _init_vllm_urls()
+        n_urls = len(_VLLM_URLS)
+
+    _max_retries = int(os.environ.get("VLLM_OPENAI_MAX_RETRIES", "3"))
+    last_exc = None
+    for _ in range(n_urls):
+        url = _next_vllm_url()
+        try:
+            client = openai.OpenAI(
+                base_url=url, api_key=VLLM_API_KEY, max_retries=max(0, _max_retries),
+            )
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": question}],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            )
+            raw = response.choices[0].message.content or ""
+            return _strip_think_tags(raw)
+        except Exception as e:
+            last_exc = e
+            continue
+
+    # All vLLM URLs failed — invalidate probe cache so next call re-probes
+    global _vllm_probe_ts
+    _vllm_probe_ts = 0.0
+    fallback = _ask_qwen_via_openrouter(
+        question, model=model, temperature=temperature, max_tokens=max_tokens,
+    )
+    if not fallback.startswith("Error"):
+        return fallback
+    return f"Error calling vLLM API (all {n_urls} URLs failed, last: {last_exc})"
 
 
 def _ask_qwen_via_openrouter(question, model="Qwen/Qwen3-8B", temperature=0.7, max_tokens=2000):

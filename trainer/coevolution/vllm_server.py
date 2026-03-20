@@ -29,11 +29,15 @@ import logging
 import os
 import signal
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
+
+_HEALTH_MONITOR_INTERVAL_S = float(os.environ.get("VLLM_HEALTH_MONITOR_S", "30"))
+_HEALTH_RESTART_COOLDOWN_S = float(os.environ.get("VLLM_RESTART_COOLDOWN_S", "120"))
 
 
 class VLLMServerManager:
@@ -262,6 +266,7 @@ class VLLMServerManager:
 
     def stop(self) -> None:
         """Terminate all vLLM instances and free GPU memory."""
+        self.stop_health_monitor()
         if not self._processes:
             return
 
@@ -419,6 +424,120 @@ class VLLMServerManager:
             "All %d vLLM instances healthy", self.n_instances,
         )
         return True
+
+    # ------------------------------------------------------------------
+    # Background health monitor + auto-restart
+    # ------------------------------------------------------------------
+
+    def _restart_instance(self, idx: int) -> bool:
+        """Restart a single dead vLLM instance in-place.
+
+        Returns True if the new process was launched (it still needs
+        to become healthy before it can serve requests).
+        """
+        if idx >= len(self._processes):
+            return False
+        proc = self._processes[idx]
+        if proc.poll() is None:
+            return False  # still running
+
+        gpu_id = self.gpu_ids[idx]
+        port = self.base_port + idx
+        logger.warning(
+            "vLLM instance %d (GPU %d, port %d) is dead (rc=%s) — restarting",
+            idx, gpu_id, port, proc.returncode,
+        )
+
+        lora_modules = getattr(self, "_lora_modules", self._build_lora_args())
+        shared_gpus = getattr(self, "_shared_gpus", self._has_shared_gpus())
+        log_dir_path = getattr(self, "_log_dir_path", None)
+
+        env = os.environ.copy()
+        env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+        env["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "1"
+        env.setdefault("HF_HOME", "/workspace/huggingface")
+        env.setdefault("HF_HUB_CACHE", os.path.join(env["HF_HOME"], "hub"))
+
+        cmd = [
+            "python", "-m", "vllm.entrypoints.openai.api_server",
+            "--model", self.model_name,
+            "--tensor-parallel-size", "1",
+            "--gpu-memory-utilization", str(self.gpu_util),
+            "--enable-lora", "--max-loras", "5", "--max-lora-rank", "64",
+            "--enable-prefix-caching",
+            "--enable-chunked-prefill",
+            "--max-num-seqs", str(self.max_num_seqs),
+            "--max-num-batched-tokens", "16384",
+            "--port", str(port),
+            "--trust-remote-code",
+        ]
+        if self.enforce_eager or shared_gpus:
+            cmd.append("--enforce-eager")
+        if self._speculative_config_json:
+            cmd.extend(["--speculative_config", self._speculative_config_json])
+        if lora_modules:
+            cmd.extend(["--lora-modules"] + lora_modules)
+
+        log_fh = None
+        if log_dir_path:
+            log_path = log_dir_path / f"vllm_{idx}_gpu{gpu_id}.log"
+            log_fh = open(log_path, "a")  # append to keep crash context
+
+        new_proc = subprocess.Popen(
+            cmd, env=env,
+            stdout=log_fh or subprocess.DEVNULL,
+            stderr=subprocess.STDOUT if log_fh else subprocess.DEVNULL,
+        )
+        self._processes[idx] = new_proc
+        if log_fh and idx < len(self._log_files):
+            try:
+                self._log_files[idx].close()
+            except Exception:
+                pass
+            self._log_files[idx] = log_fh
+
+        logger.info(
+            "Restarted vLLM instance %d (GPU %d, port %d, pid %d)",
+            idx, gpu_id, port, new_proc.pid,
+        )
+        return True
+
+    def start_health_monitor(self) -> None:
+        """Launch a background daemon thread that monitors vLLM instances.
+
+        If a process is found dead, it is automatically restarted.
+        The monitor respects a cooldown to avoid restart storms.
+        """
+        if getattr(self, "_monitor_stop", None) is not None:
+            return  # already running
+        self._monitor_stop = threading.Event()
+        self._last_restart: dict[int, float] = {}
+
+        def _monitor() -> None:
+            while not self._monitor_stop.wait(_HEALTH_MONITOR_INTERVAL_S):
+                now = time.monotonic()
+                for idx, proc in enumerate(self._processes):
+                    if proc.poll() is not None:
+                        last = self._last_restart.get(idx, 0.0)
+                        if (now - last) < _HEALTH_RESTART_COOLDOWN_S:
+                            continue
+                        if self._restart_instance(idx):
+                            self._last_restart[idx] = now
+
+        t = threading.Thread(target=_monitor, daemon=True, name="vllm-health-monitor")
+        t.start()
+        self._monitor_thread = t
+        logger.info(
+            "vLLM health monitor started (interval=%.0fs, cooldown=%.0fs)",
+            _HEALTH_MONITOR_INTERVAL_S, _HEALTH_RESTART_COOLDOWN_S,
+        )
+
+    def stop_health_monitor(self) -> None:
+        """Stop the background health monitor if running."""
+        stop_evt = getattr(self, "_monitor_stop", None)
+        if stop_evt is not None:
+            stop_evt.set()
+            self._monitor_stop = None
 
     async def reload_adapters(self) -> None:
         """Hot-reload all LoRA adapters on every running vLLM instance.

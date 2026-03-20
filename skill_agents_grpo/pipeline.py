@@ -106,6 +106,10 @@ class PipelineConfig:
     # LLM
     llm_model: Optional[str] = None
     max_concurrent_llm_calls: Optional[int] = None  # cap for local GPU (e.g. 1)
+    # Max worker threads for parallel LLM calls within a single episode's
+    # segmentation. Set to 1 when the caller already parallelises across
+    # episodes (e.g. co-evolution loop) to avoid thread explosion.
+    llm_teacher_max_workers: Optional[int] = None
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -399,6 +403,8 @@ class SkillBankAgent:
             llm_teacher=LLMTeacherConfig(
                 model=cfg.llm_model,
                 max_concurrent_llm_calls=cfg.max_concurrent_llm_calls,
+                **({"max_workers": cfg.llm_teacher_max_workers}
+                   if cfg.llm_teacher_max_workers is not None else {}),
             ),
             contract_feedback=ContractFeedbackConfig(
                 mode=cfg.contract_feedback_mode,
@@ -1508,9 +1514,11 @@ class SkillBankAgent:
         """
         from skill_agents_grpo.infer_segmentation.config import LLMTeacherConfig
 
+        _mw = self.config.llm_teacher_max_workers
         llm_cfg = LLMTeacherConfig(
             model=self.config.llm_model,
             max_concurrent_llm_calls=self.config.max_concurrent_llm_calls,
+            **({"max_workers": _mw} if _mw is not None else {}),
         ) if self.config.llm_model else None
 
         # Try the new pool manager first

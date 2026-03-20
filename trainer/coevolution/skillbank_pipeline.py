@@ -89,6 +89,8 @@ class AsyncSkillBankPipeline:
             new_pool_min_distinctiveness=0.15,
             min_new_cluster_size=1,
             report_dir=self.report_dir,
+            max_concurrent_llm_calls=24,
+            llm_teacher_max_workers=4,
         )
         self._agent = SkillBankAgent(config=config)
 
@@ -150,6 +152,8 @@ class AsyncSkillBankPipeline:
         episode = self._convert_episode_result(result)
         self._pending_episodes.append(episode)
 
+    _MAX_CONCURRENT_SEGMENTATIONS = 6
+
     async def process_batch_async(
         self,
         results: List[EpisodeResult],
@@ -158,7 +162,8 @@ class AsyncSkillBankPipeline:
 
         Segments episodes concurrently via the thread executor (each
         segmentation involves LLM calls, so parallelism overlaps the
-        network I/O).
+        network I/O).  A semaphore limits concurrent segmentations to
+        avoid saturating vLLM with hundreds of simultaneous requests.
         """
         episodes = []
         for r in results:
@@ -172,6 +177,7 @@ class AsyncSkillBankPipeline:
         loop = asyncio.get_running_loop()
         executor = self._executor
         t0 = time.monotonic()
+        sem = asyncio.Semaphore(self._MAX_CONCURRENT_SEGMENTATIONS)
 
         def _segment_one(ep):
             try:
@@ -186,11 +192,14 @@ class AsyncSkillBankPipeline:
                 logger.warning("Segmentation failed for %s: %s", ep.episode_id, exc)
                 return False
 
-        futures = [
-            loop.run_in_executor(executor, _segment_one, ep)
-            for ep in episodes
-        ]
-        results_ok = await asyncio.gather(*futures, return_exceptions=True)
+        async def _segment_with_sem(ep):
+            async with sem:
+                return await loop.run_in_executor(executor, _segment_one, ep)
+
+        results_ok = await asyncio.gather(
+            *[_segment_with_sem(ep) for ep in episodes],
+            return_exceptions=True,
+        )
 
         n_ok = sum(1 for r in results_ok if r is True)
         elapsed = time.monotonic() - t0

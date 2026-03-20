@@ -259,7 +259,13 @@ def _run_grpo_training_loop(
             len(ref_data), n_my, time.time() - t_ref,
         )
 
-    dummy_rd = ref_data[0] if ref_data else None
+    dummy_rd = ref_data[0] if ref_data else {
+        "input_ids": torch.ones(1, 2, dtype=torch.long),
+        "attn_mask": torch.ones(1, 2, dtype=torch.long),
+        "plen": 1,
+        "ref_lp": torch.zeros(1),
+        "adv": 0.0,
+    }
     while len(ref_data) < n_train_max_val:
         ref_data.append(None)
 
@@ -369,7 +375,7 @@ def _run_grpo_training_loop(
             )
 
     train_time = time.time() - t_train
-    del optimizer
+    del optimizer, trainable_params, ref_data, tokenized
 
     return {
         "n_samples": n_total,
@@ -777,7 +783,13 @@ def _train_one_adapter(
             len(ref_data), n_my, time.time() - t_ref,
         )
 
-    dummy_rd = ref_data[0] if ref_data else None
+    dummy_rd = ref_data[0] if ref_data else {
+        "input_ids": torch.ones(1, 2, dtype=torch.long),
+        "attn_mask": torch.ones(1, 2, dtype=torch.long),
+        "plen": 1,
+        "ref_lp": torch.zeros(1),
+        "adv": 0.0,
+    }
     while len(ref_data) < n_train_max_val:
         ref_data.append(None)
 
@@ -1183,6 +1195,11 @@ def _fsdp_train_worker_multi(rank: int, args: Dict[str, Any]) -> None:
                 )
 
             dist.barrier()
+
+            # Free optimizer states, ref tensors, and CUDA cache between
+            # adapter jobs to prevent OOM when training 3+ adapters.
+            gc.collect()
+            torch.cuda.empty_cache()
 
         # ── Phase 3: cleanup ─────────────────────────────────────────
         del model, tokenizer

@@ -58,6 +58,27 @@ ADAPTER_NAMES = [
     "curator",
 ]
 
+# ── Curriculum presets ───────────────────────────────────────────────
+# Each maps step thresholds → active game lists.
+
+CURRICULUM_GRADUAL: Dict[int, List[str]] = {
+    0: ["twenty_forty_eight", "tetris", "candy_crush"],
+    10: ["twenty_forty_eight", "tetris", "candy_crush", "sokoban"],
+    15: ["twenty_forty_eight", "tetris", "candy_crush", "sokoban", "avalon"],
+    20: ["twenty_forty_eight", "tetris", "candy_crush", "sokoban", "avalon", "diplomacy"],
+}
+
+CURRICULUM_FOCUSED: Dict[int, List[str]] = {
+    0: ["twenty_forty_eight", "tetris", "candy_crush", "sokoban"],
+    40: ["avalon", "diplomacy"],
+}
+
+CURRICULUM_PRESETS: Dict[str, Optional[Dict[int, List[str]]]] = {
+    "gradual": CURRICULUM_GRADUAL,
+    "focused": CURRICULUM_FOCUSED,
+    "none": None,
+}
+
 
 def _model_short_name(model_name: str) -> str:
     """Extract a filesystem-safe short name from a model identifier.
@@ -88,7 +109,7 @@ class CoEvolutionConfig:
     episodes_per_game: int = 4
     eval_episodes_per_game: int = 3
     max_concurrent_episodes: int = 64
-    total_steps: int = 30
+    total_steps: int = 60
 
     # GPU allocation — split between persistent vLLM and FSDP training.
     # vLLM instances (TP=1) run on vllm_gpu_ids and stay up for the
@@ -189,23 +210,19 @@ class CoEvolutionConfig:
     # True       → Kaiming A + zero B (standard LoRA, B gets no grad initially)
     lora_init_weights: Any = "gaussian"
 
-    # Curriculum learning — gradually introduce harder games.
-    # Maps step thresholds to game lists.  At each step, the active
-    # games are those from the highest threshold <= current step.
-    # None means use all games from step 0 (no curriculum).
+    # Curriculum learning — two-phase focused training.
+    # Phase 1 (steps 0-39): 4 simpler single-player games to build core skills.
+    # Phase 2 (steps 40-59): focus on harder social/strategic games (Avalon, Diplomacy).
+    # Set to None for no curriculum (all games from step 0).
+    # Use CURRICULUM_PRESETS["gradual"] for the old incremental schedule.
     curriculum_schedule: Optional[Dict[int, List[str]]] = field(
-        default_factory=lambda: {
-            0: ["twenty_forty_eight", "tetris", "candy_crush"],
-            10: ["twenty_forty_eight", "tetris", "candy_crush", "sokoban"],
-            15: ["twenty_forty_eight", "tetris", "candy_crush", "sokoban", "avalon"],
-            20: ["twenty_forty_eight", "tetris", "candy_crush", "sokoban", "avalon", "diplomacy"],
-        }
+        default_factory=lambda: dict(CURRICULUM_FOCUSED)
     )
 
     # GRPO from-scratch schedule — higher exploration early, then anneal.
     # Only applied when start_mode == "from_scratch" (otherwise GRPO
     # configs use the default values from StageGRPOConfig).
-    scratch_warmup_steps: int = 15
+    scratch_warmup_steps: int = 20
     scratch_initial_lr: float = 1e-4
     scratch_steady_lr: float = 5e-5
     scratch_initial_temperature: float = 1.0
@@ -293,6 +310,17 @@ class CoEvolutionConfig:
         if not thresholds:
             return list(self.games)
         return list(self.curriculum_schedule[thresholds[-1]])
+
+    def curriculum_description(self) -> str:
+        """Human-readable summary of the curriculum schedule."""
+        if not self.curriculum_schedule:
+            return "none (all games every step)"
+        phases = sorted(self.curriculum_schedule.items())
+        parts = []
+        for i, (start, games) in enumerate(phases):
+            end = phases[i + 1][0] - 1 if i + 1 < len(phases) else self.total_steps - 1
+            parts.append(f"  steps {start}–{end}: {', '.join(games)}")
+        return "focused curriculum\n" + "\n".join(parts)
 
     def grpo_schedule(self, step: int) -> Dict[str, float]:
         """Return GRPO hyperparameters for the current step.
@@ -511,8 +539,8 @@ def prepare_adapters(config: CoEvolutionConfig) -> Dict[str, str]:
 
     del base_model
     gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    # Do NOT call torch.cuda.empty_cache() here — it initializes a CUDA
+    # context on GPU 0, wasting ~6 GB that the vLLM instance needs.
 
     logger.info(
         "Adapter summary: %d pre-trained, %d random-init, %d total ready",

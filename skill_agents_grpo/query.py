@@ -218,7 +218,7 @@ class SkillQueryEngine:
         if self._embedder is None:
             try:
                 from rag import get_text_embedder
-                self._embedder = get_text_embedder()
+                self._embedder = get_text_embedder(device="cpu", shared=True)
             except Exception:
                 self._embedder = None
         self._skill_embeddings: Optional[np.ndarray] = None
