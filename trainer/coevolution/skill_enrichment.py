@@ -456,6 +456,98 @@ def link_sub_episode_outcomes(
     return linked
 
 
+def _enrich_role_side_stage_tags(
+    agent: Any,
+    episodes: Optional[list] = None,
+) -> int:
+    """Augment skill ``tags`` with role / side / stage from episode metadata.
+
+    Scans sub-episode references and the episodes themselves to find
+    role, side, and stage labels.  Adds them to ``skill.tags`` using
+    canonical prefixes (``role:<name>``, ``side:<name>``, ``stage:<name>``)
+    so the skill bank can segment and query skills along these dimensions.
+
+    Only fires when episode metadata actually contains role info
+    (i.e. ``unified_role_rollouts=True`` was used during rollout
+    collection).  Otherwise this is a no-op.
+    """
+    bank = agent.bank
+    updated = 0
+
+    seg_to_meta: Dict[str, Dict[str, str]] = {}
+    if episodes:
+        for ep in episodes:
+            ep_meta = getattr(ep, "metadata", {}) or {}
+            ep_role = ep_meta.get("role", "")
+            ep_side = ep_meta.get("side", "")
+            if not ep_role:
+                continue
+            eid = getattr(ep, "episode_id", "")
+            for exp in getattr(ep, "experiences", []):
+                iface = getattr(exp, "interface", {}) or {}
+                idx = getattr(exp, "idx", 0)
+                key = f"{eid}:{idx}"
+                seg_to_meta[key] = {
+                    "role": iface.get("role", ep_role),
+                    "side": iface.get("side", ep_side),
+                    "stage": iface.get("stage", ""),
+                }
+
+    if not seg_to_meta:
+        return 0
+
+    for seg in getattr(agent, "_all_segments", []):
+        sid = getattr(seg, "skill_label", None)
+        if not sid or sid in ("__NEW__", "NEW"):
+            continue
+        skill = bank.get_skill(sid)
+        if skill is None:
+            continue
+
+        traj_id = getattr(seg, "traj_id", "")
+        t_start = getattr(seg, "t_start", 0)
+        t_end = getattr(seg, "t_end", 0)
+
+        roles_seen: Set[str] = set()
+        sides_seen: Set[str] = set()
+        stages_seen: Set[str] = set()
+        for t in range(t_start, t_end):
+            key = f"{traj_id}:{t}"
+            meta = seg_to_meta.get(key, {})
+            if meta.get("role"):
+                roles_seen.add(meta["role"])
+            if meta.get("side"):
+                sides_seen.add(meta["side"])
+            if meta.get("stage"):
+                stages_seen.add(meta["stage"])
+
+        new_tags: List[str] = []
+        existing = set(skill.tags or [])
+        for r in sorted(roles_seen):
+            tag = f"role:{r}"
+            if tag not in existing:
+                new_tags.append(tag)
+        for s in sorted(sides_seen):
+            tag = f"side:{s}"
+            if tag not in existing:
+                new_tags.append(tag)
+        for st in sorted(stages_seen):
+            tag = f"stage:{st}"
+            if tag not in existing:
+                new_tags.append(tag)
+
+        if new_tags:
+            skill.tags = list(existing | set(new_tags))
+            bank.add_or_update_skill(skill)
+            updated += 1
+
+    if updated:
+        logger.info(
+            "Enriched %d skill(s) with role/side/stage tags", updated,
+        )
+    return updated
+
+
 def enrich_bank_after_update(
     agent: Any,
     episodes: Optional[list] = None,
@@ -474,14 +566,19 @@ def enrich_bank_after_update(
 
     if episodes:
         results["sub_episode_refs"] = link_sub_episode_outcomes(agent, episodes)
+        results["role_side_stage_tags"] = _enrich_role_side_stage_tags(
+            agent, episodes,
+        )
 
     total = sum(results.values())
     if total:
         logger.info(
-            "Skill enrichment: %d protocol(s), %d hint(s), %d duration(s), %d ref(s)",
+            "Skill enrichment: %d protocol(s), %d hint(s), %d duration(s), "
+            "%d ref(s), %d role/side/stage tag(s)",
             results.get("protocols", 0),
             results.get("execution_hints", 0),
             results.get("durations_updated", 0),
             results.get("sub_episode_refs", 0),
+            results.get("role_side_stage_tags", 0),
         )
     return results

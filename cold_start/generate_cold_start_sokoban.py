@@ -77,6 +77,17 @@ try:
 except ImportError:
     OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
+try:
+    from env_wrappers.sokoban_nl_wrapper import (
+        compute_spatial_analysis,
+        detect_all_deadlocks,
+        is_deadlocked,
+    )
+except ImportError:
+    compute_spatial_analysis = None
+    detect_all_deadlocks = None
+    is_deadlocked = None
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -121,28 +132,40 @@ ACTIONS — choose exactly one:
       the box must be floor or empty target. Player and box both move one step.
 
 CRITICAL STRATEGY:
-1. PLAN AHEAD: Before moving, trace the path from each box to the nearest \
-unoccupied target. Decide which box to push first.
-2. AVOID DEADLOCKS:
-   - Never push a box into a corner (two perpendicular walls) unless it is a target.
-   - Never push a box against a wall if there is no target along that wall.
-   - Once a box is in a deadlock position the puzzle is UNSOLVABLE.
+1. PLAN AHEAD: Before moving, mentally simulate the next 3-5 moves. \
+Trace the path from each box to the nearest unoccupied target. \
+Decide which box to push first based on dependencies.
+2. AVOID DEADLOCKS — these error patterns make the puzzle UNSOLVABLE:
+   a) CORNER LOCK: Box pushed into a non-target corner (two perpendicular walls) → GAME OVER
+   b) WALL-LINE LOCK: Box against a wall where no target exists along that wall → GAME OVER
+   c) VERTICAL/HORIZONTAL STACK: Two boxes adjacent along a wall → often UNSOLVABLE
+   d) PATH OBSTRUCTION: A box blocks your path to reach other boxes
+   e) WRONG DOCK: Box on wrong target blocks the correct box's path
 3. POSITIONING: Move the player around boxes to approach from the correct side \
-before pushing. Use "move" actions (up/down/left/right) to reposition.
+before pushing. Use movement actions (up/down/left/right) to reposition.
 4. DO NOT oscillate: If you find yourself repeating the same 2-3 moves, STOP \
 and rethink your plan completely.
-5. PUSH vs MOVE: Use "push X" ONLY when you are adjacent to a box and want to \
-push it. Use plain movement (up/down/left/right) to navigate without pushing.
-6. Once a box is on a target (*), try not to move it off.
+5. PUSH vs MOVE: Use "push X" ONLY when you are adjacent to a box AND want to \
+push it. Use plain movement to navigate without pushing.
+6. Once a box is on a target (*), try NOT to move it off unless required by your plan.
+7. BOX ORDERING: Push the box that is farthest from all targets first, or push boxes \
+that would block other boxes' paths if left in place.
+
+MULTI-STEP PLANNING:
+Before choosing your action, outline a brief plan:
+  plan: step1 → step2 → step3
+Then execute only the FIRST step of your plan.
 
 Respond with EXACTLY this format:
+plan: <your 3-5 step plan in brief>
 thought: <your step-by-step reasoning about the current board, which box to \
 target, where to position, and what to push>
 move: <action>
 
 Example:
-thought: Box at (3,2) needs to go to target at (5,2). I need to get above the \
-box first. Moving down to row 2.
+plan: position below box → push box up to row 2 → move right to next box
+thought: Box at (3,2) needs to go to target at (1,2). I need to get below the \
+box first. Moving down to row 4.
 move: down"""
 
 REFLECTION_PROMPT = """\
@@ -153,11 +176,14 @@ Analyze the last {n} steps of this Sokoban game:
 Current board:
 {board}
 
-Briefly reflect (under 60 words):
-1. Did recent actions make progress (box moved closer to target)?
-2. Any oscillation or repeated moves?
-3. Any deadlock risk (box pushed to wall/corner)?
-4. What should the next priority be?"""
+Spatial analysis:
+{spatial_analysis}
+
+Answer each question in ONE line (total under 80 words):
+1. PROGRESS: How many boxes moved closer to targets vs. farther? (+N/-N)
+2. DEADLOCK: Any box now in a corner or against a wall without a target? (yes/no, which)
+3. OSCILLATION: Am I repeating a cycle of moves? (yes/no)
+4. PLAN: Which box should I push next, to which target, from which direction?"""
 
 USER_PROMPT_TEMPLATE = """\
 ## Current Sokoban Board (row, col from top-left = 0,0)
@@ -167,6 +193,9 @@ USER_PROMPT_TEMPLATE = """\
 
 ## Element Summary
 {element_summary}
+
+## Spatial Analysis
+{spatial_analysis}
 
 ## Recent History ({n_history} steps)
 {history}
@@ -178,6 +207,7 @@ USER_PROMPT_TEMPLATE = """\
 Push all boxes ($) onto targets (?). Boxes on targets show as *.
 Choose ONE action from: up, down, left, right, push up, push down, push left, push right
 
+plan: <your 3-5 step plan>
 thought: <reasoning>
 move: <action>"""
 
@@ -327,15 +357,21 @@ def get_reflection(
     board_str: str,
     client_kw: Dict[str, Any],
     model: str,
+    grid: Optional[List[List[str]]] = None,
 ) -> str:
     """Ask the model to reflect on recent history (cheap, short call)."""
     if len(memory.history) < 3:
         return memory.last_reflection
 
+    spatial = "(not available)"
+    if grid is not None and compute_spatial_analysis is not None:
+        spatial = compute_spatial_analysis(grid)
+
     prompt = REFLECTION_PROMPT.format(
         n=len(memory.history),
         trajectory=memory.format_trajectory_for_reflection(),
         board=board_str,
+        spatial_analysis=spatial,
     )
 
     try:
@@ -343,11 +379,11 @@ def get_reflection(
         resp = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "You are a Sokoban game analyst. Give brief, actionable reflections."},
+                {"role": "system", "content": "You are a Sokoban game analyst. Give brief, actionable reflections using the structured checklist."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.2,
-            max_tokens=120,
+            max_tokens=180,
         )
         reflection = resp.choices[0].message.content.strip()
         memory.last_reflection = reflection
@@ -425,13 +461,20 @@ def sokoban_agent_action(
     board_str = grid_to_string(grid)
     element_summary = summarize_elements(grid)
 
+    spatial = "(not available)"
+    if compute_spatial_analysis is not None:
+        spatial = compute_spatial_analysis(grid)
+
     reflection = memory.last_reflection
     if do_reflect and len(memory.history) >= 3:
-        reflection = get_reflection(memory, board_str, client_kw, model)
+        reflection = get_reflection(
+            memory, board_str, client_kw, model, grid=grid,
+        )
 
     user_content = USER_PROMPT_TEMPLATE.format(
         grid=board_str,
         element_summary=element_summary,
+        spatial_analysis=spatial,
         n_history=len(memory.history),
         history=memory.format_history(),
         reflection=reflection,

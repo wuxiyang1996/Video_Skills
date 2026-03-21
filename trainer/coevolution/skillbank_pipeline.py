@@ -111,8 +111,16 @@ class AsyncSkillBankPipeline:
             agent.bank = bank
 
     def _convert_episode_result(self, result: EpisodeResult) -> Any:
-        """Convert ``EpisodeResult`` to the ``Episode`` format for the pipeline."""
+        """Convert ``EpisodeResult`` to the ``Episode`` format for the pipeline.
+
+        When role/side/stage metadata is present (unified_role_rollouts mode),
+        it is forwarded into each ``Experience.interface`` dict and into the
+        episode ``metadata`` so the skill bank can segment skills along
+        those dimensions.
+        """
         from data_structure.experience import Experience, Episode
+
+        has_role_meta = bool(result.role)
 
         experiences = []
         for exp_dict in result.experiences:
@@ -127,8 +135,23 @@ class AsyncSkillBankPipeline:
             exp.idx = exp_dict.get("step", 0)
             exp.summary_state = exp_dict.get("summary_state", "")
             exp.action_type = "primitive"
-            exp.interface = {"env_name": "gamingagent", "game_name": result.game}
+            iface = {"env_name": "gamingagent", "game_name": result.game}
+            if has_role_meta:
+                iface["role"] = exp_dict.get("role", result.role)
+                iface["side"] = exp_dict.get("side", result.side)
+                iface["stage"] = exp_dict.get("stage", "")
+            exp.interface = iface
             experiences.append(exp)
+
+        meta: Dict[str, Any] = {
+            "done": result.terminated or result.truncated,
+            "steps": result.steps,
+            "total_reward": result.total_reward,
+        }
+        if has_role_meta:
+            meta["role"] = result.role
+            meta["side"] = result.side
+            meta["role_index"] = result.role_index
 
         episode = Episode(
             experiences=experiences,
@@ -136,11 +159,7 @@ class AsyncSkillBankPipeline:
             env_name="gamingagent",
             game_name=result.game,
             episode_id=result.episode_id,
-            metadata={
-                "done": result.terminated or result.truncated,
-                "steps": result.steps,
-                "total_reward": result.total_reward,
-            },
+            metadata=meta,
         )
         episode.set_outcome()
         return episode
@@ -434,8 +453,15 @@ class PerGameSkillBankManager:
     ``<bank_dir>/<game>/skill_bank.jsonl``, so skills learned in Tetris
     stay separate from Diplomacy, etc.
 
-    The manager exposes an interface similar to ``AsyncSkillBankPipeline``
-    but routes operations by game name.
+    When ``unified_role_rollouts=True``, Avalon and Diplomacy are
+    further split into per-side / per-power sub-banks:
+
+    - ``avalon/good/skill_bank.jsonl`` — Merlin, Percival, Servant
+    - ``avalon/evil/skill_bank.jsonl`` — Minion, Assassin, Morgana, …
+    - ``diplomacy/FRANCE/skill_bank.jsonl`` — one per power
+
+    Other games keep a single bank.  The manager resolves which bank an
+    episode belongs to via :func:`resolve_bank_key`.
     """
 
     def __init__(
@@ -447,19 +473,32 @@ class PerGameSkillBankManager:
         grpo_group_size: int = 4,
         seed_bank_dir: Optional[str] = None,
         process_executor: Optional[ProcessPoolExecutor] = None,
+        unified_role_rollouts: bool = False,
     ):
+        from trainer.coevolution.config import bank_keys_for_game, resolve_bank_key
+
         self._process_executor = process_executor
+        self._unified_role_rollouts = unified_role_rollouts
+        self._resolve_bank_key = resolve_bank_key
         self._pipelines: Dict[str, AsyncSkillBankPipeline] = {}
+
         for game in games:
-            game_dir = str(Path(bank_dir) / game)
-            Path(game_dir).mkdir(parents=True, exist_ok=True)
-            self._pipelines[game] = AsyncSkillBankPipeline(
-                bank_dir=game_dir,
-                model_name=model_name,
-                executor=executor,
-                report_dir=str(Path(game_dir) / "reports"),
-                game_name=game,
-            )
+            if unified_role_rollouts:
+                keys = bank_keys_for_game(game)
+            else:
+                keys = [game]
+
+            for key in keys:
+                sub_dir = str(Path(bank_dir) / key)
+                Path(sub_dir).mkdir(parents=True, exist_ok=True)
+                self._pipelines[key] = AsyncSkillBankPipeline(
+                    bank_dir=sub_dir,
+                    model_name=model_name,
+                    executor=executor,
+                    report_dir=str(Path(sub_dir) / "reports"),
+                    game_name=game,
+                )
+
         self._bank_dir = bank_dir
         self._grpo_group_size = grpo_group_size
         self._grpo_buffer: Optional[Any] = None
@@ -467,8 +506,10 @@ class PerGameSkillBankManager:
             "segment": [], "contract": [], "curator": [],
         }
         logger.info(
-            "PerGameSkillBankManager: %d game banks under %s (process_pool=%s)",
-            len(games), bank_dir, process_executor is not None,
+            "PerGameSkillBankManager: %d bank(s) under %s "
+            "(unified_role=%s, process_pool=%s)",
+            len(self._pipelines), bank_dir,
+            unified_role_rollouts, process_executor is not None,
         )
 
         if seed_bank_dir:
@@ -479,9 +520,14 @@ class PerGameSkillBankManager:
     def _seed_from_coldstart(self, seed_dir: str) -> None:
         """Copy skills from a cold-start bank into empty per-game banks.
 
-        Only seeds a game's bank when it currently contains zero skills,
-        so an in-progress run that already has its own skills is never
+        Only seeds a bank when it currently contains zero skills, so an
+        in-progress run that already has its own skills is never
         overwritten.
+
+        For composite keys (e.g. ``"avalon/good"``), first tries the
+        matching sub-path in the seed dir, then falls back to the parent
+        game key (e.g. ``seed_dir/avalon/skill_bank.jsonl``) so that a
+        single legacy seed bank can bootstrap all sub-banks.
 
         Works at the file level (via ``SkillBankMVP``) rather than
         requiring the lazy ``SkillBankAgent`` to be initialised.
@@ -493,18 +539,21 @@ class PerGameSkillBankManager:
             logger.warning("seed_bank_dir %s does not exist — skipping seed", seed_dir)
             return
 
-        for game, pipe in self._pipelines.items():
+        for key, pipe in self._pipelines.items():
             dest_file = Path(pipe.bank_dir) / "skill_bank.jsonl"
 
             if dest_file.exists() and dest_file.stat().st_size > 0:
                 logger.info(
-                    "Seed skip %s: bank file already exists at %s", game, dest_file,
+                    "Seed skip %s: bank file already exists at %s", key, dest_file,
                 )
                 continue
 
-            candidate = seed_path / game / "skill_bank.jsonl"
+            candidate = seed_path / key / "skill_bank.jsonl"
+            if not candidate.exists() and "/" in key:
+                parent_game = key.split("/", 1)[0]
+                candidate = seed_path / parent_game / "skill_bank.jsonl"
             if not candidate.exists():
-                logger.info("Seed skip %s: no seed file at %s", game, candidate)
+                logger.info("Seed skip %s: no seed file found", key)
                 continue
 
             bank = SkillBankMVP(str(dest_file))
@@ -513,7 +562,7 @@ class PerGameSkillBankManager:
             if n > 0:
                 bank.save()
                 logger.info(
-                    "Seeded %s bank with %d skills from %s", game, n, candidate,
+                    "Seeded %s bank with %d skills from %s", key, n, candidate,
                 )
             else:
                 logger.info("Seed file %s was empty — nothing to load", candidate)
@@ -593,25 +642,34 @@ class PerGameSkillBankManager:
             )
         return collected
 
-    def pipeline_for(self, game: str) -> Optional[AsyncSkillBankPipeline]:
-        return self._pipelines.get(game)
+    def pipeline_for(self, key: str) -> Optional[AsyncSkillBankPipeline]:
+        return self._pipelines.get(key)
 
-    def get_bank(self, game: str) -> Any:
-        pipe = self._pipelines.get(game)
+    def get_bank(self, key: str) -> Any:
+        """Return the bank for *key*.
+
+        *key* is a game name (legacy mode) or a composite key like
+        ``"avalon/good"`` or ``"diplomacy/FRANCE"`` (unified-role mode).
+        """
+        pipe = self._pipelines.get(key)
         return pipe.get_bank() if pipe else None
 
     def get_banks(self) -> Dict[str, Any]:
-        """Return ``{game: bank}`` for all games that have a loaded bank."""
+        """Return ``{key: bank}`` for all pipelines that have a loaded bank.
+
+        Keys are game names in legacy mode, or composite keys like
+        ``"avalon/good"`` in unified-role mode.
+        """
         return {
-            game: pipe.get_bank()
-            for game, pipe in self._pipelines.items()
+            key: pipe.get_bank()
+            for key, pipe in self._pipelines.items()
             if pipe.get_bank() is not None
         }
 
     def get_agents(self) -> Dict[str, Any]:
         return {
-            game: pipe.get_agent()
-            for game, pipe in self._pipelines.items()
+            key: pipe.get_agent()
+            for key, pipe in self._pipelines.items()
         }
 
     def reset_for_step(self) -> None:
@@ -628,24 +686,35 @@ class PerGameSkillBankManager:
         except Exception as exc:
             logger.warning("Failed to enable GRPO wrappers: %s", exc)
 
+    def _key_for_result(self, result: EpisodeResult) -> str:
+        """Resolve the bank key for an ``EpisodeResult``."""
+        if self._unified_role_rollouts and (result.role or result.side):
+            return self._resolve_bank_key(
+                result.game, result.role, result.side,
+            )
+        return result.game
+
     async def process_batch_async(
         self, results: List[EpisodeResult],
     ) -> None:
-        """Route episodes to the correct per-game pipeline."""
-        by_game: Dict[str, List[EpisodeResult]] = {}
+        """Route episodes to the correct per-game (or per-side/power) pipeline."""
+        by_key: Dict[str, List[EpisodeResult]] = {}
         for r in results:
-            by_game.setdefault(r.game, []).append(r)
+            key = self._key_for_result(r)
+            by_key.setdefault(key, []).append(r)
 
         tasks = []
-        for game, game_results in by_game.items():
-            pipe = self._pipelines.get(game)
+        for key, key_results in by_key.items():
+            pipe = self._pipelines.get(key)
+            if pipe is None:
+                pipe = self._pipelines.get(key_results[0].game)
             if pipe is None:
                 logger.warning(
-                    "No skill bank pipeline for game '%s', skipping %d episodes",
-                    game, len(game_results),
+                    "No skill bank pipeline for key '%s', skipping %d episodes",
+                    key, len(key_results),
                 )
                 continue
-            tasks.append(pipe.process_batch_async(game_results))
+            tasks.append(pipe.process_batch_async(key_results))
 
         if tasks:
             await asyncio.gather(*tasks)

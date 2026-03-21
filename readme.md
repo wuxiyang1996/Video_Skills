@@ -1271,6 +1271,63 @@ rm -rf temp_results/* lora_adapters/* logs/skillbank/*
 
 ---
 
+## Reward shaping patches (Tetris + Sokoban)
+
+Training analysis on `Qwen3-8B_20260320_085011` (30 steps) revealed that
+Tetris (~11 mean reward) and Sokoban (~-1.2 mean reward) were stuck due to
+structural reward problems. See [patches/README.md](patches/README.md)
+(patches 004–005) for full details.
+
+| Game | Problem | Fix | Expected impact |
+|------|---------|-----|-----------------|
+| **Sokoban** | Stuck detection killed episodes at step ~20; -0.1/step penalty drowned positive signals; GRPO had zero positive examples | Exempt from stuck detection; reduce penalty -0.1→-0.02; add Manhattan distance shaping (+0.1 per cell closer) | Episodes run full 200 steps; reward variance for GRPO |
+| **Tetris** | Agent spam-dropped pieces (hard_drop=+1.0, positioning=0.0); no line clears ever; ~10 steps to game over | Penalize new holes (-0.3/hole); reward hole reduction (+0.2/hole); height penalty above 75% | Breaks reward trap; GRPO can distinguish good from bad placements |
+
+Files changed: `episode_runner.py`, `sokobanEnv.py`, `tetrisEnv.py`.
+
+---
+
+## Baseline reward comparison caveat (GPT-5.4 vs training)
+
+The GPT-5.4 baseline episodes in `labeling/output/gpt54_skill_labeled/` use a
+**different reward accounting** than the co-evolution training runs.  Directly
+comparing the numbers without normalization is misleading for Avalon and
+Diplomacy.
+
+### Root cause
+
+| Aspect | GPT-5.4 baseline (`gpt54_skill_labeled`) | Co-evolution training (`step_log.jsonl`) |
+|--------|------------------------------------------|------------------------------------------|
+| **Agent view** | Multi-agent: rewards summed across **all** players/powers | Single-agent: reward for the **one** controlled player/power only |
+| **Shaping** | Raw environment reward only (no `r_follow`, `r_cost`) | Shaped: `r_total = r_env + 0.1×r_follow + r_cost` |
+
+### Per-game breakdown
+
+**Avalon** (5 players: 3 Good, 2 Evil):
+- Baseline records the terminal reward for **all 5 players** summed: Evil win = 2.0, Good win = 3.0 → baseline mean = **2.42**
+- Training records reward for **1 controlled player** + shaping: win ≈ 1.0–1.3, lose ≈ -0.3–0.0 → training mean = **0.76–1.25**
+- Fair single-agent baseline: 2.42 / 5 ≈ **0.48** — training exceeds this
+
+**Diplomacy** (7 powers, each gets `supply_centers / 18` per phase):
+- Baseline sums rewards across **all 7 powers** every phase: first step = 22 total SCs / 18 = 1.222, grows as powers gain territory → baseline total ≈ **35.3** over 20 phases
+- Training records reward for **1 controlled power** + center-gain shaping (+0.5/center): a power with ~3 starting SCs accumulates **4–5.5** over 20 phases
+- Fair single-agent baseline: 35.3 / 7 ≈ **5.04** — training matches this
+
+### Comparable games (single-agent envs)
+
+For Candy Crush, Tetris, 2048, and Sokoban the baseline and training use the
+same single-agent reward (no multi-agent sum), so numbers are directly
+comparable:
+
+| Game | GPT-5.4 baseline | Training best | Delta |
+|------|-------------------|---------------|-------|
+| **Candy Crush** | 541.5 | 591.0 (step 11) | **+9.1%** |
+| **2048** | 1145.4 | 1361.0 (step 26) | **+18.8%** |
+| **Tetris** | 13.4 | 13.3 (step 2) | ~0% (pre reward-shaping patch) |
+| **Sokoban** | -5.4 | -0.8 (step 24) | scale changed by patch |
+
+---
+
 ## Protocol feasibility improvements
 
 The protocol system was extended to produce more actionable, verifiable

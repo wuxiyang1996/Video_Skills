@@ -157,6 +157,7 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
         executor=thread_executor,
         seed_bank_dir=getattr(config, "seed_bank_dir", None),
         process_executor=process_executor,
+        unified_role_rollouts=getattr(config, "unified_role_rollouts", False),
     )
 
     # ── Determine start step ─────────────────────────────────────

@@ -18,6 +18,10 @@ from trainer.coevolution.config import (
     CoEvolutionConfig,
     GAME_DURATION_ORDER,
     GAME_MAX_STEPS,
+    AVALON_ROLES,
+    AVALON_SIDES,
+    DIPLOMACY_POWERS,
+    resolve_bank_key,
 )
 from trainer.coevolution.episode_runner import EpisodeResult, run_episode_async
 from trainer.coevolution.vllm_client import AsyncVLLMClient
@@ -33,11 +37,17 @@ class EpisodeSpec:
     episode_idx: int
     estimated_duration_s: float = 0.0
     eval_only: bool = False
+    # Multi-role fields (populated only in unified_role_rollouts mode)
+    assigned_role: Optional[str] = None
+    assigned_role_index: Optional[int] = None
 
 
 def build_lpt_schedule(
     games: List[str],
     episodes_per_game: int,
+    *,
+    episodes_per_game_overrides: Optional[Dict[str, int]] = None,
+    unified_role_rollouts: bool = False,
 ) -> List[EpisodeSpec]:
     """Build an LPT-ordered list of episode specs.
 
@@ -45,7 +55,12 @@ def build_lpt_schedule(
     interleave episodes round-robin so long-game episodes are spread across
     the entire collection window (enabling cross-system overlap with the
     skill bank pipeline).
+
+    When *unified_role_rollouts* is ``True``, Avalon and Diplomacy episodes
+    cycle through roles deterministically so each rollout covers a
+    different role / power.
     """
+    overrides = episodes_per_game_overrides or {}
     sorted_games = sorted(
         games,
         key=lambda g: GAME_MAX_STEPS.get(g, 200),
@@ -54,16 +69,33 @@ def build_lpt_schedule(
 
     PER_STEP_S = 1.0
     buckets: Dict[str, List[EpisodeSpec]] = {}
+    max_eps = 0
+
     for g in sorted_games:
         ms = GAME_MAX_STEPS.get(g, 200)
         est = ms * PER_STEP_S
-        buckets[g] = [
-            EpisodeSpec(game=g, max_steps=ms, episode_idx=i, estimated_duration_s=est)
-            for i in range(episodes_per_game)
-        ]
+        n_eps = overrides.get(g, episodes_per_game) if unified_role_rollouts else episodes_per_game
+
+        specs: List[EpisodeSpec] = []
+        for i in range(n_eps):
+            spec = EpisodeSpec(
+                game=g, max_steps=ms, episode_idx=i,
+                estimated_duration_s=est,
+            )
+            if unified_role_rollouts:
+                if g == "avalon":
+                    spec.assigned_role_index = i % len(AVALON_ROLES)
+                    spec.assigned_role = AVALON_ROLES[spec.assigned_role_index]
+                elif g == "diplomacy":
+                    spec.assigned_role_index = i % len(DIPLOMACY_POWERS)
+                    spec.assigned_role = DIPLOMACY_POWERS[spec.assigned_role_index]
+            specs.append(spec)
+
+        buckets[g] = specs
+        max_eps = max(max_eps, n_eps)
 
     schedule: List[EpisodeSpec] = []
-    for ep_idx in range(episodes_per_game):
+    for ep_idx in range(max_eps):
         for g in sorted_games:
             if ep_idx < len(buckets[g]):
                 schedule.append(buckets[g][ep_idx])
@@ -94,7 +126,14 @@ async def collect_rollouts(
         orchestrator to feed completed trajectories into the skill bank
         pipeline concurrently (cross-system overlap, Strategy E).
     """
-    schedule = build_lpt_schedule(config.games, config.episodes_per_game)
+    _unified = getattr(config, "unified_role_rollouts", False)
+    _overrides = getattr(config, "episodes_per_game_overrides", {})
+    schedule = build_lpt_schedule(
+        config.games,
+        config.episodes_per_game,
+        episodes_per_game_overrides=_overrides,
+        unified_role_rollouts=_unified,
+    )
 
     eval_games = getattr(config, "eval_games", [])
     eval_eps = getattr(config, "eval_episodes_per_game", 3)
@@ -109,16 +148,25 @@ async def collect_rollouts(
     results: List[EpisodeResult] = []
     results_lock = asyncio.Lock()
 
-    def _bank_for(game: str) -> Any:
+    def _bank_for(spec: EpisodeSpec) -> Any:
         if skill_banks:
-            return skill_banks.get(game)
+            if _unified and spec.assigned_role:
+                key = resolve_bank_key(
+                    spec.game,
+                    spec.assigned_role or "",
+                    AVALON_SIDES.get(spec.assigned_role, spec.assigned_role or ""),
+                )
+                bank = skill_banks.get(key)
+                if bank is not None:
+                    return bank
+            return skill_banks.get(spec.game)
         return skill_bank
 
     max_retries = getattr(config, "max_episode_retries", 2)
 
     async def _run_one(spec: EpisodeSpec) -> None:
         async with semaphore:
-            game_bank = _bank_for(spec.game)
+            game_bank = _bank_for(spec)
             result: Optional[EpisodeResult] = None
             for attempt in range(1, max_retries + 1):
                 try:
@@ -133,6 +181,8 @@ async def collect_rollouts(
                         min_steps_before_stuck=config.min_steps_before_stuck_check,
                         vllm_base_urls=config.vllm_base_urls,
                         model_name=config.model_name,
+                        assigned_role=spec.assigned_role,
+                        assigned_role_index=spec.assigned_role_index,
                     )
                     break
                 except Exception as exc:
@@ -164,8 +214,8 @@ async def collect_rollouts(
 
     t0 = time.monotonic()
     logger.info(
-        "Collecting rollouts: %d episodes (%d games × %d eps), max_concurrent=%d",
-        len(schedule), len(config.games), config.episodes_per_game,
+        "Collecting rollouts: %d episodes (%d games, unified_role=%s), max_concurrent=%d",
+        len(schedule), len(config.games), _unified,
         config.max_concurrent_episodes,
     )
 

@@ -314,6 +314,48 @@ class EpisodeResult:
     wall_time_s: float = 0.0
     eval_only: bool = False
 
+    # Multi-role metadata (populated when unified_role_rollouts=True)
+    role: str = ""          # e.g. "Merlin", "FRANCE"
+    side: str = ""          # e.g. "good", "evil", or power name
+    role_index: int = -1    # player index (Avalon) or power ordinal
+
+
+# ---------------------------------------------------------------------------
+# Stage / side inference for multi-role games
+# ---------------------------------------------------------------------------
+
+def _detect_avalon_stage(step: int, max_steps: int, info: dict) -> str:
+    """Return Avalon game stage based on quest progress and phase."""
+    phase = info.get("phase", -1)
+    if phase == 3:
+        return "assassination"
+    quest = info.get("quest", info.get("current_quest", 0))
+    if quest <= 1:
+        return "early_quests"
+    if quest <= 3:
+        return "mid_quests"
+    return "late_quests"
+
+
+def _detect_diplomacy_stage(step: int, max_steps: int, info: dict) -> str:
+    """Return Diplomacy game stage based on phase progression."""
+    phase_name = info.get("phase_name", "")
+    if phase_name:
+        year_match = re.search(r"(\d{4})", phase_name)
+        if year_match:
+            year = int(year_match.group(1))
+            if year <= 1902:
+                return "opening"
+            if year <= 1907:
+                return "midgame"
+            return "endgame"
+    ratio = step / max(max_steps, 1)
+    if ratio < 0.25:
+        return "opening"
+    if ratio < 0.65:
+        return "midgame"
+    return "endgame"
+
 
 # ---------------------------------------------------------------------------
 # Helpers (lightweight, no LLM calls)
@@ -380,6 +422,32 @@ def _detect_urgency(summary_state: str, game_name: str) -> str:
         if t is not None and t < 50:
             warnings.append("time running out—NAVIGATE quickly")
     return "; ".join(warnings)
+
+
+def _build_rich_state_observation(
+    info: Dict[str, Any],
+    summary_state: str,
+) -> str:
+    """Build a rich spatial observation for games that provide grid data
+    (e.g. sokoban).  Falls back to *summary_state* when grid is absent."""
+    parts: List[str] = []
+    grid_str = info.get("grid_string")
+    if grid_str:
+        parts.append(f"Board:\n{grid_str}")
+    element_summary = info.get("element_summary")
+    if element_summary:
+        parts.append(f"Elements:\n{element_summary}")
+    spatial = info.get("spatial_analysis")
+    if spatial:
+        parts.append(f"Analysis:\n{spatial}")
+    deadlock_info = info.get("deadlock_info")
+    if deadlock_info:
+        parts.append(f"*** WARNING: {deadlock_info} — consider restart ***")
+    if summary_state:
+        parts.append(f"Status: {summary_state}")
+    if parts:
+        return "\n\n".join(parts)
+    return summary_state or ""
 
 
 def _normalize_intention(raw: str) -> str:
@@ -880,6 +948,8 @@ async def run_episode_async(
     min_steps_before_stuck: int = 20,
     vllm_base_urls: Optional[List[str]] = None,
     model_name: Optional[str] = None,
+    assigned_role: Optional[str] = None,
+    assigned_role_index: Optional[int] = None,
 ) -> EpisodeResult:
     """Run one game episode asynchronously.
 
@@ -894,6 +964,11 @@ async def run_episode_async(
         Base URLs for vLLM instances (used for LLM opponent policies).
     model_name : str | None
         Model name for LLM opponent policy requests.
+    assigned_role : str | None
+        Explicit role/power to control (unified-role mode).  When
+        *None* the legacy random-role selection is used.
+    assigned_role_index : int | None
+        Explicit player index (Avalon) or power ordinal (Diplomacy).
     """
     imp = _lazy_imports()
     GAME_CONFIGS = imp["GAME_CONFIGS"]
@@ -930,9 +1005,12 @@ async def run_episode_async(
     elif game == "diplomacy":
         if DiplomacyNLWrapper is None:
             raise ImportError("DiplomacyNLWrapper not available")
-        power = random.choice(
-            ["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"]
-        )
+        _ALL_POWERS = ["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"]
+        if assigned_role is not None:
+            power = assigned_role
+        else:
+            power = random.choice(_ALL_POWERS)
+        _role_idx = _ALL_POWERS.index(power) if power in _ALL_POWERS else 0
         logger.info("Diplomacy: controlling %s this episode", power)
         env = _DiplomacyAdapter(DiplomacyNLWrapper(
             controlled_power=power, max_phases=20,
@@ -943,8 +1021,19 @@ async def run_episode_async(
     elif game == "avalon":
         if AvalonNLWrapper is None:
             raise ImportError("AvalonNLWrapper not available")
-        player = random.randint(0, 4)
-        logger.info("Avalon: controlling player %d this episode", player)
+        _AVALON_ROLE_NAMES = ["Merlin", "Servant", "Servant", "Minion", "Assassin"]
+        _AVALON_SIDE_MAP = {
+            "Merlin": "good", "Percival": "good", "Servant": "good",
+            "Mordred": "evil", "Morgana": "evil", "Oberon": "evil",
+            "Minion": "evil", "Assassin": "evil",
+        }
+        if assigned_role_index is not None:
+            player = assigned_role_index
+        else:
+            player = random.randint(0, 4)
+        _role_name = _AVALON_ROLE_NAMES[player] if player < len(_AVALON_ROLE_NAMES) else "Servant"
+        _role_side = _AVALON_SIDE_MAP.get(_role_name, "good")
+        logger.info("Avalon: controlling player %d (%s/%s) this episode", player, _role_name, _role_side)
         env = _AvalonAdapter(AvalonNLWrapper(
             num_players=5, controlled_player=player,
             vllm_base_urls=vllm_base_urls, model_name=model_name,
@@ -959,10 +1048,33 @@ async def run_episode_async(
         else:
             base_env = make_gaming_env(game=game, max_steps=max_steps)
 
-        if game == "sokoban" and SokobanNLWrapper is not None:
-            env = SokobanNLWrapper(base_env, reflect_every=3)
+        if game == "tetris":
+            try:
+                from env_wrappers.tetris_macro_wrapper import TetrisMacroActionWrapper
+                env = TetrisMacroActionWrapper(GamingAgentNLWrapper(base_env))
+            except ImportError:
+                logger.warning("TetrisMacroActionWrapper unavailable, using primitive actions")
+                env = GamingAgentNLWrapper(base_env)
+        elif game == "sokoban" and SokobanNLWrapper is not None:
+            env = SokobanNLWrapper(
+                base_env, reflect_every=3,
+                enable_restart=True, auto_detect_deadlock=True,
+            )
         else:
             env = GamingAgentNLWrapper(base_env)
+
+    # ── Resolve role / side metadata for multi-role games ───────
+    _ep_role = ""
+    _ep_side = ""
+    _ep_role_idx = -1
+    if game == "diplomacy":
+        _ep_role = power
+        _ep_side = power          # each power is its own "side"
+        _ep_role_idx = _role_idx
+    elif game == "avalon":
+        _ep_role = _role_name
+        _ep_side = _role_side
+        _ep_role_idx = player
 
     if exe:
         obs_nl, info = await loop.run_in_executor(exe, env.reset)
@@ -971,6 +1083,7 @@ async def run_episode_async(
 
     action_names = info.get("action_names", [])
     structured_state = info.get("structured_state")
+    current_info = info
 
     bank_available = skill_bank is not None and (
         hasattr(skill_bank, "__len__") and len(skill_bank) > 0
@@ -1147,7 +1260,18 @@ async def run_episode_async(
             skill_context += "\n"
 
         recent_context = _build_recent_context(recent_actions, recent_rewards)
-        summary_for_action = current_summary if current_summary else obs_nl[:4000]
+        _use_raw_obs = getattr(env, "_is_macro_action", False)
+        _use_rich_obs = getattr(env, "_has_rich_observation", False)
+        if _use_raw_obs:
+            summary_for_action = obs_nl[:4000]
+        elif _use_rich_obs and current_info:
+            summary_for_action = _build_rich_state_observation(
+                current_info, summary_state,
+            )
+        else:
+            summary_for_action = (
+                current_summary if current_summary else obs_nl[:4000]
+            )
         skill_text = _format_skill_guidance_for_prompt(
             guidance, skill_tracker.protocol_step_idx,
             progress_summary=skill_tracker.get_progress_summary(summary_state),
@@ -1191,6 +1315,7 @@ async def run_episode_async(
             break
 
         done = terminated or truncated
+        raw_env_reward = next_info.get("raw_env_reward", float(reward))
         total_reward += reward
         next_action_names = next_info.get("action_names", action_names)
         next_structured_state = next_info.get("structured_state")
@@ -1224,6 +1349,9 @@ async def run_episode_async(
                     "intention_source": "base_model",
                     "active_skill": skill_id,
                     "intrinsic_bonus": skill_tracker._intrinsic_bonus,
+                    "raw_env_reward": raw_env_reward,
+                    "placement_metrics": next_info.get("placement_metrics"),
+                    "board_stats": next_info.get("board_stats"),
                 },
             ))
 
@@ -1266,17 +1394,32 @@ async def run_episode_async(
                 },
             ))
 
-        experiences.append({
+        _exp_dict: Dict[str, Any] = {
             "step": step_count,
             "state": obs_nl,
             "action": str(action),
             "reward": float(reward),
+            "raw_env_reward": raw_env_reward,
             "next_state": next_obs_nl,
             "done": done,
             "intention": current_intention,
             "summary_state": summary_state,
             "skill_id": skill_id,
-        })
+        }
+        if next_info.get("board_stats"):
+            _exp_dict["board_stats"] = next_info["board_stats"]
+        if _ep_role:
+            _exp_dict["role"] = _ep_role
+            _exp_dict["side"] = _ep_side
+            if game == "avalon":
+                _exp_dict["stage"] = _detect_avalon_stage(
+                    step_count, max_steps, next_info,
+                )
+            elif game == "diplomacy":
+                _exp_dict["stage"] = _detect_diplomacy_stage(
+                    step_count, max_steps, next_info,
+                )
+        experiences.append(_exp_dict)
 
         prev_summary_state = summary_state
         prev_intention = current_intention
@@ -1284,6 +1427,7 @@ async def run_episode_async(
         if m:
             tag_history.append(m.group(1).upper())
         obs_nl = next_obs_nl
+        current_info = next_info
         action_names = next_action_names
         structured_state = next_structured_state
         step_count += 1
@@ -1293,8 +1437,10 @@ async def run_episode_async(
 
         # Early termination: stuck detection
         # Skip for games with sparse rewards (reward only at game end)
-        _SPARSE_REWARD_GAMES = {"avalon", "diplomacy", "pokemon_red"}
-        if (game not in _SPARSE_REWARD_GAMES
+        # and games with constant per-step penalties (sokoban: -0.1/step
+        # guarantees sum<=0 and kills episodes before learning can happen).
+        _STUCK_EXEMPT_GAMES = {"avalon", "diplomacy", "pokemon_red", "sokoban"}
+        if (game not in _STUCK_EXEMPT_GAMES
                 and step_count >= min_steps_before_stuck
                 and len(recent_rewards) >= stuck_window
                 and sum(recent_rewards[-stuck_window:]) <= 0):
@@ -1321,4 +1467,7 @@ async def run_episode_async(
         grpo_records=grpo_records,
         experiences=experiences,
         wall_time_s=wall_time,
+        role=_ep_role,
+        side=_ep_side,
+        role_index=_ep_role_idx,
     )

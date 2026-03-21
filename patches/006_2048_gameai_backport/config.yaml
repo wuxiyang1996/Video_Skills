@@ -1,0 +1,28 @@
+game_env:
+  name: "twenty_forty_eight"
+  description: "2048 game environment"
+  env_type: "custom"
+  render_mode: "human"
+  max_steps: 1000
+  seed: 0
+  num_runs: 3
+
+agent:
+  name: "2048_agent"
+  model_name: "claude-3-7-sonnet-latest"
+  cache_dir: "cache/twenty_forty_eight"
+  reasoning_effort: "high"
+  token_limit: 50000
+  harness: true
+  observation_mode: "text"
+  use_reflection: true
+  use_perception: true
+  modules:
+    base_module:
+
+    perception_module:
+
+    memory_module:
+      max_memory: 15
+
+    reasoning_module:

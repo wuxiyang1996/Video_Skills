@@ -40,6 +40,60 @@ GAME_MAX_STEPS: Dict[str, int] = {
 
 EMULATOR_GAMES = {"pokemon_red"}
 
+# ── Multi-role rollout constants ─────────────────────────────────────
+# When ``unified_role_rollouts`` is enabled, the same decision agent
+# plays ALL roles and each rollout is tagged with role / side metadata.
+# Per-game episode overrides ensure sufficient role coverage.
+
+EPISODES_PER_GAME_MULTIROLE: Dict[str, int] = {
+    "avalon": 5,
+    "diplomacy": 7,
+}
+
+AVALON_ROLES: List[str] = ["Merlin", "Servant", "Servant", "Minion", "Assassin"]
+AVALON_SIDES: Dict[str, str] = {
+    "Merlin": "good", "Percival": "good", "Servant": "good",
+    "Mordred": "evil", "Morgana": "evil", "Oberon": "evil",
+    "Minion": "evil", "Assassin": "evil",
+}
+DIPLOMACY_POWERS: List[str] = [
+    "AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY",
+]
+
+
+def resolve_bank_key(game: str, role: str = "", side: str = "") -> str:
+    """Return the skill-bank routing key for an episode.
+
+    In unified-role mode the key encodes the role dimension so each
+    side (Avalon) or power (Diplomacy) gets its own bank.  For all
+    other games the key is just the game name.
+
+    Examples::
+
+        resolve_bank_key("avalon", "Merlin", "good")   -> "avalon/good"
+        resolve_bank_key("avalon", "Assassin", "evil")  -> "avalon/evil"
+        resolve_bank_key("diplomacy", "FRANCE", "FRANCE") -> "diplomacy/FRANCE"
+        resolve_bank_key("tetris")                      -> "tetris"
+    """
+    if game == "avalon" and side:
+        return f"avalon/{side}"
+    if game == "diplomacy" and role:
+        return f"diplomacy/{role}"
+    return game
+
+
+def bank_keys_for_game(game: str) -> List[str]:
+    """Return all possible bank keys for a game.
+
+    Used by ``PerGameSkillBankManager`` to pre-create sub-bank pipelines.
+    """
+    if game == "avalon":
+        return ["avalon/good", "avalon/evil"]
+    if game == "diplomacy":
+        return [f"diplomacy/{p}" for p in DIPLOMACY_POWERS]
+    return [game]
+
+
 GAME_DURATION_ORDER = [
     "diplomacy",
     "twenty_forty_eight",
@@ -108,6 +162,21 @@ class CoEvolutionConfig:
     eval_games: List[str] = field(default_factory=lambda: list(EVAL_ONLY_GAMES))
     episodes_per_game: int = 4
     eval_episodes_per_game: int = 3
+
+    # ── Unified multi-role rollout mode ──────────────────────────
+    # When True, Avalon and Diplomacy use a single shared decision
+    # agent for all roles.  Rollouts are tagged with role / side /
+    # stage metadata so the skill bank can segment skills along
+    # those dimensions.  Episode counts follow per-game overrides
+    # (default: 5 for Avalon, 7 for Diplomacy).  Other games are
+    # unaffected.
+    # When False (default), the legacy random-role behaviour is used
+    # and ``episodes_per_game`` applies uniformly to every game.
+    unified_role_rollouts: bool = False
+    episodes_per_game_overrides: Dict[str, int] = field(
+        default_factory=lambda: dict(EPISODES_PER_GAME_MULTIROLE),
+    )
+
     max_concurrent_episodes: int = 64
     total_steps: int = 60
 
@@ -298,6 +367,19 @@ class CoEvolutionConfig:
         if name in ("skill_selection", "action_taking"):
             return str(Path(self.decision_adapter_dir) / name)
         return str(Path(self.skillbank_adapter_dir) / name)
+
+    def get_episodes_for_game(self, game: str) -> int:
+        """Return the episode count for *game*.
+
+        In unified-role mode, per-game overrides are applied
+        (5 for Avalon, 7 for Diplomacy by default).  Otherwise
+        the global ``episodes_per_game`` is returned for all games.
+        """
+        if self.unified_role_rollouts:
+            return self.episodes_per_game_overrides.get(
+                game, self.episodes_per_game,
+            )
+        return self.episodes_per_game
 
     def active_games(self, step: int) -> List[str]:
         """Return the list of active games for the given training step.
