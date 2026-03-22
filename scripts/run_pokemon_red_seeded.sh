@@ -1,25 +1,32 @@
 #!/usr/bin/env bash
 # ======================================================================
-#  Tetris + Sokoban training — bootstrapped from a previous checkpoint.
+#  Pokemon Red co-evolution training — seeded with GPT-5.4 skill bank.
 #
-#  Loads trained LoRA adapters from a prior co-evolution run (default:
-#  step_0029 of the Qwen3-8B_20260321_010513 run) and focuses on the
-#  two single-player puzzle/arcade games.
+#  Loads trained LoRA adapters from a prior co-evolution run and seeds
+#  the skill bank with GPT-5.4-extracted skills for Pokemon Red.  This
+#  gives the agent a head-start with 9 pre-extracted skills (Finish the
+#  Opponent, Heal at Pokecenter, Get Starter Pokemon, Finish Oak Lab
+#  Intro, Explore Opening Area, Start the Journey, Trigger Position
+#  Event, Start with Squirtle, Preserve Squirtle) instead of starting
+#  from an empty bank.
+#
+#  Pokemon Red is emulator-backed (PyBoy); episodes serialise to avoid
+#  race conditions under concurrent init.
 #
 #  Usage:
-#    bash scripts/run_tetris_sokoban.sh
+#    bash scripts/run_pokemon_red_seeded.sh
 #
 #    # Override checkpoint source:
-#    CKPT_STEP=step_0024 bash scripts/run_tetris_sokoban.sh
+#    CKPT_STEP=step_0029 bash scripts/run_pokemon_red_seeded.sh
+#
+#    # Custom seed bank (default: labeling/output/gpt54_skillbank):
+#    SEED_BANK_DIR=path/to/bank bash scripts/run_pokemon_red_seeded.sh
 #
 #    # Also keep training 2048 alongside:
-#    EXTRA_GAMES="twenty_forty_eight" bash scripts/run_tetris_sokoban.sh
-#
-#    # Train Sokoban solo (recommended for bootstrapping push skills):
-#    SOKOBAN_ONLY=1 bash scripts/run_tetris_sokoban.sh
+#    EXTRA_GAMES="twenty_forty_eight" bash scripts/run_pokemon_red_seeded.sh
 #
 #    # Custom step count:
-#    TOTAL_STEPS=50 bash scripts/run_tetris_sokoban.sh
+#    TOTAL_STEPS=50 bash scripts/run_pokemon_red_seeded.sh
 # ======================================================================
 set -euo pipefail
 
@@ -39,9 +46,9 @@ mkdir -p "${HF_HUB_CACHE}"
 # ── PYTHONPATH ────────────────────────────────────────────────────────
 export PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/../GamingAgent:${PROJECT_ROOT}/../AgentEvolver:${PROJECT_ROOT}/../AI_Diplomacy:${PROJECT_ROOT}/../Orak:${PYTHONPATH:-}"
 
-# ── Source checkpoint (adapters + skill banks) ────────────────────────
-SOURCE_RUN="${SOURCE_RUN:-runs/Qwen3-8B_20260321_010513}"
-CKPT_STEP="${CKPT_STEP:-step_0029}"
+# ── Source checkpoint (adapters only) ─────────────────────────────────
+SOURCE_RUN="${SOURCE_RUN:-runs/Qwen3-8B_20260321_041333}"
+CKPT_STEP="${CKPT_STEP:-step_0034}"
 CKPT_DIR="${SOURCE_RUN}/checkpoints/${CKPT_STEP}"
 
 if [ ! -d "${CKPT_DIR}" ]; then
@@ -50,6 +57,22 @@ if [ ! -d "${CKPT_DIR}" ]; then
     ls "${SOURCE_RUN}/checkpoints/" 2>/dev/null || echo "  (none)"
     exit 1
 fi
+
+# ── Seed skill bank (GPT-5.4 extracted skills) ───────────────────────
+SEED_BANK_DIR="${SEED_BANK_DIR:-labeling/output/gpt54_skillbank}"
+
+if [ ! -d "${SEED_BANK_DIR}" ]; then
+    echo "[ERROR] Seed bank directory not found: ${SEED_BANK_DIR}"
+    exit 1
+fi
+
+SEED_SKILLS_FILE="${SEED_BANK_DIR}/pokemon_red/skill_bank.jsonl"
+if [ ! -f "${SEED_SKILLS_FILE}" ]; then
+    echo "[ERROR] No pokemon_red seed skills found at: ${SEED_SKILLS_FILE}"
+    exit 1
+fi
+SEED_SKILL_COUNT=$(wc -l < "${SEED_SKILLS_FILE}")
+echo "[pokemon_red] Seed skill bank: ${SEED_SKILLS_FILE} (${SEED_SKILL_COUNT} skills)"
 
 # ── Configurable parameters ──────────────────────────────────────────
 MODEL="${VLLM_MODEL:-Qwen/Qwen3-8B}"
@@ -61,32 +84,22 @@ SPEC_MODEL="${SPEC_MODEL:-Qwen/Qwen3-0.6B}"
 SPEC_TOKENS="${SPEC_TOKENS:-5}"
 
 TOTAL_STEPS="${TOTAL_STEPS:-40}"
-EPISODES="${EPISODES_PER_GAME:-8}"
+EPISODES="${EPISODES_PER_GAME:-4}"
 CKPT_INTERVAL="${CKPT_INTERVAL:-5}"
 WANDB_PROJECT="${WANDB_PROJECT:-game-ai-coevolution}"
-if [ "${SOKOBAN_ONLY:-}" = "1" ]; then
-    WANDB_RUN_NAME="${WANDB_RUN_NAME:-sokoban-solo-from-${CKPT_STEP}}"
-else
-    WANDB_RUN_NAME="${WANDB_RUN_NAME:-tetris-sokoban-from-${CKPT_STEP}}"
-fi
-DEBUG_IO="${DEBUG_IO:-}"
+DEBUG_IO="${DEBUG_IO:-true}"
 
-# Games: Tetris + Sokoban, plus any extras the user wants.
-# Set SOKOBAN_ONLY=1 to train Sokoban in isolation (recommended for
-# bootstrapping basic push skills before co-training with Tetris).
 EXTRA_GAMES="${EXTRA_GAMES:-}"
-if [ "${SOKOBAN_ONLY:-}" = "1" ]; then
-    GAMES="sokoban"
-else
-    GAMES="tetris sokoban ${EXTRA_GAMES}"
-fi
+GAMES="pokemon_red ${EXTRA_GAMES}"
 
 # ── Banner ────────────────────────────────────────────────────────────
 echo "══════════════════════════════════════════════════════════════"
-echo "  Tetris + Sokoban Co-Evolution Training"
+echo "  Pokemon Red Co-Evolution Training (GPT-5.4 Seed Skills)"
 echo "══════════════════════════════════════════════════════════════"
 echo "  Source run:    ${SOURCE_RUN}"
 echo "  Checkpoint:    ${CKPT_STEP}"
+echo "  Seed bank:     ${SEED_BANK_DIR}"
+echo "  Seed skills:   ${SEED_SKILL_COUNT} (pokemon_red)"
 echo "  Model:         ${MODEL}"
 echo "  Games:         ${GAMES}"
 echo "  Total steps:   ${TOTAL_STEPS}"
@@ -100,13 +113,11 @@ echo "════════════════════════�
 # ── Resolve adapter paths from checkpoint ─────────────────────────────
 DECISION_ADAPTERS="${CKPT_DIR}/adapters/decision"
 SKILLBANK_ADAPTERS="${CKPT_DIR}/adapters/skillbank"
-SEED_BANK="${CKPT_DIR}/banks"
 
 echo ""
-echo "[tetris_sokoban] Loading adapters from ${CKPT_STEP}:"
+echo "[pokemon_red] Loading adapters from ${CKPT_STEP}:"
 echo "  Decision:  ${DECISION_ADAPTERS}"
 echo "  SkillBank: ${SKILLBANK_ADAPTERS}"
-echo "  Seed bank: ${SEED_BANK}"
 
 for adapter_dir in \
     "${DECISION_ADAPTERS}/skill_selection" \
@@ -119,11 +130,11 @@ for adapter_dir in \
         exit 1
     fi
 done
-echo "[tetris_sokoban] All 5 adapters verified."
+echo "[pokemon_red] All 5 adapters verified."
 
-# ── Ensure LoRA adapters are copied into the new run ──────────────────
+# ── Initialise new run and copy adapters ──────────────────────────────
 echo ""
-echo "[tetris_sokoban] Initialising new run..."
+echo "[pokemon_red] Initialising new run..."
 
 RESOLVED_RUN_DIR=$(python -c "
 import sys, os
@@ -150,7 +161,30 @@ print(cfg.run_dir)
 ")
 
 RUN_DIR="${RESOLVED_RUN_DIR}"
-echo "[tetris_sokoban] New run dir: ${RUN_DIR}"
+echo "[pokemon_red] New run dir: ${RUN_DIR}"
+
+# ── Pre-copy seed skills into the run's skillbank directory ───────────
+# The --seed-bank-dir flag handles seeding at startup, but we also copy
+# the files directly so that skills are guaranteed present even if the
+# lazy seeding has already been skipped (e.g. on resume).
+echo ""
+echo "[pokemon_red] Pre-seeding skill banks into run directory..."
+for game_dir in "${SEED_BANK_DIR}"/*/; do
+    game_name="$(basename "${game_dir}")"
+    src_file="${game_dir}skill_bank.jsonl"
+    if [ -f "${src_file}" ]; then
+        dest_dir="${RUN_DIR}/skillbank/${game_name}"
+        dest_file="${dest_dir}/skill_bank.jsonl"
+        if [ ! -f "${dest_file}" ] || [ ! -s "${dest_file}" ]; then
+            mkdir -p "${dest_dir}"
+            cp "${src_file}" "${dest_file}"
+            n=$(wc -l < "${dest_file}")
+            echo "  Seeded ${game_name}: ${n} skills"
+        else
+            echo "  Skip ${game_name}: bank already exists"
+        fi
+    fi
+done
 
 # ── Build training args ───────────────────────────────────────────────
 # shellcheck disable=SC2086
@@ -162,11 +196,11 @@ TRAIN_ARGS=(
     --checkpoint-interval "${CKPT_INTERVAL}"
     --model "${MODEL}"
     --wandb-project "${WANDB_PROJECT}"
-    --wandb-run-name "${WANDB_RUN_NAME}"
+    --wandb-run-name "pokemon-red-seeded-from-${CKPT_STEP}"
     --run-dir "${RUN_DIR}"
     --load-decision-adapters "${DECISION_ADAPTERS}"
     --load-skillbank-adapters "${SKILLBANK_ADAPTERS}"
-    --seed-bank-dir "${SEED_BANK}"
+    --seed-bank-dir "${SEED_BANK_DIR}"
     --vllm-gpus ${VLLM_GPUS}
     --grpo-devices ${GRPO_GPUS}
     --vllm-base-port "${PORT}"
@@ -181,11 +215,11 @@ fi
 
 # ── Launch ────────────────────────────────────────────────────────────
 echo ""
-echo "[tetris_sokoban] Starting co-evolution (Tetris + Sokoban)..."
-echo "[tetris_sokoban] Command: python scripts/run_coevolution.py ${TRAIN_ARGS[*]}"
+echo "[pokemon_red] Starting co-evolution (Pokemon Red, seeded)..."
+echo "[pokemon_red] Command: python scripts/run_coevolution.py ${TRAIN_ARGS[*]}"
 echo ""
 
 python scripts/run_coevolution.py "${TRAIN_ARGS[@]}"
 
 echo ""
-echo "[tetris_sokoban] Training complete."
+echo "[pokemon_red] Training complete."

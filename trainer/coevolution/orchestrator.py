@@ -467,10 +467,64 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
             except Exception as exc:
                 logger.error("Checkpoint save failed: %s", exc)
 
+        nonlocal _best_reward, _best_step, _decline_count
+        _cur_reward = step_summary["mean_reward"]
+        if _cur_reward > _best_reward:
+            _best_reward = _cur_reward
+            _best_step = _step
+            _decline_count = 0
+            _BEST_CKPT_STEP = 99999
+            try:
+                save_checkpoint(
+                    config.checkpoint_dir, _BEST_CKPT_STEP,
+                    bank_agents=sb_manager.get_agents(),
+                    adapter_dir=config.adapter_dir,
+                    metadata={"best": True, "mean_reward": _cur_reward,
+                              "original_step": _step},
+                )
+                logger.info(
+                    "New best reward %.1f at step %d — saved best checkpoint",
+                    _best_reward, _step,
+                )
+            except Exception:
+                pass
+        else:
+            _decline_count += 1
+            logger.info(
+                "Reward %.1f < best %.1f (step %d), decline %d/%d",
+                _cur_reward, _best_reward, _best_step,
+                _decline_count, _DECLINE_PATIENCE,
+            )
+            _BEST_CKPT_STEP = 99999
+            if _decline_count >= _DECLINE_PATIENCE and _best_step >= 0:
+                try:
+                    load_checkpoint(
+                        config.checkpoint_dir, _BEST_CKPT_STEP,
+                        adapter_dir=config.adapter_dir,
+                        bank_agents=sb_manager.get_agents(),
+                    )
+                    logger.info(
+                        "Rolled back adapters to best step %d (reward %.1f) "
+                        "after %d consecutive declines",
+                        _best_step, _best_reward, _decline_count,
+                    )
+                    _decline_count = 0
+                    if vllm_manager:
+                        try:
+                            await vllm_manager.reload_adapters()
+                        except Exception:
+                            pass
+                except Exception as exc:
+                    logger.warning("Best-checkpoint rollback failed: %s", exc)
+
     # ==================================================================
     # MAIN LOOP — pipelined: GRPO(N) overlaps with rollout(N+1)
     # ==================================================================
     _pending_grpo = None  # (asyncio.Task, step_ctx) or None
+    _best_reward = float("-inf")
+    _best_step = -1
+    _decline_count = 0
+    _DECLINE_PATIENCE = 3
 
     for step in range(start_step, config.total_steps):
         step_t0 = time.monotonic()

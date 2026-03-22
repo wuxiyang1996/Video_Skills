@@ -63,6 +63,8 @@ def _lazy_imports():
         except ImportError:
             make_orak_env = None
 
+        from env_wrappers.subprocess_env import SubprocessEnv
+
         # Evolver wrappers (Diplomacy, Avalon)
         try:
             from env_wrappers.diplomacy_nl_wrapper import DiplomacyNLWrapper
@@ -91,6 +93,7 @@ def _lazy_imports():
             "GAME_CONFIGS": GAME_CONFIGS,
             "make_gaming_env": make_gaming_env,
             "make_orak_env": make_orak_env,
+            "SubprocessEnv": SubprocessEnv,
             "GamingAgentNLWrapper": GamingAgentNLWrapper,
             "SokobanNLWrapper": SokobanNLWrapper,
             "DiplomacyNLWrapper": DiplomacyNLWrapper,
@@ -724,7 +727,13 @@ def _parse_action_response(
         if matched:
             return matched, reasoning, intention
 
-    return (valid_actions[0] if valid_actions else "stay"), reasoning, intention
+    fallback = valid_actions[0] if valid_actions else "stay"
+    return _ActionFallback(fallback), reasoning, intention
+
+
+class _ActionFallback(str):
+    """Marker subclass so callers can detect fuzzy-match failures."""
+    pass
 
 
 def _fuzzy_match_action(raw: str, valid_actions: List[str]) -> Optional[str]:
@@ -991,11 +1000,18 @@ async def run_episode_async(
     exe = executor
 
     if game in ORAK_GAMES_SET:
+        SubprocessEnv = imp["SubprocessEnv"]
         if make_orak_env is None:
-            raise ImportError(
-                f"Game '{game}' requires evaluate_orak but it could not be imported"
+            logger.info(
+                "Orak import unavailable — using SubprocessEnv for %s", game
             )
-        if exe:
+            if exe:
+                env = await loop.run_in_executor(
+                    exe, SubprocessEnv, game, max_steps,
+                )
+            else:
+                env = SubprocessEnv(game=game, max_steps=max_steps)
+        elif exe:
             env = await loop.run_in_executor(
                 exe, make_orak_env, game, max_steps,
             )
@@ -1059,6 +1075,7 @@ async def run_episode_async(
             env = SokobanNLWrapper(
                 base_env, reflect_every=3,
                 enable_restart=True, auto_detect_deadlock=True,
+                distance_shaping=True,
             )
         else:
             env = GamingAgentNLWrapper(base_env)
@@ -1293,8 +1310,8 @@ async def run_episode_async(
         action_result = await vllm_client.generate_chat(
             [{"role": "user", "content": action_prompt}],
             adapter="action_taking",
-            temperature=temperature, max_tokens=64,
-            stop=["\n\nAvailable", "\n\nGame state", "\n\n---"],
+            temperature=temperature, max_tokens=48,
+            stop=["\n\nAvailable", "\n\nGame state", "\n\n---", "\n\n"],
         )
         action, reasoning, parsed_intention = _parse_action_response(
             action_result.text, step_actions,
@@ -1330,13 +1347,18 @@ async def run_episode_async(
 
         # ── 7. Record GRPO I/O ───────────────────────────────────
         if action_prompt:
+            _format_failed = isinstance(action, _ActionFallback)
             try:
                 action_num = step_actions.index(action) + 1
             except ValueError:
                 action_num = 1
             subgoal_line = f"SUBGOAL: {current_intention}\n" if current_intention else ""
-            action_completion = f"{subgoal_line}REASONING: {reasoning or 'Expert play.'}\nACTION: {action_num}"
-            _action_reward = float(reward) + skill_tracker._intrinsic_bonus
+            if _format_failed:
+                action_completion = action_result.text.strip()[:150]
+                _action_reward = 0.0
+            else:
+                action_completion = f"{subgoal_line}REASONING: {reasoning or 'Expert play.'}\nACTION: {action_num}"
+                _action_reward = float(reward) + skill_tracker._intrinsic_bonus + 1.0
             grpo_records.append(GRPORecord(
                 adapter="action_taking", game=game, episode_id=episode_id, step=step_count,
                 prompt=action_prompt, completion=action_completion, reward=_action_reward,
@@ -1436,10 +1458,10 @@ async def run_episode_async(
             break
 
         # Early termination: stuck detection
-        # Skip for games with sparse rewards (reward only at game end)
-        # and games with constant per-step penalties (sokoban: -0.1/step
-        # guarantees sum<=0 and kills episodes before learning can happen).
-        _STUCK_EXEMPT_GAMES = {"avalon", "diplomacy", "pokemon_red", "sokoban"}
+        # Skip for games with sparse rewards (reward only at game end).
+        # Sokoban now uses distance-based reward shaping, so it produces
+        # positive rewards on productive pushes and can use stuck detection.
+        _STUCK_EXEMPT_GAMES = {"avalon", "diplomacy", "pokemon_red"}
         if (game not in _STUCK_EXEMPT_GAMES
                 and step_count >= min_steps_before_stuck
                 and len(recent_rewards) >= stuck_window

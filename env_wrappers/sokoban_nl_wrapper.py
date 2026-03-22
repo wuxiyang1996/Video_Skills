@@ -189,6 +189,27 @@ def is_deadlocked(grid: List[List[str]]) -> bool:
 # Spatial analysis
 # ---------------------------------------------------------------------------
 
+def _total_min_manhattan(grid: List[List[str]]) -> Optional[int]:
+    """Sum of each unsolved box's Manhattan distance to its nearest empty target.
+
+    Returns None if the grid has no unsolved boxes or no empty targets.
+    """
+    boxes: List[Tuple[int, int]] = []
+    targets: List[Tuple[int, int]] = []
+    for r, row in enumerate(grid):
+        for c, ch in enumerate(row):
+            if ch == "$":
+                boxes.append((r, c))
+            elif ch == "?":
+                targets.append((r, c))
+    if not boxes or not targets:
+        return None
+    return sum(
+        min(abs(br - tr) + abs(bc - tc) for tr, tc in targets)
+        for br, bc in boxes
+    )
+
+
 def compute_spatial_analysis(grid: List[List[str]]) -> str:
     """Compute per-box Manhattan distances, nearest targets, and deadlock warnings."""
     boxes: List[Tuple[int, int]] = []
@@ -611,6 +632,9 @@ class SokobanNLWrapper:
     # Max restarts before we stop allowing them
     MAX_RESTARTS = 3
 
+    DISTANCE_SHAPING_BONUS = 0.2
+    DEADLOCK_SHAPING_PENALTY = -0.5
+
     def __init__(
         self,
         env: Any,
@@ -618,6 +642,7 @@ class SokobanNLWrapper:
         reflect_every: int = 3,
         enable_restart: bool = True,
         auto_detect_deadlock: bool = True,
+        distance_shaping: bool = True,
     ):
         self._env = env
         self._memory = SokobanMemory(max_steps=max_memory)
@@ -627,6 +652,8 @@ class SokobanNLWrapper:
         self._last_obs_nl: str = ""
         self._enable_restart = enable_restart
         self._auto_detect_deadlock = auto_detect_deadlock
+        self._distance_shaping = distance_shaping
+        self._prev_distance: Optional[int] = None
         self._initial_seed: Optional[int] = None
         self._initial_options: Optional[Dict[str, Any]] = None
         self._action_names = (
@@ -681,6 +708,12 @@ class SokobanNLWrapper:
         obs_nl = obs if isinstance(obs, str) else str(obs.get("text", obs))
         self._last_obs_nl, self._last_grid = self._process_obs(obs_nl)
 
+        self._prev_distance = (
+            _total_min_manhattan(self._last_grid)
+            if self._distance_shaping and self._last_grid is not None
+            else None
+        )
+
         info["action_names"] = self._action_names
         info["env_name"] = "gamingagent"
         info["game_name"] = "sokoban"
@@ -702,6 +735,12 @@ class SokobanNLWrapper:
 
         obs_nl = obs if isinstance(obs, str) else str(obs.get("text", obs))
         self._last_obs_nl, self._last_grid = self._process_obs(obs_nl)
+
+        self._prev_distance = (
+            _total_min_manhattan(self._last_grid)
+            if self._distance_shaping and self._last_grid is not None
+            else None
+        )
 
         board_summary = ""
         if self._last_grid is not None:
@@ -745,6 +784,7 @@ class SokobanNLWrapper:
 
         board_summary = ""
         deadlock_info = ""
+        shaping_bonus = 0.0
         if self._last_grid is not None:
             board_summary = summarize_elements(self._last_grid)
             # Run deadlock detection
@@ -761,8 +801,30 @@ class SokobanNLWrapper:
                 else:
                     self._consecutive_deadlock_steps = 0
 
+            # Distance-based reward shaping
+            if self._distance_shaping and self._prev_distance is not None:
+                cur_dist = _total_min_manhattan(self._last_grid)
+                if cur_dist is not None:
+                    delta = self._prev_distance - cur_dist
+                    if delta > 0:
+                        shaping_bonus = self.DISTANCE_SHAPING_BONUS * delta
+                    elif delta < 0:
+                        shaping_bonus = self.DISTANCE_SHAPING_BONUS * delta
+                    self._prev_distance = cur_dist
+                elif cur_dist is None and self._prev_distance > 0:
+                    # All boxes now on targets — puzzle solved, big bonus
+                    shaping_bonus = self.DISTANCE_SHAPING_BONUS * self._prev_distance
+                    self._prev_distance = 0
+                # Deadlock penalty on top of distance shaping
+                if deadlock_info:
+                    shaping_bonus += self.DEADLOCK_SHAPING_PENALTY
+
+        reward = float(reward) + shaping_bonus
+        info["raw_env_reward"] = float(reward) - shaping_bonus
+        info["shaping_bonus"] = shaping_bonus
+
         self._memory.add(
-            self._step_count, str(action), float(reward),
+            self._step_count, str(action), reward,
             board_summary, deadlock_info=deadlock_info,
         )
 

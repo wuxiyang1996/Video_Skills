@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -72,6 +73,7 @@ class AsyncSkillBankPipeline:
         from skill_agents_grpo.pipeline import SkillBankAgent, PipelineConfig
 
         bank_path = str(Path(self.bank_dir) / "skill_bank.jsonl")
+        _teacher_max_tokens_env = os.environ.get("SKILLBANK_LLM_TEACHER_MAX_TOKENS")
         config = PipelineConfig(
             bank_path=bank_path,
             env_name="llm",
@@ -91,6 +93,8 @@ class AsyncSkillBankPipeline:
             report_dir=self.report_dir,
             max_concurrent_llm_calls=24,
             llm_teacher_max_workers=4,
+            **({"llm_teacher_max_tokens": int(_teacher_max_tokens_env)}
+               if _teacher_max_tokens_env is not None else {}),
         )
         self._agent = SkillBankAgent(config=config)
 
@@ -171,7 +175,12 @@ class AsyncSkillBankPipeline:
         episode = self._convert_episode_result(result)
         self._pending_episodes.append(episode)
 
-    _MAX_CONCURRENT_SEGMENTATIONS = 6
+    _MAX_CONCURRENT_SEGMENTATIONS = int(
+        os.environ.get("SKILLBANK_MAX_CONCURRENT_SEGMENTATIONS", "8")
+    )
+    _SEGMENT_TIMEOUT_S = int(
+        os.environ.get("SKILLBANK_SEGMENT_TIMEOUT_S", "600")
+    )
 
     async def process_batch_async(
         self,
@@ -213,7 +222,18 @@ class AsyncSkillBankPipeline:
 
         async def _segment_with_sem(ep):
             async with sem:
-                return await loop.run_in_executor(executor, _segment_one, ep)
+                try:
+                    return await asyncio.wait_for(
+                        loop.run_in_executor(executor, _segment_one, ep),
+                        timeout=self._SEGMENT_TIMEOUT_S,
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "Segmentation timed out after %ds for %s",
+                        self._SEGMENT_TIMEOUT_S,
+                        getattr(ep, "episode_id", "?"),
+                    )
+                    return False
 
         results_ok = await asyncio.gather(
             *[_segment_with_sem(ep) for ep in episodes],

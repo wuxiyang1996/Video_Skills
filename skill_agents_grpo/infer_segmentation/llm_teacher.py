@@ -23,6 +23,7 @@ each evaluated via scorer-rebuild + decode, and the best is returned.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import threading
@@ -41,6 +42,20 @@ if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
 logger = logging.getLogger(__name__)
+
+# ── Global concurrency limiter for LLM teacher calls ─────────────────
+# When multiple episodes are segmented in parallel (each spawning its own
+# ThreadPoolExecutor), the per-episode semaphore from _wrap_ask_with_semaphore
+# does NOT limit cross-episode concurrency.  Without a global cap, N episodes
+# × M workers can flood the vLLM servers with hundreds of simultaneous
+# requests, causing queue buildup and effective deadlock.
+#
+# This module-level semaphore caps the TOTAL in-flight LLM teacher calls
+# across all episodes/threads in this process.
+_GLOBAL_MAX_CONCURRENT_LLM_CALLS = int(
+    os.environ.get("SKILLBANK_GLOBAL_MAX_LLM_CALLS", "32")
+)
+_global_llm_semaphore = threading.Semaphore(_GLOBAL_MAX_CONCURRENT_LLM_CALLS)
 
 
 # ── Cold-start I/O recording ─────────────────────────────────────────
@@ -112,21 +127,33 @@ def _get_ask_model():
     Prefers the LoRA segment adapter when available, otherwise falls back
     to the API-based ``ask_model``.  The returned callable is wrapped for
     reasoning-model compatibility (Qwen3 ``/no_think``, think-tag stripping).
+
+    The returned callable is always wrapped with the global concurrency
+    semaphore so that cross-episode parallelism cannot flood the vLLM
+    servers.
     """
     from skill_agents_grpo._llm_compat import wrap_ask_for_reasoning_models
 
     _hint = "Qwen/Qwen3-8B"
+    raw_ask = None
     try:
         from skill_agents_grpo.lora import MultiLoraSkillBankLLM, SkillFunction
         llm = MultiLoraSkillBankLLM.get_shared_instance()
         if llm is not None:
-            return wrap_ask_for_reasoning_models(
+            raw_ask = wrap_ask_for_reasoning_models(
                 llm.as_ask_fn(SkillFunction.SEGMENT), model_hint=_hint,
             )
     except Exception:
         pass
-    from API_func import ask_model
-    return wrap_ask_for_reasoning_models(ask_model, model_hint=_hint)
+    if raw_ask is None:
+        from API_func import ask_model
+        raw_ask = wrap_ask_for_reasoning_models(ask_model, model_hint=_hint)
+
+    def _globally_limited_ask(*args, **kwargs):
+        with _global_llm_semaphore:
+            return raw_ask(*args, **kwargs)
+
+    return _globally_limited_ask
 
 
 def _wrap_ask_with_semaphore(ask: Callable, max_concurrent: int):

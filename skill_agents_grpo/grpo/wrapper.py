@@ -28,8 +28,10 @@ Usage::
 from __future__ import annotations
 
 import logging
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from skill_agents_grpo.grpo.buffer import GRPOBuffer, GRPOSample
 from skill_agents_grpo.grpo.grpo_outputs import default_grpo_training_completion
@@ -108,38 +110,72 @@ class GRPOCallWrapper:
         wrapped._grpo_wrapper = wrapper_self  # type: ignore[attr-defined]
         return wrapped
 
+    _PARALLEL_SAMPLES = os.environ.get(
+        "GRPO_PARALLEL_SAMPLES", "1"
+    ).strip().lower() not in ("0", "false", "no")
+
+    def _generate_one(
+        self,
+        original_fn: Callable,
+        args: tuple,
+        kwargs_sample: dict,
+        idx: int,
+    ) -> Tuple[int, Any, str, bool]:
+        """Generate one GRPO sample. Returns (idx, output, completion, ok)."""
+        try:
+            out = original_fn(*args, **kwargs_sample)
+            try:
+                tc = self.training_completion_fn(out)
+            except Exception:
+                tc = str(out) if out is not None else ""
+            return (idx, out, tc if isinstance(tc, str) else str(tc), True)
+        except Exception as exc:
+            if idx == 0:
+                logger.warning(
+                    "GRPO[%s] sample %d failed: %s", self.adapter.value, idx, exc,
+                )
+            return (idx, None, "", False)
+
     def _run(
         self,
         original_fn: Callable,
         args: tuple,
         kwargs: dict,
     ) -> Any:
-        """Core sampling logic."""
+        """Core sampling logic — generates G samples in parallel when possible."""
         self._call_count += 1
 
         kwargs_sample = {**kwargs, "temperature": self.temperature}
 
-        samples: List[Any] = []
-        completions: List[str] = []
+        samples: List[Any] = [None] * self.group_size
+        completions: List[str] = [""] * self.group_size
         n_failures = 0
 
-        for _ in range(self.group_size):
-            try:
-                out = original_fn(*args, **kwargs_sample)
-                samples.append(out)
-                try:
-                    tc = self.training_completion_fn(out)
-                except Exception:
-                    tc = str(out) if out is not None else ""
-                completions.append(tc if isinstance(tc, str) else str(tc))
-            except Exception as exc:
-                n_failures += 1
-                if n_failures == 1:
-                    logger.warning(
-                        "GRPO[%s] sample failed: %s", self.adapter.value, exc,
+        if self._PARALLEL_SAMPLES and self.group_size > 1:
+            with ThreadPoolExecutor(max_workers=self.group_size) as pool:
+                futures = [
+                    pool.submit(
+                        self._generate_one, original_fn, args, kwargs_sample, i,
                     )
-                samples.append(None)
-                completions.append("")
+                    for i in range(self.group_size)
+                ]
+                for fut in as_completed(futures):
+                    idx, out, tc, ok = fut.result()
+                    if ok:
+                        samples[idx] = out
+                        completions[idx] = tc
+                    else:
+                        n_failures += 1
+        else:
+            for i in range(self.group_size):
+                idx, out, tc, ok = self._generate_one(
+                    original_fn, args, kwargs_sample, i,
+                )
+                if ok:
+                    samples[idx] = out
+                    completions[idx] = tc
+                else:
+                    n_failures += 1
 
         if n_failures == self.group_size:
             logger.warning(

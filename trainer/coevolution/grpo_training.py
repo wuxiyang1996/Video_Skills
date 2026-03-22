@@ -34,54 +34,56 @@ logger = logging.getLogger(__name__)
 # ── Experience Replay Buffer ────────────────────────────────────────────
 
 class ReplayBuffer:
-    """Ring buffer of GRPORecords with importance-weighted staleness.
+    """Ring buffer of GRPORecords with staleness weighting.
 
     Records from the current step get weight 1.0; older records are
     down-weighted so the gradient is dominated by fresh on-policy data
     while still benefiting from past experience.
 
-    An optional *per_game_cap* limits how many records any single game
-    can contribute when sampling, preventing high-step-count games
-    (e.g. 2048) from crowding out others.
-
-    Episode-length normalization: each sample is weighted by
-    ``1 / episode_length`` so that every *episode* contributes equal
-    total gradient mass regardless of its step count.  A 200-step
-    2048 episode and a 10-step tetris episode each contribute ~1.0
-    total weight instead of 200 vs 10.
+    The deque ``maxlen`` caps total memory; no per-game cap is applied
+    because games are trained sequentially (one at a time).
     """
 
     STALENESS_WEIGHTS = {0: 1.0, 1: 0.7, 2: 0.5}
     DEFAULT_WEIGHT = 0.3
 
-    def __init__(self, max_size: int = 2000, per_game_cap: int = 400):
+    def __init__(self, max_size: int = 2000):
         self._buf: Deque[Tuple[GRPORecord, int]] = deque(maxlen=max_size)
-        self._per_game_cap = per_game_cap
 
     def add(self, records: List[GRPORecord], step: int) -> None:
         for rec in records:
             self._buf.append((rec, step))
 
-    def sample_all(self, current_step: int) -> Tuple[List[GRPORecord], List[float]]:
-        """Return all records with staleness + episode-length weights.
+    def sample_all(
+        self,
+        current_step: int,
+        max_replay_ratio: float = 1.0,
+        n_fresh: int = 0,
+    ) -> Tuple[List[GRPORecord], List[float]]:
+        """Return all records with staleness weights.
 
-        Applies per-game cap so no single game dominates the batch.
+        When *n_fresh* > 0 and *max_replay_ratio* is set, older records
+        are sub-sampled so replay never exceeds ``n_fresh * max_replay_ratio``
+        entries.  This keeps the on-policy signal dominant.
         """
-        from collections import Counter
-        game_counts: Counter = Counter()
-        records: List[GRPORecord] = []
-        weights: List[float] = []
+        fresh: List[Tuple[GRPORecord, float]] = []
+        replay: List[Tuple[GRPORecord, float]] = []
         for rec, rec_step in self._buf:
-            game = getattr(rec, "game", None) or ""
-            if self._per_game_cap and game_counts[game] >= self._per_game_cap:
-                continue
             age = current_step - rec_step
             staleness = self.STALENESS_WEIGHTS.get(age, self.DEFAULT_WEIGHT)
-            ep_len = getattr(rec, "episode_length", 1) or 1
-            length_weight = 1.0 / ep_len
-            records.append(rec)
-            weights.append(staleness * length_weight)
-            game_counts[game] += 1
+            if age == 0:
+                fresh.append((rec, staleness))
+            else:
+                replay.append((rec, staleness))
+
+        max_replay = int(max(n_fresh, len(fresh)) * max_replay_ratio) if max_replay_ratio < float("inf") else len(replay)
+        if len(replay) > max_replay:
+            replay.sort(key=lambda x: x[1], reverse=True)
+            replay = replay[:max_replay]
+
+        combined = fresh + replay
+        records = [r for r, _ in combined]
+        weights = [w for _, w in combined]
         return records, weights
 
     def __len__(self) -> int:
@@ -114,11 +116,14 @@ class GRPOStepResult:
 # ── Helpers ─────────────────────────────────────────────────────────────
 
 
-def _compute_advantages(rewards: List[float]) -> List[float]:
-    """Group-normalize rewards (decision-agent path: no per-group completions)."""
+def _compute_advantages(
+    rewards: List[float],
+    completions: Optional[List[str]] = None,
+) -> List[float]:
+    """Group-normalize rewards with optional completion tiebreaking."""
     from skill_agents_grpo.grpo.advantage_utils import compute_grpo_group_advantages
 
-    return compute_grpo_group_advantages(rewards, completions=None)
+    return compute_grpo_group_advantages(rewards, completions=completions)
 
 
 def _collect_grpo_records(results: List[EpisodeResult]) -> Dict[str, List[GRPORecord]]:
@@ -173,7 +178,8 @@ def _records_to_training_data(
         game_records = [e[0] for e in game_entries]
         game_weights = [e[1] for e in game_entries]
         rewards = [r.reward for r in game_records]
-        advs = _compute_advantages(rewards)
+        game_completions = [r.completion for r in game_records]
+        advs = _compute_advantages(rewards, completions=game_completions)
 
         n_nonzero = sum(1 for a in advs if abs(a) > 1e-6)
         logger.debug(
@@ -296,7 +302,9 @@ class DecisionGRPOTrainer:
             if fresh_recs:
                 buf.add(fresh_recs, step)
 
-            all_recs, weights = buf.sample_all(step)
+            all_recs, weights = buf.sample_all(
+                step, max_replay_ratio=1.0, n_fresh=len(fresh_recs),
+            )
             if not all_recs:
                 logger.info("No GRPO records for '%s', skipping", adapter_name)
                 continue
@@ -315,7 +323,7 @@ class DecisionGRPOTrainer:
                 continue
 
             n_samples = len(prompts)
-            epochs = max(2, min(8, 256 // n_samples))
+            epochs = max(1, min(4, 128 // n_samples))
 
             from collections import Counter
             game_counts = Counter(r.game for r in all_recs)
@@ -398,7 +406,7 @@ _skillbank_accum: Dict[str, List[Dict[str, Any]]] = {
 }
 
 _SKILLBANK_TRAIN_THRESHOLD = int(
-    os.environ.get("SKILLBANK_TRAIN_THRESHOLD", "16")
+    os.environ.get("SKILLBANK_TRAIN_THRESHOLD", "32")
 )
 _SKILLBANK_MAX_ACCUM = 512
 
@@ -453,9 +461,9 @@ class SkillBankGRPOTrainer:
                 "epochs": 3,
             },
             "contract": {
-                "lr": self.lr,
-                "kl_coeff": self.kl_coeff,
-                "epochs": 2,
+                "lr": self.lr * 0.5,
+                "kl_coeff": self.kl_coeff * 1.5,
+                "epochs": 1,
             },
             "curator": {
                 "lr": self.lr,

@@ -110,6 +110,7 @@ class PipelineConfig:
     # segmentation. Set to 1 when the caller already parallelises across
     # episodes (e.g. co-evolution loop) to avoid thread explosion.
     llm_teacher_max_workers: Optional[int] = None
+    llm_teacher_max_tokens: Optional[int] = None  # override LLMTeacherConfig default (1000)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -405,6 +406,8 @@ class SkillBankAgent:
                 max_concurrent_llm_calls=cfg.max_concurrent_llm_calls,
                 **({"max_workers": cfg.llm_teacher_max_workers}
                    if cfg.llm_teacher_max_workers is not None else {}),
+                **({"max_tokens": cfg.llm_teacher_max_tokens}
+                   if cfg.llm_teacher_max_tokens is not None else {}),
             ),
             contract_feedback=ContractFeedbackConfig(
                 mode=cfg.contract_feedback_mode,
@@ -1515,10 +1518,12 @@ class SkillBankAgent:
         from skill_agents_grpo.infer_segmentation.config import LLMTeacherConfig
 
         _mw = self.config.llm_teacher_max_workers
+        _mt = self.config.llm_teacher_max_tokens
         llm_cfg = LLMTeacherConfig(
             model=self.config.llm_model,
             max_concurrent_llm_calls=self.config.max_concurrent_llm_calls,
             **({"max_workers": _mw} if _mw is not None else {}),
+            **({"max_tokens": _mt} if _mt is not None else {}),
         ) if self.config.llm_model else None
 
         # Try the new pool manager first

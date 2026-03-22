@@ -297,7 +297,7 @@ class CoEvolutionConfig:
     scratch_initial_temperature: float = 1.0
     scratch_steady_temperature: float = 0.7
     scratch_initial_kl_coeff: float = 0.01
-    scratch_steady_kl_coeff: float = 0.03
+    scratch_steady_kl_coeff: float = 0.05
 
     _resolved: bool = field(default=False, repr=False)
 
@@ -416,10 +416,17 @@ class CoEvolutionConfig:
         import math as _math
 
         if self.start_mode != "from_scratch":
+            total = max(1, self.total_steps)
+            progress = min(1.0, step / total)
+            lr_min = self.scratch_steady_lr * 0.1
+            lr = lr_min + 0.5 * (self.scratch_steady_lr - lr_min) * (
+                1.0 + _math.cos(_math.pi * progress)
+            )
+            kl = self.scratch_steady_kl_coeff * (1.0 + progress)
             return {
-                "lr": self.scratch_steady_lr,
+                "lr": lr,
                 "temperature": self.scratch_steady_temperature,
-                "kl_coeff": self.scratch_steady_kl_coeff,
+                "kl_coeff": kl,
             }
 
         w = self.scratch_warmup_steps

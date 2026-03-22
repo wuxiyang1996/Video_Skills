@@ -89,6 +89,7 @@ for p in [
 from trainer.coevolution.config import (
     CoEvolutionConfig,
     CURRICULUM_PRESETS,
+    GAME_MAX_STEPS,
     SKILL_BANK_GAMES,
     EVAL_ONLY_GAMES,
 )
@@ -108,7 +109,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--games", nargs="+", default=None,
-        help=f"Games to train on (default: all {len(SKILL_BANK_GAMES)})",
+        help=f"Games to train on (default: {len(SKILL_BANK_GAMES)} skill-bank games; {len(GAME_MAX_STEPS)} total supported)",
     )
     parser.add_argument(
         "--curriculum", type=str, default="focused",
@@ -292,11 +293,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    all_known_games = set(GAME_MAX_STEPS)
     games = args.games if args.games else list(SKILL_BANK_GAMES)
     for g in games:
-        if g not in SKILL_BANK_GAMES:
+        if g not in all_known_games:
             logging.warning("Unknown game '%s', skipping", g)
-    games = [g for g in games if g in SKILL_BANK_GAMES]
+    games = [g for g in games if g in all_known_games]
 
     if not games:
         logging.error("No valid games specified")
