@@ -270,6 +270,11 @@ class CoEvolutionConfig:
     stuck_window: int = 15
     min_steps_before_stuck_check: int = 20
 
+    # Rollout batching synchronizer — prevents episodes from
+    # desynchronizing and losing vLLM request batching (which causes
+    # 10-20x throughput loss due to the GPU batch-size cliff).
+    rollout_sync_timeout_s: float = 0.10
+
     # LoRA adapter defaults (matches skill_agents_grpo.lora.config)
     lora_r: int = 16
     lora_alpha: int = 32
@@ -298,6 +303,11 @@ class CoEvolutionConfig:
     scratch_steady_temperature: float = 0.7
     scratch_initial_kl_coeff: float = 0.01
     scratch_steady_kl_coeff: float = 0.05
+
+    # Per-run GRPO overrides (set via CLI, leave None to use defaults)
+    grpo_clip_ratio: float = 0.2
+    grpo_max_epochs: int = 4
+    grpo_adv_clip: Optional[float] = None
 
     _resolved: bool = field(default=False, repr=False)
 
@@ -418,11 +428,11 @@ class CoEvolutionConfig:
         if self.start_mode != "from_scratch":
             total = max(1, self.total_steps)
             progress = min(1.0, step / total)
-            lr_min = self.scratch_steady_lr * 0.1
+            lr_min = self.scratch_steady_lr * 0.3
             lr = lr_min + 0.5 * (self.scratch_steady_lr - lr_min) * (
                 1.0 + _math.cos(_math.pi * progress)
             )
-            kl = self.scratch_steady_kl_coeff * (1.0 + progress)
+            kl = self.scratch_steady_kl_coeff
             return {
                 "lr": lr,
                 "temperature": self.scratch_steady_temperature,

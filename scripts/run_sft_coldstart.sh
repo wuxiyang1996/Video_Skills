@@ -44,6 +44,7 @@ BATCH="${SFT_BATCH:-4}"
 GRAD_ACCUM="${SFT_GRAD_ACCUM:-4}"
 MAX_SEQ="${SFT_MAX_SEQ:-2048}"
 ADAPTERS="${SFT_ADAPTERS:-}"    # empty = all 5
+GAMES="${SFT_GAMES:-}"          # empty = all games in COLDSTART_GAMES
 PARALLEL="${SFT_PARALLEL:-0}"   # 1 = parallel training
 GPUS="${SFT_GPUS:-}"            # e.g. "0 1 2 3 4" (auto-detect if empty)
 
@@ -58,6 +59,7 @@ echo "  Batch:       ${BATCH}"
 echo "  Grad accum:  ${GRAD_ACCUM}"
 echo "  Max seq len: ${MAX_SEQ}"
 echo "  Adapters:    ${ADAPTERS:-all 5}"
+echo "  Games:       ${GAMES:-all}"
 if [ "$PARALLEL" = "1" ]; then
 echo "  Mode:        PARALLEL (one adapter per GPU)"
 echo "  GPUs:        ${GPUS:-auto-detect}"
@@ -69,6 +71,11 @@ echo "============================================================"
 ADAPTER_ARGS=""
 if [ -n "$ADAPTERS" ]; then
     ADAPTER_ARGS="--adapters ${ADAPTERS}"
+fi
+
+GAMES_ARGS=""
+if [ -n "$GAMES" ]; then
+    GAMES_ARGS="--games ${GAMES}"
 fi
 
 PARALLEL_ARGS=""
@@ -88,6 +95,7 @@ python -m trainer.SFT.train \
     --grad_accum "${GRAD_ACCUM}" \
     --max_seq_length "${MAX_SEQ}" \
     ${ADAPTER_ARGS} \
+    ${GAMES_ARGS} \
     ${PARALLEL_ARGS}
 
 echo ""

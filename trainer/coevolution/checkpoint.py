@@ -75,7 +75,7 @@ def save_checkpoint(
             if agent is None:
                 continue
             game_dir = banks_dir / game
-            game_dir.mkdir(exist_ok=True)
+            game_dir.mkdir(parents=True, exist_ok=True)
             _save_one_bank(agent, game_dir / "skill_bank.jsonl", label=game)
     elif bank_agent is not None:
         _save_one_bank(bank_agent, ckpt_path / "skill_bank.jsonl")

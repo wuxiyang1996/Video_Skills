@@ -944,6 +944,30 @@ _ACTION_SYSTEM = (
     "ACTION: <number>\n"
 )
 
+_ACTION_SYSTEM_POKEMON = (
+    "You are an expert Pokemon Red player. "
+    "You receive a game state with a full map and must choose the best action.\n\n"
+    "Rules:\n"
+    "- Study the map and state carefully before choosing.\n"
+    "- Use tool calls with coordinates read from the map.\n"
+    "- NEVER repeat the same action more than 2 times in a row.\n"
+    "- If recent actions got zero reward, change strategy.\n\n"
+    "Available actions:\n"
+    "  Buttons: up, down, left, right, a, b, start, select\n"
+    "  Tools:\n"
+    "    move_to(x, y) - Walk to walkable tile (O or G).\n"
+    "    warp_with_warp_point(x, y) - Walk to WarpPoint and warp.\n"
+    "    interact_with_object(name) - Interact with named sprite.\n"
+    "    continue_dialog - Advance dialog.\n"
+    "    select_move_in_battle - Use first move in battle.\n"
+    "    switch_pkmn_in_battle - Switch Pokemon.\n"
+    "    run_away - Flee from battle.\n"
+    "    use_item_in_battle - Use item in battle.\n\n"
+    "Output format (strict):\n"
+    "REASONING: <1-2 sentences>\n"
+    "ACTION: <button or tool call, e.g. move_to(5, 3)>\n"
+)
+
 _SKILL_SYSTEM = (
     "You are an expert game strategist. "
     "Given the current game state and candidate strategies, "
@@ -952,6 +976,72 @@ _SKILL_SYSTEM = (
     "REASONING: <1-2 sentences why this strategy fits>\n"
     "SKILL: <number>\n"
 )
+
+
+_POKEMON_RED_ACTIONS = [
+    "up", "down", "left", "right", "a", "b", "start", "select",
+    "move_to", "interact_with_object", "warp_with_warp_point",
+    "continue_dialog", "select_move_in_battle",
+    "switch_pkmn_in_battle", "run_away", "use_item_in_battle",
+]
+
+
+_OVERWORLD_DIR_MAP = {"north": "up", "south": "down", "west": "left", "east": "right"}
+
+
+def _pokemon_action_to_tool_call(action: str) -> str:
+    """Convert 'use_tool(tool_name, (args))' to 'tool_name(arg_vals)' format."""
+    if not action.startswith("use_tool("):
+        return action
+    inside = action[len("use_tool("):-1] if action.endswith(")") else action[len("use_tool("):]
+    parts = inside.split(",", 1)
+    tool_name = parts[0].strip()
+    if len(parts) < 2:
+        return tool_name
+    arg_str = parts[1].strip().strip("()")
+    if not arg_str:
+        return tool_name
+    vals = []
+    for part in arg_str.split(","):
+        part = part.strip()
+        if "=" in part:
+            val = part.split("=", 1)[1].strip().strip("'\"")
+            vals.append(val)
+        else:
+            vals.append(part.strip("'\""))
+    return f"{tool_name}({', '.join(vals)})"
+
+
+def _normalize_action(action: str, available_actions: list, game_name: str):
+    """Return (available_actions, action_str_or_index) for the cold-start sample.
+
+    For Pokemon Red, returns the full tool call string (e.g. 'move_to(5, 3)')
+    instead of a numeric index, so SFT teaches the parametric format.
+
+    ``overworld_map_transition(direction=...)`` is not in the Orak action
+    space; it maps to the corresponding d-pad button (north→up, etc.).
+    """
+    if game_name == "pokemon_red":
+        if action in _POKEMON_RED_ACTIONS:
+            return _POKEMON_RED_ACTIONS, action
+
+        if action.startswith("use_tool("):
+            bare = action.split("(", 1)[1].split(",")[0].strip()
+            if bare == "overworld_map_transition":
+                for direction, button in _OVERWORLD_DIR_MAP.items():
+                    if direction in action:
+                        return _POKEMON_RED_ACTIONS, button
+            tool_call = _pokemon_action_to_tool_call(action)
+            return _POKEMON_RED_ACTIONS, tool_call
+
+        if action in available_actions:
+            return available_actions, action
+        return _POKEMON_RED_ACTIONS, "a"
+
+    if action in available_actions:
+        return available_actions, available_actions.index(action) + 1
+
+    return available_actions, 1
 
 
 def export_grpo_coldstart_data(
@@ -1001,9 +1091,13 @@ def export_grpo_coldstart_data(
             skills_label = exp.get("skills")
 
             # ── Action-taking sample ──────────────────────────
-            available_actions = exp.get("available_actions")
-            if not available_actions:
-                available_actions = [action]
+            raw_available = exp.get("available_actions")
+            if not raw_available:
+                raw_available = [action]
+
+            available_actions, action_num = _normalize_action(
+                action, raw_available, game_name,
+            )
 
             state_text = summary_state if summary_state else state[:4000]
 
@@ -1022,19 +1116,28 @@ def export_grpo_coldstart_data(
                 sk_parts.append("--- end skill ---\n")
                 skill_block = "\n".join(sk_parts)
 
-            action_prompt = (
-                _ACTION_SYSTEM + skill_block + "\n"
-                f"Game state:\n\n{state_text}\n\n"
-                f"Available actions (pick ONE by number):\n{action_lines}\n\n"
-                f"Choose the best action. Output REASONING then ACTION number."
-            )
+            if game_name == "pokemon_red":
+                action_prompt = (
+                    _ACTION_SYSTEM_POKEMON + skill_block + "\n"
+                    f"Game state:\n\n{state_text}\n\n"
+                    f"Choose the best action. Output REASONING then ACTION (button or tool call)."
+                )
+            else:
+                action_prompt = (
+                    _ACTION_SYSTEM + skill_block + "\n"
+                    f"Game state:\n\n{state_text}\n\n"
+                    f"Available actions (pick ONE by number):\n{action_lines}\n\n"
+                    f"Choose the best action. Output REASONING then ACTION number."
+                )
 
-            try:
-                action_num = available_actions.index(action) + 1
-            except ValueError:
-                action_num = 1
-
-            action_completion = f"REASONING: Expert play.\nACTION: {action_num}"
+            reasoning_text = exp.get("skill_reasoning") or ""
+            if reasoning_text:
+                reasoning_text = reasoning_text.split("\n")[0].strip()
+                if len(reasoning_text) > 200:
+                    reasoning_text = reasoning_text[:197] + "..."
+            if not reasoning_text or len(reasoning_text) < 10:
+                reasoning_text = "Expert play."
+            action_completion = f"REASONING: {reasoning_text}\nACTION: {action_num}"
 
             action_sample = {
                 "type": "action_taking",

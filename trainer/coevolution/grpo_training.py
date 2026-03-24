@@ -248,6 +248,9 @@ class DecisionGRPOTrainer:
         temperature: float = 0.7,
         kl_coeff: float = 0.05,
         io_log_dir: Optional[str] = None,
+        clip_ratio: float = 0.2,
+        max_epochs: int = 4,
+        adv_clip: Optional[float] = None,
     ):
         self.model_name = model_name
         self.adapter_dir = adapter_dir
@@ -255,6 +258,9 @@ class DecisionGRPOTrainer:
         self.lr = lr
         self.kl_coeff = kl_coeff
         self.io_log_dir = io_log_dir
+        self.clip_ratio = clip_ratio
+        self.max_epochs = max_epochs
+        self.adv_clip = adv_clip
 
     _MIN_SAMPLES = 16
 
@@ -323,7 +329,7 @@ class DecisionGRPOTrainer:
                 continue
 
             n_samples = len(prompts)
-            epochs = max(1, min(4, 128 // n_samples))
+            epochs = max(1, min(self.max_epochs, 128 // n_samples))
 
             from collections import Counter
             game_counts = Counter(r.game for r in all_recs)
@@ -341,6 +347,12 @@ class DecisionGRPOTrainer:
                 epochs, len(self.devices), game_breakdown,
             )
 
+            if self.adv_clip is not None:
+                advantages = [
+                    max(-self.adv_clip, min(self.adv_clip, a))
+                    for a in advantages
+                ]
+
             jobs.append({
                 "adapter_dir": adapter_path,
                 "adapter_name": adapter_name,
@@ -349,8 +361,8 @@ class DecisionGRPOTrainer:
                 "advantages": advantages,
                 "lr": cfg["lr"],
                 "epochs": epochs,
-                "batch_size": 32,
-                "clip_ratio": 0.2,
+                "batch_size": _FSDP_BATCH_SIZE,
+                "clip_ratio": self.clip_ratio,
                 "kl_coeff": cfg["kl_coeff"],
                 "save_dir": adapter_path,
             })
@@ -409,6 +421,7 @@ _SKILLBANK_TRAIN_THRESHOLD = int(
     os.environ.get("SKILLBANK_TRAIN_THRESHOLD", "32")
 )
 _SKILLBANK_MAX_ACCUM = 512
+_FSDP_BATCH_SIZE = int(os.environ.get("GRPO_FSDP_BATCH_SIZE", "32"))
 
 
 class SkillBankGRPOTrainer:
@@ -431,6 +444,7 @@ class SkillBankGRPOTrainer:
         temperature: float = 0.7,
         kl_coeff: float = 0.05,
         io_log_dir: Optional[str] = None,
+        clip_ratio: float = 0.2,
     ):
         self.model_name = model_name
         self.adapter_dir = adapter_dir
@@ -438,6 +452,7 @@ class SkillBankGRPOTrainer:
         self.lr = lr
         self.kl_coeff = kl_coeff
         self.io_log_dir = io_log_dir
+        self.clip_ratio = clip_ratio
 
     def build_jobs(
         self,
@@ -518,8 +533,8 @@ class SkillBankGRPOTrainer:
                 "advantages": advantages,
                 "lr": cfg["lr"],
                 "epochs": cfg["epochs"],
-                "batch_size": 32,
-                "clip_ratio": 0.2,
+                "batch_size": _FSDP_BATCH_SIZE,
+                "clip_ratio": self.clip_ratio,
                 "kl_coeff": cfg["kl_coeff"],
                 "save_dir": adapter_path,
             })
@@ -604,8 +619,12 @@ async def run_grpo_training(
     temperature = sched["temperature"]
     kl_coeff = sched["kl_coeff"]
     logger.info(
-        "GRPO step %d schedule: lr=%.2e, temp=%.2f, kl=%.3f",
+        "GRPO step %d schedule: lr=%.2e, temp=%.2f, kl=%.3f, "
+        "clip=%.2f, max_epochs=%d, adv_clip=%s",
         step, lr, temperature, kl_coeff,
+        getattr(config, "grpo_clip_ratio", 0.2),
+        getattr(config, "grpo_max_epochs", 4),
+        getattr(config, "grpo_adv_clip", None),
     )
 
     devices = config.effective_grpo_devices
@@ -618,6 +637,10 @@ async def run_grpo_training(
     all_jobs: List[Dict] = []
     job_categories: List[tuple] = []
 
+    clip_ratio = getattr(config, "grpo_clip_ratio", 0.2)
+    max_epochs = getattr(config, "grpo_max_epochs", 4)
+    adv_clip = getattr(config, "grpo_adv_clip", None)
+
     decision_trainer = DecisionGRPOTrainer(
         model_name=config.model_name,
         adapter_dir=config.decision_adapter_dir,
@@ -626,6 +649,9 @@ async def run_grpo_training(
         temperature=temperature,
         kl_coeff=kl_coeff,
         io_log_dir=io_dir,
+        clip_ratio=clip_ratio,
+        max_epochs=max_epochs,
+        adv_clip=adv_clip,
     )
     d_jobs, d_names = decision_trainer.build_jobs(decision_records, step=step)
     all_jobs.extend(d_jobs)
@@ -639,6 +665,7 @@ async def run_grpo_training(
         temperature=temperature,
         kl_coeff=kl_coeff,
         io_log_dir=io_dir,
+        clip_ratio=clip_ratio,
     )
     s_jobs, s_names = skillbank_trainer.build_jobs(skillbank_grpo_data)
     all_jobs.extend(s_jobs)

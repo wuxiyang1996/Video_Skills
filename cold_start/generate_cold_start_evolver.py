@@ -343,8 +343,14 @@ def run_avalon_episode(
     model: str = MODEL_GPT54,
     temperature: float = 0.4,
     verbose: bool = False,
+    controlled_player: Optional[int] = None,
 ) -> Tuple[Episode, Dict[str, Any]]:
-    """Run one Avalon episode with all players controlled by GPT-5.4.
+    """Run one Avalon episode.
+
+    If *controlled_player* is None (default), all players are controlled by
+    GPT-5.4 (multi-agent self-play).  If set to a player index (0-4), only
+    that player is controlled by GPT-5.4 and the others use the random
+    partner policy — matching the single-agent setup used during training.
 
     The loop runs until the engine's natural end condition fires
     (3 quest failures → Evil wins, or assassination resolves after 3 successes).
@@ -352,9 +358,18 @@ def run_avalon_episode(
     if AvalonNLWrapper is None:
         raise ImportError("AvalonNLWrapper not available. Check AgentEvolver install.")
 
+    single_agent = controlled_player is not None
     task = EVOLVER_GAMES["avalon"]["task"]
-    env = AvalonNLWrapper(num_players=num_players, seed=seed)
+    env = AvalonNLWrapper(num_players=num_players, seed=seed,
+                          controlled_player=controlled_player)
     obs, info = env.reset()
+
+    if single_agent:
+        roles = env.roles
+        cp_role_id, cp_role_name, cp_is_good = roles[controlled_player]
+        cp_side = "good" if cp_is_good else "evil"
+        if verbose:
+            print(f"    Single-agent: player {controlled_player} = {cp_role_name} ({cp_side})")
 
     experiences: List[Experience] = []
     total_reward = 0.0
@@ -362,38 +377,50 @@ def run_avalon_episode(
 
     while not env.done:
         active = info.get("active_players", [])
-        actions: Dict[int, Any] = {}
         step_reasonings: List[str] = []
 
-        players_to_query = [
-            (pid, obs.get(pid, "")) for pid in active if obs.get(pid, "")
-        ]
+        if single_agent:
+            action_str, reasoning = avalon_agent_action(obs, model, temperature)
+            if reasoning:
+                step_reasonings.append(f"Player {controlled_player}: {reasoning}")
+            if verbose:
+                short = (reasoning[:80] + "...") if reasoning and len(reasoning) > 80 else reasoning
+                print(f"  Player {controlled_player} action={action_str!r}  reason={short}")
 
-        with ThreadPoolExecutor(max_workers=len(players_to_query) or 1) as pool:
-            futures = {
-                pool.submit(avalon_agent_action, state_nl, model, temperature): pid
-                for pid, state_nl in players_to_query
-            }
-            for future in as_completed(futures):
-                pid = futures[future]
-                try:
-                    action, reasoning = future.result()
-                except Exception as exc:
-                    print(f"    [WARN] Player {pid} agent call failed ({exc})")
-                    action, reasoning = "wait", None
-                actions[pid] = action
-                if reasoning:
-                    step_reasonings.append(f"Player {pid}: {reasoning}")
-                if verbose:
-                    short = (reasoning[:80] + "...") if reasoning and len(reasoning) > 80 else reasoning
-                    print(f"  Player {pid} action={action!r}  reason={short}")
+            next_obs, rewards, terminated, truncated, next_info = env.step(action_str)
+            done = terminated or truncated
+            reward_val = float(rewards) if not isinstance(rewards, dict) else 0.0
 
-        next_obs, rewards, terminated, truncated, next_info = env.step(actions)
-        done = terminated or truncated
+        else:
+            actions: Dict[int, Any] = {}
+            players_to_query = [
+                (pid, obs.get(pid, "")) for pid in active if obs.get(pid, "")
+            ]
 
-        reward_val = sum(rewards.values()) if isinstance(rewards, dict) and rewards else 0.0
+            with ThreadPoolExecutor(max_workers=len(players_to_query) or 1) as pool:
+                futures = {
+                    pool.submit(avalon_agent_action, state_nl, model, temperature): pid
+                    for pid, state_nl in players_to_query
+                }
+                for future in as_completed(futures):
+                    pid = futures[future]
+                    try:
+                        action, reasoning = future.result()
+                    except Exception as exc:
+                        print(f"    [WARN] Player {pid} agent call failed ({exc})")
+                        action, reasoning = "wait", None
+                    actions[pid] = action
+                    if reasoning:
+                        step_reasonings.append(f"Player {pid}: {reasoning}")
+                    if verbose:
+                        short = (reasoning[:80] + "...") if reasoning and len(reasoning) > 80 else reasoning
+                        print(f"  Player {pid} action={action!r}  reason={short}")
+
+            next_obs, rewards, terminated, truncated, next_info = env.step(actions)
+            done = terminated or truncated
+            reward_val = sum(rewards.values()) if isinstance(rewards, dict) and rewards else 0.0
+
         total_reward += reward_val
-
         combined_reasoning = "\n".join(step_reasonings) if step_reasonings else None
 
         phase_id = info.get("phase", 0)
@@ -425,13 +452,22 @@ def run_avalon_episode(
         else:
             avail_actions = {"type": "unknown", "active_players": list(active)}
 
-        exp = Experience(
-            state=json.dumps({str(k): v for k, v in obs.items()}, ensure_ascii=False, default=str),
-            action=json.dumps({str(k): v for k, v in actions.items()}, ensure_ascii=False, default=str),
-            reward=float(reward_val),
-            next_state=json.dumps(
+        if single_agent:
+            state_json = json.dumps(obs, ensure_ascii=False, default=str) if not isinstance(obs, str) else obs
+            action_json = json.dumps(action_str, ensure_ascii=False, default=str) if not isinstance(action_str, str) else action_str
+            next_state_json = json.dumps(next_obs, ensure_ascii=False, default=str) if not isinstance(next_obs, str) else next_obs
+        else:
+            state_json = json.dumps({str(k): v for k, v in obs.items()}, ensure_ascii=False, default=str)
+            action_json = json.dumps({str(k): v for k, v in actions.items()}, ensure_ascii=False, default=str)
+            next_state_json = json.dumps(
                 {str(k): v for k, v in next_obs.items()}, ensure_ascii=False, default=str
-            ) if isinstance(next_obs, dict) else str(next_obs),
+            ) if isinstance(next_obs, dict) else str(next_obs)
+
+        exp = Experience(
+            state=state_json,
+            action=action_json,
+            reward=float(reward_val),
+            next_state=next_state_json,
             done=done,
             intentions=combined_reasoning,
             tasks=task,
@@ -473,11 +509,15 @@ def run_avalon_episode(
         "terminated": env_done,
         "truncated": False,
         "model": model,
-        "agent_type": "gpt54_base",
+        "agent_type": "gpt54_single" if single_agent else "gpt54_base",
         "num_players": num_players,
         "seed": seed,
         "good_victory": good_victory,
     }
+    if single_agent:
+        stats["controlled_player"] = controlled_player
+        stats["role_name"] = cp_role_name
+        stats["role_side"] = cp_side
     return episode, stats
 
 
@@ -691,12 +731,16 @@ def run_game_rollouts(
 
         try:
             if game_name == "avalon":
+                cp = getattr(args, "controlled_player", None)
+                if getattr(args, "per_role", False):
+                    cp = ep_idx % args.num_players
                 episode, stats = run_avalon_episode(
                     num_players=args.num_players,
                     seed=seed,
                     model=args.model,
                     temperature=args.temperature,
                     verbose=args.verbose,
+                    controlled_player=cp,
                 )
             elif game_name == "diplomacy":
                 episode, stats = run_diplomacy_episode(
@@ -782,6 +826,12 @@ def main():
                         help="Base random seed (incremented per episode)")
     parser.add_argument("--num_players", type=int, default=5,
                         help="Number of Avalon players (default: 5)")
+    parser.add_argument("--controlled_player", type=int, default=None,
+                        help="Avalon: single-agent mode controlling this player (0-4). "
+                             "Others use random partner policy. None = self-play (default).")
+    parser.add_argument("--per_role", action="store_true",
+                        help="Avalon: cycle controlled_player through 0..num_players-1 "
+                             "across episodes (single-agent, one role per episode).")
 
     args = parser.parse_args()
 

@@ -126,6 +126,12 @@ def parse_args() -> argparse.Namespace:
         "--max-concurrent", type=int, default=64,
         help="Max concurrent episodes (default: 64)",
     )
+    parser.add_argument(
+        "--unified-roles", action="store_true",
+        help="Enable unified multi-role rollouts for Avalon/Diplomacy. "
+             "Deterministically cycles through all roles instead of random "
+             "assignment. Skill banks split by side/power.",
+    )
 
     # Model
     parser.add_argument(
@@ -184,6 +190,54 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-grpo", action="store_true",
         help="Disable GRPO training (rollout + skill bank only)",
+    )
+    parser.add_argument(
+        "--grpo-lr", type=float, default=None,
+        help="Override GRPO steady-state learning rate (default: 5e-5)",
+    )
+    parser.add_argument(
+        "--grpo-kl-coeff", type=float, default=None,
+        help="Override GRPO steady-state KL coefficient (default: 0.05)",
+    )
+    parser.add_argument(
+        "--grpo-clip-ratio", type=float, default=None,
+        help="Override GRPO PPO clip ratio (default: 0.2)",
+    )
+    parser.add_argument(
+        "--grpo-max-epochs", type=int, default=None,
+        help="Max GRPO epochs per adapter per step (default: 4)",
+    )
+    parser.add_argument(
+        "--grpo-adv-clip", type=float, default=None,
+        help="Clip GRPO advantages to [-val, val] to limit outlier influence",
+    )
+
+    # Training schedule
+    parser.add_argument(
+        "--warmup-steps", type=int, default=None,
+        help="Number of warmup steps for LR/temperature/KL ramp (default: 20)",
+    )
+    parser.add_argument(
+        "--initial-kl-coeff", type=float, default=None,
+        help="KL coefficient at start of warmup (default: 0.01)",
+    )
+    parser.add_argument(
+        "--initial-temperature", type=float, default=None,
+        help="Sampling temperature at start of warmup (default: 1.0)",
+    )
+    parser.add_argument(
+        "--steady-temperature", type=float, default=None,
+        help="Sampling temperature after warmup (default: 0.7)",
+    )
+
+    # Episode control
+    parser.add_argument(
+        "--stuck-window", type=int, default=None,
+        help="Rolling window size for stuck detection (default: 15)",
+    )
+    parser.add_argument(
+        "--min-steps-before-stuck", type=int, default=None,
+        help="Min steps before stuck detection activates (default: 20)",
     )
 
     # Directories
@@ -343,6 +397,7 @@ def main() -> None:
     config_kwargs = dict(
         games=games,
         episodes_per_game=args.episodes_per_game,
+        unified_role_rollouts=args.unified_roles,
         max_concurrent_episodes=args.max_concurrent,
         total_steps=args.total_steps,
         curriculum_schedule=dict(curriculum) if curriculum else None,
@@ -369,6 +424,36 @@ def main() -> None:
         process_workers=args.process_workers,
         debug_io=args.debug_io,
     )
+
+    if args.grpo_lr is not None:
+        config_kwargs["scratch_steady_lr"] = args.grpo_lr
+        config_kwargs["scratch_initial_lr"] = args.grpo_lr * 2.0
+    if args.grpo_kl_coeff is not None:
+        config_kwargs["scratch_steady_kl_coeff"] = args.grpo_kl_coeff
+    if args.grpo_clip_ratio is not None:
+        config_kwargs["grpo_clip_ratio"] = args.grpo_clip_ratio
+    if args.grpo_max_epochs is not None:
+        config_kwargs["grpo_max_epochs"] = args.grpo_max_epochs
+    if args.grpo_adv_clip is not None:
+        config_kwargs["grpo_adv_clip"] = args.grpo_adv_clip
+
+    if args.warmup_steps is not None:
+        config_kwargs["scratch_warmup_steps"] = args.warmup_steps
+    if args.initial_kl_coeff is not None:
+        config_kwargs["scratch_initial_kl_coeff"] = args.initial_kl_coeff
+    if args.initial_temperature is not None:
+        config_kwargs["scratch_initial_temperature"] = args.initial_temperature
+    if args.steady_temperature is not None:
+        config_kwargs["scratch_steady_temperature"] = args.steady_temperature
+    if args.stuck_window is not None:
+        config_kwargs["stuck_window"] = args.stuck_window
+    if args.min_steps_before_stuck is not None:
+        config_kwargs["min_steps_before_stuck_check"] = args.min_steps_before_stuck
+
+    if args.unified_roles:
+        config_kwargs["episodes_per_game_overrides"] = {
+            g: args.episodes_per_game for g in games
+        }
 
     if args.seed_bank_dir is not None:
         config_kwargs["seed_bank_dir"] = args.seed_bank_dir

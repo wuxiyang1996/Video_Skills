@@ -15,8 +15,10 @@ The external GamingAgent repo must be installed or on PYTHONPATH; this
 module only imports from it at runtime.
 """
 
+import atexit
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -199,6 +201,9 @@ class _GymLikeWrapper:
     def close(self) -> None:
         if hasattr(self._env, "close"):
             self._env.close()
+        tmp = getattr(self._env, "_rom_tmp_dir", None)
+        if tmp and os.path.isdir(tmp):
+            shutil.rmtree(tmp, ignore_errors=True)
 
     def render(self):
         if hasattr(self._env, "render"):
@@ -318,9 +323,14 @@ def make_gaming_env(
                 f"Pokemon Red ROM not found at '{rom_path}'. "
                 f"Place the .gb ROM at {_GAMINGAGENT_ROOT / 'gamingagent' / 'configs' / 'custom_06_pokemon_red' / 'rom' / 'pokemon.gb'}"
             )
+        _tmp_dir = tempfile.mkdtemp(prefix="pokemon_red_")
+        _rom_copy = os.path.join(_tmp_dir, os.path.basename(rom_path))
+        shutil.copy2(rom_path, _rom_copy)
+        atexit.register(shutil.rmtree, _tmp_dir, True)
+
         env = PokemonRedEnv(
             render_mode=None,
-            rom_path=rom_path,
+            rom_path=_rom_copy,
             sound=init_kw.get("sound", False),
             game_name_for_adapter=game,
             observation_mode_for_adapter=observation_mode,
@@ -330,6 +340,7 @@ def make_gaming_env(
                 "max_unchanged_steps_for_termination", 100
             ),
         )
+        env._rom_tmp_dir = _tmp_dir
 
     elif game == "tictactoe":
         from gamingagent.envs.zoo_01_tictactoe.TicTacToeEnv import (

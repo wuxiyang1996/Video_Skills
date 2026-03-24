@@ -43,6 +43,10 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+_GRPO_MAX_SEQ_LEN = int(os.environ.get("GRPO_MAX_SEQ_LEN", "2048"))
+_GRPO_REF_MICRO_BATCH = int(os.environ.get("GRPO_REF_MICRO_BATCH", "8"))
+
+
 def _find_free_port() -> int:
     """Return an available TCP port on localhost."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -138,6 +142,7 @@ def _run_grpo_training_loop(
             adapter_name, n_total, n_my, epochs, batch_size,
         )
 
+    max_seq = _GRPO_MAX_SEQ_LEN
     t_ref = time.time()
     tokenized: list = []
     if n_my > 0:
@@ -145,11 +150,12 @@ def _run_grpo_training_loop(
             tokenizer, my_prompts, my_completions,
         )
         enc_batch = tokenizer(
-            chat_full, truncation=True, padding=False, return_tensors=None,
+            chat_full, truncation=True, max_length=max_seq,
+            padding=False, return_tensors=None,
         )
         penc_batch = tokenizer(
-            chat_prompts, truncation=True, padding=False,
-            return_tensors=None,
+            chat_prompts, truncation=True, max_length=max_seq,
+            padding=False, return_tensors=None,
         )
         for i in range(n_my):
             ids = enc_batch["input_ids"][i]
@@ -185,10 +191,10 @@ def _run_grpo_training_loop(
     while len(tokenized) < n_valid_max_val:
         tokenized.append(None)
 
-    # ── Reference log-probabilities ──
+    # ── Reference log-probabilities (memory-safe micro-batching) ──
     ref_data: list = [None] * len(tokenized)
     pad_id = tokenizer.pad_token_id or 0
-    ref_batch = batch_size * 2
+    ref_batch = min(_GRPO_REF_MICRO_BATCH, batch_size)
 
     model.eval()
     with torch.no_grad():
@@ -213,7 +219,54 @@ def _run_grpo_training_loop(
             batch_ids = batch_ids.to(device)
             batch_attn = batch_attn.to(device)
 
-            out = model(input_ids=batch_ids, attention_mask=batch_attn)
+            try:
+                out = model(input_ids=batch_ids, attention_mask=batch_attn)
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                if is_main:
+                    logger.warning(
+                        "OOM in ref log-prob batch (bsz=%d, seq=%d), "
+                        "falling back to sample-by-sample",
+                        bsz, max_len,
+                    )
+                for j, e in enumerate(entries):
+                    if not real_flags[j]:
+                        continue
+                    slen = e["input_ids"].shape[1]
+                    one_ids = e["input_ids"].to(device)
+                    one_attn = e["attn_mask"].to(device)
+                    try:
+                        one_out = model(
+                            input_ids=one_ids, attention_mask=one_attn,
+                        )
+                        plen = e["plen"]
+                        logits_j = one_out.logits[0, plen - 1:slen - 1, :]
+                        target_j = one_ids[0, plen:slen]
+                        lp = torch.log_softmax(logits_j, dim=-1)
+                        per_tok = lp.gather(
+                            -1, target_j.unsqueeze(-1),
+                        ).squeeze(-1)
+                        del one_out, logits_j, lp
+                        if per_tok.numel() > 0:
+                            ref_data[batch_start + j] = {
+                                "input_ids": e["input_ids"],
+                                "attn_mask": e["attn_mask"],
+                                "plen": plen,
+                                "ref_lp": per_tok.cpu(),
+                                "adv": e["adv"],
+                            }
+                        del per_tok
+                    except torch.cuda.OutOfMemoryError:
+                        torch.cuda.empty_cache()
+                        if is_main:
+                            logger.warning(
+                                "OOM on single sample (seq=%d), skipping",
+                                slen,
+                            )
+                    finally:
+                        del one_ids, one_attn
+                        torch.cuda.empty_cache()
+                continue
 
             for j, e in enumerate(entries):
                 if not real_flags[j]:
@@ -226,6 +279,7 @@ def _run_grpo_training_loop(
                 per_tok = lp.gather(
                     -1, target_j.unsqueeze(-1),
                 ).squeeze(-1)
+                del logits_j, lp
 
                 if per_tok.numel() == 0:
                     continue
@@ -236,7 +290,8 @@ def _run_grpo_training_loop(
                     "ref_lp": per_tok.cpu(),
                     "adv": e["adv"],
                 }
-            del out
+            del out, batch_ids, batch_attn
+            torch.cuda.empty_cache()
     model.train()
 
     ref_data = [rd for rd in ref_data if rd is not None]
@@ -269,15 +324,15 @@ def _run_grpo_training_loop(
     while len(ref_data) < n_train_max_val:
         ref_data.append(None)
 
-    # ── Training loop (with gradient accumulation) ──
+    # ── Training loop (with gradient accumulation + OOM resilience) ──
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(trainable_params, lr=lr)
     accum = max(1, accumulation_steps)
+    eff_batch_size = batch_size
 
     total_loss = 0.0
     total_tokens = 0
     n_my_train = len(ref_data)
-    n_mini = max(1, (n_my_train + batch_size - 1) // batch_size)
     t_train = time.time()
 
     for epoch in range(epochs):
@@ -286,9 +341,10 @@ def _run_grpo_training_loop(
         epoch_samples = 0
         t_epoch = time.time()
 
+        n_mini = max(1, (n_my_train + eff_batch_size - 1) // eff_batch_size)
         for mb in range(n_mini):
-            mb_start = mb * batch_size
-            mb_end = min(mb_start + batch_size, n_my_train)
+            mb_start = mb * eff_batch_size
+            mb_end = min(mb_start + eff_batch_size, n_my_train)
             batch_items = ref_data[mb_start:mb_end]
             real_flags = [rd is not None for rd in batch_items]
             entries = [rd if rd is not None else dummy_rd
@@ -308,11 +364,24 @@ def _run_grpo_training_loop(
             batch_ids = batch_ids.to(device)
             batch_attn = batch_attn.to(device)
 
-            with torch.enable_grad():
-                out = model(
-                    input_ids=batch_ids,
-                    attention_mask=batch_attn,
-                )
+            try:
+                with torch.enable_grad():
+                    out = model(
+                        input_ids=batch_ids,
+                        attention_mask=batch_attn,
+                    )
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                old_bs = eff_batch_size
+                eff_batch_size = max(1, eff_batch_size // 2)
+                if is_main:
+                    logger.warning(
+                        "OOM in training fwd (bsz=%d, seq=%d), "
+                        "halving batch %d→%d and skipping mini-batch",
+                        bsz, max_len, old_bs, eff_batch_size,
+                    )
+                optimizer.zero_grad()
+                continue
 
             mb_losses: list = []
             for j, e in enumerate(entries):
@@ -330,6 +399,7 @@ def _run_grpo_training_loop(
                 per_tok = lp.gather(
                     -1, target_j.unsqueeze(-1),
                 ).squeeze(-1)
+                del logits_j, lp
 
                 ratio = torch.exp(per_tok - old_lp)
                 clipped = torch.clamp(
@@ -355,7 +425,8 @@ def _run_grpo_training_loop(
             if mb_losses:
                 (torch.stack(mb_losses).mean() / accum).backward()
 
-            del out
+            del out, batch_ids, batch_attn
+            torch.cuda.empty_cache()
 
             is_accum_boundary = ((mb + 1) % accum == 0) or (mb == n_mini - 1)
             if is_accum_boundary:
@@ -369,9 +440,10 @@ def _run_grpo_training_loop(
             elapsed = time.time() - t_epoch
             rate = n_my / elapsed if elapsed > 0 else 0
             logger.info(
-                "  FSDP [%s] epoch %d/%d: loss=%.4f (%.1f samples/s, %.1fs, accum=%d)",
+                "  FSDP [%s] epoch %d/%d: loss=%.4f (%.1f samples/s, %.1fs, accum=%d, bs=%d)",
                 adapter_name, epoch + 1, epochs,
                 epoch_loss / max(epoch_samples, 1), rate, elapsed, accum,
+                eff_batch_size,
             )
 
     train_time = time.time() - t_train
@@ -641,6 +713,7 @@ def _train_one_adapter(
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(trainable_params, lr=lr)
 
+    max_seq = _GRPO_MAX_SEQ_LEN
     t_ref = time.time()
     tokenized: list = []
     if n_my > 0:
@@ -648,11 +721,12 @@ def _train_one_adapter(
             tokenizer, my_prompts, my_completions,
         )
         enc_batch = tokenizer(
-            chat_full, truncation=True, padding=False, return_tensors=None,
+            chat_full, truncation=True, max_length=max_seq,
+            padding=False, return_tensors=None,
         )
         penc_batch = tokenizer(
-            chat_prompts, truncation=True, padding=False,
-            return_tensors=None,
+            chat_prompts, truncation=True, max_length=max_seq,
+            padding=False, return_tensors=None,
         )
         for i in range(n_my):
             ids = enc_batch["input_ids"][i]
@@ -701,7 +775,7 @@ def _train_one_adapter(
 
     ref_data: list = [None] * len(tokenized)
     pad_id = tokenizer.pad_token_id or 0
-    ref_batch = batch_size * 2
+    ref_batch = min(_GRPO_REF_MICRO_BATCH, batch_size)
 
     model.eval()
     with torch.no_grad():
@@ -726,7 +800,54 @@ def _train_one_adapter(
             batch_ids = batch_ids.to(device)
             batch_attn = batch_attn.to(device)
 
-            out = model(input_ids=batch_ids, attention_mask=batch_attn)
+            try:
+                out = model(input_ids=batch_ids, attention_mask=batch_attn)
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                if is_main:
+                    logger.warning(
+                        "OOM in ref log-prob batch (bsz=%d, seq=%d), "
+                        "falling back to sample-by-sample",
+                        bsz, max_len,
+                    )
+                for j, e in enumerate(entries):
+                    if not real_flags[j]:
+                        continue
+                    slen = e["input_ids"].shape[1]
+                    one_ids = e["input_ids"].to(device)
+                    one_attn = e["attn_mask"].to(device)
+                    try:
+                        one_out = model(
+                            input_ids=one_ids, attention_mask=one_attn,
+                        )
+                        plen = e["plen"]
+                        logits_j = one_out.logits[0, plen - 1:slen - 1, :]
+                        target_j = one_ids[0, plen:slen]
+                        lp = torch.log_softmax(logits_j, dim=-1)
+                        per_tok = lp.gather(
+                            -1, target_j.unsqueeze(-1),
+                        ).squeeze(-1)
+                        del one_out, logits_j, lp
+                        if per_tok.numel() > 0:
+                            ref_data[batch_start + j] = {
+                                "input_ids": e["input_ids"],
+                                "attn_mask": e["attn_mask"],
+                                "plen": plen,
+                                "ref_lp": per_tok.cpu(),
+                                "adv": e["adv"],
+                            }
+                        del per_tok
+                    except torch.cuda.OutOfMemoryError:
+                        torch.cuda.empty_cache()
+                        if is_main:
+                            logger.warning(
+                                "OOM on single sample (seq=%d), skipping",
+                                slen,
+                            )
+                    finally:
+                        del one_ids, one_attn
+                        torch.cuda.empty_cache()
+                continue
 
             for j, e in enumerate(entries):
                 if not real_flags[j]:
@@ -739,6 +860,7 @@ def _train_one_adapter(
                 per_tok = lp.gather(
                     -1, target_j.unsqueeze(-1),
                 ).squeeze(-1)
+                del logits_j, lp
 
                 if per_tok.numel() == 0:
                     continue
@@ -749,7 +871,8 @@ def _train_one_adapter(
                     "ref_lp": per_tok.cpu(),
                     "adv": e["adv"],
                 }
-            del out
+            del out, batch_ids, batch_attn
+            torch.cuda.empty_cache()
     model.train()
 
     ref_data = [rd for rd in ref_data if rd is not None]
@@ -794,10 +917,10 @@ def _train_one_adapter(
         ref_data.append(None)
 
     accum_single = max(1, 4)
+    eff_batch_size = batch_size
     total_loss = 0.0
     total_tokens = 0
     n_my_train = len(ref_data)
-    n_mini = max(1, (n_my_train + batch_size - 1) // batch_size)
     t_train = time.time()
 
     for epoch in range(epochs):
@@ -806,9 +929,10 @@ def _train_one_adapter(
         epoch_samples = 0
         t_epoch = time.time()
 
+        n_mini = max(1, (n_my_train + eff_batch_size - 1) // eff_batch_size)
         for mb in range(n_mini):
-            mb_start = mb * batch_size
-            mb_end = min(mb_start + batch_size, n_my_train)
+            mb_start = mb * eff_batch_size
+            mb_end = min(mb_start + eff_batch_size, n_my_train)
             batch_items = ref_data[mb_start:mb_end]
             real_flags = [rd is not None for rd in batch_items]
             entries = [rd if rd is not None else dummy_rd
@@ -828,11 +952,24 @@ def _train_one_adapter(
             batch_ids = batch_ids.to(device)
             batch_attn = batch_attn.to(device)
 
-            with torch.enable_grad():
-                out = model(
-                    input_ids=batch_ids,
-                    attention_mask=batch_attn,
-                )
+            try:
+                with torch.enable_grad():
+                    out = model(
+                        input_ids=batch_ids,
+                        attention_mask=batch_attn,
+                    )
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                old_bs = eff_batch_size
+                eff_batch_size = max(1, eff_batch_size // 2)
+                if is_main:
+                    logger.warning(
+                        "OOM in training fwd (bsz=%d, seq=%d), "
+                        "halving batch %d→%d and skipping mini-batch",
+                        bsz, max_len, old_bs, eff_batch_size,
+                    )
+                optimizer.zero_grad()
+                continue
 
             mb_losses: list = []
             for j, e in enumerate(entries):
@@ -850,6 +987,7 @@ def _train_one_adapter(
                 per_tok = lp.gather(
                     -1, target_j.unsqueeze(-1),
                 ).squeeze(-1)
+                del logits_j, lp
 
                 ratio = torch.exp(per_tok - old_lp)
                 clipped = torch.clamp(
@@ -875,7 +1013,8 @@ def _train_one_adapter(
             if mb_losses:
                 (torch.stack(mb_losses).mean() / accum_single).backward()
 
-            del out
+            del out, batch_ids, batch_attn
+            torch.cuda.empty_cache()
 
             is_accum_boundary = ((mb + 1) % accum_single == 0) or (mb == n_mini - 1)
             if is_accum_boundary:
@@ -889,9 +1028,10 @@ def _train_one_adapter(
             elapsed = time.time() - t_epoch
             rate = n_my / elapsed if elapsed > 0 else 0
             logger.info(
-                "  FSDP [%s] epoch %d/%d: loss=%.4f (%.1f samples/s, %.1fs)",
+                "  FSDP [%s] epoch %d/%d: loss=%.4f (%.1f samples/s, %.1fs, bs=%d)",
                 adapter_name, epoch + 1, epochs,
                 epoch_loss / max(epoch_samples, 1), rate, elapsed,
+                eff_batch_size,
             )
 
     train_time = time.time() - t_train

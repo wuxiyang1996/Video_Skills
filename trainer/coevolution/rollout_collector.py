@@ -29,6 +29,54 @@ from trainer.coevolution.vllm_client import AsyncVLLMClient
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Wave synchronizer — keeps episode LLM requests batched on the GPU
+# ---------------------------------------------------------------------------
+
+class WaveSynchronizer:
+    """Aligns episode LLM-request waves for better GPU batching.
+
+    vLLM throughput drops 10-20x when batch size falls to 1 (the GPU
+    becomes memory-bandwidth bound instead of compute-bound).  This
+    synchronizer prevents that by holding each episode at a barrier
+    before its LLM calls until all active episodes arrive — or a short
+    timeout expires — so that the requests reach vLLM together.
+    """
+
+    __slots__ = ("_n_active", "_timeout", "_count", "_event", "_lock")
+
+    def __init__(self, n_participants: int, timeout_s: float = 0.10):
+        self._n_active = n_participants
+        self._timeout = timeout_s
+        self._count = 0
+        self._event = asyncio.Event()
+        self._lock = asyncio.Lock()
+
+    async def arrive(self) -> None:
+        """Block until all active episodes arrive or *timeout_s* elapses."""
+        async with self._lock:
+            self._count += 1
+            if self._count >= self._n_active:
+                self._event.set()
+                self._count = 0
+                self._event = asyncio.Event()
+                return
+            my_event = self._event
+
+        try:
+            await asyncio.wait_for(my_event.wait(), timeout=self._timeout)
+        except asyncio.TimeoutError:
+            async with self._lock:
+                if self._event is my_event:
+                    my_event.set()
+                    self._count = 0
+                    self._event = asyncio.Event()
+
+    def depart(self) -> None:
+        """Decrease the active participant count (episode finished)."""
+        self._n_active = max(1, self._n_active - 1)
+
+
 @dataclass
 class EpisodeSpec:
     """One episode to run: game name + settings."""
@@ -145,6 +193,15 @@ async def collect_rollouts(
 
     semaphore = asyncio.Semaphore(config.max_concurrent_episodes)
 
+    sync_timeout = getattr(config, "rollout_sync_timeout_s", 0.10)
+    step_sync: Optional[WaveSynchronizer] = None
+    if sync_timeout > 0 and len(schedule) > 1:
+        step_sync = WaveSynchronizer(len(schedule), timeout_s=sync_timeout)
+        logger.info(
+            "Rollout wave sync enabled: %d participants, %.0fms timeout",
+            len(schedule), sync_timeout * 1000,
+        )
+
     results: List[EpisodeResult] = []
     results_lock = asyncio.Lock()
 
@@ -183,6 +240,7 @@ async def collect_rollouts(
                         model_name=config.model_name,
                         assigned_role=spec.assigned_role,
                         assigned_role_index=spec.assigned_role_index,
+                        step_sync=step_sync,
                     )
                     break
                 except Exception as exc:

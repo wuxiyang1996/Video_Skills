@@ -31,10 +31,13 @@ Usage (from Game-AI-Agent root):
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 import time
 import traceback
 from dataclasses import dataclass, field
@@ -152,11 +155,27 @@ def _suppress_map_warnings():
     _pbr.parse_object_sprites = _quiet_parse
 
 
+def _isolate_rom(rom_path: str) -> str:
+    """Copy ROM to a temp dir so each PyBoy instance gets its own .ram/.sav files.
+
+    Returns the path to the ROM copy.  The temp dir is registered for
+    cleanup at process exit.
+    """
+    tmp_dir = tempfile.mkdtemp(prefix="pokemon_red_")
+    rom_copy = os.path.join(tmp_dir, os.path.basename(rom_path))
+    shutil.copy2(rom_path, rom_copy)
+    atexit.register(shutil.rmtree, tmp_dir, True)
+    return rom_copy
+
+
 def make_orak_env(rom_path: str, log_path: str, task: str = "DefeatBrock") -> PokemonRedEnv:
     """Instantiate an Orak PokemonRedEnv without the MCP/omegaconf stack.
 
     Orak's PyBoyRunner uses relative paths (e.g. ./src/mcp_game_servers/...)
-    so we chdir to the Orak root first.
+    so we chdir to the Orak root during setup, then restore the original cwd.
+
+    The ROM is copied to a temp dir so parallel episodes each get their own
+    .ram/.sav files and don't conflict.
     """
     import types
 
@@ -164,25 +183,24 @@ def make_orak_env(rom_path: str, log_path: str, task: str = "DefeatBrock") -> Po
 
     orak_root = str(ORAK_SRC.parent)
     old_cwd = os.getcwd()
-    os.chdir(orak_root)
+    try:
+        os.chdir(orak_root)
 
-    # Delete .sav file so each episode starts from NEW GAME
-    rom_abs = os.path.abspath(rom_path)
-    sav_path = os.path.splitext(rom_abs)[0] + ".sav"
-    if os.path.exists(sav_path):
-        os.remove(sav_path)
+        rom_copy = _isolate_rom(os.path.abspath(rom_path))
 
-    cfg = types.SimpleNamespace(
-        log_path=log_path,
-        task=task,
-        rom_path=rom_path,
-        success_condition="get_boulder_badge",
-        input_modality="text",
-    )
-    env = PokemonRedEnv.__new__(PokemonRedEnv)
-    env.cfg = cfg
-    env.configure()
-    return env
+        cfg = types.SimpleNamespace(
+            log_path=log_path,
+            task=task,
+            rom_path=rom_copy,
+            success_condition="get_boulder_badge",
+            input_modality="text",
+        )
+        env = PokemonRedEnv.__new__(PokemonRedEnv)
+        env.cfg = cfg
+        env.configure()
+        return env
+    finally:
+        os.chdir(old_cwd)
 
 
 # ===================================================================
@@ -440,6 +458,16 @@ def check_whiteout(state_dict: Dict) -> bool:
 VALID_ACTIONS = {"a", "b", "start", "select", "up", "down", "left", "right"}
 
 
+def _make_client(client_kw: Dict) -> "openai.OpenAI":
+    """Create or return a cached OpenAI client (avoids re-creating HTTP sessions)."""
+    key = tuple(sorted(client_kw.items()))
+    if not hasattr(_make_client, "_cache"):
+        _make_client._cache = {}
+    if key not in _make_client._cache:
+        _make_client._cache[key] = openai.OpenAI(**client_kw)
+    return _make_client._cache[key]
+
+
 def get_reflection(memory: RollingMemory, state_summary: str,
                    client_kw: Dict, model: str) -> str:
     if len(memory.history) < 4:
@@ -450,7 +478,7 @@ def get_reflection(memory: RollingMemory, state_summary: str,
         state_summary=state_summary,
     )
     try:
-        client = openai.OpenAI(**client_kw)
+        client = _make_client(client_kw)
         resp = client.chat.completions.create(
             model=model, temperature=0.2, max_tokens=150,
             messages=[
@@ -497,7 +525,7 @@ def llm_decide(state_text: str, memory: RollingMemory,
     )
 
     try:
-        client = openai.OpenAI(**client_kw)
+        client = _make_client(client_kw)
         resp = client.chat.completions.create(
             model=model, temperature=temperature, max_tokens=500,
             messages=[
@@ -623,6 +651,7 @@ def run_pokemon_episode(
     env.state_dict = env.parse_game_state(state_text)
     env.prev_state_dict = dict(env.state_dict)
     score_str = "0.0 (0/12)"
+    prev_score_val = 0.0
 
     while step_count < max_steps:
         # --- Read state ---
@@ -700,7 +729,8 @@ def run_pokemon_episode(
         reward = 0.0
         try:
             score_val = float(score_str.split("(")[0].strip())
-            reward = score_val / 100.0
+            reward = (score_val - prev_score_val) / 100.0
+            prev_score_val = score_val
         except Exception:
             pass
         total_reward += reward
@@ -766,7 +796,7 @@ def run_pokemon_episode(
         "model": model,
         "agent_type": "gpt54_orak_toolset",
         "final_location": state_dict.get("map_info", {}).get("map_name"),
-        "final_score": score_str if 'score_str' in dir() else "0",
+        "final_score": score_str,
     }
     return episode, stats
 
