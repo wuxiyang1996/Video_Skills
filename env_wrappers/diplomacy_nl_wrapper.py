@@ -507,6 +507,102 @@ def _make_llm_partner_policy(
     return _llm_partner_orders
 
 
+def _make_api_partner_policy(
+    api_model: str,
+    api_base: str = "https://openrouter.ai/api/v1",
+    api_key: Optional[str] = None,
+) -> Callable:
+    """Create an API-based partner policy for external opponent models.
+
+    Calls an external chat API (e.g. OpenRouter) instead of local vLLM,
+    enabling training against a fixed strong opponent to break self-play
+    reward inflation.  Falls back to random on any failure.
+    """
+    import openai as _openai
+
+    if api_key is None:
+        try:
+            from api_keys import open_router_api_key
+            api_key = open_router_api_key
+        except ImportError:
+            import os
+            api_key = os.environ.get("OPENROUTER_API_KEY", "")
+
+    _client = _openai.OpenAI(base_url=api_base, api_key=api_key, max_retries=2)
+
+    def _api_partner_orders(
+        game: "Game",
+        power_name: str,
+        *,
+        shared_ctx: Optional[str] = None,
+        all_possible_orders: Optional[dict] = None,
+    ) -> List[str]:
+        try:
+            possible_orders = all_possible_orders or game.get_all_possible_orders()
+            orderable_locs = game.get_orderable_locations(power_name) or []
+            if not orderable_locs:
+                return []
+
+            power = game.powers.get(power_name)
+            if shared_ctx is None:
+                shared_ctx = _build_shared_board_context(game)
+
+            power_lines = [f"You are: {power_name}."]
+            if power:
+                power_lines.append(f"Your units: {power.units if power.units else 'None'}")
+                power_lines.append(f"Your supply centers: {list(power.centers)} ({len(power.centers)} total)")
+            obs_text = shared_ctx + "\n".join(power_lines)
+
+            loc_options = []
+            for loc in orderable_locs:
+                if loc in possible_orders and possible_orders[loc]:
+                    opts = possible_orders[loc][:10]
+                    loc_options.append(f"  {loc}: {opts}")
+            options_str = "\n".join(loc_options)
+
+            prompt = (
+                f"{obs_text}\n\n"
+                f"Pick one order per unit from these options:\n"
+                f"{options_str}\n\n"
+                f"Reply with one order per line, nothing else.\nOrders:\n"
+            )
+
+            resp = _client.chat.completions.create(
+                model=api_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.4,
+                max_tokens=256,
+            )
+            text = (resp.choices[0].message.content or "").strip()
+
+            valid_set: set = set()
+            for loc in orderable_locs:
+                if loc in possible_orders:
+                    valid_set.update(possible_orders[loc])
+
+            parsed = [line.strip() for line in text.split("\n") if line.strip()]
+            valid_orders = [o for o in parsed if o in valid_set]
+
+            covered_locs = set()
+            for o in valid_orders:
+                for loc in orderable_locs:
+                    if loc in possible_orders and o in possible_orders[loc]:
+                        covered_locs.add(loc)
+                        break
+
+            for loc in orderable_locs:
+                if loc not in covered_locs and loc in possible_orders and possible_orders[loc]:
+                    valid_orders.append(random.choice(possible_orders[loc]))
+
+            return valid_orders
+
+        except Exception as exc:
+            _log.debug("API partner orders failed for %s: %s", power_name, exc)
+            return _random_partner_orders(game, power_name)
+
+    return _api_partner_orders
+
+
 # ---------------------------------------------------------------------------
 # Wrapper class
 # ---------------------------------------------------------------------------
@@ -541,20 +637,27 @@ class DiplomacyNLWrapper:
         vllm_base_urls: Optional[List[str]] = None,
         model_name: Optional[str] = None,
         skill_bank: Any = None,
+        opponent_model: Optional[str] = None,
+        opponent_api_base: Optional[str] = None,
     ):
         """
         Args:
             controlled_power: If set (e.g. "FRANCE"), single-agent mode.
                 If None, multi-agent mode (all 7 powers controlled externally).
             partner_policy: Callable(game, power_name) -> List[str] for non-controlled
-                powers in single-agent mode. If None and vllm_base_urls is set,
-                uses LLM policy. If None and no URLs, uses random orders.
+                powers in single-agent mode.
+                If None and opponent_model is set, uses API policy.
+                If None and vllm_base_urls is set, uses LLM policy.
+                If None and no URLs, uses random orders.
             map_name: Diplomacy map name (default "standard").
             max_phases: Maximum number of phases before truncation.
             seed: Random seed.
             vllm_base_urls: vLLM server URLs for LLM-based partner policy.
             model_name: Model name for vLLM requests.
             skill_bank: Per-game skill bank for opponent skill hints.
+            opponent_model: External API model name for opponents (e.g.
+                "gpt-5-mini").  Takes priority over vLLM self-play.
+            opponent_api_base: API base URL (default: OpenRouter).
         """
         if Game is None:
             _msg = (
@@ -571,6 +674,11 @@ class DiplomacyNLWrapper:
         self._multi_agent = controlled_power is None
         if partner_policy is not None:
             self._partner_policy = partner_policy
+        elif opponent_model:
+            self._partner_policy = _make_api_partner_policy(
+                opponent_model,
+                api_base=opponent_api_base or "https://openrouter.ai/api/v1",
+            )
         elif vllm_base_urls and model_name:
             self._partner_policy = _make_llm_partner_policy(
                 vllm_base_urls, model_name,

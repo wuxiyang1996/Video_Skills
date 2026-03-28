@@ -462,7 +462,9 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                     adapter_dir=config.adapter_dir,
                     metadata=ckpt_metadata,
                 )
-                cleanup_old_checkpoints(config.checkpoint_dir, keep_last=10)
+                _keep = getattr(config, "checkpoint_keep_last", 0)
+                if _keep > 0:
+                    cleanup_old_checkpoints(config.checkpoint_dir, keep_last=_keep)
                 logger.info("Checkpoint saved at step %d", _step)
             except Exception as exc:
                 logger.error("Checkpoint save failed: %s", exc)
@@ -524,7 +526,7 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
     _best_reward = float("-inf")
     _best_step = -1
     _decline_count = 0
-    _DECLINE_PATIENCE = 3
+    _DECLINE_PATIENCE = getattr(config, "rollback_patience", 4)
 
     for step in range(start_step, config.total_steps):
         step_t0 = time.monotonic()
@@ -660,6 +662,11 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                 try:
                     import gc as _gc
                     _gc.collect()
+                    import torch as _torch
+                    if _torch.cuda.is_available():
+                        for _i in range(_torch.cuda.device_count()):
+                            with _torch.cuda.device(_i):
+                                _torch.cuda.empty_cache()
                 except Exception:
                     pass
             _prev_phase_c_time = time.monotonic() - _prev_ctx['phase_c_t0']
@@ -775,6 +782,11 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
             try:
                 import gc as _gc
                 _gc.collect()
+                import torch as _torch
+                if _torch.cuda.is_available():
+                    for _i in range(_torch.cuda.device_count()):
+                        with _torch.cuda.device(_i):
+                            _torch.cuda.empty_cache()
             except Exception:
                 pass
         _last_phase_c_time = time.monotonic() - _last_ctx['phase_c_t0']

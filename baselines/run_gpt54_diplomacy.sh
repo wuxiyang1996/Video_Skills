@@ -71,10 +71,13 @@ if [ -z "$AI_DIPLOMACY_ROOT" ]; then
     echo "       Expected at: $WORKSPACE_ROOT/AI_Diplomacy or $PROJECT_ROOT/AI_Diplomacy"
 fi
 
-# ── Settings matching training (scripts/run_diplomacy.sh) ──────────────────
-EPISODES="${EPISODES:-20}"
+# ── Settings ──────────────────────────────────────────────────────────────────
+NUM_POWERS=7
+EPISODES_PER_POWER="${EPISODES_PER_POWER:-8}"
+EPISODES="${EPISODES:-$((NUM_POWERS * EPISODES_PER_POWER))}"
 TEMPERATURE="${TEMPERATURE:-0.4}"
 MODEL="${MODEL:-gpt-5.4}"
+OPPONENT_MODEL="${OPPONENT_MODEL:-gpt-5.4}"
 SEED="${SEED:-42}"
 
 # ── Headless rendering (from scripts/run_diplomacy.sh) ─────────────────────
@@ -124,32 +127,26 @@ mkdir -p "${OUTPUT_DIR}"
 
 # ── Banner ─────────────────────────────────────────────────────────────────
 echo "══════════════════════════════════════════════════════════════"
-echo "  GPT-5.4 Baseline — Diplomacy (${EPISODES} episodes)"
+echo "  GPT-5.4 Baseline — Diplomacy (${EPISODES} episodes = ${EPISODES_PER_POWER}/power x ${NUM_POWERS})"
 echo "══════════════════════════════════════════════════════════════"
 echo "  Project root:   ${PROJECT_ROOT}"
 echo "  AgentEvolver:   ${AGENTEVOLVER_ROOT}"
 [ -n "$AI_DIPLOMACY_ROOT" ] && echo "  AI_Diplomacy:   ${AI_DIPLOMACY_ROOT}" || echo "  AI_Diplomacy:   (not found)"
-echo "  Model:          ${MODEL}"
+echo "  Model:          ${MODEL}  (controlled power)"
+echo "  Opponents:      ${OPPONENT_MODEL}"
 echo "  Episodes:       ${EPISODES}"
+echo "  Mode:           per-power (cycle through 7 powers)"
 echo "  Temperature:    ${TEMPERATURE}"
 echo "  Seed:           ${SEED}"
 echo "  Output:         ${OUTPUT_DIR}"
 [ -n "${OPENROUTER_API_KEY:-}" ] && echo "  API key:        ${OPENROUTER_API_KEY:0:12}... (OpenRouter)" || echo "  API key:        ${OPENAI_API_KEY:0:12}..."
 echo ""
-echo "  Diplomacy game profile (same as scripts/run_diplomacy.sh):"
+echo "  Diplomacy game profile:"
 echo "    - 7-player strategic board game (classic map)"
 echo "    - Powers: Austria, England, France, Germany, Italy, Russia, Turkey"
-echo "    - Phases: Spring/Fall Movement + Retreat + Fall Adjustment"
-echo "    - 20 max phases/episode (DiplomacyConfig.max_phases)"
-echo "    - Reward: supply_centers/18 + potential shaping (+0.5/centre gained)"
-echo "    - Negotiation: message exchange before order submission"
-echo "    - End condition: natural (solo victory or max phases)"
-echo "    - GPT-5.4 controls all 7 powers independently"
+echo "    - 20 max phases/episode"
+echo "    - Controlled power = ${MODEL}, opponents = ${OPPONENT_MODEL}"
 echo "    - Chain-of-thought reasoning via function calling"
-echo ""
-echo "  Env chain:"
-echo "    DiplomacyNLWrapper(max_phases=20)"
-echo "      → per-power structured CoT → submit_orders()"
 echo "══════════════════════════════════════════════════════════════"
 echo ""
 
@@ -164,8 +161,10 @@ python3 "${PROJECT_ROOT}/cold_start/generate_cold_start_evolver.py" \
     --games diplomacy \
     --episodes "${EPISODES}" \
     --model "${MODEL}" \
+    --opponent_model "${OPPONENT_MODEL}" \
     --temperature "${TEMPERATURE}" \
     --seed "${SEED}" \
+    --per_power \
     --no_label \
     --verbose \
     --output_dir "${OUTPUT_DIR}" \

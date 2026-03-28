@@ -454,6 +454,87 @@ def _make_llm_partner_policy(
     return _llm_partner_action
 
 
+def _make_api_partner_policy(
+    api_model: str,
+    api_base: str = "https://openrouter.ai/api/v1",
+    api_key: Optional[str] = None,
+) -> Callable:
+    """Create an API-based partner policy for external opponent models.
+
+    Calls an external chat API (e.g. OpenRouter) instead of local vLLM,
+    enabling training against a fixed strong opponent to break self-play
+    reward inflation.  Falls back to random on any failure.
+    """
+    import openai as _openai
+
+    if api_key is None:
+        try:
+            from api_keys import open_router_api_key
+            api_key = open_router_api_key
+        except ImportError:
+            import os
+            api_key = os.environ.get("OPENROUTER_API_KEY", "")
+
+    _client = _openai.OpenAI(base_url=api_base, api_key=api_key, max_retries=2)
+
+    def _api_partner_action(env, roles, player_id, phase_id):
+        try:
+            obs = state_to_natural_language(env, roles, player_id=player_id)
+            obs_short = obs[:2000]
+            num_players = len(roles)
+
+            if phase_id == 0:
+                team_size = env.num_players_for_quest[env.turn]
+                prompt = (
+                    f"{obs_short}\n\n"
+                    f"Pick {team_size} players for the quest team. "
+                    f"Reply with just the player numbers separated by commas "
+                    f"(e.g. \"0,2,3\").\nTeam:"
+                )
+            elif phase_id == 1:
+                prompt = (
+                    f"{obs_short}\n\n"
+                    f"Vote: approve or reject this team. "
+                    f"Reply with just one word.\nVote:"
+                )
+            elif phase_id == 2:
+                prompt = (
+                    f"{obs_short}\n\n"
+                    f"Quest vote: pass or fail. "
+                    f"Reply with just one word.\nVote:"
+                )
+            elif phase_id == 3:
+                prompt = (
+                    f"{obs_short}\n\n"
+                    f"Choose a player to assassinate (0 to {num_players - 1}). "
+                    f"Reply with just the player number.\nTarget:"
+                )
+            else:
+                return _random_partner_action(env, roles, player_id, phase_id)
+
+            resp = _client.chat.completions.create(
+                model=api_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.4,
+                max_tokens=32,
+            )
+            text = (resp.choices[0].message.content or "").strip()
+
+            if phase_id == 0:
+                team_size = env.num_players_for_quest[env.turn]
+                return parse_team(text, num_players, team_size)
+            elif phase_id in (1, 2):
+                return parse_vote(text)
+            elif phase_id == 3:
+                return parse_target(text, num_players)
+
+        except Exception as exc:
+            _log.debug("API partner action failed for player %d: %s", player_id, exc)
+            return _random_partner_action(env, roles, player_id, phase_id)
+
+    return _api_partner_action
+
+
 # ---------------------------------------------------------------------------
 # Wrapper class
 # ---------------------------------------------------------------------------
@@ -490,6 +571,8 @@ class AvalonNLWrapper:
         vllm_base_urls: Optional[List[str]] = None,
         model_name: Optional[str] = None,
         skill_bank: Any = None,
+        opponent_model: Optional[str] = None,
+        opponent_api_base: Optional[str] = None,
     ):
         """
         Args:
@@ -498,6 +581,7 @@ class AvalonNLWrapper:
                 If None, multi-agent mode (all players controlled externally).
             partner_policy: Callable(env, roles, player_id, phase_id) -> action
                 for non-controlled players in single-agent mode.
+                If None and opponent_model is set, uses API policy.
                 If None and vllm_base_urls is set, uses LLM policy.
                 If None and no URLs, uses random policy.
             merlin..oberon: Role flags passed to AvalonBasicConfig.
@@ -505,6 +589,9 @@ class AvalonNLWrapper:
             vllm_base_urls: vLLM server URLs for LLM-based partner policy.
             model_name: Model name for vLLM requests.
             skill_bank: Per-game skill bank for opponent skill hints.
+            opponent_model: External API model name for opponents (e.g.
+                "gpt-5-mini").  Takes priority over vLLM self-play.
+            opponent_api_base: API base URL (default: OpenRouter).
         """
         if AvalonBasicConfig is None:
             raise ImportError(
@@ -516,6 +603,11 @@ class AvalonNLWrapper:
         self._multi_agent = controlled_player is None
         if partner_policy is not None:
             self._partner_policy = partner_policy
+        elif opponent_model:
+            self._partner_policy = _make_api_partner_policy(
+                opponent_model,
+                api_base=opponent_api_base or "https://openrouter.ai/api/v1",
+            )
         elif vllm_base_urls and model_name:
             self._partner_policy = _make_llm_partner_policy(
                 vllm_base_urls, model_name,

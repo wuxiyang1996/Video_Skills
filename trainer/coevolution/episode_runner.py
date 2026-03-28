@@ -1184,6 +1184,8 @@ async def run_episode_async(
     assigned_role: Optional[str] = None,
     assigned_role_index: Optional[int] = None,
     step_sync: Any = None,
+    opponent_model: Optional[str] = None,
+    opponent_api_base: Optional[str] = None,
 ) -> EpisodeResult:
     """Run one game episode asynchronously.
 
@@ -1203,6 +1205,12 @@ async def run_episode_async(
         *None* the legacy random-role selection is used.
     assigned_role_index : int | None
         Explicit player index (Avalon) or power ordinal (Diplomacy).
+    opponent_model : str | None
+        External API model for opponents (e.g. ``"gpt-5-mini"``).
+        When set, non-controlled players use this model via API
+        instead of vLLM self-play.
+    opponent_api_base : str | None
+        Base URL for the opponent API (default: OpenRouter).
     """
     imp = _lazy_imports()
     GAME_CONFIGS = imp["GAME_CONFIGS"]
@@ -1261,6 +1269,8 @@ async def run_episode_async(
             controlled_power=power, max_phases=20,
             vllm_base_urls=vllm_base_urls, model_name=model_name,
             skill_bank=skill_bank,
+            opponent_model=opponent_model,
+            opponent_api_base=opponent_api_base,
         ))
 
     elif game == "avalon":
@@ -1283,6 +1293,8 @@ async def run_episode_async(
             num_players=5, controlled_player=player,
             vllm_base_urls=vllm_base_urls, model_name=model_name,
             skill_bank=skill_bank,
+            opponent_model=opponent_model,
+            opponent_api_base=opponent_api_base,
         ))
 
     else:

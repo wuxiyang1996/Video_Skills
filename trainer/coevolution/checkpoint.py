@@ -30,6 +30,7 @@ ADAPTER_SUBDIR.update({name: "skillbank" for name in SKILLBANK_ADAPTERS})
 
 def _save_one_bank(agent: Any, path: Path, label: str = "") -> None:
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         bank = getattr(agent, "bank", agent)
         if hasattr(bank, "save"):
             bank.save(str(path))

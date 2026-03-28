@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Claude Sonnet 4.6 baseline on Diplomacy (56 episodes = 8/power x 7) via OpenRouter
+# Controlled power = Claude 4.6, all opponents = GPT-5.4
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,6 +23,7 @@ EPISODES_PER_POWER="${EPISODES_PER_POWER:-8}"
 EPISODES=$((NUM_POWERS * EPISODES_PER_POWER))
 TEMPERATURE="${TEMPERATURE:-0.4}"
 MODEL="${MODEL:-anthropic/claude-4.6-sonnet-20260217}"
+OPPONENT_MODEL="${OPPONENT_MODEL:-gpt-5.4}"
 SEED="${SEED:-42}"
 
 export PYGLET_HEADLESS=1
@@ -49,8 +51,10 @@ mkdir -p "${OUTPUT_DIR}"
 echo "══════════════════════════════════════════════════════════════"
 echo "  Claude Sonnet 4.6 Baseline — Diplomacy (${EPISODES} episodes = ${EPISODES_PER_POWER}/power x ${NUM_POWERS})"
 echo "══════════════════════════════════════════════════════════════"
-echo "  Model:     ${MODEL}"
+echo "  Model:     ${MODEL}  (controlled power)"
+echo "  Opponents: ${OPPONENT_MODEL}"
 echo "  Episodes:  ${EPISODES}    Temperature: ${TEMPERATURE}"
+echo "  Mode:      per-power (cycle through 7 powers)"
 echo "  Output:    ${OUTPUT_DIR}"
 echo "══════════════════════════════════════════════════════════════"
 echo ""
@@ -59,8 +63,10 @@ python3 "${PROJECT_ROOT}/cold_start/generate_cold_start_evolver.py" \
     --games diplomacy \
     --episodes "${EPISODES}" \
     --model "${MODEL}" \
+    --opponent_model "${OPPONENT_MODEL}" \
     --temperature "${TEMPERATURE}" \
     --seed "${SEED}" \
+    --per_power \
     --no_label \
     --verbose \
     --output_dir "${OUTPUT_DIR}" \

@@ -227,6 +227,8 @@ async def collect_rollouts(
             result: Optional[EpisodeResult] = None
             for attempt in range(1, max_retries + 1):
                 try:
+                    _opp_model = getattr(config, "opponent_model", None)
+                    _opp_base = getattr(config, "opponent_api_base", None)
                     result = await run_episode_async(
                         game=spec.game,
                         max_steps=spec.max_steps,
@@ -241,6 +243,8 @@ async def collect_rollouts(
                         assigned_role=spec.assigned_role,
                         assigned_role_index=spec.assigned_role_index,
                         step_sync=step_sync,
+                        opponent_model=_opp_model if spec.game in ("avalon", "diplomacy") else None,
+                        opponent_api_base=_opp_base if spec.game in ("avalon", "diplomacy") else None,
                     )
                     break
                 except Exception as exc:

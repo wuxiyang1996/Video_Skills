@@ -186,6 +186,18 @@ def parse_args() -> argparse.Namespace:
         help="Number of tokens the draft model proposes per step (default: 5)",
     )
 
+    # External opponent (Avalon / Diplomacy)
+    parser.add_argument(
+        "--opponent-model", type=str, default=None,
+        help="External API model for opponents in Avalon/Diplomacy "
+             "(e.g. gpt-5-mini). When set, non-controlled players use "
+             "this model via API instead of vLLM self-play.",
+    )
+    parser.add_argument(
+        "--opponent-api-base", type=str, default=None,
+        help="Base URL for opponent API (default: https://openrouter.ai/api/v1)",
+    )
+
     # GRPO
     parser.add_argument(
         "--no-grpo", action="store_true",
@@ -455,6 +467,11 @@ def main() -> None:
             g: args.episodes_per_game for g in games
         }
 
+    if args.opponent_model is not None:
+        config_kwargs["opponent_model"] = args.opponent_model
+    if args.opponent_api_base is not None:
+        config_kwargs["opponent_api_base"] = args.opponent_api_base
+
     if args.seed_bank_dir is not None:
         config_kwargs["seed_bank_dir"] = args.seed_bank_dir
 
@@ -492,6 +509,10 @@ def main() -> None:
               f"{config.vllm_base_port + len(config.vllm_gpu_ids) - 1})")
     else:
         print(f"  vLLM:         EXTERNAL — {config.vllm_base_url}")
+    _opp = getattr(config, "opponent_model", None)
+    if _opp:
+        _opp_base = getattr(config, "opponent_api_base", "openrouter")
+        print(f"  Opponent:     {_opp} ({_opp_base})")
     print(f"  GRPO:         {'enabled' if config.grpo_enabled else 'disabled'}")
     if config.grpo_enabled:
         print(f"    FSDP GPUs:  {config.effective_grpo_devices}")

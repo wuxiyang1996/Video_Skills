@@ -1323,8 +1323,15 @@ comparable:
 |------|-------------------|---------------|-------|
 | **Candy Crush** | 541.5 | 591.0 (step 11) | **+9.1%** |
 | **2048** | 1145.4 | 1361.0 (step 26) | **+18.8%** |
-| **Tetris** | 13.4 | 13.3 (step 2) | ~0% (pre reward-shaping patch) |
+| **Tetris** (macro) | 513.0 ± 333.9 | 510.9 ± 199.5 (step 4) | ~0% |
 | **Sokoban** | -5.4 | -0.8 (step 24) | scale changed by patch |
+
+**Tetris macro-action note:** Tetris uses the `TetrisMacroActionWrapper`
+(placement-level actions: each decision places one entire piece at a chosen
+rotation + column) instead of primitive moves. This matches the training env
+chain (`make_gaming_env → GamingAgentNLWrapper → TetrisMacroActionWrapper`).
+The old primitive-action numbers (GPT-5.4: 13.4, training: 13.3) are no longer
+comparable. 95% CIs computed with t-distribution (N=8 episodes each).
 
 ---
 

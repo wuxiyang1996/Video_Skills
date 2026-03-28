@@ -52,9 +52,13 @@ export SKILLBANK_SEGMENT_TIMEOUT_S="${SKILLBANK_SEGMENT_TIMEOUT_S:-180}"
 # ── CUDA memory management ───────────────────────────────────────────
 # Diplomacy prompts are 2-4× longer than single-player games, causing
 # FSDP GRPO OOM at the default batch size.  Reduce FSDP micro-batch
-# from 32→16 and enable expandable segments to reduce fragmentation.
+# from 32→8 and ref micro-batch from 8→4.  Enable expandable segments
+# to reduce fragmentation.  Raise NCCL timeout to survive long
+# all-reduce stalls after OOM recovery.
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
-export GRPO_FSDP_BATCH_SIZE="${GRPO_FSDP_BATCH_SIZE:-16}"
+export GRPO_FSDP_BATCH_SIZE="${GRPO_FSDP_BATCH_SIZE:-8}"
+export GRPO_REF_MICRO_BATCH="${GRPO_REF_MICRO_BATCH:-4}"
+export GRPO_NCCL_TIMEOUT_S="${GRPO_NCCL_TIMEOUT_S:-900}"
 
 # ── Skillbank GRPO accumulation threshold ────────────────────────────
 # Default threshold of 32 is too high for Diplomacy: 28 episodes only

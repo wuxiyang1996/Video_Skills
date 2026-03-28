@@ -353,6 +353,10 @@ class DecisionGRPOTrainer:
                     for a in advantages
                 ]
 
+            batch_size = _estimate_safe_batch_size(
+                prompts, completions, default=_FSDP_BATCH_SIZE,
+            )
+
             jobs.append({
                 "adapter_dir": adapter_path,
                 "adapter_name": adapter_name,
@@ -361,7 +365,7 @@ class DecisionGRPOTrainer:
                 "advantages": advantages,
                 "lr": cfg["lr"],
                 "epochs": epochs,
-                "batch_size": _FSDP_BATCH_SIZE,
+                "batch_size": batch_size,
                 "clip_ratio": self.clip_ratio,
                 "kl_coeff": cfg["kl_coeff"],
                 "save_dir": adapter_path,
@@ -422,6 +426,32 @@ _SKILLBANK_TRAIN_THRESHOLD = int(
 )
 _SKILLBANK_MAX_ACCUM = 512
 _FSDP_BATCH_SIZE = int(os.environ.get("GRPO_FSDP_BATCH_SIZE", "32"))
+
+
+def _estimate_safe_batch_size(
+    prompts: List[str],
+    completions: List[str],
+    default: int = _FSDP_BATCH_SIZE,
+) -> int:
+    """Estimate a safe FSDP batch size from prompt/completion lengths.
+
+    Long-context games (Diplomacy, Avalon) produce prompts 2-4x longer
+    than single-player games, and the default batch size causes OOM.
+    This heuristic caps batch size so that ``bs * median_chars`` stays
+    under a safe budget (~32K chars ≈ ~8K tokens at ~4 chars/token).
+    """
+    if not prompts:
+        return default
+    char_lens = sorted(len(p) + len(c) for p, c in zip(prompts, completions))
+    median_chars = char_lens[len(char_lens) // 2]
+    safe = max(1, int(32_000 / max(median_chars, 1)))
+    result = min(default, safe)
+    if result < default:
+        logger.info(
+            "FSDP batch size capped: %d→%d (median_chars=%d)",
+            default, result, median_chars,
+        )
+    return result
 
 
 class SkillBankGRPOTrainer:
@@ -525,6 +555,10 @@ class SkillBankGRPOTrainer:
                 adapter_name, n_total, n_new, len(self.devices),
             )
 
+            batch_size = _estimate_safe_batch_size(
+                prompts, completions, default=_FSDP_BATCH_SIZE,
+            )
+
             jobs.append({
                 "adapter_dir": adapter_path,
                 "adapter_name": adapter_name,
@@ -533,7 +567,7 @@ class SkillBankGRPOTrainer:
                 "advantages": advantages,
                 "lr": cfg["lr"],
                 "epochs": cfg["epochs"],
-                "batch_size": _FSDP_BATCH_SIZE,
+                "batch_size": batch_size,
                 "clip_ratio": self.clip_ratio,
                 "kl_coeff": cfg["kl_coeff"],
                 "save_dir": adapter_path,

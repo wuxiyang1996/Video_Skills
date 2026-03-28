@@ -12,3 +12,6 @@ __all__ = [
     "run_inference",
     "run_verl_inference",
 ]
+
+# Academic benchmark evaluation (MMLU-Pro, Math-500) available via:
+#   python -m inference.run_academic_benchmarks [--help]

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ======================================================================
-#  Inference: Super Mario with Qwen3-8B  (8 episodes)
+#  Inference: Super Mario with Qwen3-32B  (8 episodes)
 #
-#  Launches a vLLM server for Qwen/Qwen3-8B and runs 8 inference
+#  Launches a vLLM server for Qwen/Qwen3-32B and runs 8 inference
 #  episodes on Super Mario using the evaluation runner.
 #
 #  Super Mario requires the orak-mario conda env (gym-super-mario-bros /
@@ -70,11 +70,11 @@ mkdir -p "${HF_HUB_CACHE}"
 export PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/../GamingAgent:${PROJECT_ROOT}/../AgentEvolver:${PROJECT_ROOT}/../AI_Diplomacy:${PROJECT_ROOT}/../Orak:${PYTHONPATH:-}"
 
 # ── Configurable parameters ──────────────────────────────────────────
-MODEL="${MODEL:-Qwen/Qwen3-8B}"
+MODEL="${MODEL:-Qwen/Qwen3-32B}"
 EPISODES="${EPISODES:-8}"
 MAX_STEPS="${MAX_STEPS:-500}"
 TEMPERATURE="${TEMPERATURE:-0.3}"
-EVAL_GPUS="${EVAL_GPUS:-3}"
+EVAL_GPUS="${EVAL_GPUS:-6}"
 VLLM_PORT="${VLLM_PORT:-8013}"
 VLLM_HOST="${VLLM_HOST:-127.0.0.1}"
 TENSOR_PARALLEL="${TENSOR_PARALLEL:-1}"
@@ -106,7 +106,7 @@ trap cleanup EXIT INT TERM
 
 # ── Print banner ─────────────────────────────────────────────────────
 echo "══════════════════════════════════════════════════════════════"
-echo "  Super Mario Inference: Qwen3-8B"
+echo "  Super Mario Inference: Qwen3-32B"
 echo "══════════════════════════════════════════════════════════════"
 echo "  Model:          ${MODEL}"
 echo "  Episodes:       ${EPISODES}"

@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 _GRPO_MAX_SEQ_LEN = int(os.environ.get("GRPO_MAX_SEQ_LEN", "2048"))
 _GRPO_REF_MICRO_BATCH = int(os.environ.get("GRPO_REF_MICRO_BATCH", "8"))
+_NCCL_TIMEOUT_S = int(os.environ.get("GRPO_NCCL_TIMEOUT_S", "600"))
 
 
 def _find_free_port() -> int:
@@ -328,7 +329,22 @@ def _run_grpo_training_loop(
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(trainable_params, lr=lr)
     accum = max(1, accumulation_steps)
-    eff_batch_size = batch_size
+
+    # Adaptive batch size: cap based on median sequence length to prevent
+    # OOM on long-context games like Diplomacy (~2 KB prompts).
+    # Heuristic: safe_bs ~ 80GB_budget / (seq_len * per_token_cost).
+    seq_lengths = [rd["input_ids"].shape[1] for rd in ref_data if rd is not None]
+    if seq_lengths:
+        median_seq = sorted(seq_lengths)[len(seq_lengths) // 2]
+        safe_bs = max(1, int(24_000 / max(median_seq, 1)))
+        eff_batch_size = min(batch_size, safe_bs)
+        if eff_batch_size < batch_size and is_main:
+            logger.info(
+                "Adaptive batch size: %d→%d (median_seq=%d)",
+                batch_size, eff_batch_size, median_seq,
+            )
+    else:
+        eff_batch_size = batch_size
 
     total_loss = 0.0
     total_tokens = 0
@@ -1110,15 +1126,24 @@ def _fsdp_train_worker(rank: int, args: Dict[str, Any]) -> None:
     Thin wrapper that initialises the NCCL process group, delegates to
     :func:`_train_one_adapter`, then tears down the group.
     """
+    import datetime
+
     import torch
     import torch.distributed as dist
+
+    os.environ.setdefault(
+        "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"
+    )
 
     torch.cuda.set_device(rank)
     device = torch.device(f"cuda:{rank}")
 
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = str(args["master_port"])
-    dist.init_process_group("nccl", rank=rank, world_size=args["world_size"])
+    dist.init_process_group(
+        "nccl", rank=rank, world_size=args["world_size"],
+        timeout=datetime.timedelta(seconds=_NCCL_TIMEOUT_S),
+    )
 
     try:
         _train_one_adapter(
@@ -1141,6 +1166,7 @@ def _fsdp_train_worker_multi(rank: int, args: Dict[str, Any]) -> None:
     FSDP wrapping (~60-80 s) and full state-dict save (~100 s), reducing
     skill-bank Phase C.2 from ~12 min to ~2-3 min.
     """
+    import datetime
     import functools
 
     import torch
@@ -1158,7 +1184,10 @@ def _fsdp_train_worker_multi(rank: int, args: Dict[str, Any]) -> None:
 
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = str(args["master_port"])
-    dist.init_process_group("nccl", rank=rank, world_size=args["world_size"])
+    dist.init_process_group(
+        "nccl", rank=rank, world_size=args["world_size"],
+        timeout=datetime.timedelta(seconds=_NCCL_TIMEOUT_S),
+    )
 
     is_main = rank == 0
     world_size = args["world_size"]
@@ -1459,6 +1488,9 @@ def run_fsdp_grpo(
     # Remap CUDA_VISIBLE_DEVICES so rank 0..N-1 map to the target GPUs
     original_cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(g) for g in gpu_ids)
+    os.environ.setdefault(
+        "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"
+    )
 
     t0 = time.time()
     try:
@@ -1468,6 +1500,16 @@ def run_fsdp_grpo(
             args=(args,),
             join=True,
         )
+    except Exception:
+        try:
+            import torch as _torch
+            for _gid in gpu_ids:
+                with _torch.cuda.device(_gid):
+                    _torch.cuda.empty_cache()
+            gc.collect()
+        except Exception:
+            pass
+        raise
     finally:
         if original_cvd is not None:
             os.environ["CUDA_VISIBLE_DEVICES"] = original_cvd
@@ -1571,6 +1613,18 @@ def run_fsdp_grpo_multi(
             args=(args,),
             join=True,
         )
+    except Exception:
+        # On spawn failure (SIGABRT, OOM), force-clear GPU memory on
+        # all training GPUs so the next step starts with a clean slate.
+        try:
+            import torch as _torch
+            for _gid in gpu_ids:
+                with _torch.cuda.device(_gid):
+                    _torch.cuda.empty_cache()
+            gc.collect()
+        except Exception:
+            pass
+        raise
     finally:
         if original_cvd is not None:
             os.environ["CUDA_VISIBLE_DEVICES"] = original_cvd

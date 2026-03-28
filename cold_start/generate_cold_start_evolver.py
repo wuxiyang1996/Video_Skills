@@ -105,6 +105,10 @@ from cold_start.generate_cold_start import label_trajectory
 # ---------------------------------------------------------------------------
 MODEL_GPT54 = "gpt-5.4"
 
+DIPLOMACY_POWERS = [
+    "AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY",
+]
+
 # ---------------------------------------------------------------------------
 # Game registry for evolver games
 # ---------------------------------------------------------------------------
@@ -311,12 +315,85 @@ def avalon_agent_action(
     return action, reasoning
 
 
+def _parse_diplomacy_orders_from_text(reply: str) -> List[str]:
+    """Extract Diplomacy order strings from a plain-text LLM reply."""
+    orders: List[str] = []
+    for line in reply.splitlines():
+        line = line.strip().strip("'\",-•*`)>0123456789.")
+        line = line.strip()
+        if re.match(r"^[A-Z]\s+[A-Z]{3}", line):
+            orders.append(line)
+    if not orders:
+        json_m = re.search(r"\[([^\]]+)\]", reply)
+        if json_m:
+            try:
+                parsed = json.loads("[" + json_m.group(1) + "]")
+                orders = [str(o).strip() for o in parsed if o and re.match(r"^[A-Z]\s+[A-Z]{3}", str(o).strip())]
+            except (json.JSONDecodeError, TypeError):
+                pass
+    return orders
+
+
+def _call_text_completion(
+    system_prompt: str,
+    user_content: str,
+    model: str = MODEL_GPT54,
+    temperature: float = 0.4,
+) -> str:
+    """Call a model via OpenRouter using plain chat completion (no tools)."""
+    if openai is None:
+        return ""
+    client, use_router = _get_client()
+    eff_model = _effective_model(model, use_router)
+    try:
+        response = client.chat.completions.create(
+            model=eff_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=temperature,
+            max_tokens=800,
+        )
+        return response.choices[0].message.content or ""
+    except Exception as exc:
+        print(f"    [WARN] text-completion call failed ({exc})")
+        return ""
+
+
+DIPLOMACY_TEXT_SYSTEM = (
+    "You are an expert Diplomacy player.\n"
+    "You control one power and must issue orders for your units this phase.\n\n"
+    "Before choosing, briefly reason about:\n"
+    "1. Your current territorial position and supply-centre count.\n"
+    "2. Which neighbours are threats vs potential allies.\n"
+    "3. Whether to attack, defend, or support, and which borders matter most.\n\n"
+    "Order formats:\n"
+    "  Hold:         A PAR H\n"
+    "  Move:         A PAR - BUR\n"
+    "  Support hold: A MAR S A PAR\n"
+    "  Support move: A MAR S A PAR - BUR\n"
+    "  Convoy:       F ENG C A LON - BRE\n"
+    "  Retreat:      A PAR R MAR\n"
+    "  Build:        A PAR B\n"
+    "  Disband:      A PAR D\n\n"
+    "Reply with:\n"
+    "REASONING: <your brief reasoning>\n"
+    "ORDERS:\n<one order per line>\n"
+)
+
+
 def diplomacy_agent_action(
     state_nl: str,
     model: str = MODEL_GPT54,
     temperature: float = 0.4,
 ) -> Tuple[List[str], Optional[str]]:
-    """Query GPT-5.4 for one Diplomacy power. Returns (orders_list, reasoning)."""
+    """Query an LLM for one Diplomacy power. Returns (orders_list, reasoning).
+
+    Tries function calling first (works for GPT-5.4); falls back to
+    plain text completion + regex parsing for models that don't support
+    tool_choice (e.g. Gemini, GPT-OSS-120B via OpenRouter).
+    """
     args = _call_gpt54(
         system_prompt=DIPLOMACY_COT_SYSTEM,
         user_content=f"Current game state:\n\n{state_nl}\n\nSubmit your orders.",
@@ -330,6 +407,26 @@ def diplomacy_agent_action(
         orders = [str(orders)] if orders else []
     orders = [str(o) for o in orders if o]
     reasoning = args.get("reasoning")
+
+    if orders:
+        return orders, reasoning
+
+    # Fallback: plain text completion (no function calling)
+    reply = _call_text_completion(
+        system_prompt=DIPLOMACY_TEXT_SYSTEM,
+        user_content=f"Current game state:\n\n{state_nl}\n\nSubmit your orders.",
+        model=model,
+        temperature=temperature,
+    )
+    if not reply:
+        return [], None
+
+    reasoning = None
+    reasoning_m = re.search(r"REASONING\s*:\s*(.+?)(?=\nORDERS|\Z)", reply, re.DOTALL | re.IGNORECASE)
+    if reasoning_m:
+        reasoning = reasoning_m.group(1).strip()
+
+    orders = _parse_diplomacy_orders_from_text(reply)
     return orders, reasoning
 
 
@@ -344,32 +441,42 @@ def run_avalon_episode(
     temperature: float = 0.4,
     verbose: bool = False,
     controlled_player: Optional[int] = None,
+    opponent_model: Optional[str] = None,
 ) -> Tuple[Episode, Dict[str, Any]]:
     """Run one Avalon episode.
 
-    If *controlled_player* is None (default), all players are controlled by
-    GPT-5.4 (multi-agent self-play).  If set to a player index (0-4), only
-    that player is controlled by GPT-5.4 and the others use the random
-    partner policy — matching the single-agent setup used during training.
+    Three modes depending on *controlled_player* and *opponent_model*:
 
-    The loop runs until the engine's natural end condition fires
-    (3 quest failures → Evil wins, or assassination resolves after 3 successes).
+    1. ``controlled_player=None`` — all players use *model* (self-play).
+    2. ``controlled_player=N, opponent_model=None`` — player *N* uses
+       *model*, others use the env's random partner policy (legacy).
+    3. ``controlled_player=N, opponent_model="gpt-5.4"`` — player *N* uses
+       *model*, all other players use *opponent_model* via LLM calls.
+       The env runs in multi-agent mode (no random policy).
     """
     if AvalonNLWrapper is None:
         raise ImportError("AvalonNLWrapper not available. Check AgentEvolver install.")
 
-    single_agent = controlled_player is not None
+    mixed_model = controlled_player is not None and opponent_model is not None
+    single_agent = controlled_player is not None and opponent_model is None
     task = EVOLVER_GAMES["avalon"]["task"]
-    env = AvalonNLWrapper(num_players=num_players, seed=seed,
-                          controlled_player=controlled_player)
+
+    if mixed_model:
+        env = AvalonNLWrapper(num_players=num_players, seed=seed)
+    else:
+        env = AvalonNLWrapper(num_players=num_players, seed=seed,
+                              controlled_player=controlled_player)
     obs, info = env.reset()
 
-    if single_agent:
+    cp_role_name = cp_side = None
+    if controlled_player is not None:
         roles = env.roles
         cp_role_id, cp_role_name, cp_is_good = roles[controlled_player]
         cp_side = "good" if cp_is_good else "evil"
         if verbose:
-            print(f"    Single-agent: player {controlled_player} = {cp_role_name} ({cp_side})")
+            mode_tag = "mixed-model" if mixed_model else "single-agent"
+            opp_tag = f", opponents={opponent_model}" if mixed_model else ""
+            print(f"    {mode_tag}: player {controlled_player} = {cp_role_name} ({cp_side}){opp_tag}")
 
     experiences: List[Experience] = []
     total_reward = 0.0
@@ -398,10 +505,14 @@ def run_avalon_episode(
             ]
 
             with ThreadPoolExecutor(max_workers=len(players_to_query) or 1) as pool:
-                futures = {
-                    pool.submit(avalon_agent_action, state_nl, model, temperature): pid
-                    for pid, state_nl in players_to_query
-                }
+                futures = {}
+                for pid, state_nl in players_to_query:
+                    if mixed_model:
+                        pid_model = model if pid == controlled_player else opponent_model
+                    else:
+                        pid_model = model
+                    futures[pool.submit(avalon_agent_action, state_nl, pid_model, temperature)] = pid
+
                 for future in as_completed(futures):
                     pid = futures[future]
                     try:
@@ -413,8 +524,9 @@ def run_avalon_episode(
                     if reasoning:
                         step_reasonings.append(f"Player {pid}: {reasoning}")
                     if verbose:
+                        tag = f"[{model}]" if mixed_model and pid == controlled_player else (f"[{opponent_model}]" if mixed_model else "")
                         short = (reasoning[:80] + "...") if reasoning and len(reasoning) > 80 else reasoning
-                        print(f"  Player {pid} action={action!r}  reason={short}")
+                        print(f"  Player {pid} {tag} action={action!r}  reason={short}")
 
             next_obs, rewards, terminated, truncated, next_info = env.step(actions)
             done = terminated or truncated
@@ -502,6 +614,13 @@ def run_avalon_episode(
     )
     episode.set_outcome()
 
+    if mixed_model:
+        agent_type = "mixed_model"
+    elif single_agent:
+        agent_type = "gpt54_single"
+    else:
+        agent_type = "gpt54_base"
+
     stats = {
         "game": "avalon",
         "steps": step_count,
@@ -509,19 +628,30 @@ def run_avalon_episode(
         "terminated": env_done,
         "truncated": False,
         "model": model,
-        "agent_type": "gpt54_single" if single_agent else "gpt54_base",
+        "agent_type": agent_type,
         "num_players": num_players,
         "seed": seed,
         "good_victory": good_victory,
     }
-    if single_agent:
+    if controlled_player is not None:
         stats["controlled_player"] = controlled_player
         stats["role_name"] = cp_role_name
         stats["role_side"] = cp_side
+    if opponent_model:
+        stats["opponent_model"] = opponent_model
     return episode, stats
 
 
 DIPLOMACY_MAX_PHASES = 20  # matches DiplomacyConfig.max_phases
+
+
+def _match_power_name(controlled: str, active_names) -> Optional[str]:
+    """Case-insensitive match of *controlled* against env power names."""
+    ctrl = controlled.upper()
+    for name in active_names:
+        if str(name).upper() == ctrl:
+            return name
+    return None
 
 
 def run_diplomacy_episode(
@@ -529,19 +659,35 @@ def run_diplomacy_episode(
     model: str = MODEL_GPT54,
     temperature: float = 0.4,
     verbose: bool = False,
+    controlled_power: Optional[str] = None,
+    opponent_model: Optional[str] = None,
 ) -> Tuple[Episode, Dict[str, Any]]:
-    """Run one Diplomacy episode with all powers controlled by GPT-5.4.
+    """Run one Diplomacy episode.
 
-    The loop runs until the wrapper's natural end condition fires
-    (solo victory via game.is_game_done, or phases_processed >= DIPLOMACY_MAX_PHASES
-     matching DiplomacyConfig.max_phases = 20).
+    Two modes depending on *controlled_power* and *opponent_model*:
+
+    1. ``controlled_power=None`` — all powers use *model* (self-play).
+    2. ``controlled_power="FRANCE", opponent_model="gpt-5.4"`` — the
+       controlled power uses *model*, all other powers use *opponent_model*.
     """
     if DiplomacyNLWrapper is None:
         raise ImportError("DiplomacyNLWrapper not available. Check AI_Diplomacy install.")
 
+    mixed_model = controlled_power is not None and opponent_model is not None
     task = EVOLVER_GAMES["diplomacy"]["task"]
     env = DiplomacyNLWrapper(seed=seed, max_phases=DIPLOMACY_MAX_PHASES)
     obs, info = env.reset()
+
+    resolved_cp: Optional[str] = None
+    if mixed_model:
+        all_power_names = list(obs.keys()) if isinstance(obs, dict) else []
+        resolved_cp = _match_power_name(controlled_power, all_power_names)
+        if resolved_cp is None and all_power_names:
+            resolved_cp = all_power_names[0]
+            print(f"    [WARN] Could not match '{controlled_power}' in {all_power_names}, "
+                  f"falling back to {resolved_cp}")
+        if verbose:
+            print(f"    Mixed-model: {resolved_cp}={model}, opponents={opponent_model}")
 
     experiences: List[Experience] = []
     total_reward = 0.0
@@ -559,10 +705,14 @@ def run_diplomacy_episode(
         ]
 
         with ThreadPoolExecutor(max_workers=len(powers_to_query) or 1) as pool:
-            futures = {
-                pool.submit(diplomacy_agent_action, state_nl, model, temperature): pname
-                for pname, state_nl in powers_to_query
-            }
+            futures = {}
+            for pname, state_nl in powers_to_query:
+                if mixed_model:
+                    p_model = model if pname == resolved_cp else opponent_model
+                else:
+                    p_model = model
+                futures[pool.submit(diplomacy_agent_action, state_nl, p_model, temperature)] = pname
+
             for future in as_completed(futures):
                 power_name = futures[future]
                 try:
@@ -574,8 +724,9 @@ def run_diplomacy_episode(
                 if reasoning:
                     step_reasonings.append(f"{power_name}: {reasoning}")
                 if verbose:
+                    tag = f"[{model}]" if mixed_model and power_name == resolved_cp else (f"[{opponent_model}]" if mixed_model else "")
                     preview = orders[:3]
-                    print(f"  {power_name}: {len(orders)} orders, e.g. {preview}")
+                    print(f"  {power_name} {tag}: {len(orders)} orders, e.g. {preview}")
 
         next_obs, rewards, terminated, truncated, next_info = env.step(actions)
         done = terminated or truncated
@@ -634,11 +785,16 @@ def run_diplomacy_episode(
         "terminated": terminated,
         "truncated": truncated,
         "model": model,
-        "agent_type": "gpt54_base",
+        "agent_type": "mixed_model" if mixed_model else "gpt54_base",
         "seed": seed,
         "max_phases": DIPLOMACY_MAX_PHASES,
         "final_sc_rewards": final_rewards,
     }
+    if mixed_model:
+        stats["controlled_power"] = resolved_cp
+        stats["opponent_model"] = opponent_model
+        if isinstance(rewards, dict) and resolved_cp:
+            stats["controlled_power_reward"] = float(rewards.get(resolved_cp, 0.0))
     return episode, stats
 
 
@@ -676,11 +832,13 @@ def save_game_summary(
     elapsed: float,
     args: argparse.Namespace,
 ) -> Dict[str, Any]:
+    opp = getattr(args, "opponent_model", None)
     summary: Dict[str, Any] = {
         "game": game_name,
         "timestamp": datetime.now().isoformat(),
         "model": args.model,
-        "agent_type": "gpt54_base",
+        "opponent_model": opp,
+        "agent_type": "mixed_model" if opp else "gpt54_base",
         "total_episodes": len(all_stats),
         "target_episodes": args.episodes,
         "end_condition": "natural",
@@ -730,6 +888,8 @@ def run_game_rollouts(
         seed = args.seed + ep_idx
 
         try:
+            opp_model = getattr(args, "opponent_model", None)
+
             if game_name == "avalon":
                 cp = getattr(args, "controlled_player", None)
                 if getattr(args, "per_role", False):
@@ -741,13 +901,19 @@ def run_game_rollouts(
                     temperature=args.temperature,
                     verbose=args.verbose,
                     controlled_player=cp,
+                    opponent_model=opp_model,
                 )
             elif game_name == "diplomacy":
+                cp_power = getattr(args, "controlled_power", None)
+                if getattr(args, "per_power", False):
+                    cp_power = DIPLOMACY_POWERS[ep_idx % len(DIPLOMACY_POWERS)]
                 episode, stats = run_diplomacy_episode(
                     seed=seed,
                     model=args.model,
                     temperature=args.temperature,
                     verbose=args.verbose,
+                    controlled_power=cp_power,
+                    opponent_model=opp_model,
                 )
             else:
                 print(f"    [ERROR] Unknown game: {game_name}")
@@ -832,6 +998,17 @@ def main():
     parser.add_argument("--per_role", action="store_true",
                         help="Avalon: cycle controlled_player through 0..num_players-1 "
                              "across episodes (single-agent, one role per episode).")
+    parser.add_argument("--opponent_model", type=str, default=None,
+                        help="Model for opponent players/powers (e.g. gpt-5.4). "
+                             "When set with --per_role or --per_power, the controlled "
+                             "player/power uses --model while all others use this model.")
+    parser.add_argument("--controlled_power", type=str, default=None,
+                        help="Diplomacy: control a specific power (e.g. FRANCE). "
+                             "Others use --opponent_model. None = all-same-model (default).")
+    parser.add_argument("--per_power", action="store_true",
+                        help="Diplomacy: cycle controlled_power through the 7 powers "
+                             "across episodes (one power per episode). "
+                             "Requires --opponent_model.")
 
     args = parser.parse_args()
 
@@ -871,7 +1048,7 @@ def main():
         sys.exit(1)
 
     print("=" * 78)
-    print("  GPT-5.4 Cold-Start — Avalon & Diplomacy Rollout Generation")
+    print("  Avalon & Diplomacy Baseline Rollout Generation")
     print("=" * 78)
     print(f"  Games:       {', '.join(available_games)}")
     if skipped_games:
@@ -879,12 +1056,16 @@ def main():
     print(f"  Episodes:    {args.episodes} per game")
     print(f"  End cond:    natural (avalon=engine done, diplomacy=max_phases {DIPLOMACY_MAX_PHASES})")
     print(f"  Model:       {args.model}")
+    if args.opponent_model:
+        print(f"  Opponents:   {args.opponent_model}")
     print(f"  Temperature: {args.temperature}")
     print(f"  Labeling:    {args.label and not args.no_label} (label model: {args.label_model})")
     print(f"  Resume:      {args.resume}")
     print(f"  Seed:        {args.seed}")
     if "avalon" in available_games:
-        print(f"  Avalon:      {args.num_players} players")
+        print(f"  Avalon:      {args.num_players} players, per_role={args.per_role}")
+    if "diplomacy" in available_games:
+        print(f"  Diplomacy:   per_power={args.per_power}")
     print(f"  Output:      {output_dir}")
     print("=" * 78)
 
@@ -904,7 +1085,8 @@ def main():
     master_summary = {
         "timestamp": datetime.now().isoformat(),
         "model": args.model,
-        "agent_type": "gpt54_base",
+        "opponent_model": args.opponent_model,
+        "agent_type": "mixed_model" if args.opponent_model else "gpt54_base",
         "episodes_per_game": args.episodes,
         "end_condition": "natural",
         "temperature": args.temperature,

@@ -208,6 +208,14 @@ class CoEvolutionConfig:
     # (persistent instances on vllm_gpu_ids, hot-reload after GRPO).
     manage_vllm: bool = True
 
+    # External opponent for multi-agent games (Avalon, Diplomacy).
+    # When set, non-controlled players/powers use this API model
+    # instead of self-play via the local vLLM model.  This breaks the
+    # symmetric-weakness problem where both sides share the same bugs.
+    # Example: "gpt-5-mini" (routed through OpenRouter).
+    opponent_model: Optional[str] = None
+    opponent_api_base: Optional[str] = "https://openrouter.ai/api/v1"
+
     # Skill bank EM
     em_max_iterations: int = 3
     em_micro_batch_size: int = 8
@@ -237,6 +245,14 @@ class CoEvolutionConfig:
 
     # Checkpointing
     checkpoint_interval: int = 5
+    # How many per-step checkpoints to keep on disk.  Set to 0 to keep ALL.
+    # The "best" checkpoint (step_99999) is never deleted regardless.
+    checkpoint_keep_last: int = 0
+
+    # Number of consecutive reward declines before rolling back to the
+    # best checkpoint.  Higher values give the optimizer more room to
+    # recover from temporary dips; lower values are more conservative.
+    rollback_patience: int = 4
 
     # W&B
     wandb_enabled: bool = True

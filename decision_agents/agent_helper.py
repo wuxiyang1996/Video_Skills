@@ -436,6 +436,12 @@ def _extract_avalon_facts(state: str) -> Dict[str, str]:
     facts: Dict[str, str] = {}
     d = _try_parse_dict(state)
     text = str(list(d.values())[0]) if isinstance(d, dict) and d else state
+
+    # Phase from the header (e.g. "=== Avalon Game — Team Voting ===")
+    m = re.search(r"Avalon Game\s*[—–-]+\s*(.+?)\s*===", text)
+    if m:
+        facts["phase"] = m.group(1).strip().lower().replace(" ", "_")
+
     for pat, key in [
         (r"Current quest\s*:\s*(\d+)", "quest"),
         (r"Current round\s*:\s*(\d+)", "round"),
@@ -445,6 +451,43 @@ def _extract_avalon_facts(state: str) -> Dict[str, str]:
         m = re.search(pat, text)
         if m:
             facts[key] = m.group(1)
+
+    # Side (Good/Evil) — critical for action selection
+    m = re.search(r"Your role\s*:\s*\w+\s*\((\w+)\s+side\)", text)
+    if m:
+        facts["side"] = m.group(1).lower()
+
+    # Quest scoreboard (e.g. "Good 2 - Evil 1")
+    m = re.search(r"\(Good\s+(\d+)\s*-\s*Evil\s+(\d+)\)", text)
+    if m:
+        facts["score"] = f"G{m.group(1)}-E{m.group(2)}"
+
+    # Proposed team for voting phases
+    m = re.search(r"Proposed team\s*:\s*\[([^\]]+)\]", text)
+    if m:
+        facts["team"] = m.group(1).strip()
+
+    # Whether the player is on the quest team
+    if "You are on the quest team" in text:
+        facts["on_team"] = "yes"
+        m = re.search(r"on the quest team\s*:\s*\[([^\]]+)\]", text)
+        if m:
+            facts["team"] = m.group(1).strip()
+
+    # Merlin's knowledge of evil players
+    m = re.search(r"players\s*\[([^\]]+)\]\s*are Evil", text)
+    if m:
+        facts["evil_visible"] = m.group(1).strip()
+
+    # Evil teammates visible to Assassin/Minion
+    m = re.search(r"Evil teammates\s*\(visible to you\)\s*:\s*\[([^\]]+)\]", text)
+    if m:
+        facts["allies"] = m.group(1).strip()
+
+    # Good-side quest vote hint
+    if "As a Good player" in text:
+        facts["hint"] = "good_must_pass"
+
     return facts
 
 

@@ -135,15 +135,27 @@ except ImportError:
     make_orak_env = None  # type: ignore[assignment]
     ORAK_GAMES = {}  # type: ignore[assignment]
 
-# Per-game dependency probes for Orak games that need specific conda envs.
-# super_mario requires gym-super-mario-bros (in orak-mario env).
-# pokemon_red requires pyboy (in game-ai-agent env).
-_ORAK_GAME_AVAILABLE: Dict[str, bool] = {}
 try:
-    import gym_super_mario_bros  # noqa: F401
-    _ORAK_GAME_AVAILABLE["super_mario"] = True
+    from env_wrappers.tetris_macro_wrapper import TetrisMacroActionWrapper
 except ImportError:
-    _ORAK_GAME_AVAILABLE["super_mario"] = False
+    TetrisMacroActionWrapper = None  # type: ignore[assignment,misc]
+
+# Per-game dependency probes for Orak games that need specific conda envs.
+# super_mario runs as a subprocess via ORAK_PYTHON (orak-mario env), so we
+# only need the binary to exist — gym-super-mario-bros is NOT required in
+# the current process.
+# pokemon_red requires pyboy (in game-ai-agent env).
+import os as _os
+_ORAK_GAME_AVAILABLE: Dict[str, bool] = {}
+_orak_python = _os.environ.get("ORAK_PYTHON", "")
+if _orak_python and _os.path.isfile(_orak_python) and _os.access(_orak_python, _os.X_OK):
+    _ORAK_GAME_AVAILABLE["super_mario"] = True
+else:
+    try:
+        import gym_super_mario_bros  # noqa: F401
+        _ORAK_GAME_AVAILABLE["super_mario"] = True
+    except ImportError:
+        _ORAK_GAME_AVAILABLE["super_mario"] = False
 
 try:
     import pyboy  # noqa: F401
@@ -175,6 +187,10 @@ EVOLVER_GAME_INFO: Dict[str, Dict[str, Any]] = {
         "display_name": "Diplomacy",
     },
 }
+
+DIPLOMACY_POWERS = [
+    "AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY",
+]
 
 ORAK_EVAL_INFO: Dict[str, Dict[str, Any]] = {
     "super_mario": {
@@ -586,6 +602,7 @@ def run_qwen3_episode(
     label: bool = True,
     label_model: Optional[str] = None,
     skill_bank: Any = None,
+    use_macro: bool = False,
 ) -> Tuple[Episode, Dict[str, Any]]:
     """Run one episode with Qwen3-8B, calling get_state_summary and
     infer_intention at every step."""
@@ -595,6 +612,10 @@ def run_qwen3_episode(
 
     base_env = make_gaming_env(game=game, max_steps=max_steps)
     env = GamingAgentNLWrapper(base_env)
+
+    if use_macro and game == "tetris" and TetrisMacroActionWrapper is not None:
+        env = TetrisMacroActionWrapper(env)
+        print(f"    [macro] Tetris macro-action wrapper enabled (placement-level actions)")
 
     obs_nl, info = env.reset()
     action_names = info.get("action_names", [])
@@ -673,10 +694,10 @@ def run_qwen3_episode(
             sub_tasks=None,
         )
         exp.idx = step_count
-        exp.action_type = "primitive"
+        exp.action_type = "macro" if (use_macro and game == "tetris") else "primitive"
         exp.summary_state = last_state_summary if last_state_summary else None
         exp.available_actions = list(step_actions) if step_actions else None
-        exp.interface = {"env_name": "gamingagent", "game_name": game}
+        exp.interface = {"env_name": "gamingagent", "game_name": game, "macro_actions": use_macro and game == "tetris"}
 
         # --- Generate experience summary: key=value facts + strategic note ---
         if ask_model is not None:
@@ -739,6 +760,7 @@ def run_qwen3_episode(
             "agent_type": "qwen3_8b",
             "final_intention": current_intention,
             "final_state_summary": last_state_summary,
+            "macro_actions": use_macro and game == "tetris",
         },
     )
     episode.set_outcome()
@@ -751,6 +773,7 @@ def run_qwen3_episode(
         "truncated": truncated,
         "model": model,
         "agent_type": "qwen3_8b",
+        "macro_actions": use_macro and game == "tetris",
     }
     return episode, stats
 
@@ -970,15 +993,35 @@ def run_qwen3_avalon_episode(
     num_players: int = 5,
     seed: int = 42,
     skill_bank: Any = None,
+    controlled_player: Optional[int] = None,
+    opponent_model: Optional[str] = None,
     **kwargs,
 ) -> Tuple[Episode, Dict[str, Any]]:
-    """Run one Avalon episode with all players controlled by Qwen3-8B."""
+    """Run one Avalon episode.
+
+    Three modes:
+    1. controlled_player=None — all players use *model* with skill bank (self-play).
+    2. controlled_player=N, opponent_model="gpt-5.4" — player N uses *model*
+       with skill bank guidance, all other players use *opponent_model* (no bank).
+    3. controlled_player=N, opponent_model=None — player N uses *model*, others
+       use the same model without bank guidance.
+    """
     if AvalonNLWrapper is None:
         raise ImportError("AvalonNLWrapper not available. Install AgentEvolver deps.")
 
+    mixed_model = controlled_player is not None and opponent_model is not None
     task = EVOLVER_GAME_INFO["avalon"]["task"]
     env = AvalonNLWrapper(num_players=num_players, seed=seed)
     obs, info = env.reset()
+
+    cp_role_name = cp_side = None
+    if controlled_player is not None:
+        roles = env.roles
+        cp_role_id, cp_role_name, cp_is_good = roles[controlled_player]
+        cp_side = "good" if cp_is_good else "evil"
+        if verbose:
+            opp_tag = f", opponents={opponent_model}" if mixed_model else ""
+            print(f"    controlled player {controlled_player} = {cp_role_name} ({cp_side}){opp_tag}")
 
     experiences: List[Experience] = []
     total_reward = 0.0
@@ -993,15 +1036,18 @@ def run_qwen3_avalon_episode(
             (pid, obs.get(pid, "")) for pid in active if obs.get(pid, "")
         ]
 
-        # Retrieve skill guidance once per step (shared across players)
         representative_state = next((s for _, s in players_to_query), "")
         guidance = get_skill_guidance(skill_bank, representative_state, game_name="avalon")
 
         with ThreadPoolExecutor(max_workers=max(len(players_to_query), 1)) as pool:
-            futures = {
-                pool.submit(qwen3_avalon_action, state_nl, model, temperature, guidance): pid
-                for pid, state_nl in players_to_query
-            }
+            futures = {}
+            for pid, state_nl in players_to_query:
+                if mixed_model and pid != controlled_player:
+                    f = pool.submit(qwen3_avalon_action, state_nl, opponent_model, temperature, None)
+                else:
+                    f = pool.submit(qwen3_avalon_action, state_nl, model, temperature, guidance)
+                futures[f] = pid
+
             for future in as_completed(futures):
                 pid = futures[future]
                 try:
@@ -1013,8 +1059,11 @@ def run_qwen3_avalon_episode(
                 if reasoning:
                     step_reasonings.append(f"Player {pid}: {reasoning}")
                 if verbose:
+                    tag = ""
+                    if mixed_model:
+                        tag = f" [{model}]" if pid == controlled_player else f" [{opponent_model}]"
                     short = (reasoning[:80] + "...") if reasoning and len(reasoning) > 80 else reasoning
-                    print(f"  Player {pid} action={action!r}  reason={short}")
+                    print(f"  Player {pid}{tag} action={action!r}  reason={short}")
 
         next_obs, rewards, terminated, truncated, next_info = env.step(actions)
         done = terminated or truncated
@@ -1023,11 +1072,9 @@ def run_qwen3_avalon_episode(
 
         combined_reasoning = "\n".join(step_reasonings) if step_reasonings else None
 
-        # State summary from structured state (deterministic, no LLM)
         structured = info.get("structured_state")
         state_summary = get_state_summary("", structured_state=structured) if structured else ""
 
-        # Intention via Qwen3 (uses the state summary produced above)
         intention = infer_intention(
             state_summary or next(iter(obs.values()), "")[:1500],
             game="avalon", model=model,
@@ -1086,19 +1133,28 @@ def run_qwen3_avalon_episode(
         if done:
             break
 
+    agent_type = "decision_agent_mixed" if mixed_model else "qwen3_8b"
+    meta = {
+        "done": True,
+        "steps": step_count,
+        "total_reward": total_reward,
+        "model": model,
+        "agent_type": agent_type,
+        "good_victory": info.get("good_victory"),
+    }
+    if controlled_player is not None:
+        meta["controlled_player"] = controlled_player
+        meta["role_name"] = cp_role_name
+        meta["role_side"] = cp_side
+    if opponent_model:
+        meta["opponent_model"] = opponent_model
+
     episode = Episode(
         experiences=experiences,
         task=task,
         env_name="avalon",
         game_name="avalon",
-        metadata={
-            "done": True,
-            "steps": step_count,
-            "total_reward": total_reward,
-            "model": model,
-            "agent_type": "qwen3_8b",
-            "good_victory": info.get("good_victory"),
-        },
+        metadata=meta,
     )
     episode.set_outcome()
 
@@ -1109,9 +1165,15 @@ def run_qwen3_avalon_episode(
         "terminated": env.done,
         "truncated": False,
         "model": model,
-        "agent_type": "qwen3_8b",
+        "agent_type": agent_type,
         "good_victory": info.get("good_victory"),
     }
+    if controlled_player is not None:
+        stats["controlled_player"] = controlled_player
+        stats["role_name"] = cp_role_name
+        stats["role_side"] = cp_side
+    if opponent_model:
+        stats["opponent_model"] = opponent_model
     return episode, stats
 
 
@@ -1119,27 +1181,55 @@ def run_qwen3_avalon_episode(
 # Episode runner: Diplomacy (multi-agent, 20-phase cap)
 # ---------------------------------------------------------------------------
 
+def _match_power_name(controlled: str, active_names) -> Optional[str]:
+    """Case-insensitive match of *controlled* against env power names."""
+    ctrl = controlled.upper()
+    for name in active_names:
+        if str(name).upper() == ctrl:
+            return name
+    return None
+
+
 def run_qwen3_diplomacy_episode(
     model: str = DEFAULT_MODEL,
     temperature: float = 0.3,
     verbose: bool = False,
     seed: int = 42,
     skill_bank: Any = None,
+    controlled_power: Optional[str] = None,
+    opponent_model: Optional[str] = None,
     **kwargs,
 ) -> Tuple[Episode, Dict[str, Any]]:
-    """Run one Diplomacy episode with all 7 powers controlled by Qwen3-8B."""
+    """Run one Diplomacy episode.
+
+    Two modes:
+    1. controlled_power=None — all powers use *model* with skill bank (self-play).
+    2. controlled_power="FRANCE", opponent_model="gpt-5.4" — the controlled
+       power uses *model* with skill bank, all others use *opponent_model*.
+    """
     if DiplomacyNLWrapper is None:
         raise ImportError("DiplomacyNLWrapper not available. Install AI_Diplomacy deps.")
 
+    mixed_model = controlled_power is not None and opponent_model is not None
     task = EVOLVER_GAME_INFO["diplomacy"]["task"]
     env = DiplomacyNLWrapper(seed=seed, max_phases=DIPLOMACY_MAX_PHASES)
     obs, info = env.reset()
+
+    resolved_cp: Optional[str] = None
+    if mixed_model:
+        all_power_names = list(obs.keys()) if isinstance(obs, dict) else []
+        resolved_cp = _match_power_name(controlled_power, all_power_names)
+        if resolved_cp is None and all_power_names:
+            resolved_cp = all_power_names[0]
+            print(f"    [WARN] Could not match '{controlled_power}' in {all_power_names}, "
+                  f"falling back to {resolved_cp}")
+        if verbose:
+            print(f"    controlled power {resolved_cp} = {model}, opponents = {opponent_model}")
 
     experiences: List[Experience] = []
     total_reward = 0.0
     step_count = 0
 
-    # Track SC counts for delta computation
     prev_sc_counts: Dict[str, int] = {}
     if env.game is not None:
         prev_sc_counts = {
@@ -1157,15 +1247,18 @@ def run_qwen3_diplomacy_episode(
             if obs.get(pname) and pname in active_powers
         ]
 
-        # Retrieve skill guidance once per phase (shared across powers)
         representative_state = next((s for _, s in powers_to_query), "")
         guidance = get_skill_guidance(skill_bank, representative_state, game_name="diplomacy")
 
         with ThreadPoolExecutor(max_workers=max(len(powers_to_query), 1)) as pool:
-            futures = {
-                pool.submit(qwen3_diplomacy_action, state_nl, model, temperature, guidance): pname
-                for pname, state_nl in powers_to_query
-            }
+            futures = {}
+            for pname, state_nl in powers_to_query:
+                if mixed_model and pname != resolved_cp:
+                    f = pool.submit(qwen3_diplomacy_action, state_nl, opponent_model, temperature, None)
+                else:
+                    f = pool.submit(qwen3_diplomacy_action, state_nl, model, temperature, guidance)
+                futures[f] = pname
+
             for future in as_completed(futures):
                 power_name = futures[future]
                 try:
@@ -1179,10 +1272,12 @@ def run_qwen3_diplomacy_episode(
                 if reasoning:
                     step_reasonings[power_name] = reasoning
                 if verbose:
+                    tag = ""
+                    if mixed_model:
+                        tag = f" [{model}]" if power_name == resolved_cp else f" [{opponent_model}]"
                     preview = orders[:3]
-                    print(f"  {power_name}: {len(orders)} orders, e.g. {preview}")
+                    print(f"  {power_name}{tag}: {len(orders)} orders, e.g. {preview}")
 
-        # Snapshot phase before stepping
         phase_before = info.get("phase", "")
 
         next_obs, rewards, terminated, truncated, next_info = env.step(actions)
@@ -1190,7 +1285,6 @@ def run_qwen3_diplomacy_episode(
         reward_val = sum(rewards.values()) if isinstance(rewards, dict) else 0.0
         total_reward += reward_val
 
-        # Compute SC delta after adjudication
         cur_sc_counts: Dict[str, int] = {}
         sc_delta_parts: List[str] = []
         if env.game is not None:
@@ -1202,10 +1296,7 @@ def run_qwen3_diplomacy_episode(
                     sc_delta_parts.append(f"{pn}{'+' if diff > 0 else ''}{diff}")
         sc_delta_str = ", ".join(sc_delta_parts)
 
-        # Structured state summary with delta (deterministic, no LLM)
-        # Use AUSTRIA as the "primary" perspective — matches alphabetical ordering
-        # but now enriched with all-powers context
-        primary_power = "AUSTRIA"
+        primary_power = resolved_cp or "AUSTRIA"
         structured = info.get("structured_state")
         if env.game is not None and _diplo_structured_summary is not None:
             structured = _diplo_structured_summary(
@@ -1213,7 +1304,6 @@ def run_qwen3_diplomacy_episode(
             )
         state_summary = get_state_summary("", structured_state=structured) if structured else ""
 
-        # Intention via Qwen3 — anchored to primary power with Diplomacy context
         primary_obs_text = obs.get(primary_power, "")[:1500] if isinstance(obs, dict) else str(obs)[:1500]
         intention = infer_intention(
             state_summary or primary_obs_text,
@@ -1227,7 +1317,6 @@ def run_qwen3_diplomacy_episode(
             },
         )
 
-        # Fallback: use the primary power's reasoning if intention is empty
         combined_reasoning_parts = [f"{pn}: {r}" for pn, r in step_reasonings.items()]
         combined_reasoning = "\n".join(combined_reasoning_parts) if combined_reasoning_parts else None
         primary_reasoning = step_reasonings.get(primary_power)
@@ -1249,7 +1338,6 @@ def run_qwen3_diplomacy_episode(
         exp.summary_state = state_summary if state_summary else None
         exp.interface = {"env_name": "diplomacy", "game_name": "diplomacy"}
 
-        # Experience summary — Diplomacy-aware note focusing on what changed
         if ask_model is not None:
             try:
                 ss = exp.summary_state or ""
@@ -1289,7 +1377,6 @@ def run_qwen3_diplomacy_episode(
                 f"    intention: {intent_short}"
             )
 
-        # Advance tracking state
         prev_sc_counts = cur_sc_counts
         obs = next_obs
         info = next_info
@@ -1301,19 +1388,26 @@ def run_qwen3_diplomacy_episode(
     if isinstance(rewards, dict):
         final_rewards = {str(k): float(v) for k, v in rewards.items()}
 
+    agent_type = "decision_agent_mixed" if mixed_model else "qwen3_8b"
+    meta = {
+        "done": True,
+        "steps": step_count,
+        "total_reward": total_reward,
+        "model": model,
+        "agent_type": agent_type,
+        "final_sc_rewards": final_rewards,
+    }
+    if resolved_cp:
+        meta["controlled_power"] = resolved_cp
+    if opponent_model:
+        meta["opponent_model"] = opponent_model
+
     episode = Episode(
         experiences=experiences,
         task=task,
         env_name="diplomacy",
         game_name="diplomacy",
-        metadata={
-            "done": True,
-            "steps": step_count,
-            "total_reward": total_reward,
-            "model": model,
-            "agent_type": "qwen3_8b",
-            "final_sc_rewards": final_rewards,
-        },
+        metadata=meta,
     )
     episode.set_outcome()
 
@@ -1324,10 +1418,16 @@ def run_qwen3_diplomacy_episode(
         "terminated": terminated,
         "truncated": truncated,
         "model": model,
-        "agent_type": "qwen3_8b",
+        "agent_type": agent_type,
         "max_phases": DIPLOMACY_MAX_PHASES,
         "final_sc_rewards": final_rewards,
     }
+    if resolved_cp:
+        stats["controlled_power"] = resolved_cp
+        if isinstance(rewards, dict) and resolved_cp:
+            stats["controlled_power_reward"] = float(rewards.get(resolved_cp, 0.0))
+    if opponent_model:
+        stats["opponent_model"] = opponent_model
     return episode, stats
 
 
@@ -1547,6 +1647,7 @@ def run_game_rollouts(
     args: argparse.Namespace,
     game_run_dir: Path,
     skill_bank: Any = None,
+    use_macro: bool = False,
 ) -> Dict[str, Any]:
     """Run all episodes for one game and save outputs. game_run_dir = output/<model>/<game>/<timestamp>."""
     game_dir = game_run_dir
@@ -1596,6 +1697,11 @@ def run_game_rollouts(
                     skill_bank=skill_bank,
                 )
             elif game_name == "avalon":
+                opp_model = getattr(args, "opponent_model", None)
+                cp = None
+                if getattr(args, "per_role", False):
+                    num_p = getattr(args, "num_players", 5)
+                    cp = ep_idx % num_p
                 episode, stats = run_qwen3_avalon_episode(
                     model=args.model,
                     temperature=args.temperature,
@@ -1603,14 +1709,22 @@ def run_game_rollouts(
                     num_players=getattr(args, "num_players", 5),
                     seed=seed_base + ep_idx,
                     skill_bank=skill_bank,
+                    controlled_player=cp,
+                    opponent_model=opp_model,
                 )
             elif game_name == "diplomacy":
+                opp_model = getattr(args, "opponent_model", None)
+                cp_power = None
+                if getattr(args, "per_power", False):
+                    cp_power = DIPLOMACY_POWERS[ep_idx % len(DIPLOMACY_POWERS)]
                 episode, stats = run_qwen3_diplomacy_episode(
                     model=args.model,
                     temperature=args.temperature,
                     verbose=args.verbose,
                     seed=seed_base + ep_idx,
                     skill_bank=skill_bank,
+                    controlled_power=cp_power,
+                    opponent_model=opp_model,
                 )
             elif game_name in ORAK_EVAL_GAME_NAMES:
                 episode, stats = run_qwen3_orak_episode(
@@ -1631,6 +1745,7 @@ def run_game_rollouts(
                     label=args.label,
                     label_model=args.label_model,
                     skill_bank=skill_bank,
+                    use_macro=use_macro,
                 )
 
             stats["episode_index"] = ep_idx
@@ -1747,6 +1862,24 @@ def main():
         "--no-query-engine", action="store_true",
         help="Disable SkillQueryEngine (use plain SkillBankMVP for skill queries).",
     )
+    parser.add_argument(
+        "--macro-actions", action="store_true",
+        help="Use macro-action wrapper for Tetris (placement-level actions instead of primitives).",
+    )
+    parser.add_argument(
+        "--opponent_model", type=str, default=None,
+        help="Model for opponent players/powers in Avalon/Diplomacy (e.g. gpt-5.4). "
+             "When set with --per_role or --per_power, the controlled player/power uses "
+             "--model with the skill bank while all others use this model.",
+    )
+    parser.add_argument(
+        "--per_role", action="store_true",
+        help="Avalon: cycle controlled_player through 0..num_players-1 across episodes.",
+    )
+    parser.add_argument(
+        "--per_power", action="store_true",
+        help="Diplomacy: cycle controlled_power through 7 powers across episodes.",
+    )
 
     args = parser.parse_args()
 
@@ -1847,6 +1980,12 @@ def main():
     print(f"  Episodes:    {args.episodes} per game")
     print(f"  Max steps:   {'per-game config' if args.max_steps is None else args.max_steps}")
     print(f"  Model:       {args.model}")
+    if getattr(args, "opponent_model", None):
+        print(f"  Opponents:   {args.opponent_model}")
+        if "avalon" in available_games:
+            print(f"  Avalon:      {getattr(args, 'num_players', 5)} players, per_role={getattr(args, 'per_role', False)}")
+        if "diplomacy" in available_games:
+            print(f"  Diplomacy:   per_power={getattr(args, 'per_power', False)}")
     print(f"  Temperature: {args.temperature}")
     bank_desc = "none"
     if skill_bank_obj is not None:
@@ -1867,7 +2006,8 @@ def main():
         print(f"{'━' * 78}")
 
         game_run_dir = base_dir / game_name / run_timestamp
-        summary = run_game_rollouts(game_name, args, game_run_dir, skill_bank=skill_bank_obj)
+        use_macro = getattr(args, "macro_actions", False) and game_name == "tetris"
+        summary = run_game_rollouts(game_name, args, game_run_dir, skill_bank=skill_bank_obj, use_macro=use_macro)
         game_summaries.append(summary)
 
     overall_elapsed = time.time() - overall_t0

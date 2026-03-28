@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import re
 import sys
 import time
@@ -89,22 +90,31 @@ MODEL_GPT54 = "gpt-5.4"
 # ---------------------------------------------------------------------------
 # System prompt: enhanced for GPT-5.4 with chain-of-thought reasoning
 # ---------------------------------------------------------------------------
-GPT54_SYSTEM_PROMPT = (
-    "You are an expert game-playing agent powered by GPT-5.4, competing in LM-Game Bench.\n"
+SYSTEM_PROMPT = (
+    "You are an expert game-playing agent competing in LM-Game Bench.\n"
     "You receive a textual description of the current game state and must choose exactly one action.\n\n"
     "Before choosing, briefly reason about:\n"
     "1. Key elements of the current state (positions, scores, threats, opportunities).\n"
     "2. What your goal is and which sub-goal to pursue now.\n"
     "3. How each candidate action moves you toward that goal.\n\n"
+    "IMPORTANT: If your recent action history shows that an action had NO EFFECT on the\n"
+    "game state (marked as 'NO EFFECT'), you MUST choose a DIFFERENT action. Repeating a\n"
+    "no-effect action wastes your limited steps.\n\n"
     "Then call the `choose_action` function with your chosen action.\n"
     "Use the EXACT action name from the valid actions list."
 )
 
-GPT54_USER_TEMPLATE = (
+USER_TEMPLATE = (
     "Game state:\n\n{state}\n\n"
     "Valid actions: {actions}\n\n"
+    "{history_block}"
     "Think step-by-step, then choose one action."
 )
+
+# Max number of recent history entries to include in the prompt
+_HISTORY_WINDOW = 5
+# Force a random different action after this many consecutive no-ops
+_MAX_CONSECUTIVE_NOOPS = 2
 
 
 # ---------------------------------------------------------------------------
@@ -168,13 +178,32 @@ def _build_tools(action_names: List[str]) -> list:
     ]
 
 
-def gpt54_agent_action(
+def _format_history_block(recent_history: List[Dict[str, Any]]) -> str:
+    """Format recent action history into a prompt block."""
+    if not recent_history:
+        return ""
+    lines = ["Recent action history (newest first):"]
+    for entry in reversed(recent_history[-_HISTORY_WINDOW:]):
+        effect = "NO EFFECT" if entry["noop"] else f"reward {entry['reward']:+.1f}"
+        lines.append(f"  - Action '{entry['action']}' -> {effect}")
+    noop_actions = {e["action"] for e in recent_history[-_HISTORY_WINDOW:] if e["noop"]}
+    if noop_actions:
+        lines.append(
+            f"WARNING: Action(s) {noop_actions} had no effect. Choose a DIFFERENT action!\n"
+        )
+    else:
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def agent_action(
     state_nl: str,
     action_names: List[str],
     model: str = MODEL_GPT54,
     temperature: float = 0.4,
+    recent_history: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[str, Optional[str]]:
-    """Query GPT-5.4 with function calling. Returns (action, reasoning)."""
+    """Query LLM with function calling. Returns (action, reasoning)."""
     use_router = open_router_api_key and open_router_api_key.strip()
     if openai is None or (not use_router and openai_api_key is None):
         return action_names[0] if action_names else "stay", None
@@ -187,9 +216,11 @@ def gpt54_agent_action(
     else:
         client_kw = {"api_key": openai_api_key}
 
-    user_content = GPT54_USER_TEMPLATE.format(
+    history_block = _format_history_block(recent_history or [])
+    user_content = USER_TEMPLATE.format(
         state=state_nl,
         actions=", ".join(action_names),
+        history_block=history_block,
     )
     tools = _build_tools(action_names)
 
@@ -198,7 +229,7 @@ def gpt54_agent_action(
         response = client.chat.completions.create(
             model=effective_model,
             messages=[
-                {"role": "system", "content": GPT54_SYSTEM_PROMPT},
+                {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
             ],
             tools=tools,
@@ -235,13 +266,25 @@ def gpt54_agent_action(
         return (action_names[0] if action_names else "stay"), None
 
     except Exception as exc:
-        print(f"    [WARN] GPT-5.4 call failed ({exc}), using fallback")
+        print(f"    [WARN] LLM call failed ({exc}), using fallback")
         return (action_names[0] if action_names else "stay"), None
+
+
+# Keep old name as alias for backward compatibility
+gpt54_agent_action = agent_action
 
 
 # ---------------------------------------------------------------------------
 # Episode runner
 # ---------------------------------------------------------------------------
+
+def _pick_different_action(
+    last_action: str, action_names: List[str]
+) -> str:
+    """Pick a random action that differs from ``last_action``."""
+    alternatives = [a for a in action_names if a != last_action]
+    return random.choice(alternatives) if alternatives else last_action
+
 
 def run_gpt54_episode(
     env: ColdStartEnvWrapper,
@@ -250,12 +293,13 @@ def run_gpt54_episode(
     max_steps: int = 50,
     temperature: float = 0.4,
     verbose: bool = False,
+    seed: Optional[int] = None,
 ) -> Tuple[Episode, Dict[str, Any]]:
-    """Run one episode with the GPT-5.4 base agent."""
+    """Run one episode with the base agent (supports any model via --model)."""
     task = GAME_REGISTRY[game_name]["task"]
     action_names = GAME_REGISTRY[game_name]["action_names"]
 
-    obs, info = env.reset()
+    obs, info = env.reset(seed=seed)
     raw_obs = info.get("raw_obs")
     curr_available_actions = info.get("available_actions") or action_names
     experiences: List[Experience] = []
@@ -264,21 +308,56 @@ def run_gpt54_episode(
     terminated = False
     truncated = False
 
+    recent_history: List[Dict[str, Any]] = []
+    consecutive_noops = 0
+    last_noop_action: Optional[str] = None
+
     while step_count < max_steps:
         step_actions = curr_available_actions if curr_available_actions else action_names
         prompt_state = obs + f"\n\nValid actions: {', '.join(step_actions)}. Choose one."
 
-        action, reasoning = gpt54_agent_action(
+        action, reasoning = agent_action(
             state_nl=prompt_state,
             action_names=step_actions,
             model=model,
             temperature=temperature,
+            recent_history=recent_history,
         )
+
+        # Safety valve: if the LLM keeps returning the same no-op action,
+        # override with a random different one.
+        if (
+            consecutive_noops >= _MAX_CONSECUTIVE_NOOPS
+            and action == last_noop_action
+            and len(step_actions) > 1
+        ):
+            old = action
+            action = _pick_different_action(action, step_actions)
+            reasoning = (reasoning or "") + f" [auto-override: '{old}' had no effect {consecutive_noops}x]"
+            if verbose:
+                print(f"  step {step_count}: OVERRIDE {old} -> {action} (no-op x{consecutive_noops})")
 
         next_obs, reward, terminated, truncated, next_info = env.step(action)
         next_raw_obs = next_info.get("raw_obs")
         done = terminated or truncated
         total_reward += reward
+
+        is_noop = (obs == next_obs and reward == 0.0)
+
+        recent_history.append({
+            "action": action,
+            "reward": reward,
+            "noop": is_noop,
+        })
+
+        if is_noop and action == last_noop_action:
+            consecutive_noops += 1
+        elif is_noop:
+            consecutive_noops = 1
+            last_noop_action = action
+        else:
+            consecutive_noops = 0
+            last_noop_action = None
 
         exp = Experience(
             state=obs,
@@ -298,9 +377,10 @@ def run_gpt54_episode(
         experiences.append(exp)
 
         if verbose:
+            noop_tag = " [NOOP]" if is_noop else ""
             reason_short = (reasoning[:80] + "...") if reasoning and len(reasoning) > 80 else reasoning
             print(f"  step {step_count}: action={action}, reward={reward:.2f}, "
-                  f"cum={total_reward:.2f}, reason={reason_short}")
+                  f"cum={total_reward:.2f}{noop_tag}, reason={reason_short}")
 
         obs = next_obs
         raw_obs = next_raw_obs
@@ -318,6 +398,7 @@ def run_gpt54_episode(
     )
     episode.set_outcome()
 
+    noop_count = sum(1 for h in recent_history if h["noop"])
     stats = {
         "game": game_name,
         "steps": step_count,
@@ -326,6 +407,7 @@ def run_gpt54_episode(
         "truncated": truncated,
         "model": model,
         "agent_type": "gpt54_base",
+        "noop_steps": noop_count,
     }
     return episode, stats
 
@@ -418,6 +500,7 @@ def run_game_rollouts(
                 max_steps=effective_max_steps,
                 temperature=args.temperature,
                 verbose=args.verbose,
+                seed=42 + ep_idx,
             )
             env.close()
 

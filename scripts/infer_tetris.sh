@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ======================================================================
-#  Inference: Tetris with Qwen3-8B  (8 episodes)
+#  Inference: Tetris with Qwen3-32B  (8 episodes)
 #
-#  Launches a vLLM server for Qwen/Qwen3-8B and runs 8 inference
+#  Launches a vLLM server for Qwen/Qwen3-32B and runs 8 inference
 #  episodes on Tetris using the evaluation runner.
 #
 #  Tetris game profile:
@@ -20,7 +20,7 @@
 #    VLLM_BASE_URL=http://localhost:8000/v1 NO_SERVER=1 bash scripts/infer_tetris.sh
 #
 #    # With a trained skill bank:
-#    BANK=runs/Qwen3-8B_tetris_*/skillbank/bank.jsonl bash scripts/infer_tetris.sh
+#    BANK=runs/Qwen3-32B_tetris_*/skillbank/bank.jsonl bash scripts/infer_tetris.sh
 # ======================================================================
 set -euo pipefail
 
@@ -41,11 +41,11 @@ mkdir -p "${HF_HUB_CACHE}"
 export PYTHONPATH="${PROJECT_ROOT}:${PROJECT_ROOT}/../GamingAgent:${PROJECT_ROOT}/../AgentEvolver:${PROJECT_ROOT}/../AI_Diplomacy:${PROJECT_ROOT}/../Orak:${PYTHONPATH:-}"
 
 # ── Configurable parameters ──────────────────────────────────────────
-MODEL="${MODEL:-Qwen/Qwen3-8B}"
+MODEL="${MODEL:-Qwen/Qwen3-32B}"
 EPISODES="${EPISODES:-8}"
 MAX_STEPS="${MAX_STEPS:-200}"
 TEMPERATURE="${TEMPERATURE:-0.3}"
-EVAL_GPUS="${EVAL_GPUS:-0}"
+EVAL_GPUS="${EVAL_GPUS:-6}"
 VLLM_PORT="${VLLM_PORT:-8010}"
 VLLM_HOST="${VLLM_HOST:-127.0.0.1}"
 TENSOR_PARALLEL="${TENSOR_PARALLEL:-1}"
@@ -63,12 +63,31 @@ OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/output/infer_tetris_${TIMESTAMP}}"
 mkdir -p "${OUTPUT_DIR}"
 
 # ── Cleanup on exit ──────────────────────────────────────────────────
+# If you see "Terminated" before this message, the eval process (foreground)
+# received SIGTERM/SIGINT (manual kill, scheduler preemption, tmux close, etc.),
+# not necessarily a bug in Tetris.  Abrupt vLLM kills can trigger a harmless
+# PyTorch NCCL "destroy_process_group" warning; we try SIGINT first so the
+# OpenAI API server can shut down cleanly.
 VLLM_PID=""
 cleanup() {
+    # Traps run with inherited set -e; be defensive.
+    set +e
     echo ""
     echo "[infer_tetris] Shutting down..."
     if [ -n "${VLLM_PID}" ] && kill -0 "${VLLM_PID}" 2>/dev/null; then
-        kill "${VLLM_PID}" 2>/dev/null || true
+        # Graceful: uvicorn/vLLM often handles SIGINT better than SIGTERM for NCCL.
+        kill -INT "${VLLM_PID}" 2>/dev/null || true
+        for _ in {1..45}; do
+            kill -0 "${VLLM_PID}" 2>/dev/null || break
+            sleep 1
+        done
+        if kill -0 "${VLLM_PID}" 2>/dev/null; then
+            kill -TERM "${VLLM_PID}" 2>/dev/null || true
+            sleep 3
+        fi
+        if kill -0 "${VLLM_PID}" 2>/dev/null; then
+            kill -KILL "${VLLM_PID}" 2>/dev/null || true
+        fi
         wait "${VLLM_PID}" 2>/dev/null || true
     fi
     echo "[infer_tetris] Done."
@@ -77,7 +96,7 @@ trap cleanup EXIT INT TERM
 
 # ── Print banner ─────────────────────────────────────────────────────
 echo "══════════════════════════════════════════════════════════════"
-echo "  Tetris Inference: Qwen3-8B"
+echo "  Tetris Inference: Qwen3-32B"
 echo "══════════════════════════════════════════════════════════════"
 echo "  Model:          ${MODEL}"
 echo "  Episodes:       ${EPISODES}"
@@ -153,8 +172,8 @@ echo "  python -m scripts.run_qwen3_8b_eval ${EVAL_ARGS[*]}"
 echo ""
 
 # ── Run inference ────────────────────────────────────────────────────
-python -m scripts.run_qwen3_8b_eval "${EVAL_ARGS[@]}"
-EXIT_CODE=$?
+EXIT_CODE=0
+python -m scripts.run_qwen3_8b_eval "${EVAL_ARGS[@]}" || EXIT_CODE=$?
 
 # ── Summary ──────────────────────────────────────────────────────────
 echo ""

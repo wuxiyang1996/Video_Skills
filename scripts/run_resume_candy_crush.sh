@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+n#!/usr/bin/env bash
 # ======================================================================
 #  Resume Candy Crush training from step-4 checkpoint.
 #

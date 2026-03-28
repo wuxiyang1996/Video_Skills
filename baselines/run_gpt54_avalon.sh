@@ -53,11 +53,13 @@ if [ -z "$AGENTEVOLVER_ROOT" ]; then
     exit 1
 fi
 
-# ── Settings matching training (scripts/run_avalon.sh) ──────────────────────
-EPISODES="${EPISODES:-20}"
+# ── Settings ──────────────────────────────────────────────────────────────────
 NUM_PLAYERS="${NUM_PLAYERS:-5}"
+EPISODES_PER_PLAYER="${EPISODES_PER_PLAYER:-8}"
+EPISODES="${EPISODES:-$((NUM_PLAYERS * EPISODES_PER_PLAYER))}"
 TEMPERATURE="${TEMPERATURE:-0.4}"
 MODEL="${MODEL:-gpt-5.4}"
+OPPONENT_MODEL="${OPPONENT_MODEL:-gpt-5.4}"
 SEED="${SEED:-42}"
 
 # ── Headless rendering (from scripts/run_avalon.sh) ────────────────────────
@@ -106,30 +108,28 @@ mkdir -p "${OUTPUT_DIR}"
 
 # ── Banner ─────────────────────────────────────────────────────────────────
 echo "══════════════════════════════════════════════════════════════"
-echo "  GPT-5.4 Baseline — Avalon (${EPISODES} episodes)"
+echo "  GPT-5.4 Baseline — Avalon (${EPISODES} episodes = ${EPISODES_PER_PLAYER}/player x ${NUM_PLAYERS})"
 echo "══════════════════════════════════════════════════════════════"
 echo "  Project root:   ${PROJECT_ROOT}"
 echo "  AgentEvolver:   ${AGENTEVOLVER_ROOT}"
-echo "  Model:          ${MODEL}"
+echo "  Model:          ${MODEL}  (controlled player)"
+echo "  Opponents:      ${OPPONENT_MODEL}"
 echo "  Episodes:       ${EPISODES}"
 echo "  Num players:    ${NUM_PLAYERS}"
+echo "  Mode:           per-role (cycle through player positions 0-4)"
 echo "  Temperature:    ${TEMPERATURE}"
 echo "  Seed:           ${SEED}"
 echo "  Output:         ${OUTPUT_DIR}"
 [ -n "${OPENROUTER_API_KEY:-}" ] && echo "  API key:        ${OPENROUTER_API_KEY:0:12}... (OpenRouter)" || echo "  API key:        ${OPENAI_API_KEY:0:12}..."
 echo ""
-echo "  Avalon game profile (same as scripts/run_avalon.sh):"
+echo "  Avalon game profile:"
 echo "    - 5-player social deduction game"
 echo "    - Roles: Merlin, 2×Servant (good) vs Minion, Assassin (evil)"
 echo "    - 50 max steps/episode"
 echo "    - Reward: win/loss + role-specific bonuses"
 echo "    - End condition: natural (engine.done)"
-echo "    - GPT-5.4 controls all 5 players independently"
+echo "    - Controlled player = ${MODEL}, opponents = ${OPPONENT_MODEL}"
 echo "    - Chain-of-thought reasoning via function calling"
-echo ""
-echo "  Env chain:"
-echo "    AvalonNLWrapper(num_players=${NUM_PLAYERS})"
-echo "      → per-player structured CoT → choose_action()"
 echo "══════════════════════════════════════════════════════════════"
 echo ""
 
@@ -144,9 +144,11 @@ python3 "${PROJECT_ROOT}/cold_start/generate_cold_start_evolver.py" \
     --games avalon \
     --episodes "${EPISODES}" \
     --model "${MODEL}" \
+    --opponent_model "${OPPONENT_MODEL}" \
     --temperature "${TEMPERATURE}" \
     --num_players "${NUM_PLAYERS}" \
     --seed "${SEED}" \
+    --per_role \
     --no_label \
     --verbose \
     --output_dir "${OUTPUT_DIR}" \
