@@ -20,6 +20,7 @@ ANALYSES = {
     "p4": ("p4_skill_retrieval_analysis", "Skill-state association & retrieval confidence"),
     "p5": ("p5_failure_analysis", "Failure analysis & contract failure signatures"),
     "p7": ("p7_strategy_analysis", "Intention tag / strategy distribution"),
+    "p8": ("p8_candy_crush_diplomacy_case_study", "Candy Crush & Diplomacy deep case studies"),
 }
 
 

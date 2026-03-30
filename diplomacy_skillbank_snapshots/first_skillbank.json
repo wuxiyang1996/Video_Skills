@@ -1,0 +1,3613 @@
+{
+  "_meta": {
+    "run": "Qwen3-8B_diplomacy_20260322_234548",
+    "snapshot": "first",
+    "description": "Skills discovered during step 0 (initial rollout, 4 episodes per power)",
+    "step": 0,
+    "cutoff_timestamp": 1774223932.2882333
+  },
+  "aggregate": {
+    "total_skills": 40,
+    "per_country": {
+      "AUSTRIA": 6,
+      "ENGLAND": 5,
+      "FRANCE": 6,
+      "GERMANY": 5,
+      "ITALY": 6,
+      "RUSSIA": 6,
+      "TURKEY": 6
+    },
+    "by_phase": {
+      "adjustment": 5,
+      "late_orders": 17,
+      "opening": 7,
+      "orders": 11
+    },
+    "by_intention": {
+      "DEFEND": 8,
+      "EXPLORE": 14,
+      "SETUP": 18
+    },
+    "phase_pct": {
+      "adjustment": 12.5,
+      "late_orders": 42.5,
+      "opening": 17.5,
+      "orders": 27.5
+    },
+    "intention_pct": {
+      "DEFEND": 20.0,
+      "EXPLORE": 35.0,
+      "SETUP": 45.0
+    },
+    "avg_pass_rate": 0.6,
+    "avg_reward": 1.1562
+  },
+  "countries": {
+    "AUSTRIA": [
+      {
+        "skill_id": "adjustment:SETUP",
+        "phase": "adjustment",
+        "intention": "SETUP",
+        "name": "Adjustment Setup",
+        "description": "Transitions the game phase from W1903A to S1904M while maintaining other world state predicates.",
+        "version": 2,
+        "n_instances": 16,
+        "n_sub_episodes": 16,
+        "outcomes": {
+          "success": 14,
+          "partial": 2
+        },
+        "avg_cumulative_reward": 0.625,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "Game is in adjustment phase",
+            "Board/state allows preparatory placement"
+          ],
+          "steps": [
+            "Assess current layout for setup opportunities",
+            "Place elements to prepare for future gains",
+            "Verify arrangement is stable",
+            "Achieve: event.centers_changed, world.centers=3, world.phase=F1904M",
+            "Remove: world.phase=S1904M, world.phase=W1903A, world.units=A SER, A BOH, A GAL, F ADR"
+          ],
+          "success_criteria": [
+            "event.centers_changed achieved",
+            "world.centers=3 achieved",
+            "Target arrangement achieved"
+          ],
+          "expected_duration": 3
+        },
+        "contract_effects": {
+          "eff_add": [
+            "event.centers_changed",
+            "world.centers=3",
+            "world.phase=F1904M",
+            "world.phase=W1904A",
+            "world.units=A BOH, A VIE, F APU, A BUD",
+            "world.units=A SER, A BOH, A VIE, F APU"
+          ],
+          "eff_del": [
+            "world.phase=S1904M",
+            "world.phase=W1903A",
+            "world.units=A SER, A BOH, A GAL, F ADR"
+          ]
+        },
+        "created_at": 1774223646.1819582,
+        "updated_at": 1774229610.5858796,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_3b9746e5",
+            "outcome": "success",
+            "reward": 0.7778,
+            "n_steps": 1,
+            "tags": [
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_9d1123cb",
+            "outcome": "success",
+            "reward": 0.5,
+            "n_steps": 3,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_b9c39f06",
+            "outcome": "success",
+            "reward": 1.0,
+            "n_steps": 6,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "late_orders:DEFEND",
+        "phase": "late_orders",
+        "intention": "DEFEND",
+        "name": "Late Orders Defend",
+        "description": "The 'late_orders:DEFEND' skill changes the game phase, centers, and units, and triggers events related to phase and center changes.",
+        "version": 2,
+        "n_instances": 29,
+        "n_sub_episodes": 29,
+        "outcomes": {
+          "success": 29
+        },
+        "avg_cumulative_reward": 0.908,
+        "overall_pass_rate": 0.0,
+        "failure_signatures": {
+          "miss_add:world.phase=F1906M": 3
+        },
+        "protocol": {
+          "preconditions": [
+            "Game is in late_orders phase",
+            "Threat detected requiring defensive response"
+          ],
+          "steps": [
+            "Identify primary threat",
+            "Take defensive position or action",
+            "Hold until threat passes",
+            "Achieve: world.phase=F1906M"
+          ],
+          "success_criteria": [
+            "world.phase=F1906M achieved",
+            "Threat neutralized, state stabilized"
+          ],
+          "expected_duration": 10
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=F1906M"
+          ],
+          "eff_del": []
+        },
+        "created_at": 1774223651.3140268,
+        "updated_at": 1774229343.636479,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_164aa003",
+            "outcome": "success",
+            "reward": 0.2778,
+            "n_steps": 1,
+            "tags": [
+              "DEFEND"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_164aa003",
+            "outcome": "success",
+            "reward": 1.1111,
+            "n_steps": 4,
+            "tags": [
+              "DEFEND",
+              "DEFEND",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_aba2f678",
+            "outcome": "success",
+            "reward": 1.9444,
+            "n_steps": 7,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "DEFEND",
+              "DEFEND",
+              "DEFEND",
+              "DEFEND",
+              "DEFEND"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "late_orders:SETUP",
+        "phase": "late_orders",
+        "intention": "SETUP",
+        "name": "Late Orders Setup",
+        "description": "The 'late_orders:SETUP' skill transitions Austria's centers and phase, reducing centers from 3 or 4 to 2 and advancing the game phase.",
+        "version": 5,
+        "n_instances": 43,
+        "n_sub_episodes": 43,
+        "outcomes": {
+          "success": 42,
+          "partial": 1
+        },
+        "avg_cumulative_reward": 0.9574,
+        "overall_pass_rate": 0.0,
+        "failure_signatures": {
+          "miss_add:world.phase=F1907M": 5
+        },
+        "protocol": {
+          "preconditions": [
+            "current_phase != 'endgame'",
+            "centers >= 2",
+            "player_has_control_of_austria"
+          ],
+          "steps": [
+            "Reduce Austria's center count from 3 or 4 to 2 by moving units to adjacent territories",
+            "Advance the game phase to the next stage using the phase advancement button",
+            "Confirm the phase change and center reduction in the game interface"
+          ],
+          "success_criteria": [
+            "Austria's center count is reduced to 2",
+            "Game phase has advanced to the next stage",
+            "No errors reported during the phase transition"
+          ],
+          "expected_duration": 3
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=F1907M"
+          ],
+          "eff_del": [
+            "world.phase=W1906A"
+          ]
+        },
+        "created_at": 1774223654.0896652,
+        "updated_at": 1774229627.000698,
+        "retired": false,
+        "n_protocol_revisions": 3,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_aba2f678",
+            "outcome": "success",
+            "reward": 0.5556,
+            "n_steps": 2,
+            "tags": [
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_3b9746e5",
+            "outcome": "success",
+            "reward": 0.8333,
+            "n_steps": 3,
+            "tags": [
+              "DEFEND",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_8afafcf2",
+            "outcome": "success",
+            "reward": 1.1111,
+            "n_steps": 4,
+            "tags": [
+              "DEFEND",
+              "DEFEND",
+              "SETUP",
+              "SETUP"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "opening:EXPLORE",
+        "phase": "opening",
+        "intention": "EXPLORE",
+        "name": "Opening Explore",
+        "description": "The 'opening:EXPLORE' skill increases Austria's centers to 4 and transitions phases, updating units and phase states during the early game.",
+        "version": 2,
+        "n_instances": 40,
+        "n_sub_episodes": 40,
+        "outcomes": {
+          "success": 40
+        },
+        "avg_cumulative_reward": 1.1208,
+        "overall_pass_rate": 0.0,
+        "failure_signatures": {
+          "miss_add:world.phase=F1902M|miss_add:world.phase=S1903M|miss_add:world.phase=W1902A": 4
+        },
+        "protocol": {
+          "preconditions": [
+            "Game is in opening phase",
+            "Unknown territory or options available"
+          ],
+          "steps": [
+            "Choose unexplored direction or option",
+            "Investigate and gather information",
+            "Update strategy based on findings",
+            "Achieve: world.phase=F1902M, world.phase=S1903M, world.phase=W1902A",
+            "Remove: event.centers_changed, world.phase=F1901M, world.phase=S1901M"
+          ],
+          "success_criteria": [
+            "world.phase=F1902M achieved",
+            "world.phase=S1903M achieved",
+            "New information or area discovered"
+          ],
+          "expected_duration": 6
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=F1902M",
+            "world.phase=S1903M",
+            "world.phase=W1902A"
+          ],
+          "eff_del": [
+            "event.centers_changed",
+            "world.phase=F1901M",
+            "world.phase=S1901M",
+            "world.phase=W1901A",
+            "world.units=A BUD, A VIE, F TRI"
+          ]
+        },
+        "created_at": 1774223658.5519857,
+        "updated_at": 1774229627.0010612,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_164aa003",
+            "outcome": "success",
+            "reward": 1.3889,
+            "n_steps": 5,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_aba2f678",
+            "outcome": "success",
+            "reward": 1.6111,
+            "n_steps": 6,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_3b9746e5",
+            "outcome": "success",
+            "reward": 0.6667,
+            "n_steps": 4,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "orders:EXPLORE",
+        "phase": "orders",
+        "intention": "EXPLORE",
+        "name": "Orders Explore",
+        "description": "The EXPLORE skill increases Austria's centers by 1 and advances the game phase from F1902M to W1902A.",
+        "version": 2,
+        "n_instances": 1,
+        "n_sub_episodes": 1,
+        "outcomes": {
+          "success": 1
+        },
+        "avg_cumulative_reward": 0.7222,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "Game is in orders phase",
+            "Unknown territory or options available"
+          ],
+          "steps": [
+            "Choose unexplored direction or option",
+            "Investigate and gather information",
+            "Update strategy based on findings",
+            "Achieve: event.centers_changed, world.centers=4, world.phase=W1902A",
+            "Remove: event.units_changed, world.centers=3, world.phase=F1902M"
+          ],
+          "success_criteria": [
+            "event.centers_changed achieved",
+            "world.centers=4 achieved",
+            "New information or area discovered"
+          ],
+          "expected_duration": 10
+        },
+        "contract_effects": {
+          "eff_add": [
+            "event.centers_changed",
+            "world.centers=4",
+            "world.phase=W1902A"
+          ],
+          "eff_del": [
+            "event.units_changed",
+            "world.centers=3",
+            "world.phase=F1902M"
+          ]
+        },
+        "created_at": 1774223660.125265,
+        "updated_at": 1774223660.125265,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_8afafcf2",
+            "outcome": "success",
+            "reward": 0.7222,
+            "n_steps": 1,
+            "tags": [
+              "EXPLORE"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "orders:SETUP",
+        "phase": "orders",
+        "intention": "SETUP",
+        "name": "Orders Setup",
+        "description": "The 'orders:SETUP' skill transitions the game phase and increases the number of centers for Austria, indicating setup of strategic positioning and movement.",
+        "version": 3,
+        "n_instances": 43,
+        "n_sub_episodes": 43,
+        "outcomes": {
+          "success": 41,
+          "partial": 2
+        },
+        "avg_cumulative_reward": 0.6253,
+        "overall_pass_rate": 0.0,
+        "failure_signatures": {
+          "miss_add:event.units_changed": 4
+        },
+        "protocol": {
+          "preconditions": [
+            "phase=setup",
+            "austria_centers<5",
+            "orders_available>0"
+          ],
+          "steps": [
+            "Select Austria's center units and move them to strategic positions",
+            "Assign movement orders to Austria's units to secure key locations",
+            "Confirm all movement orders are executed and units are in place"
+          ],
+          "success_criteria": [
+            "Austria has successfully positioned its units in strategic locations",
+            "Game phase transitions to the next phase",
+            "Number of Austria's centers has increased as expected"
+          ],
+          "expected_duration": 2
+        },
+        "contract_effects": {
+          "eff_add": [
+            "event.units_changed"
+          ],
+          "eff_del": [
+            "world.phase=F1903M",
+            "world.phase=S1904M"
+          ]
+        },
+        "created_at": 1774223664.9964306,
+        "updated_at": 1774229627.0022743,
+        "retired": false,
+        "n_protocol_revisions": 1,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_164aa003",
+            "outcome": "success",
+            "reward": 1.0,
+            "n_steps": 2,
+            "tags": [
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_164aa003",
+            "outcome": "success",
+            "reward": 0.8333,
+            "n_steps": 3,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "DEFEND"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_aba2f678",
+            "outcome": "success",
+            "reward": 0.7778,
+            "n_steps": 1,
+            "tags": [
+              "SETUP"
+            ]
+          }
+        ]
+      }
+    ],
+    "ENGLAND": [
+      {
+        "skill_id": "adjustment:SETUP",
+        "phase": "adjustment",
+        "intention": "SETUP",
+        "name": "Adjustment Setup",
+        "description": "The 'adjustment:SETUP' skill changes the game phase and unit configurations, updating centers and phase states while modifying unit assignments.",
+        "version": 2,
+        "n_instances": 2,
+        "n_sub_episodes": 2,
+        "outcomes": {
+          "success": 2
+        },
+        "avg_cumulative_reward": 1.25,
+        "overall_pass_rate": 0.0,
+        "failure_signatures": {
+          "miss_add:event.units_changed|miss_add:world.phase=F1905M|miss_add:world.phase=W1905A": 2
+        },
+        "protocol": {
+          "preconditions": [
+            "Game is in adjustment phase",
+            "Board/state allows preparatory placement"
+          ],
+          "steps": [
+            "Assess current layout for setup opportunities",
+            "Place elements to prepare for future gains",
+            "Verify arrangement is stable",
+            "Achieve: event.units_changed, world.phase=F1905M, world.phase=W1905A",
+            "Remove: event.centers_changed, world.phase=F1904M, world.phase=S1905M"
+          ],
+          "success_criteria": [
+            "event.units_changed achieved",
+            "world.phase=F1905M achieved",
+            "Target arrangement achieved"
+          ],
+          "expected_duration": 10
+        },
+        "contract_effects": {
+          "eff_add": [
+            "event.units_changed",
+            "world.phase=F1905M",
+            "world.phase=W1905A"
+          ],
+          "eff_del": [
+            "event.centers_changed",
+            "world.phase=F1904M",
+            "world.phase=S1905M",
+            "world.phase=W1904A",
+            "world.units=F YOR, A EDI, F NWY"
+          ]
+        },
+        "created_at": 1774223648.2324038,
+        "updated_at": 1774223661.1495595,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_b56d7856",
+            "outcome": "success",
+            "reward": 1.1667,
+            "n_steps": 3,
+            "tags": [
+              "SETUP",
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_cf5aaad3",
+            "outcome": "success",
+            "reward": 1.3333,
+            "n_steps": 4,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "late_orders:DEFEND",
+        "phase": "late_orders",
+        "intention": "DEFEND",
+        "name": "Late Orders Defend",
+        "description": "The 'late_orders:DEFEND' skill reduces England's centers from 4 to 3, advances the phase from F1906M to S1907M, and changes unit positions.",
+        "version": 2,
+        "n_instances": 12,
+        "n_sub_episodes": 12,
+        "outcomes": {
+          "partial": 1,
+          "success": 11
+        },
+        "avg_cumulative_reward": 2.5926,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "Game is in late_orders phase",
+            "Threat detected requiring defensive response"
+          ],
+          "steps": [
+            "Identify primary threat",
+            "Take defensive position or action",
+            "Hold until threat passes",
+            "Achieve: event.centers_changed, event.units_changed, world.centers=4",
+            "Remove: world.phase=F1904M, world.phase=F1905M, world.phase=S1905M"
+          ],
+          "success_criteria": [
+            "event.centers_changed achieved",
+            "event.units_changed achieved",
+            "Threat neutralized, state stabilized"
+          ],
+          "expected_duration": 10
+        },
+        "contract_effects": {
+          "eff_add": [
+            "event.centers_changed",
+            "event.units_changed",
+            "world.centers=4",
+            "world.phase=F1908M",
+            "world.phase=S1908M",
+            "world.phase=W1908A",
+            "world.units=F LON, A WAL, F BEL"
+          ],
+          "eff_del": [
+            "world.phase=F1904M",
+            "world.phase=F1905M",
+            "world.phase=S1905M"
+          ]
+        },
+        "created_at": 1774223650.8371336,
+        "updated_at": 1774229610.4328818,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_0c7a12ef",
+            "outcome": "partial",
+            "reward": -0.0,
+            "n_steps": 3,
+            "tags": [
+              "DEFEND",
+              "DEFEND",
+              "DEFEND"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_7e90cfcc",
+            "outcome": "success",
+            "reward": 3.4444,
+            "n_steps": 11,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "DEFEND",
+              "DEFEND"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_47aa4ad9",
+            "outcome": "success",
+            "reward": 3.5,
+            "n_steps": 10,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "late_orders:SETUP",
+        "phase": "late_orders",
+        "intention": "SETUP",
+        "name": "Late Orders Setup",
+        "description": "The 'late_orders:SETUP' skill increases England's centers from 4 to 5 and advances the game phase to later periods (W1906A, W1907A, S1908M), while removing earlier phase indicators.",
+        "version": 3,
+        "n_instances": 22,
+        "n_sub_episodes": 22,
+        "outcomes": {
+          "success": 22
+        },
+        "avg_cumulative_reward": 2.1086,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "centers=4",
+            "phase<=W1906A",
+            "game_state=setup"
+          ],
+          "steps": [
+            "Increase England's centers to 5 using the center_upgrade action",
+            "Advance game phase to W1906A using the phase_advance action",
+            "Remove all phase indicators from the game board using the clear_phase_indicators action"
+          ],
+          "success_criteria": [
+            "England's centers are increased to 5",
+            "Game phase is advanced to W1906A",
+            "All earlier phase indicators are removed"
+          ],
+          "expected_duration": 10
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=F1908M",
+            "world.phase=S1908M",
+            "world.phase=S1909M",
+            "world.units=A EDI, A LON, F SKA, F NWG",
+            "world.units=A EDI, F SKA, F NWG, A YOR"
+          ],
+          "eff_del": [
+            "world.phase=F1905M",
+            "world.phase=S1905M",
+            "world.phase=S1906M",
+            "world.units=A EDI, F NTH, A LON, F SKA",
+            "world.units=F NWY, A EDI, F NTH, A LON"
+          ]
+        },
+        "created_at": 1774223653.66669,
+        "updated_at": 1774229614.9651797,
+        "retired": false,
+        "n_protocol_revisions": 1,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_e7330468",
+            "outcome": "success",
+            "reward": 2.0,
+            "n_steps": 10,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "DEFEND",
+              "DEFEND",
+              "DEFEND",
+              "DEFEND"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_b56d7856",
+            "outcome": "success",
+            "reward": 0.4444,
+            "n_steps": 2,
+            "tags": [
+              "EXPLORE",
+              "DEFEND"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_b56d7856",
+            "outcome": "success",
+            "reward": 0.3333,
+            "n_steps": 2,
+            "tags": [
+              "DEFEND",
+              "DEFEND"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "opening:EXPLORE",
+        "phase": "opening",
+        "intention": "EXPLORE",
+        "name": "Opening Explore",
+        "description": "The 'EXPLORE' skill increases England's centers from 3 to 4 and changes the phase from S1901M to S1903M, while updating and modifying unit configurations.",
+        "version": 2,
+        "n_instances": 20,
+        "n_sub_episodes": 20,
+        "outcomes": {
+          "success": 20
+        },
+        "avg_cumulative_reward": 1.4222,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "Game is in opening phase",
+            "Unknown territory or options available"
+          ],
+          "steps": [
+            "Choose unexplored direction or option",
+            "Investigate and gather information",
+            "Update strategy based on findings",
+            "Achieve: world.phase=F1902M, world.phase=S1903M, world.phase=W1902A",
+            "Remove: world.phase=F1901M, world.phase=S1901M, world.phase=W1901A"
+          ],
+          "success_criteria": [
+            "world.phase=F1902M achieved",
+            "world.phase=S1903M achieved",
+            "New information or area discovered"
+          ],
+          "expected_duration": 6
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=F1902M",
+            "world.phase=S1903M",
+            "world.phase=W1902A",
+            "world.units=F LON, A EDI, F SKA"
+          ],
+          "eff_del": [
+            "world.phase=F1901M",
+            "world.phase=S1901M",
+            "world.phase=W1901A",
+            "world.units=F EDI, F LON, A LVP",
+            "world.units=F LON, A LVP, F NTH",
+            "world.units=F LON, F NTH, A EDI"
+          ]
+        },
+        "created_at": 1774223657.3261158,
+        "updated_at": 1774229617.457702,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_e7330468",
+            "outcome": "success",
+            "reward": 1.3333,
+            "n_steps": 8,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_b56d7856",
+            "outcome": "success",
+            "reward": 0.1667,
+            "n_steps": 1,
+            "tags": [
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_be2a3139",
+            "outcome": "success",
+            "reward": 2.2222,
+            "n_steps": 8,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "orders:SETUP",
+        "phase": "orders",
+        "intention": "SETUP",
+        "name": "Orders Setup",
+        "description": "The 'orders:SETUP' skill increases the number of centers from 3 to 4 and advances the game phase through multiple turns, while modifying unit configurations.",
+        "version": 2,
+        "n_instances": 23,
+        "n_sub_episodes": 23,
+        "outcomes": {
+          "success": 23
+        },
+        "avg_cumulative_reward": 1.942,
+        "overall_pass_rate": 0.0,
+        "failure_signatures": {
+          "miss_add:world.phase=F1903M|miss_add:world.phase=F1904M|miss_add:world.phase=S1904M": 3
+        },
+        "protocol": {
+          "preconditions": [
+            "Game is in orders phase",
+            "Board/state allows preparatory placement"
+          ],
+          "steps": [
+            "Assess current layout for setup opportunities",
+            "Place elements to prepare for future gains",
+            "Verify arrangement is stable",
+            "Achieve: world.phase=F1903M, world.phase=F1904M, world.phase=S1904M",
+            "Remove: event.units_changed, world.phase=F1901M, world.phase=S1901M"
+          ],
+          "success_criteria": [
+            "world.phase=F1903M achieved",
+            "world.phase=F1904M achieved",
+            "Target arrangement achieved"
+          ],
+          "expected_duration": 8
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=F1903M",
+            "world.phase=F1904M",
+            "world.phase=S1904M"
+          ],
+          "eff_del": [
+            "event.units_changed",
+            "world.phase=F1901M",
+            "world.phase=S1901M",
+            "world.phase=W1901A",
+            "world.units=F EDI, F LON, A LVP"
+          ]
+        },
+        "created_at": 1774223661.1347513,
+        "updated_at": 1774229619.9220655,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_0c7a12ef",
+            "outcome": "success",
+            "reward": 3.2778,
+            "n_steps": 15,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_b56d7856",
+            "outcome": "success",
+            "reward": 0.6667,
+            "n_steps": 4,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_b56d7856",
+            "outcome": "success",
+            "reward": 0.3333,
+            "n_steps": 2,
+            "tags": [
+              "SETUP",
+              "SETUP"
+            ]
+          }
+        ]
+      }
+    ],
+    "FRANCE": [
+      {
+        "skill_id": "adjustment:DEFEND",
+        "phase": "adjustment",
+        "intention": "DEFEND",
+        "name": "Adjustment Defend",
+        "description": "The 'adjustment:DEFEND' skill increases the number of centers to 6, changes the phase to F1906M and W1906A, and updates the units list.",
+        "version": 2,
+        "n_instances": 2,
+        "n_sub_episodes": 2,
+        "outcomes": {
+          "success": 2
+        },
+        "avg_cumulative_reward": 0.8333,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "Game is in adjustment phase",
+            "Threat detected requiring defensive response"
+          ],
+          "steps": [
+            "Identify primary threat",
+            "Take defensive position or action",
+            "Hold until threat passes",
+            "Achieve: world.phase=F1907M, world.phase=W1907A",
+            "Remove: event.centers_changed, event.units_changed, world.phase=S1907M"
+          ],
+          "success_criteria": [
+            "world.phase=F1907M achieved",
+            "world.phase=W1907A achieved",
+            "Threat neutralized, state stabilized"
+          ],
+          "expected_duration": 10
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=F1907M",
+            "world.phase=W1907A"
+          ],
+          "eff_del": [
+            "event.centers_changed",
+            "event.units_changed",
+            "world.phase=S1907M",
+            "world.phase=W1906A",
+            "world.units=A BRE, A MAR, A POR, F LYO"
+          ]
+        },
+        "created_at": 1774223647.5355606,
+        "updated_at": 1774225066.3634906,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_df89b6e6",
+            "outcome": "success",
+            "reward": 0.8333,
+            "n_steps": 3,
+            "tags": [
+              "DEFEND",
+              "DEFEND",
+              "DEFEND"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_dc16154b",
+            "outcome": "success",
+            "reward": 0.8333,
+            "n_steps": 3,
+            "tags": [
+              "DEFEND",
+              "DEFEND",
+              "SETUP"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "late_orders:DEFEND",
+        "phase": "late_orders",
+        "intention": "DEFEND",
+        "name": "Late Orders Defend",
+        "description": "Transitions the game phase from F1905M to S1906M while maintaining other state predicates.",
+        "version": 2,
+        "n_instances": 16,
+        "n_sub_episodes": 16,
+        "outcomes": {
+          "success": 16
+        },
+        "avg_cumulative_reward": 1.5035,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "Game is in late_orders phase",
+            "Threat detected requiring defensive response"
+          ],
+          "steps": [
+            "Identify primary threat",
+            "Take defensive position or action",
+            "Hold until threat passes",
+            "Achieve: event.centers_changed, world.centers=4, world.centers=5",
+            "Remove: world.centers=3, world.phase=F1904M, world.phase=S1904M"
+          ],
+          "success_criteria": [
+            "event.centers_changed achieved",
+            "world.centers=4 achieved",
+            "Threat neutralized, state stabilized"
+          ],
+          "expected_duration": 10
+        },
+        "contract_effects": {
+          "eff_add": [
+            "event.centers_changed",
+            "world.centers=4",
+            "world.centers=5",
+            "world.phase=F1907M",
+            "world.phase=S1907M",
+            "world.phase=W1907A",
+            "world.units=A GAS, A PIC, F TUN, F BRE",
+            "world.units=A GAS, A PIC, F TUN, F MAO",
+            "world.units=F TUN, F MAO, A BRE, A BEL"
+          ],
+          "eff_del": [
+            "world.centers=3",
+            "world.phase=F1904M",
+            "world.phase=S1904M",
+            "world.phase=W1904A",
+            "world.units=A GAS, A BRE, F MAO",
+            "world.units=A GAS, A BRE, F NAF",
+            "world.units=A GAS, A PIC, F WES"
+          ]
+        },
+        "created_at": 1774223648.9226153,
+        "updated_at": 1774229611.3519306,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_c74aa3d3",
+            "outcome": "success",
+            "reward": 0.5556,
+            "n_steps": 2,
+            "tags": [
+              "DEFEND",
+              "DEFEND"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_5cbc63da",
+            "outcome": "success",
+            "reward": 0.1667,
+            "n_steps": 1,
+            "tags": [
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_5cbc63da",
+            "outcome": "success",
+            "reward": 1.3889,
+            "n_steps": 4,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "late_orders:SETUP",
+        "phase": "late_orders",
+        "intention": "SETUP",
+        "name": "Late Orders Setup",
+        "description": "The 'late_orders:SETUP' skill increases France's centers and advances the game phase, transitioning from earlier phases like S1905M to later phases like W1907A and F1908M, while reducing the number of centers in earlier states.",
+        "version": 2,
+        "n_instances": 44,
+        "n_sub_episodes": 44,
+        "outcomes": {
+          "success": 44
+        },
+        "avg_cumulative_reward": 1.2803,
+        "overall_pass_rate": 0.0,
+        "failure_signatures": {
+          "miss_add:world.phase=S1908M": 5
+        },
+        "protocol": {
+          "preconditions": [
+            "Game is in late_orders phase",
+            "Board/state allows preparatory placement"
+          ],
+          "steps": [
+            "Assess current layout for setup opportunities",
+            "Place elements to prepare for future gains",
+            "Verify arrangement is stable",
+            "Achieve: world.phase=S1908M",
+            "Remove: world.phase=F1904M"
+          ],
+          "success_criteria": [
+            "world.phase=S1908M achieved",
+            "Target arrangement achieved"
+          ],
+          "expected_duration": 5
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=S1908M"
+          ],
+          "eff_del": [
+            "world.phase=F1904M"
+          ]
+        },
+        "created_at": 1774223652.343181,
+        "updated_at": 1774229622.909556,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_df89b6e6",
+            "outcome": "success",
+            "reward": 0.6667,
+            "n_steps": 2,
+            "tags": [
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_c74aa3d3",
+            "outcome": "success",
+            "reward": 1.5,
+            "n_steps": 3,
+            "tags": [
+              "DEFEND",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_55888704",
+            "outcome": "success",
+            "reward": 1.0556,
+            "n_steps": 2,
+            "tags": [
+              "SETUP",
+              "DEFEND"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "opening:EXPLORE",
+        "phase": "opening",
+        "intention": "EXPLORE",
+        "name": "Opening Explore",
+        "description": "The skill increases France's centers from 3 to 4 and transitions the game phase to various diplomatic and war phases.",
+        "version": 2,
+        "n_instances": 47,
+        "n_sub_episodes": 47,
+        "outcomes": {
+          "success": 47
+        },
+        "avg_cumulative_reward": 0.8842,
+        "overall_pass_rate": 0.0,
+        "failure_signatures": {
+          "miss_add:world.phase=S1903M|miss_add:world.phase=W1902A": 5
+        },
+        "protocol": {
+          "preconditions": [
+            "Game is in opening phase",
+            "Unknown territory or options available"
+          ],
+          "steps": [
+            "Choose unexplored direction or option",
+            "Investigate and gather information",
+            "Update strategy based on findings",
+            "Achieve: world.phase=S1903M, world.phase=W1902A",
+            "Remove: world.phase=S1901M, world.units=F BRE, A MAR, A PAR"
+          ],
+          "success_criteria": [
+            "world.phase=S1903M achieved",
+            "world.phase=W1902A achieved",
+            "New information or area discovered"
+          ],
+          "expected_duration": 3
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=S1903M",
+            "world.phase=W1902A"
+          ],
+          "eff_del": [
+            "world.phase=S1901M",
+            "world.units=F BRE, A MAR, A PAR"
+          ]
+        },
+        "created_at": 1774223654.7646487,
+        "updated_at": 1774229622.9099243,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_c74aa3d3",
+            "outcome": "success",
+            "reward": 0.8889,
+            "n_steps": 2,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_c74aa3d3",
+            "outcome": "success",
+            "reward": 0.6667,
+            "n_steps": 3,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_e2e55543",
+            "outcome": "success",
+            "reward": 1.7778,
+            "n_steps": 6,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "orders:EXPLORE",
+        "phase": "orders",
+        "intention": "EXPLORE",
+        "name": "Orders Explore",
+        "description": "The EXPLORE skill causes phase transitions and changes in unit configurations during the game.",
+        "version": 6,
+        "n_instances": 3,
+        "n_sub_episodes": 3,
+        "outcomes": {
+          "success": 3
+        },
+        "avg_cumulative_reward": 0.7037,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "world.centers=3",
+            "world.phase=F1902M",
+            "world.units=F MAO, A GAS, A PAR"
+          ],
+          "steps": [
+            "Issue EXPLORE order to a unit with F MAO",
+            "Wait for phase transition to W1902A",
+            "Confirm units have changed to A GAS, A PAR, F SPA/SC",
+            "Verify centers count is updated to 4",
+            "Check for event.centers_changed in the game log",
+            "Ensure no other phase or unit changes occur"
+          ],
+          "success_criteria": [
+            "Phase transitions to W1902A",
+            "Units are updated to A GAS, A PAR, F SPA/SC",
+            "Centers count is now 4 and event.centers_changed is recorded"
+          ],
+          "expected_duration": 3
+        },
+        "contract_effects": {
+          "eff_add": [
+            "event.centers_changed",
+            "world.centers=4",
+            "world.phase=W1902A",
+            "world.units=A GAS, A PAR, F SPA/SC"
+          ],
+          "eff_del": [
+            "world.centers=3",
+            "world.phase=F1902M",
+            "world.units=F MAO, A GAS, A PAR"
+          ]
+        },
+        "created_at": 1774223657.5537224,
+        "updated_at": 1774229631.2018163,
+        "retired": false,
+        "n_protocol_revisions": 4,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_55888704",
+            "outcome": "success",
+            "reward": 1.7778,
+            "n_steps": 6,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_93cdff3a",
+            "outcome": "success",
+            "reward": 0.1667,
+            "n_steps": 1,
+            "tags": [
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_6d3fed98",
+            "outcome": "success",
+            "reward": 0.1667,
+            "n_steps": 1,
+            "tags": [
+              "EXPLORE"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "orders:SETUP",
+        "phase": "orders",
+        "intention": "SETUP",
+        "name": "Orders Setup",
+        "description": "The 'orders:SETUP' skill increases the number of centers controlled by France and transitions the game phase, often leading to changes in centers and units.",
+        "version": 5,
+        "n_instances": 49,
+        "n_sub_episodes": 49,
+        "outcomes": {
+          "success": 48,
+          "partial": 1
+        },
+        "avg_cumulative_reward": 0.6066,
+        "overall_pass_rate": 0.0,
+        "failure_signatures": {
+          "miss_add:world.phase=W1903A": 3
+        },
+        "protocol": {
+          "preconditions": [
+            "game_phase=setup",
+            "player=France",
+            "centers_controlled<10"
+          ],
+          "steps": [
+            "Assign 2 new centers to France",
+            "Transfer 3 units from Germany to France",
+            "Confirm center ownership changes",
+            "Activate phase transition to 'orders'",
+            "Verify unit distribution",
+            "Update strategic objectives",
+            "Finalize setup and proceed"
+          ],
+          "success_criteria": [
+            "France controls 8 centers after setup",
+            "Game phase transitions to 'orders'",
+            "Unit distribution matches expected values"
+          ],
+          "expected_duration": 2
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=W1903A"
+          ],
+          "eff_del": [
+            "world.phase=F1903M"
+          ]
+        },
+        "created_at": 1774223662.919585,
+        "updated_at": 1774229622.910434,
+        "retired": false,
+        "n_protocol_revisions": 3,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_df89b6e6",
+            "outcome": "success",
+            "reward": 2.2222,
+            "n_steps": 8,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_df89b6e6",
+            "outcome": "success",
+            "reward": 1.2778,
+            "n_steps": 3,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "DEFEND"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_c74aa3d3",
+            "outcome": "success",
+            "reward": 0.2222,
+            "n_steps": 1,
+            "tags": [
+              "SETUP"
+            ]
+          }
+        ]
+      }
+    ],
+    "GERMANY": [
+      {
+        "skill_id": "adjustment:SETUP",
+        "phase": "adjustment",
+        "intention": "SETUP",
+        "name": "Adjustment Setup",
+        "description": "The 'adjustment:SETUP' skill changes the phase, centers, and units, while triggering event-related changes in the game state.",
+        "version": 3,
+        "n_instances": 10,
+        "n_sub_episodes": 10,
+        "outcomes": {
+          "success": 9,
+          "partial": 1
+        },
+        "avg_cumulative_reward": 0.3556,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "phase=setup",
+            "units=active",
+            "centers=unlocked"
+          ],
+          "steps": [
+            "Change phase to adjustment",
+            "Set center positions to default",
+            "Update unit scale to 1.0"
+          ],
+          "success_criteria": [
+            "Phase transition to adjustment is confirmed",
+            "Center positions are reset to default",
+            "Unit scale is adjusted to 1.0"
+          ],
+          "expected_duration": 1
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=S1903M"
+          ],
+          "eff_del": [
+            "event.units_changed",
+            "world.phase=W1902A"
+          ]
+        },
+        "created_at": 1774223648.5401268,
+        "updated_at": 1774229609.3686795,
+        "retired": false,
+        "n_protocol_revisions": 1,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_d5ecfb82",
+            "outcome": "success",
+            "reward": 1.0,
+            "n_steps": 2,
+            "tags": [
+              "DEFEND",
+              "DEFEND"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_f498c1a3",
+            "outcome": "success",
+            "reward": 0.2222,
+            "n_steps": 1,
+            "tags": [
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_f498c1a3",
+            "outcome": "success",
+            "reward": 0.8889,
+            "n_steps": 4,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "DEFEND"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "late_orders:DEFEND",
+        "phase": "late_orders",
+        "intention": "DEFEND",
+        "name": "Late Orders Defend",
+        "description": "The 'late_orders:DEFEND' skill increases centers, changes phases, and alters unit configurations, indicating a defensive strategic shift in the game state.",
+        "version": 2,
+        "n_instances": 32,
+        "n_sub_episodes": 32,
+        "outcomes": {
+          "success": 31,
+          "partial": 1
+        },
+        "avg_cumulative_reward": 0.7726,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "Game is in late_orders phase",
+            "Threat detected requiring defensive response"
+          ],
+          "steps": [
+            "Identify primary threat",
+            "Take defensive position or action",
+            "Hold until threat passes",
+            "Remove: event.units_changed, world.phase=F1905M, world.phase=F1906M"
+          ],
+          "success_criteria": [
+            "Threat neutralized, state stabilized"
+          ],
+          "expected_duration": 2
+        },
+        "contract_effects": {
+          "eff_add": [],
+          "eff_del": [
+            "event.units_changed",
+            "world.phase=F1905M",
+            "world.phase=F1906M",
+            "world.phase=S1906M"
+          ]
+        },
+        "created_at": 1774223652.0986416,
+        "updated_at": 1774229627.1406794,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_906794f4",
+            "outcome": "success",
+            "reward": 4.2778,
+            "n_steps": 11,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "DEFEND",
+              "DEFEND",
+              "DEFEND",
+              "DEFEND"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_43dfa7fb",
+            "outcome": "success",
+            "reward": 0.2222,
+            "n_steps": 1,
+            "tags": [
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_43dfa7fb",
+            "outcome": "success",
+            "reward": 0.8889,
+            "n_steps": 4,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "late_orders:SETUP",
+        "phase": "late_orders",
+        "intention": "SETUP",
+        "name": "Late Orders Setup",
+        "description": "The 'late_orders:SETUP' skill transitions the game phase and modifies center counts and unit configurations, typically increasing center count and updating phase to later years.",
+        "version": 2,
+        "n_instances": 27,
+        "n_sub_episodes": 27,
+        "outcomes": {
+          "success": 25,
+          "partial": 2
+        },
+        "avg_cumulative_reward": 0.7078,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "Game is in late_orders phase",
+            "Board/state allows preparatory placement"
+          ],
+          "steps": [
+            "Assess current layout for setup opportunities",
+            "Place elements to prepare for future gains",
+            "Verify arrangement is stable",
+            "Achieve: world.phase=F1907M, world.phase=W1907A, world.units=A KIE, A SIL, A PRU, F STP/NC, A RUH",
+            "Remove: world.phase=F1906M, world.phase=W1906A, world.units=A KIE, A SIL, F NWY, A MUN, A PRU"
+          ],
+          "success_criteria": [
+            "world.phase=F1907M achieved",
+            "world.phase=W1907A achieved",
+            "Target arrangement achieved"
+          ],
+          "expected_duration": 4
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=F1907M",
+            "world.phase=W1907A",
+            "world.units=A KIE, A SIL, A PRU, F STP/NC, A RUH",
+            "world.units=A SIL, A BER, A LVN, F NWY, A KIE"
+          ],
+          "eff_del": [
+            "world.phase=F1906M",
+            "world.phase=W1906A",
+            "world.units=A KIE, A SIL, F NWY, A MUN, A PRU"
+          ]
+        },
+        "created_at": 1774223658.0184944,
+        "updated_at": 1774229617.1428273,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_906794f4",
+            "outcome": "success",
+            "reward": 0.3889,
+            "n_steps": 1,
+            "tags": [
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_d5ecfb82",
+            "outcome": "success",
+            "reward": 2.4444,
+            "n_steps": 4,
+            "tags": [
+              "DEFEND",
+              "DEFEND",
+              "DEFEND",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_726bb3b2",
+            "outcome": "success",
+            "reward": 0.6667,
+            "n_steps": 3,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "DEFEND"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "opening:EXPLORE",
+        "phase": "opening",
+        "intention": "EXPLORE",
+        "name": "Opening Explore",
+        "description": "The 'opening:EXPLORE' skill transitions the game phase, increases centers from 3 to 4, and changes unit configurations, indicating exploration and strategic expansion.",
+        "version": 2,
+        "n_instances": 44,
+        "n_sub_episodes": 44,
+        "outcomes": {
+          "success": 44
+        },
+        "avg_cumulative_reward": 0.8131,
+        "overall_pass_rate": 0.0,
+        "failure_signatures": {
+          "miss_add:event.centers_changed|miss_add:event.units_changed|miss_add:world.centers=4": 6
+        },
+        "protocol": {
+          "preconditions": [
+            "Game is in opening phase",
+            "Unknown territory or options available"
+          ],
+          "steps": [
+            "Choose unexplored direction or option",
+            "Investigate and gather information",
+            "Update strategy based on findings",
+            "Achieve: event.centers_changed, event.units_changed, world.centers=4",
+            "Remove: world.phase=S1901M, world.units=F KIE, A BER, A MUN"
+          ],
+          "success_criteria": [
+            "event.centers_changed achieved",
+            "event.units_changed achieved",
+            "New information or area discovered"
+          ],
+          "expected_duration": 3
+        },
+        "contract_effects": {
+          "eff_add": [
+            "event.centers_changed",
+            "event.units_changed",
+            "world.centers=4"
+          ],
+          "eff_del": [
+            "world.phase=S1901M",
+            "world.units=F KIE, A BER, A MUN"
+          ]
+        },
+        "created_at": 1774223662.2457268,
+        "updated_at": 1774229627.1412396,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_906794f4",
+            "outcome": "success",
+            "reward": 1.4444,
+            "n_steps": 5,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_d5ecfb82",
+            "outcome": "success",
+            "reward": 0.3333,
+            "n_steps": 2,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_d5ecfb82",
+            "outcome": "success",
+            "reward": 0.9444,
+            "n_steps": 2,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "orders:SETUP",
+        "phase": "orders",
+        "intention": "SETUP",
+        "name": "Orders Setup",
+        "description": "The 'orders:SETUP' skill transitions Germany's game phase, modifies center counts, and changes unit configurations during diplomatic gameplay.",
+        "version": 4,
+        "n_instances": 59,
+        "n_sub_episodes": 59,
+        "outcomes": {
+          "success": 58,
+          "partial": 1
+        },
+        "avg_cumulative_reward": 0.8832,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "phase=germany_phase",
+            "center_counts_modified=true",
+            "unit_configurations_locked=false"
+          ],
+          "steps": [
+            "Transition game phase to 'orders' using Germany's phase transition protocol",
+            "Adjust center counts according to diplomatic agreement parameters",
+            "Reconfigure unit placements based on current diplomatic status"
+          ],
+          "success_criteria": [
+            "Germany's phase has been successfully transitioned to 'orders'",
+            "Center counts have been adjusted per diplomatic rules",
+            "Unit configurations are finalized and locked"
+          ],
+          "expected_duration": 2
+        },
+        "contract_effects": {
+          "eff_add": [],
+          "eff_del": [
+            "world.phase=F1904M"
+          ]
+        },
+        "created_at": 1774223666.3989735,
+        "updated_at": 1774229627.1418214,
+        "retired": false,
+        "n_protocol_revisions": 2,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_d5ecfb82",
+            "outcome": "success",
+            "reward": 0.4444,
+            "n_steps": 2,
+            "tags": [
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_d5ecfb82",
+            "outcome": "success",
+            "reward": 0.4444,
+            "n_steps": 2,
+            "tags": [
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_726bb3b2",
+            "outcome": "success",
+            "reward": 1.1667,
+            "n_steps": 3,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP"
+            ]
+          }
+        ]
+      }
+    ],
+    "ITALY": [
+      {
+        "skill_id": "late_orders:DEFEND",
+        "phase": "late_orders",
+        "intention": "DEFEND",
+        "name": "Late Orders Defend",
+        "description": "The 'late_orders:DEFEND' skill changes the game phase from F1906M to W1907A and onward, while maintaining Italy's control and center count.",
+        "version": 3,
+        "n_instances": 13,
+        "n_sub_episodes": 13,
+        "outcomes": {
+          "success": 13
+        },
+        "avg_cumulative_reward": 2.3419,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {
+          "miss_add:world.phase=F1907M|miss_add:world.phase=W1907A": 2
+        },
+        "protocol": {
+          "preconditions": [
+            "world.phase=F1906M",
+            "world.control=Italy",
+            "world.center_count=10"
+          ],
+          "steps": [
+            "Activate DEFEND order via late_orders:DEFEND command",
+            "Confirm phase transition to W1907A",
+            "Verify Italy maintains control",
+            "Ensure center count remains at 10",
+            "Check units are updated to A MAR, A PIE, A APU",
+            "Confirm phase transitions to F1907M, S1907M, S1908M"
+          ],
+          "success_criteria": [
+            "Game phase transitions to W1907A and onward",
+            "Italy retains control and center count",
+            "Units are updated to A MAR, A PIE, A APU"
+          ],
+          "expected_duration": 5
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=F1907M",
+            "world.phase=W1907A"
+          ],
+          "eff_del": [
+            "event.units_changed",
+            "world.phase=F1906M",
+            "world.phase=S1906M",
+            "world.phase=W1906A",
+            "world.units=F NAP, A TUS"
+          ]
+        },
+        "created_at": 1774223647.2410564,
+        "updated_at": 1774229617.417791,
+        "retired": false,
+        "n_protocol_revisions": 1,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_b7270caf",
+            "outcome": "success",
+            "reward": 1.0,
+            "n_steps": 6,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_4f529f98",
+            "outcome": "success",
+            "reward": 1.0,
+            "n_steps": 6,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_15a8932b",
+            "outcome": "success",
+            "reward": 4.6667,
+            "n_steps": 19,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "late_orders:EXPLORE",
+        "phase": "late_orders",
+        "intention": "EXPLORE",
+        "name": "Late Orders Explore",
+        "description": "The 'late_orders:EXPLORE' skill increases Italy's centers from 3 to 4 and advances the game phase from F1905M to W1907A.",
+        "version": 2,
+        "n_instances": 9,
+        "n_sub_episodes": 9,
+        "outcomes": {
+          "success": 9
+        },
+        "avg_cumulative_reward": 0.4444,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {
+          "miss_add:world.centers=2": 2
+        },
+        "protocol": {
+          "preconditions": [
+            "Game is in late_orders phase",
+            "Unknown territory or options available"
+          ],
+          "steps": [
+            "Choose unexplored direction or option",
+            "Investigate and gather information",
+            "Update strategy based on findings",
+            "Achieve: world.centers=2",
+            "Remove: world.centers=3, world.phase=F1906M, world.phase=S1906M"
+          ],
+          "success_criteria": [
+            "world.centers=2 achieved",
+            "New information or area discovered"
+          ],
+          "expected_duration": 10
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.centers=2"
+          ],
+          "eff_del": [
+            "world.centers=3",
+            "world.phase=F1906M",
+            "world.phase=S1906M",
+            "world.units=F AEG, A APU, A PIE",
+            "world.units=F AEG, A PIE, A NAP"
+          ]
+        },
+        "created_at": 1774223649.9764643,
+        "updated_at": 1774227935.2084641,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_a6339d57",
+            "outcome": "success",
+            "reward": 0.5,
+            "n_steps": 3,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_a6339d57",
+            "outcome": "success",
+            "reward": 0.6667,
+            "n_steps": 4,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_74551ea6",
+            "outcome": "success",
+            "reward": 0.3333,
+            "n_steps": 2,
+            "tags": [
+              "SETUP",
+              "SETUP"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "late_orders:SETUP",
+        "phase": "late_orders",
+        "intention": "SETUP",
+        "name": "Late Orders Setup",
+        "description": "The 'late_orders:SETUP' skill transitions Italy's game phase from early 1901 to late 1907, updating unit configurations and introducing new phases and unit combinations.",
+        "version": 2,
+        "n_instances": 16,
+        "n_sub_episodes": 16,
+        "outcomes": {
+          "success": 14,
+          "partial": 2
+        },
+        "avg_cumulative_reward": 1.0312,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "Game is in late_orders phase",
+            "Board/state allows preparatory placement"
+          ],
+          "steps": [
+            "Assess current layout for setup opportunities",
+            "Place elements to prepare for future gains",
+            "Verify arrangement is stable",
+            "Achieve: event.units_changed, world.phase=F1907M, world.phase=S1907M",
+            "Remove: world.phase=F1906M, world.phase=S1906M, world.phase=W1906A"
+          ],
+          "success_criteria": [
+            "event.units_changed achieved",
+            "world.phase=F1907M achieved",
+            "Target arrangement achieved"
+          ],
+          "expected_duration": 5
+        },
+        "contract_effects": {
+          "eff_add": [
+            "event.units_changed",
+            "world.phase=F1907M",
+            "world.phase=S1907M",
+            "world.phase=S1908M",
+            "world.units=A APU, A TUS, F NAP"
+          ],
+          "eff_del": [
+            "world.phase=F1906M",
+            "world.phase=S1906M",
+            "world.phase=W1906A"
+          ]
+        },
+        "created_at": 1774223653.5373335,
+        "updated_at": 1774229610.7150629,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_8483da53",
+            "outcome": "success",
+            "reward": 3.1667,
+            "n_steps": 19,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_30ce24e7",
+            "outcome": "success",
+            "reward": 1.6667,
+            "n_steps": 10,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_59a56297",
+            "outcome": "success",
+            "reward": 1.6667,
+            "n_steps": 10,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "opening:EXPLORE",
+        "phase": "opening",
+        "intention": "EXPLORE",
+        "name": "Opening Explore",
+        "description": "The skill 'opening:EXPLORE' reduces the number of centers from 3 to 2 and advances the game phase from S1901M to S1902M.",
+        "version": 2,
+        "n_instances": 10,
+        "n_sub_episodes": 10,
+        "outcomes": {
+          "success": 10
+        },
+        "avg_cumulative_reward": 0.5222,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "Game is in opening phase",
+            "Unknown territory or options available"
+          ],
+          "steps": [
+            "Choose unexplored direction or option",
+            "Investigate and gather information",
+            "Update strategy based on findings",
+            "Achieve: event.phase_changed, event.units_changed, world.phase=W1901A",
+            "Remove: world.phase=S1901M"
+          ],
+          "success_criteria": [
+            "event.phase_changed achieved",
+            "event.units_changed achieved",
+            "New information or area discovered"
+          ],
+          "expected_duration": 2
+        },
+        "contract_effects": {
+          "eff_add": [
+            "event.phase_changed",
+            "event.units_changed",
+            "world.phase=W1901A"
+          ],
+          "eff_del": [
+            "world.phase=S1901M"
+          ]
+        },
+        "created_at": 1774223654.9547389,
+        "updated_at": 1774229612.471428,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_30ce24e7",
+            "outcome": "success",
+            "reward": 0.8333,
+            "n_steps": 5,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_59a56297",
+            "outcome": "success",
+            "reward": 0.1667,
+            "n_steps": 1,
+            "tags": [
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_74551ea6",
+            "outcome": "success",
+            "reward": 0.3333,
+            "n_steps": 2,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "orders:EXPLORE",
+        "phase": "orders",
+        "intention": "EXPLORE",
+        "name": "Orders Explore",
+        "description": "The EXPLORE skill increases the number of centers and changes phases, while updating unit configurations.",
+        "version": 2,
+        "n_instances": 5,
+        "n_sub_episodes": 5,
+        "outcomes": {
+          "success": 5
+        },
+        "avg_cumulative_reward": 1.8333,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "Game is in orders phase",
+            "Unknown territory or options available"
+          ],
+          "steps": [
+            "Choose unexplored direction or option",
+            "Investigate and gather information",
+            "Update strategy based on findings",
+            "Achieve: event.units_changed, world.centers=2, world.phase=F1905M",
+            "Remove: world.centers=3, world.phase=F1901M, world.phase=S1901M"
+          ],
+          "success_criteria": [
+            "event.units_changed achieved",
+            "world.centers=2 achieved",
+            "New information or area discovered"
+          ],
+          "expected_duration": 10
+        },
+        "contract_effects": {
+          "eff_add": [
+            "event.units_changed",
+            "world.centers=2",
+            "world.phase=F1905M",
+            "world.phase=S1905M",
+            "world.phase=W1905A",
+            "world.units=A APU, A ROM",
+            "world.units=A TUS, A APU"
+          ],
+          "eff_del": [
+            "world.centers=3",
+            "world.phase=F1901M",
+            "world.phase=S1901M",
+            "world.phase=S1902M",
+            "world.units=F NAP, A ROM, A VEN"
+          ]
+        },
+        "created_at": 1774223658.5562549,
+        "updated_at": 1774228837.022814,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_b7270caf",
+            "outcome": "success",
+            "reward": 2.0,
+            "n_steps": 12,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_a6339d57",
+            "outcome": "success",
+            "reward": 1.0,
+            "n_steps": 6,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_c0176df7",
+            "outcome": "success",
+            "reward": 2.0,
+            "n_steps": 12,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "orders:SETUP",
+        "phase": "orders",
+        "intention": "SETUP",
+        "name": "Orders Setup",
+        "description": "The skill 'orders:SETUP' transitions the game phase and modifies unit states, reflecting a setup phase for Italy in the game.",
+        "version": 2,
+        "n_instances": 27,
+        "n_sub_episodes": 27,
+        "outcomes": {
+          "success": 27
+        },
+        "avg_cumulative_reward": 2.2942,
+        "overall_pass_rate": 0.0,
+        "failure_signatures": {
+          "miss_add:event.units_changed|miss_add:world.phase=F1905M|miss_add:world.phase=S1905M|miss_add:world.phase=W1905A": 4
+        },
+        "protocol": {
+          "preconditions": [
+            "Game is in orders phase",
+            "Board/state allows preparatory placement"
+          ],
+          "steps": [
+            "Assess current layout for setup opportunities",
+            "Place elements to prepare for future gains",
+            "Verify arrangement is stable",
+            "Achieve: event.units_changed, world.phase=F1905M, world.phase=S1905M",
+            "Remove: world.phase=F1901M, world.phase=S1901M, world.phase=S1902M"
+          ],
+          "success_criteria": [
+            "event.units_changed achieved",
+            "world.phase=F1905M achieved",
+            "Target arrangement achieved"
+          ],
+          "expected_duration": 13
+        },
+        "contract_effects": {
+          "eff_add": [
+            "event.units_changed",
+            "world.phase=F1905M",
+            "world.phase=S1905M",
+            "world.phase=W1905A"
+          ],
+          "eff_del": [
+            "world.phase=F1901M",
+            "world.phase=S1901M",
+            "world.phase=S1902M",
+            "world.phase=W1901A",
+            "world.units=F NAP, A ROM, A VEN"
+          ]
+        },
+        "created_at": 1774223661.535269,
+        "updated_at": 1774229617.418601,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_a6339d57",
+            "outcome": "success",
+            "reward": 0.5,
+            "n_steps": 3,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_30ce24e7",
+            "outcome": "success",
+            "reward": 0.3333,
+            "n_steps": 2,
+            "tags": [
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_4f529f98",
+            "outcome": "success",
+            "reward": 2.0,
+            "n_steps": 12,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          }
+        ]
+      }
+    ],
+    "RUSSIA": [
+      {
+        "skill_id": "adjustment:SETUP",
+        "phase": "adjustment",
+        "intention": "SETUP",
+        "name": "Adjustment Setup",
+        "description": "The skill 'adjustment:SETUP' advances the game phase and updates unit states during the diplomacy game.",
+        "version": 2,
+        "n_instances": 7,
+        "n_sub_episodes": 7,
+        "outcomes": {
+          "success": 7
+        },
+        "avg_cumulative_reward": 0.3333,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "Game is in adjustment phase",
+            "Board/state allows preparatory placement"
+          ],
+          "steps": [
+            "Assess current layout for setup opportunities",
+            "Place elements to prepare for future gains",
+            "Verify arrangement is stable",
+            "Achieve: world.phase=S1903M",
+            "Remove: world.phase=W1902A"
+          ],
+          "success_criteria": [
+            "world.phase=S1903M achieved",
+            "Target arrangement achieved"
+          ],
+          "expected_duration": 10
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=S1903M"
+          ],
+          "eff_del": [
+            "world.phase=W1902A"
+          ]
+        },
+        "created_at": 1774223647.1683397,
+        "updated_at": 1774226036.9675307,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_e758cfac",
+            "outcome": "success",
+            "reward": 0.6667,
+            "n_steps": 3,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_d7047933",
+            "outcome": "success",
+            "reward": 0.2778,
+            "n_steps": 1,
+            "tags": [
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_04084abd",
+            "outcome": "success",
+            "reward": 0.2778,
+            "n_steps": 1,
+            "tags": [
+              "SETUP"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "late_orders:DEFEND",
+        "phase": "late_orders",
+        "intention": "DEFEND",
+        "name": "Late Orders Defend",
+        "description": "The 'late_orders:DEFEND' skill transitions the game phase from S1906M to F1907M and introduces new phases like S1908M and W1907A, while removing the S1907M phase.",
+        "version": 2,
+        "n_instances": 25,
+        "n_sub_episodes": 25,
+        "outcomes": {
+          "success": 25
+        },
+        "avg_cumulative_reward": 1.4889,
+        "overall_pass_rate": 0.0,
+        "failure_signatures": {
+          "miss_add:world.centers=3|miss_add:world.phase=F1907M|miss_add:world.phase=S1908M|miss_add:world.phase=W1907A": 2
+        },
+        "protocol": {
+          "preconditions": [
+            "Game is in late_orders phase",
+            "Threat detected requiring defensive response"
+          ],
+          "steps": [
+            "Identify primary threat",
+            "Take defensive position or action",
+            "Hold until threat passes",
+            "Achieve: world.centers=3, world.phase=F1907M, world.phase=S1908M",
+            "Remove: world.phase=F1904M, world.phase=S1904M, world.phase=S1905M"
+          ],
+          "success_criteria": [
+            "world.centers=3 achieved",
+            "world.phase=F1907M achieved",
+            "Threat neutralized, state stabilized"
+          ],
+          "expected_duration": 10
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.centers=3",
+            "world.phase=F1907M",
+            "world.phase=S1908M",
+            "world.phase=W1907A"
+          ],
+          "eff_del": [
+            "world.phase=F1904M",
+            "world.phase=S1904M",
+            "world.phase=S1905M",
+            "world.phase=W1904A",
+            "world.units=A LVN, A WAR, F STP/SC",
+            "world.units=A MOS, A PRU, F LVN",
+            "world.units=A MOS, F RUM, F SEV, F BOT, A BOH",
+            "world.units=F RUM, F SEV, F BOT, A BOH, A STP"
+          ]
+        },
+        "created_at": 1774223648.9683135,
+        "updated_at": 1774229622.8489044,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_54cd8ef3",
+            "outcome": "success",
+            "reward": 1.1111,
+            "n_steps": 5,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_a4db8f67",
+            "outcome": "success",
+            "reward": 0.2222,
+            "n_steps": 1,
+            "tags": [
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_d7047933",
+            "outcome": "success",
+            "reward": 0.8333,
+            "n_steps": 3,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "DEFEND"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "late_orders:EXPLORE",
+        "phase": "late_orders",
+        "intention": "EXPLORE",
+        "name": "Late Orders Explore",
+        "description": "The 'late_orders:EXPLORE' skill increases Russian centers to 4, advances the phase to S1908M and W1907A, and changes unit compositions.",
+        "version": 2,
+        "n_instances": 3,
+        "n_sub_episodes": 3,
+        "outcomes": {
+          "success": 3
+        },
+        "avg_cumulative_reward": 0.8704,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "Game is in late_orders phase",
+            "Unknown territory or options available"
+          ],
+          "steps": [
+            "Choose unexplored direction or option",
+            "Investigate and gather information",
+            "Update strategy based on findings",
+            "Achieve: world.phase=F1905M, world.phase=S1905M, world.units=F BLA, A PRU, A UKR, F FIN",
+            "Remove: world.phase=F1904M, world.phase=W1904A, world.units=F BLA, A PRU, A SEV, F FIN"
+          ],
+          "success_criteria": [
+            "world.phase=F1905M achieved",
+            "world.phase=S1905M achieved",
+            "New information or area discovered"
+          ],
+          "expected_duration": 10
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=F1905M",
+            "world.phase=S1905M",
+            "world.units=F BLA, A PRU, A UKR, F FIN"
+          ],
+          "eff_del": [
+            "world.phase=F1904M",
+            "world.phase=W1904A",
+            "world.units=F BLA, A PRU, A SEV, F FIN"
+          ]
+        },
+        "created_at": 1774223651.669075,
+        "updated_at": 1774224783.5764027,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_e758cfac",
+            "outcome": "success",
+            "reward": 1.3333,
+            "n_steps": 6,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_d5ae4255",
+            "outcome": "success",
+            "reward": 0.4444,
+            "n_steps": 2,
+            "tags": [
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_04084abd",
+            "outcome": "success",
+            "reward": 0.8333,
+            "n_steps": 3,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "DEFEND"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "late_orders:SETUP",
+        "phase": "late_orders",
+        "intention": "SETUP",
+        "name": "Late Orders Setup",
+        "description": "The 'late_orders:SETUP' skill transitions the game phase and updates center and unit states, typically associated with Russia's diplomatic and strategic adjustments in the early 20th century.",
+        "version": 2,
+        "n_instances": 19,
+        "n_sub_episodes": 19,
+        "outcomes": {
+          "success": 19
+        },
+        "avg_cumulative_reward": 1.6199,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {
+          "miss_add:world.phase=F1907M": 2
+        },
+        "protocol": {
+          "preconditions": [
+            "Game is in late_orders phase",
+            "Board/state allows preparatory placement"
+          ],
+          "steps": [
+            "Assess current layout for setup opportunities",
+            "Place elements to prepare for future gains",
+            "Verify arrangement is stable",
+            "Achieve: world.phase=F1907M",
+            "Remove: world.centers=3, world.phase=F1904M, world.phase=F1905M"
+          ],
+          "success_criteria": [
+            "world.phase=F1907M achieved",
+            "Target arrangement achieved"
+          ],
+          "expected_duration": 10
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=F1907M"
+          ],
+          "eff_del": [
+            "world.centers=3",
+            "world.phase=F1904M",
+            "world.phase=F1905M",
+            "world.phase=S1905M",
+            "world.phase=W1904A",
+            "world.units=A MOS, A GAL, F LVN",
+            "world.units=A MOS, A GAL, F STP/SC",
+            "world.units=F BLA, A STP, F BOT, A MOS",
+            "world.units=F BLA, A STP, F LVN, A WAR"
+          ]
+        },
+        "created_at": 1774223655.6968658,
+        "updated_at": 1774229622.8500972,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_d5ae4255",
+            "outcome": "success",
+            "reward": 0.6667,
+            "n_steps": 3,
+            "tags": [
+              "SETUP",
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_d5ae4255",
+            "outcome": "success",
+            "reward": 0.4444,
+            "n_steps": 2,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_54cd8ef3",
+            "outcome": "success",
+            "reward": 0.4444,
+            "n_steps": 2,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "opening:EXPLORE",
+        "phase": "opening",
+        "intention": "EXPLORE",
+        "name": "Opening Explore",
+        "description": "The 'opening:EXPLORE' skill advances the game phase and changes unit and center states, indicating exploration and strategic movement in the game.",
+        "version": 2,
+        "n_instances": 37,
+        "n_sub_episodes": 37,
+        "outcomes": {
+          "success": 37
+        },
+        "avg_cumulative_reward": 1.2538,
+        "overall_pass_rate": 0.0,
+        "failure_signatures": {
+          "miss_add:world.phase=F1902M|miss_add:world.phase=S1903M|miss_add:world.phase=W1902A": 4
+        },
+        "protocol": {
+          "preconditions": [
+            "Game is in opening phase",
+            "Unknown territory or options available"
+          ],
+          "steps": [
+            "Choose unexplored direction or option",
+            "Investigate and gather information",
+            "Update strategy based on findings",
+            "Achieve: world.phase=F1902M, world.phase=S1903M, world.phase=W1902A",
+            "Remove: world.phase=F1901M, world.phase=S1901M, world.phase=W1901A"
+          ],
+          "success_criteria": [
+            "world.phase=F1902M achieved",
+            "world.phase=S1903M achieved",
+            "New information or area discovered"
+          ],
+          "expected_duration": 6
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=F1902M",
+            "world.phase=S1903M",
+            "world.phase=W1902A"
+          ],
+          "eff_del": [
+            "world.phase=F1901M",
+            "world.phase=S1901M",
+            "world.phase=W1901A",
+            "world.units=A WAR, A MOS, F SEV, F STP/SC"
+          ]
+        },
+        "created_at": 1774223660.7310135,
+        "updated_at": 1774229622.851454,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_e758cfac",
+            "outcome": "success",
+            "reward": 0.6667,
+            "n_steps": 3,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_d5ae4255",
+            "outcome": "success",
+            "reward": 1.3333,
+            "n_steps": 6,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_54cd8ef3",
+            "outcome": "success",
+            "reward": 1.5556,
+            "n_steps": 7,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "orders:SETUP",
+        "phase": "orders",
+        "intention": "SETUP",
+        "name": "Orders Setup",
+        "description": "The skill 'orders:SETUP' transitions the game phase and modifies center and unit states, typically associated with Russia's strategic setup in the game.",
+        "version": 2,
+        "n_instances": 31,
+        "n_sub_episodes": 31,
+        "outcomes": {
+          "success": 30,
+          "partial": 1
+        },
+        "avg_cumulative_reward": 0.8423,
+        "overall_pass_rate": 0.0,
+        "failure_signatures": {
+          "miss_add:event.units_changed": 4
+        },
+        "protocol": {
+          "preconditions": [
+            "Game is in orders phase",
+            "Board/state allows preparatory placement"
+          ],
+          "steps": [
+            "Assess current layout for setup opportunities",
+            "Place elements to prepare for future gains",
+            "Verify arrangement is stable",
+            "Achieve: event.units_changed",
+            "Remove: world.phase=F1903M"
+          ],
+          "success_criteria": [
+            "event.units_changed achieved",
+            "Target arrangement achieved"
+          ],
+          "expected_duration": 1
+        },
+        "contract_effects": {
+          "eff_add": [
+            "event.units_changed"
+          ],
+          "eff_del": [
+            "world.phase=F1903M"
+          ]
+        },
+        "created_at": 1774223665.119932,
+        "updated_at": 1774229622.8522131,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_e758cfac",
+            "outcome": "success",
+            "reward": 0.4444,
+            "n_steps": 2,
+            "tags": [
+              "EXPLORE",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_e758cfac",
+            "outcome": "success",
+            "reward": 0.2222,
+            "n_steps": 1,
+            "tags": [
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_d5ae4255",
+            "outcome": "success",
+            "reward": 0.4444,
+            "n_steps": 2,
+            "tags": [
+              "SETUP",
+              "SETUP"
+            ]
+          }
+        ]
+      }
+    ],
+    "TURKEY": [
+      {
+        "skill_id": "late_orders:DEFEND",
+        "phase": "late_orders",
+        "intention": "DEFEND",
+        "name": "Late Orders Defend",
+        "description": "The 'late_orders:DEFEND' skill transitions the game phase and maintains Turkey's control over 3 or 4 centers while altering unit configurations.",
+        "version": 2,
+        "n_instances": 24,
+        "n_sub_episodes": 24,
+        "outcomes": {
+          "success": 22,
+          "partial": 2
+        },
+        "avg_cumulative_reward": 1.4421,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "Game is in late_orders phase",
+            "Threat detected requiring defensive response"
+          ],
+          "steps": [
+            "Identify primary threat",
+            "Take defensive position or action",
+            "Hold until threat passes",
+            "Achieve: world.phase=F1905M",
+            "Remove: world.phase=W1904A"
+          ],
+          "success_criteria": [
+            "world.phase=F1905M achieved",
+            "Threat neutralized, state stabilized"
+          ],
+          "expected_duration": 2
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=F1905M"
+          ],
+          "eff_del": [
+            "world.phase=W1904A"
+          ]
+        },
+        "created_at": 1774223648.9079347,
+        "updated_at": 1774229616.0046206,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_9c08a7de",
+            "outcome": "success",
+            "reward": 0.2778,
+            "n_steps": 1,
+            "tags": [
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_9c08a7de",
+            "outcome": "success",
+            "reward": 1.1111,
+            "n_steps": 4,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_c4600c8a",
+            "outcome": "success",
+            "reward": 1.6667,
+            "n_steps": 6,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "late_orders:EXPLORE",
+        "phase": "late_orders",
+        "intention": "EXPLORE",
+        "name": "Late Orders Explore",
+        "description": "The 'late_orders:EXPLORE' skill increases Turkey's centers to 5, advances the phase from F1905M to W1906A, and triggers changes in centers, phase, and units.",
+        "version": 2,
+        "n_instances": 6,
+        "n_sub_episodes": 6,
+        "outcomes": {
+          "success": 6
+        },
+        "avg_cumulative_reward": 1.2315,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "Game is in late_orders phase",
+            "Unknown territory or options available"
+          ],
+          "steps": [
+            "Choose unexplored direction or option",
+            "Investigate and gather information",
+            "Update strategy based on findings",
+            "Remove: world.phase=F1905M, world.phase=F1906M, world.phase=S1907M"
+          ],
+          "success_criteria": [
+            "New information or area discovered"
+          ],
+          "expected_duration": 10
+        },
+        "contract_effects": {
+          "eff_add": [],
+          "eff_del": [
+            "world.phase=F1905M",
+            "world.phase=F1906M",
+            "world.phase=S1907M",
+            "world.phase=W1906A"
+          ]
+        },
+        "created_at": 1774223651.6686814,
+        "updated_at": 1774229344.7121162,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_455eb6ea",
+            "outcome": "success",
+            "reward": 0.7778,
+            "n_steps": 1,
+            "tags": [
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_455eb6ea",
+            "outcome": "success",
+            "reward": 0.5556,
+            "n_steps": 2,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_60d84a65",
+            "outcome": "success",
+            "reward": 2.4444,
+            "n_steps": 11,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "late_orders:SETUP",
+        "phase": "late_orders",
+        "intention": "SETUP",
+        "name": "Late Orders Setup",
+        "description": "The 'late_orders:SETUP' skill transitions the game phase and increases Turkey's centers from 3 to 5.",
+        "version": 4,
+        "n_instances": 22,
+        "n_sub_episodes": 22,
+        "outcomes": {
+          "success": 22
+        },
+        "avg_cumulative_reward": 1.4444,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "phase=setup",
+            "turkey_centers=3",
+            "game_state=active"
+          ],
+          "steps": [
+            "Activate late_orders:SETUP skill",
+            "Increase turkey_centers by 2",
+            "Confirm phase transition to late_orders"
+          ],
+          "success_criteria": [
+            "Turkey's centers increased to 5",
+            "Game phase transitioned to late_orders",
+            "Skill executed without interruption"
+          ],
+          "expected_duration": 4
+        },
+        "contract_effects": {
+          "eff_add": [],
+          "eff_del": [
+            "world.phase=F1906M",
+            "world.phase=W1906A"
+          ]
+        },
+        "created_at": 1774223654.2973692,
+        "updated_at": 1774229627.1466599,
+        "retired": false,
+        "n_protocol_revisions": 2,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_086dccaf",
+            "outcome": "success",
+            "reward": 3.6111,
+            "n_steps": 12,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_455eb6ea",
+            "outcome": "success",
+            "reward": 0.8333,
+            "n_steps": 3,
+            "tags": [
+              "EXPLORE",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_c7eb7a8a",
+            "outcome": "success",
+            "reward": 5.8333,
+            "n_steps": 19,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "opening:EXPLORE",
+        "phase": "opening",
+        "intention": "EXPLORE",
+        "name": "Opening Explore",
+        "description": "The skill 'opening:EXPLORE' advances the game phase and increases Turkish units during the diplomacy phase.",
+        "version": 2,
+        "n_instances": 39,
+        "n_sub_episodes": 39,
+        "outcomes": {
+          "success": 39
+        },
+        "avg_cumulative_reward": 0.9943,
+        "overall_pass_rate": 0.0,
+        "failure_signatures": {
+          "miss_add:event.phase_changed": 4
+        },
+        "protocol": {
+          "preconditions": [
+            "Game is in opening phase",
+            "Unknown territory or options available"
+          ],
+          "steps": [
+            "Choose unexplored direction or option",
+            "Investigate and gather information",
+            "Update strategy based on findings",
+            "Achieve: event.phase_changed",
+            "Remove: world.phase=S1901M"
+          ],
+          "success_criteria": [
+            "event.phase_changed achieved",
+            "New information or area discovered"
+          ],
+          "expected_duration": 3
+        },
+        "contract_effects": {
+          "eff_add": [
+            "event.phase_changed"
+          ],
+          "eff_del": [
+            "world.phase=S1901M"
+          ]
+        },
+        "created_at": 1774223656.6994152,
+        "updated_at": 1774229627.1470163,
+        "retired": false,
+        "n_protocol_revisions": 0,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_086dccaf",
+            "outcome": "success",
+            "reward": 1.6667,
+            "n_steps": 6,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_455eb6ea",
+            "outcome": "success",
+            "reward": 0.5,
+            "n_steps": 3,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_7256567d",
+            "outcome": "success",
+            "reward": 0.8889,
+            "n_steps": 2,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "orders:EXPLORE",
+        "phase": "orders",
+        "intention": "EXPLORE",
+        "name": "Orders Explore",
+        "description": "The EXPLORE skill causes a phase transition and changes unit configurations in the game, reflecting territorial and military shifts during the Ottoman Empire's expansion.",
+        "version": 4,
+        "n_instances": 4,
+        "n_sub_episodes": 4,
+        "outcomes": {
+          "success": 4
+        },
+        "avg_cumulative_reward": 1.7917,
+        "overall_pass_rate": 1.0,
+        "failure_signatures": {},
+        "protocol": {
+          "preconditions": [
+            "world.phase=F1902M",
+            "world.units=F ANK, A CON, A SYR",
+            "stack_h<5"
+          ],
+          "steps": [
+            "Issue order: EXPLORE to the Ottoman Army unit",
+            "Wait for phase transition to F1903M",
+            "Confirm units are updated to F ANK, A CON, A ARM",
+            "Issue order: EXPLORE to the Anatolian unit",
+            "Wait for phase transition to W1903A",
+            "Confirm units are updated to F ANK, A SMY, A SYR",
+            "Verify all phase transitions and unit changes are complete"
+          ],
+          "success_criteria": [
+            "Phase transitions to F1903M and W1903A are confirmed",
+            "Units are updated to F ANK, A CON, A ARM and then to F ANK, A SMY, A SYR",
+            "No errors during the phase and unit transitions"
+          ],
+          "expected_duration": 6
+        },
+        "contract_effects": {
+          "eff_add": [
+            "world.phase=F1903M",
+            "world.phase=S1903M",
+            "world.phase=W1903A"
+          ],
+          "eff_del": [
+            "world.phase=F1901M",
+            "world.phase=S1901M",
+            "world.phase=S1902M"
+          ]
+        },
+        "created_at": 1774223659.459033,
+        "updated_at": 1774227939.5110404,
+        "retired": false,
+        "n_protocol_revisions": 2,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_9c08a7de",
+            "outcome": "success",
+            "reward": 3.5556,
+            "n_steps": 12,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_4250a160",
+            "outcome": "success",
+            "reward": 0.7222,
+            "n_steps": 1,
+            "tags": [
+              "EXPLORE"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_5bbc793c",
+            "outcome": "success",
+            "reward": 0.5,
+            "n_steps": 3,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP"
+            ]
+          }
+        ]
+      },
+      {
+        "skill_id": "orders:SETUP",
+        "phase": "orders",
+        "intention": "SETUP",
+        "name": "Orders Setup",
+        "description": "The skill 'orders:SETUP' transitions the game phase and modifies unit configurations, primarily affecting Turkey's center count and unit holdings during the early 1900s.",
+        "version": 4,
+        "n_instances": 41,
+        "n_sub_episodes": 41,
+        "outcomes": {
+          "success": 41
+        },
+        "avg_cumulative_reward": 0.8482,
+        "overall_pass_rate": 0.0,
+        "failure_signatures": {
+          "miss_add:event.units_changed": 5
+        },
+        "protocol": {
+          "preconditions": [
+            "phase=early_1900s",
+            "turkey_center_count>0",
+            "unit_holdings_available>=3"
+          ],
+          "steps": [
+            "Assign 2 units to Turkey's central region",
+            "Adjust unit holdings to reflect new center count",
+            "Confirm phase transition to setup mode"
+          ],
+          "success_criteria": [
+            "Phase successfully transitioned to setup mode",
+            "Turkey's center count is correctly updated",
+            "Unit holdings reflect new configuration"
+          ],
+          "expected_duration": 2
+        },
+        "contract_effects": {
+          "eff_add": [
+            "event.units_changed"
+          ],
+          "eff_del": []
+        },
+        "created_at": 1774223663.148572,
+        "updated_at": 1774229627.1794858,
+        "retired": false,
+        "n_protocol_revisions": 2,
+        "sample_episodes": [
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_c4600c8a",
+            "outcome": "success",
+            "reward": 3.5556,
+            "n_steps": 12,
+            "tags": [
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "EXPLORE",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_455eb6ea",
+            "outcome": "success",
+            "reward": 0.4444,
+            "n_steps": 2,
+            "tags": [
+              "EXPLORE",
+              "SETUP"
+            ]
+          },
+          {
+            "episode_id": "Play diplomacy__epdiplomacy_455eb6ea",
+            "outcome": "success",
+            "reward": 0.6667,
+            "n_steps": 3,
+            "tags": [
+              "SETUP",
+              "SETUP",
+              "SETUP"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
