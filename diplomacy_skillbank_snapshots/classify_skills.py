@@ -793,10 +793,10 @@ print(f"Saved: {DIR / '11_skill_bank_dynamics.png'}")
 
 # ── Figure Final: (A) Strategic Function + (B) Intention + (C) Growth ─
 
-FS = 22
+FS = 26
 
 fig_final, (axA, axB, axC) = plt.subplots(
-    1, 3, figsize=(28, 8),
+    1, 3, figsize=(30, 9),
     gridspec_kw={"width_ratios": [1.0, 0.65, 1.15]},
 )
 
@@ -838,7 +838,7 @@ for j, (fv, lv) in enumerate(zip(f_vals_a, l_vals_a)):
         axA.text(x_sf[j], y_pos, f"{sign}{delta}",
                  ha="center", fontsize=FS-2, fontweight="bold", color=col)
 
-axA.set_title("(A)  Strategic Function", fontsize=FS+2, fontweight="bold", pad=14)
+axA.set_title("(a)  Strategic Function", fontsize=FS+2, fontweight="bold", pad=14)
 axA.set_xticks(x_sf)
 sf_abbr = {
     "territory_gain": "Terr.\nGain",
@@ -877,7 +877,7 @@ for intent in INTENT_ORDER:
                      color=INTENT_COLORS[intent], fontweight="bold")
     bottoms_b += pct
 
-axB.set_title("(B)  Intention (%)", fontsize=FS+2, fontweight="bold", pad=14)
+axB.set_title("(b)  Intention (%)", fontsize=FS+2, fontweight="bold", pad=14)
 axB.set_ylabel("Percentage", fontsize=FS)
 axB.legend(fontsize=FS-6, loc="upper left", ncol=1,
            bbox_to_anchor=(1.02, 1.0),
@@ -924,7 +924,7 @@ axC2.set_ylabel("Cumulative Count", fontsize=FS)
 axC.set_xlim(-0.5, max(steps_c) + 0.5)
 axC.set_ylim(0, max(total_c) + 12)
 axC2.set_ylim(0, max(cumul_new_c) + 15)
-axC.set_title("(C)  Skill Bank Growth", fontsize=FS+2, fontweight="bold", pad=14)
+axC.set_title("(c)  Skill Bank Growth", fontsize=FS+2, fontweight="bold", pad=14)
 axC.tick_params(axis="both", labelsize=FS-2)
 axC2.tick_params(axis="y", labelsize=FS-2)
 
