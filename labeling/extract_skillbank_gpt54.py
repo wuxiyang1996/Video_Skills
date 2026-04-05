@@ -82,13 +82,10 @@ try:
 except ImportError:
     ask_model = None
 
-try:
-    import openai
-    from api_keys import openai_api_key, open_router_api_key
-except (ImportError, AttributeError):
-    openai = None
-    openai_api_key = None
-    open_router_api_key = None
+import openai
+
+openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+open_router_api_key = os.environ.get("OPENROUTER_API_KEY", "")
 
 try:
     from API_func import OPENROUTER_BASE
@@ -1622,11 +1619,7 @@ def main():
         args.max_episodes = 1
 
     # Validate API key
-    has_key = bool(
-        os.environ.get("OPENROUTER_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-        or (open_router_api_key and str(open_router_api_key).strip())
-    )
+    has_key = bool(os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY"))
     if not has_key:
         print("[WARNING] No API key detected. LLM calls will fail.")
         print("  Set OPENROUTER_API_KEY or OPENAI_API_KEY.")

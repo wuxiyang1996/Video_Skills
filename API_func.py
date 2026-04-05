@@ -1,5 +1,5 @@
-# This file is to define the API calling functions for the agent, create a general function for each model
-# By default, we use OpenRouter when open_router_api_key is set (cold-start, ask_model, etc.); else OpenAI.
+# API calling functions for the agent — routes to GPT, Claude, Gemini, or vLLM.
+# All API keys are read from environment variables.  See .env.example for the list.
 
 import itertools as _itertools
 import os
@@ -9,7 +9,11 @@ import threading as _threading
 import openai
 from anthropic import Anthropic
 from google import genai
-from api_keys import openai_api_key, claude_api_key, gemini_api_key, open_router_api_key
+
+openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+claude_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+gemini_api_key = os.environ.get("GEMINI_API_KEY", "")
+open_router_api_key = os.environ.get("OPENROUTER_API_KEY", "")
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
@@ -88,7 +92,7 @@ def ask_openrouter(question, model="openai/gpt-4o-mini", temperature=0.7, max_to
     Used by default for cold-start data gathering and ask_model when key is set.
     """
     if not (open_router_api_key and open_router_api_key.strip()):
-        return f"Error: OpenRouter API key not set. Set OPENROUTER_API_KEY or add open_router_api_key in api_keys.py."
+        return f"Error: OPENROUTER_API_KEY not set. See .env.example for required API keys."
     try:
         client = openai.OpenAI(base_url=OPENROUTER_BASE, api_key=open_router_api_key.strip())
         response = client.chat.completions.create(

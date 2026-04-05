@@ -10,7 +10,7 @@
 #
 # Prerequisites:
 #   - 8 GPUs (0-3 for vLLM inference, 4-7 for GRPO training)
-#   - OpenRouter API key in api_keys.py or OPENROUTER_API_KEY env var
+#   - OPENROUTER_API_KEY env var set (see .env.example)
 #   - Qwen/Qwen3-8B model weights in /workspace/huggingface/
 #
 # Usage:

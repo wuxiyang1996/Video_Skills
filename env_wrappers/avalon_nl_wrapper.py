@@ -29,6 +29,7 @@ Usage (single-agent):
 
 import itertools
 import logging
+import os
 import re
 import random
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -468,12 +469,7 @@ def _make_api_partner_policy(
     import openai as _openai
 
     if api_key is None:
-        try:
-            from api_keys import open_router_api_key
-            api_key = open_router_api_key
-        except ImportError:
-            import os
-            api_key = os.environ.get("OPENROUTER_API_KEY", "")
+        api_key = os.environ.get("OPENROUTER_API_KEY", "")
 
     _client = _openai.OpenAI(base_url=api_base, api_key=api_key, max_retries=2)
 

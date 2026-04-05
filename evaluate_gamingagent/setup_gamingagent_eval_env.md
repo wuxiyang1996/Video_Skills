@@ -32,9 +32,7 @@ pip install gymnasium numpy
 ## 3. Environment variables for LLM APIs
 
 ```powershell
-$env:OPENAI_API_KEY = "your_api_key"
-# Or if using api_keys module:
-# Ensure api_keys.py exists with openai_api_key
+$env:OPENAI_API_KEY = "your_api_key"  # See .env.example for required keys
 ```
 
 ## 4. Run evaluation tests

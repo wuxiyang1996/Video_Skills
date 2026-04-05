@@ -8,7 +8,7 @@ initial seed data for the skill database.
 
 Usage (from Game-AI-Agent root):
 
-    # Prefer OpenRouter (used by default): set open_router_api_key in api_keys.py or:
+    # Prefer OpenRouter (used by default):
     export OPENROUTER_API_KEY="sk-or-..."
     export PYTHONPATH="$(pwd):$(pwd)/../GamingAgent:$PYTHONPATH"
 
@@ -757,14 +757,10 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else SCRIPT_DIR / "data"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        from api_keys import open_router_api_key
-        has_key = bool(os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY") or (open_router_api_key and open_router_api_key.strip()))
-    except Exception:
-        has_key = bool(os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY"))
+    has_key = bool(os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY"))
     if not has_key:
         print("[WARNING] No API key set. LLM calls will fail.")
-        print("  Prefer: open_router_api_key in api_keys.py or export OPENROUTER_API_KEY='sk-or-...'")
+        print("  Set: export OPENROUTER_API_KEY='sk-or-...'")
         print("  Or: export OPENAI_API_KEY='sk-...'")
 
     games = list(GAME_REGISTRY.keys()) if args.all_games else [args.game]

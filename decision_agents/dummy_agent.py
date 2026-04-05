@@ -74,6 +74,7 @@ Usage with DiplomacyNLWrapper (multi-agent):
 """
 
 import json
+import os
 import re
 from typing import List, Optional, Union, Dict, Any
 
@@ -83,13 +84,10 @@ try:
 except ImportError:
     ask_model = None
 
-try:
-    import openai
-    from api_keys import openai_api_key, open_router_api_key
-except (ImportError, AttributeError):
-    openai = None
-    openai_api_key = None
-    open_router_api_key = None
+import openai
+
+openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+open_router_api_key = os.environ.get("OPENROUTER_API_KEY", "")
 
 try:
     from API_func import OPENROUTER_BASE
@@ -1387,7 +1385,7 @@ def ask_gpt_function_action(
     """
     Use OpenAI GPT with function/tool calling to get a structured action.
 
-    Requires openai and api_keys. Returns action appropriate for the game.
+    Requires openai. Returns action appropriate for the game.
     """
     if game is None:
         game = detect_game(state_nl)

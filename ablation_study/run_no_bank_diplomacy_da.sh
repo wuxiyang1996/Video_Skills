@@ -56,18 +56,12 @@ export VLLM_BASE_URL="${VLLM_BASE_URL:-http://${VLLM_HOST}:${VLLM_PORT}/v1}"
 export VLLM_API_KEY="${VLLM_API_KEY:-EMPTY}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
+# Verify API key is set (see .env.example)
 if [ -z "${OPENROUTER_API_KEY:-}" ]; then
-    OPENROUTER_API_KEY="$(python3 -c "
-import sys; sys.path.insert(0, '${PROJECT_ROOT}')
-from api_keys import open_router_api_key; print(open_router_api_key or '')
-" 2>/dev/null || echo "")"
-    export OPENROUTER_API_KEY
+    echo "Warning: OPENROUTER_API_KEY not set. See .env.example for required keys."
 fi
-[ -z "${OPENAI_API_KEY:-}" ] && export OPENAI_API_KEY="${OPENROUTER_API_KEY:-}"
-if [ -z "${OPENROUTER_API_KEY:-}" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
-    echo "[no-bank-diplomacy-da] ERROR: No API key found for GPT-5.4 opponents."
-    echo "  Set OPENROUTER_API_KEY or OPENAI_API_KEY, or configure api_keys.py."
-    exit 1
+if [ -z "${OPENAI_API_KEY:-}" ]; then
+    echo "Warning: OPENAI_API_KEY not set. See .env.example for required keys."
 fi
 
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"

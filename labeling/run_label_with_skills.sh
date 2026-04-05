@@ -15,8 +15,8 @@ GAMINGAGENT_DIR="$(dirname "$ROOT_DIR")/GamingAgent"
 
 export PYTHONPATH="${ROOT_DIR}:${GAMINGAGENT_DIR}:${PYTHONPATH:-}"
 
-if [[ -z "${OPENROUTER_API_KEY:-}" ]] && [[ -f "${ROOT_DIR}/api_keys.py" ]]; then
-    echo "[info] OPENROUTER_API_KEY not in env; api_keys.py will be used by Python."
+if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
+    echo "Warning: OPENROUTER_API_KEY not set. See .env.example for required keys."
 fi
 
 BANK_DIR="${ROOT_DIR}/skill_agents_grpo/extract_skillbank/output/gpt54_skillbank_grpo"

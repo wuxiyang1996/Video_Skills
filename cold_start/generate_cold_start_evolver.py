@@ -85,13 +85,10 @@ try:
 except ImportError:
     DiplomacyNLWrapper = None  # type: ignore
 
-try:
-    import openai
-    from api_keys import openai_api_key, open_router_api_key
-except (ImportError, AttributeError):
-    openai = None
-    openai_api_key = None
-    open_router_api_key = None
+import openai
+
+openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+open_router_api_key = os.environ.get("OPENROUTER_API_KEY", "")
 
 try:
     from API_func import OPENROUTER_BASE
@@ -1015,18 +1012,10 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else SCRIPT_DIR / "output" / "gpt54_evolver"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        from api_keys import open_router_api_key as _or_key
-        has_key = bool(
-            os.environ.get("OPENROUTER_API_KEY")
-            or os.environ.get("OPENAI_API_KEY")
-            or (_or_key and _or_key.strip())
-        )
-    except Exception:
-        has_key = bool(os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY"))
+    has_key = bool(os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY"))
     if not has_key:
         print("[WARNING] No API key set. LLM calls will fail.")
-        print("  Set open_router_api_key in api_keys.py or export OPENROUTER_API_KEY='sk-or-...'")
+        print("  Set: export OPENROUTER_API_KEY='sk-or-...'")
 
     requested = args.games if args.games else list(EVOLVER_GAMES.keys())
     available_games: List[str] = []

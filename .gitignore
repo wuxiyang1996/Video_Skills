@@ -1,38 +1,56 @@
-# API keys and secrets - never commit
+# ── Secrets ──────────────────────────────────────────────────────
 api_keys.py
+.env
+*.key
+*.pem
 
-# Python bytecode (can contain secrets from imported modules)
+# ── Python ───────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
 
-# Training / co-evolution outputs (checkpoints, rollouts, logs)
+# ── Training / co-evolution outputs ─────────────────────────────
 runs/
+wandb/
+*.ckpt
+*.safetensors
+*.bin
 
-# Run logs, screenshots, and eval output (do not commit)
+# ── Run logs, screenshots, eval output ──────────────────────────
 orak_logs/
 output/
 **/orak_logs/
 **/output/
 **/qwen_skills/
 **/Qwen3-8B/
+*.log
 
-# Cold-start cache (do not commit)
+# ── Cold-start cache ────────────────────────────────────────────
 cold_start/cache/
 cold_start/backup/
 cold_start/output/
 
+# ── Labeling outputs ────────────────────────────────────────────
 labeling/backup/
 labeling/output/
 
-output/
-
-test_rollout/
-
+# ── Skill bank extraction outputs ───────────────────────────────
 skill_agents_grpo/extract_skillbank/output/
 skill_agents_grpo/extract_skillbank/backup/
 skill_agents_grpo/extract_skillbank/backup_2/
 
-wandb/
+# ── Evaluation / test outputs ───────────────────────────────────
+test_rollout/
+baselines/output/
+eval_results/**/raw/
 
-baselines/output
+# ── IDE / OS ─────────────────────────────────────────────────────
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

@@ -76,13 +76,10 @@ from decision_agents.dummy_agent import (
     AgentBufferManager,
 )
 
-try:
-    import openai
-    from api_keys import openai_api_key, open_router_api_key
-except (ImportError, AttributeError):
-    openai = None
-    openai_api_key = None  # type: ignore[assignment]
-    open_router_api_key = None  # type: ignore[assignment]
+import openai
+
+openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+open_router_api_key = os.environ.get("OPENROUTER_API_KEY", "")
 
 try:
     from API_func import OPENROUTER_BASE
@@ -915,15 +912,9 @@ def main() -> None:
         or os.environ.get("OPENAI_API_KEY")
     )
     if not api_key:
-        try:
-            from api_keys import open_router_api_key as _k
-            api_key = _k
-        except Exception:
-            pass
-    if not api_key:
         print(
-            "[WARNING] No API key found (OPENROUTER_API_KEY / OPENAI_API_KEY / "
-            "api_keys.py). LLM calls may fall back to default actions."
+            "[WARNING] No API key found (OPENROUTER_API_KEY / OPENAI_API_KEY). "
+            "LLM calls may fall back to default actions."
         )
 
     games_label = args.game if args.game != "both" else "super_mario + star_craft"

@@ -103,13 +103,10 @@ try:
 except ImportError:
     ask_model = None
 
-try:
-    import openai
-    from api_keys import openai_api_key, open_router_api_key
-except (ImportError, AttributeError):
-    openai = None
-    openai_api_key = None
-    open_router_api_key = None
+import openai
+
+openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+open_router_api_key = os.environ.get("OPENROUTER_API_KEY", "")
 
 try:
     from API_func import OPENROUTER_BASE

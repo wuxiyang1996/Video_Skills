@@ -42,13 +42,10 @@ from env_wrappers.gamingagent_nl_wrapper import GamingAgentNLWrapper
 from env_wrappers.tetris_macro_wrapper import TetrisMacroActionWrapper
 from trainer.coevolution.config import GAME_MAX_STEPS
 
-try:
-    import openai
-    from api_keys import openai_api_key, open_router_api_key
-except (ImportError, AttributeError):
-    openai = None
-    openai_api_key = None
-    open_router_api_key = None
+import openai
+
+openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+open_router_api_key = os.environ.get("OPENROUTER_API_KEY", "")
 
 try:
     from API_func import OPENROUTER_BASE

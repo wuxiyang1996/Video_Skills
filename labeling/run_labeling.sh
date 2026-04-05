@@ -17,8 +17,8 @@ GAMINGAGENT_DIR="$(dirname "$ROOT_DIR")/GamingAgent"
 export PYTHONPATH="${ROOT_DIR}:${GAMINGAGENT_DIR}:${PYTHONPATH:-}"
 
 # Pick up API key from environment or .env file
-if [[ -z "${OPENROUTER_API_KEY:-}" ]] && [[ -f "${ROOT_DIR}/api_keys.py" ]]; then
-    echo "[info] OPENROUTER_API_KEY not in env; api_keys.py will be used by Python."
+if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
+    echo "Warning: OPENROUTER_API_KEY not set. See .env.example for required keys."
 fi
 
 echo "============================================================"

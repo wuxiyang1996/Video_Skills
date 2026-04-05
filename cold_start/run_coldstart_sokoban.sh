@@ -28,17 +28,12 @@ GAMINGAGENT_ROOT="$(cd "$CODEBASE_ROOT/../GamingAgent" 2>/dev/null && pwd || ech
 
 export PYTHONPATH="${CODEBASE_ROOT}:${GAMINGAGENT_ROOT}:${PYTHONPATH:-}"
 
-# Auto-detect API key from api_keys.py if not already set
+# Verify API key is set (see .env.example)
 if [ -z "${OPENROUTER_API_KEY:-}" ]; then
-    OPENROUTER_API_KEY="$(python3 -c "
-import sys; sys.path.insert(0, '${CODEBASE_ROOT}')
-from api_keys import open_router_api_key; print(open_router_api_key or '')
-" 2>/dev/null || echo "")"
-    export OPENROUTER_API_KEY
+    echo "Warning: OPENROUTER_API_KEY not set. See .env.example for required keys."
 fi
 if [ -z "${OPENAI_API_KEY:-}" ]; then
-    OPENAI_API_KEY="${OPENROUTER_API_KEY:-}"
-    export OPENAI_API_KEY
+    echo "Warning: OPENAI_API_KEY not set. See .env.example for required keys."
 fi
 
 echo "================================================================"

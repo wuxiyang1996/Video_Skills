@@ -88,25 +88,12 @@ export SDL_VIDEODRIVER=dummy
 export PYTHONPATH="${PROJECT_ROOT}:${AGENTEVOLVER_ROOT}:${PROJECT_ROOT}/../GamingAgent:${PROJECT_ROOT}/../AI_Diplomacy:${PROJECT_ROOT}/../Orak:${PYTHONPATH:-}"
 [ -n "$AI_DIPLOMACY_ROOT" ] && export PYTHONPATH="${AI_DIPLOMACY_ROOT}:${PYTHONPATH}"
 
-# ── API key resolution (same as run_gpt54_tetris.sh / run_coldstart_evolver.sh)
+# ── Verify API key is set (see .env.example) ─────────────────────────
 if [ -z "${OPENROUTER_API_KEY:-}" ]; then
-    OPENROUTER_API_KEY="$(python3 -c "
-import sys; sys.path.insert(0, '${PROJECT_ROOT}')
-from api_keys import open_router_api_key; print(open_router_api_key or '')
-" 2>/dev/null || echo "")"
-    export OPENROUTER_API_KEY
+    echo "Warning: OPENROUTER_API_KEY not set. See .env.example for required keys."
 fi
 if [ -z "${OPENAI_API_KEY:-}" ]; then
-    OPENAI_API_KEY="${OPENROUTER_API_KEY:-$(python3 -c "
-import sys; sys.path.insert(0, '${PROJECT_ROOT}')
-from api_keys import openai_api_key; print(openai_api_key or '')
-" 2>/dev/null || echo "")}"
-    export OPENAI_API_KEY
-fi
-
-if [ -z "${OPENROUTER_API_KEY:-}" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
-    echo "[ERROR] No API key found. Set OPENROUTER_API_KEY or open_router_api_key in api_keys.py"
-    exit 1
+    echo "Warning: OPENAI_API_KEY not set. See .env.example for required keys."
 fi
 
 # ── Dependency check ───────────────────────────────────────────────────────

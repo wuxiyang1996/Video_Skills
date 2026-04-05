@@ -80,13 +80,10 @@ try:
 except ImportError:
     label_trajectory = None
 
-try:
-    import openai
-    from api_keys import openai_api_key, open_router_api_key
-except (ImportError, AttributeError):
-    openai = None
-    openai_api_key = None  # type: ignore[assignment]
-    open_router_api_key = None  # type: ignore[assignment]
+import openai
+
+openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+open_router_api_key = os.environ.get("OPENROUTER_API_KEY", "")
 
 try:
     from API_func import OPENROUTER_BASE
@@ -736,12 +733,6 @@ Examples:
         args.no_label = True
 
     api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        try:
-            from api_keys import open_router_api_key as _k
-            api_key = _k
-        except Exception:
-            pass
     if not api_key:
         print("[WARNING] No API key found. LLM calls will fall back to defaults.")
 

@@ -25,17 +25,12 @@ export PYGLET_HEADLESS=1
 export SDL_VIDEODRIVER=dummy
 export PYTHONPATH="${PROJECT_ROOT}:${AGENTEVOLVER_ROOT}:${PROJECT_ROOT}/../GamingAgent:${PROJECT_ROOT}/../AI_Diplomacy:${PROJECT_ROOT}/../Orak:${PYTHONPATH:-}"
 
-# ── API key ───────────────────────────────────────────────────────────
+# ── Verify API key is set (see .env.example) ─────────────────────────
 if [ -z "${OPENROUTER_API_KEY:-}" ]; then
-    OPENROUTER_API_KEY="$(python3 -c "
-import sys; sys.path.insert(0, '${PROJECT_ROOT}')
-from api_keys import open_router_api_key; print(open_router_api_key or '')
-" 2>/dev/null || echo "")"
-    export OPENROUTER_API_KEY
+    echo "Warning: OPENROUTER_API_KEY not set. See .env.example for required keys."
 fi
-[ -z "${OPENAI_API_KEY:-}" ] && export OPENAI_API_KEY="${OPENROUTER_API_KEY:-}"
-if [ -z "${OPENROUTER_API_KEY:-}" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
-    echo "[ERROR] No API key found."; exit 1
+if [ -z "${OPENAI_API_KEY:-}" ]; then
+    echo "Warning: OPENAI_API_KEY not set. See .env.example for required keys."
 fi
 
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"

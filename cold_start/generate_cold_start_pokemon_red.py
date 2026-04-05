@@ -77,13 +77,10 @@ from mcp_game_servers.pokemon_red.game.utils.map_utils import (
 # Cold-start data structures
 from data_structure.experience import Experience, Episode, Episode_Buffer
 
-try:
-    import openai
-    from api_keys import openai_api_key, open_router_api_key
-except (ImportError, AttributeError):
-    openai = None
-    openai_api_key = None
-    open_router_api_key = None
+import openai
+
+openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+open_router_api_key = os.environ.get("OPENROUTER_API_KEY", "")
 
 try:
     from API_func import OPENROUTER_BASE
@@ -969,11 +966,7 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else SCRIPT_DIR / "output" / "gpt54"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    has_key = bool(
-        os.environ.get("OPENROUTER_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-        or (open_router_api_key and open_router_api_key.strip())
-    )
+    has_key = bool(os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY"))
     if not has_key:
         print("[WARNING] No API key. LLM calls will fail.")
 
