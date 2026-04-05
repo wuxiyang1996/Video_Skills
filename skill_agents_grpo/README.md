@@ -88,7 +88,7 @@ from skill_agents import SkillBankAgent, PipelineConfig
 # Config (optional; defaults work)
 config = PipelineConfig(
     bank_path="data/skill_bank.jsonl",
-    env_name="llm+overcooked",      # or "llm", "overcooked", etc.
+    env_name="llm+avalon",          # or "llm", "avalon", etc.
     preference_store_path="data/preferences.json",
     report_dir="data/reports",
     min_instances_per_skill=5,
@@ -107,7 +107,7 @@ agent.load()   # load existing bank if path exists
 episodes = [ep1, ep2, ep3]
 
 # Ingest: Stage 1+2 (segment) + Stage 3 (learn contracts)
-agent.ingest_episodes(episodes, env_name="llm+overcooked")
+agent.ingest_episodes(episodes, env_name="llm+avalon")
 
 # Optional: iterate until stable (Stage 3 → Stage 4 → materialize NEW)
 agent.run_until_stable(max_iterations=3)
@@ -119,15 +119,15 @@ agent.save()
 
 ```python
 # Natural-language key (scene / objective / entities)
-results = agent.query_skill("navigate to pot and place onion", top_k=3)
+results = agent.query_skill("propose team and vote on quest", top_k=3)
 for r in results:
     print(r["skill_id"], r["score"], r.get("micro_plan"))
 
 # Rich skill selection (preferred for decision agents):
 # separates retrieval relevance from execution applicability
 results = agent.select_skill(
-    query="navigate to pot",
-    current_state={"near_pot": 0.1, "holding_onion": 0.9},
+    query="propose team for quest",
+    current_state={"is_leader": True, "quest_round": 2},
     top_k=3,
 )
 for r in results:
@@ -135,8 +135,8 @@ for r in results:
 
 # Effect-based: find skills that achieve desired state changes
 results = agent.query_by_effects(
-    desired_add={"at_pot", "holding_onion"},
-    desired_del={"at_spawn"},
+    desired_add={"team_proposed", "quest_active"},
+    desired_del={"waiting_for_leader"},
     top_k=3,
 )
 
@@ -144,7 +144,7 @@ results = agent.query_by_effects(
 summary = agent.list_skills()
 
 # Full detail for one skill
-detail = agent.get_skill_detail("nav_to_pot")
+detail = agent.get_skill_detail("propose_team")
 ```
 
 ### 3. Use with the decision agent
@@ -182,12 +182,12 @@ bank.load()
 # After the decision agent calls query_skill and you have the outcome:
 reward_result = compute_tool_call_reward(
     tool_name="query_skill",
-    tool_args={"key": "navigate to pot and place onion"},
-    context_observation="chef near pot, holding onion",
-    outcome_observation="onion in pot, soup cooking",
+    tool_args={"key": "propose team and vote on quest"},
+    context_observation="leader phase, round 2, score 1-0",
+    outcome_observation="team approved, quest succeeded",
     skill_bank=bank,
-    retrieved_skill_id="nav_to_pot",
-    retrieved_result={"skill_id": "nav_to_pot", "score": 0.85},
+    retrieved_skill_id="propose_team",
+    retrieved_result={"skill_id": "propose_team", "score": 0.85},
     config=ToolCallRewardConfig(w_relevance=1.0, w_utility=1.0),
 )
 print(reward_result.r_total)   # for RL loss / value target
@@ -263,15 +263,15 @@ bank.load()
 engine = SkillQueryEngine(bank)            # auto-loads RAG embedder
 
 # Simple retrieval (backward compatible)
-results = engine.query("place onion in pot", top_k=3)
-detail = engine.get_detail("place_onion")
+results = engine.query("propose team for quest", top_k=3)
+detail = engine.get_detail("propose_team")
 list_all = engine.list_all()
 
 # Rich skill selection (preferred for decision agents):
 # separates retrieval relevance from execution applicability
 selections = engine.select(
-    query="place onion in pot",
-    current_state={"near_pot": 0.8, "holding_onion": 0.9},
+    query="propose team for quest",
+    current_state={"is_leader": True, "quest_round": 2},
     top_k=3,
 )
 for s in selections:
@@ -280,8 +280,8 @@ for s in selections:
 
 # Format expected by decision_agents run_tool(QUERY_SKILL)
 decision_result = engine.query_for_decision_agent(
-    "place onion",
-    current_state={"near_pot": 0.8},  # optional: enables applicability scoring
+    "propose team",
+    current_state={"is_leader": True},  # optional: enables applicability scoring
     top_k=1,
 )
 # → {"skill_id": "...", "relevance": 0.8, "applicability": 0.6, "confidence": 0.7, ...}
@@ -298,7 +298,7 @@ All fields (see `pipeline.PipelineConfig` dataclass). **Model convention:** use 
 | `preference_store_path` | `None` | JSON path for the preference store (Stage 2). |
 | `report_dir` | `None` | Directory for evaluation reports. |
 | | | **Stage 1: boundary proposal** |
-| `env_name` | `"llm"` | Signal extraction: `"llm"`, `"llm+overcooked"`, `"overcooked"`, etc. |
+| `env_name` | `"llm"` | Signal extraction: `"llm"`, `"llm+avalon"`, `"avalon"`, etc. |
 | `game_name` | `"generic"` | Actual game identifier for phase detection (e.g. `"twenty_forty_eight"`, `"super_mario"`). |
 | `merge_radius` | `3` | Merge boundary candidates within this many steps. |
 | `extractor_model` | `None` | LLM for boundary proposal (e.g. `Qwen/Qwen3-8B`, `gpt-4o-mini`). |
@@ -406,8 +406,6 @@ Each game has a dedicated extractor that parses structured state features:
 | **2048** | Board occupancy + highest tile | `opening`, `midgame`, `endgame` |
 | **Tetris** | Board fill ratio | `opening`, `midgame`, `endgame` |
 | **Super Mario** | Mario x-position (level progress) | `early_level`, `mid_level`, `late_level` |
-| **Sokoban** | Boxes on goal positions | `setup`, `solving`, `finishing` |
-| **Pokemon Red** | State text keywords (battle/route/menu) | `battle`, `exploration`, `overworld`, `menu` |
 | **Avalon** | Round signals (vote/quest/assassin) | `team_building`, `quest`, `endgame` |
 | **Diplomacy** | Turn/season signals | `opening`, `orders`, `retreat`, `adjustment` |
 | **Candy Crush** | Temporal position (no strong state signal) | `early`, `mid`, `late` |
@@ -433,8 +431,6 @@ The `game_name` field in `PipelineConfig` controls which game-specific extractor
 | 2048 | 1 skill (`MERGE`) | 9 skills (`opening:MERGE`, `midgame:MERGE`, `endgame:MERGE`, `endgame:SURVIVE`, ...) |
 | Super Mario | 1 skill (`NAVIGATE`) | 4 skills (`early:NAVIGATE`, `NAVIGATE`, `CLEAR`, `late:CLEAR`) |
 | Candy Crush | 1 skill | 2 skills |
-| Sokoban | 2 skills | 3 skills |
-| Pokemon Red | 2 skills | 3 skills |
 | Tetris | 4 skills | 4 skills (maintained) |
 
 ---
@@ -685,7 +681,6 @@ skill_agents_grpo/
 │   ├── changepoint.py        # Embedding changepoint detection
 │   ├── boundary_preference.py # Boundary plausibility scoring
 │   ├── signal_extractors.py  # Extract signals from trajectories
-│   └── example_toy.py        # Toy example / integration test
 ├── infer_segmentation/       # Stage 2 — preference learning + phase-aware intention-fit scoring
 │   ├── config.py             # ScorerWeights (incl. intention_fit=2.0), SegmentationConfig
 │   ├── scorer.py             # SegmentScorer: 6-term composite (behavior_fit, intention_fit, ...)
@@ -696,7 +691,6 @@ skill_agents_grpo/
 │   ├── llm_teacher.py        # LLM teacher: rankings → pairwise prefs; TeacherIORecord cold-start
 │   ├── preference.py         # PreferenceStore, PreferenceScorer (Bradley-Terry)
 │   ├── diagnostics.py        # SegmentationResult, SegmentDiagnostic
-│   └── example_toy.py        # Toy example / integration test
 ├── stage3_mvp/               # Stage 3 — CONTRACT LoRA wraps llm_summarize_contract()
 │   ├── run_stage3_mvp.py     # Stage 3 orchestrator: run_stage3_mvp()
 │   ├── config.py             # Stage3MVPConfig
@@ -722,14 +716,12 @@ skill_agents_grpo/
 │   ├── local_redecode.py     # redecode_windows(), build_redecode_requests()
 │   ├── indices.py            # EffectInvertedIndex, MinHashLSH, EmbeddingANN
 │   ├── duration_model.py     # DurationModelStore
-│   └── example_toy.py        # Toy example / integration test
 ├── contract_verification/    # Legacy full Pre/Eff/Inv contract verification
 ├── skill_evaluation/         # Quality evaluation
 │   ├── run_evaluation.py     # run_skill_evaluation()
 │   ├── evaluators.py         # evaluate_coherence(), evaluate_discriminability(), etc.
 │   ├── config.py             # SkillEvaluationConfig
 │   ├── schemas.py            # EvaluationSummary, SkillQualityReport
-│   └── example_toy.py        # Toy example / integration test
 ├── grpo/                     # GRPO infrastructure
 │   ├── orchestrator.py       # GRPOOrchestrator: enable/disable wrappers, train_step
 │   ├── wrapper.py            # GRPOCallWrapper (G samples, reward, store, return best)

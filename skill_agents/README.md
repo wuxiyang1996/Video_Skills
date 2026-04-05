@@ -43,7 +43,7 @@ from skill_agents import SkillBankAgent, PipelineConfig
 # Config (optional; defaults work)
 config = PipelineConfig(
     bank_path="data/skill_bank.jsonl",
-    env_name="llm+overcooked",      # or "llm", "overcooked", etc.
+    env_name="llm+avalon",          # or "llm", "avalon", etc.
     preference_store_path="data/preferences.json",
     report_dir="data/reports",
     min_instances_per_skill=5,
@@ -62,7 +62,7 @@ agent.load()   # load existing bank if path exists
 episodes = [ep1, ep2, ep3]
 
 # Ingest: Stage 1+2 (segment) + Stage 3 (learn contracts)
-agent.ingest_episodes(episodes, env_name="llm+overcooked")
+agent.ingest_episodes(episodes, env_name="llm+avalon")
 
 # Optional: iterate until stable (Stage 3 → Stage 4 → materialize NEW)
 agent.run_until_stable(max_iterations=3)
@@ -74,15 +74,15 @@ agent.save()
 
 ```python
 # Natural-language key (scene / objective / entities)
-results = agent.query_skill("navigate to pot and place onion", top_k=3)
+results = agent.query_skill("propose team and vote on quest", top_k=3)
 for r in results:
     print(r["skill_id"], r["score"], r.get("micro_plan"))
 
 # Rich skill selection (preferred for decision agents):
 # separates retrieval relevance from execution applicability
 results = agent.select_skill(
-    query="navigate to pot",
-    current_state={"near_pot": 0.1, "holding_onion": 0.9},
+    query="propose team for quest",
+    current_state={"is_leader": True, "quest_round": 2},
     top_k=3,
 )
 for r in results:
@@ -90,8 +90,8 @@ for r in results:
 
 # Effect-based: find skills that achieve desired state changes
 results = agent.query_by_effects(
-    desired_add={"at_pot", "holding_onion"},
-    desired_del={"at_spawn"},
+    desired_add={"team_proposed", "quest_active"},
+    desired_del={"waiting_for_leader"},
     top_k=3,
 )
 
@@ -99,7 +99,7 @@ results = agent.query_by_effects(
 summary = agent.list_skills()
 
 # Full detail for one skill
-detail = agent.get_skill_detail("nav_to_pot")
+detail = agent.get_skill_detail("propose_team")
 ```
 
 ### 3. Use with the decision agent
@@ -137,12 +137,12 @@ bank.load()
 # After the decision agent calls query_skill and you have the outcome:
 reward_result = compute_tool_call_reward(
     tool_name="query_skill",
-    tool_args={"key": "navigate to pot and place onion"},
-    context_observation="chef near pot, holding onion",
-    outcome_observation="onion in pot, soup cooking",
+    tool_args={"key": "propose team and vote on quest"},
+    context_observation="leader phase, round 2, score 1-0",
+    outcome_observation="team approved, quest succeeded",
     skill_bank=bank,
-    retrieved_skill_id="nav_to_pot",
-    retrieved_result={"skill_id": "nav_to_pot", "score": 0.85},
+    retrieved_skill_id="propose_team",
+    retrieved_result={"skill_id": "propose_team", "score": 0.85},
     config=ToolCallRewardConfig(w_relevance=1.0, w_utility=1.0),
 )
 print(reward_result.r_total)   # for RL loss / value target
@@ -207,15 +207,15 @@ bank.load()
 engine = SkillQueryEngine(bank)            # auto-loads RAG embedder
 
 # Simple retrieval (backward compatible)
-results = engine.query("place onion in pot", top_k=3)
-detail = engine.get_detail("place_onion")
+results = engine.query("propose team for quest", top_k=3)
+detail = engine.get_detail("propose_team")
 list_all = engine.list_all()
 
 # Rich skill selection (preferred for decision agents):
 # separates retrieval relevance from execution applicability
 selections = engine.select(
-    query="place onion in pot",
-    current_state={"near_pot": 0.8, "holding_onion": 0.9},
+    query="propose team for quest",
+    current_state={"is_leader": True, "quest_round": 2},
     top_k=3,
 )
 for s in selections:
@@ -224,8 +224,8 @@ for s in selections:
 
 # Format expected by decision_agents run_tool(QUERY_SKILL)
 decision_result = engine.query_for_decision_agent(
-    "place onion",
-    current_state={"near_pot": 0.8},  # optional: enables applicability scoring
+    "propose team",
+    current_state={"is_leader": True},  # optional: enables applicability scoring
     top_k=1,
 )
 # → {"skill_id": "...", "relevance": 0.8, "applicability": 0.6, "confidence": 0.7, ...}
@@ -238,7 +238,7 @@ Key options (see `pipeline.PipelineConfig` for all):
 | Field | Default | Meaning |
 |-------|--------|--------|
 | `bank_path` | `None` | JSONL path for the skill bank. |
-| `env_name` | `"llm"` | Signal extraction: `"llm"`, `"llm+overcooked"`, `"overcooked"`, etc. |
+| `env_name` | `"llm"` | Signal extraction: `"llm"`, `"llm+avalon"`, `"avalon"`, etc. |
 | `extractor_model` | `None` | LLM for Stage 1 boundary proposal. Set to your backend (e.g. `gpt-4o-mini`, `Qwen/Qwen3-8B`); same `ask_model` routing as inference. |
 | `llm_model` | `None` | LLM for protocol synthesis and other pipeline LLM calls. When set, `update_protocols()` can generate richer protocols via `ask_model` (model-agnostic). |
 | `merge_radius` | `5` | Merge boundary candidates within this many steps (Stage 1). |

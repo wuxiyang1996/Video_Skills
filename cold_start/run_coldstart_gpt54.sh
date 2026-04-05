@@ -13,7 +13,7 @@
 #   bash cold_start/run_coldstart_gpt54.sh                     # All games, 100 eps each
 #   bash cold_start/run_coldstart_gpt54.sh --episodes 5        # Quick test (5 eps)
 #   bash cold_start/run_coldstart_gpt54.sh --resume            # Resume interrupted run
-#   bash cold_start/run_coldstart_gpt54.sh --games tetris sokoban
+#   bash cold_start/run_coldstart_gpt54.sh --games tetris candy_crush
 #   bash cold_start/run_coldstart_gpt54.sh --help              # Show all options
 
 set -euo pipefail

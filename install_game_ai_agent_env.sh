@@ -4,19 +4,15 @@
 #
 # Creates the "game-ai-agent" conda environment with all dependencies for:
 #   - Game-AI-Agent trainer (GRPO, SkillBank, co-evolution)
-#   - legacy/evaluate_videogamebench (DOS games via Playwright)
-#   - evaluate_gamingagent (2048, Sokoban, Tetris, VizDoom, etc.)
-#   - legacy/evaluate_overcooked (multi-agent cooking)
-#   - evaluation_evolver (Avalon + Diplomacy via AgentEvolver)
+#   - evaluate_gamingagent (2048, Candy Crush, Tetris)
+#   - AgentEvolver (Avalon + Diplomacy)
 #
 # Prerequisites:
 #   - miniconda3 or anaconda installed
 #   - CUDA 12.x drivers on the host (for GPU training/inference)
 #   - The following repos cloned as siblings under the same parent directory:
 #       Game-AI-Agent/     (this repo)
-#       videogamebench/    (https://github.com/alexzhang13/videogamebench)
 #       GamingAgent/       (https://github.com/lmgame-org/GamingAgent)
-#       overcooked_ai/     (https://github.com/HumanCompatibleAI/overcooked_ai)
 #       AgentEvolver/      (https://github.com/modelscope/AgentEvolver)
 #
 # Usage:
@@ -27,7 +23,7 @@
 #
 # After install:
 #   conda activate game-ai-agent
-#   export PYTHONPATH=$(pwd)/Game-AI-Agent:$(pwd)/overcooked_ai/src:$(pwd)/AgentEvolver:$(pwd)/videogamebench:$(pwd)/GamingAgent:$PYTHONPATH
+#   export PYTHONPATH=$(pwd)/Game-AI-Agent:$(pwd)/AgentEvolver:$(pwd)/GamingAgent:$PYTHONPATH
 # =============================================================================
 
 set -euo pipefail
@@ -75,9 +71,7 @@ echo
 # ---------------------------------------------------------------------------
 REPOS=(
     "Game-AI-Agent"
-    "videogamebench"
     "GamingAgent"
-    "overcooked_ai"
     "AgentEvolver"
 )
 
@@ -103,9 +97,9 @@ fi
 # Step 1: Create conda environment
 # ---------------------------------------------------------------------------
 if "$CONDA" env list | grep -q "^${ENV_NAME} "; then
-    echo "[1/7] Conda env '$ENV_NAME' already exists, skipping creation."
+    echo "[1/5] Conda env '$ENV_NAME' already exists, skipping creation."
 else
-    echo "[1/7] Creating conda env '$ENV_NAME' with Python $PYTHON_VERSION ..."
+    echo "[1/5] Creating conda env '$ENV_NAME' with Python $PYTHON_VERSION ..."
     "$CONDA" create -n "$ENV_NAME" python="$PYTHON_VERSION" -y
 fi
 echo
@@ -113,7 +107,7 @@ echo
 # ---------------------------------------------------------------------------
 # Step 2: Trainer core dependencies
 # ---------------------------------------------------------------------------
-echo "[2/7] Installing trainer dependencies (torch, transformers, sentence-transformers, etc.) ..."
+echo "[2/5] Installing trainer dependencies (torch, transformers, sentence-transformers, etc.) ..."
 "$PIP" install --quiet \
     "numpy==1.26.4" \
     "pyyaml>=6.0" \
@@ -124,32 +118,9 @@ echo "[2/7] Installing trainer dependencies (torch, transformers, sentence-trans
 echo
 
 # ---------------------------------------------------------------------------
-# Step 3: VideoGameBench
+# Step 3: GamingAgent
 # ---------------------------------------------------------------------------
-echo "[3/7] Installing VideoGameBench dependencies ..."
-"$PIP" install --quiet \
-    "playwright>=1.40.0" \
-    "openai" \
-    "anthropic" \
-    "ImageHash" \
-    "litellm>=1.0.0" \
-    "python-dotenv>=1.0.0" \
-    "opencv-python"
-
-if [[ -d "$PARENT_DIR/videogamebench" ]]; then
-    "$PIP" install --quiet -e "$PARENT_DIR/videogamebench"
-    echo "  Installed videogamebench (editable)"
-fi
-
-# Install Playwright browsers
-echo "  Installing Playwright Chromium ..."
-"$PYTHON" -m playwright install chromium 2>/dev/null || true
-echo
-
-# ---------------------------------------------------------------------------
-# Step 4: GamingAgent
-# ---------------------------------------------------------------------------
-echo "[4/7] Installing GamingAgent ..."
+echo "[3/5] Installing GamingAgent ..."
 if [[ -d "$PARENT_DIR/GamingAgent" ]]; then
     "$PIP" install --quiet -e "$PARENT_DIR/GamingAgent"
     echo "  Installed GamingAgent (editable)"
@@ -160,25 +131,9 @@ fi
 echo
 
 # ---------------------------------------------------------------------------
-# Step 5: Overcooked
+# Step 4: AgentEvolver (Avalon + Diplomacy)
 # ---------------------------------------------------------------------------
-echo "[5/7] Installing Overcooked AI ..."
-if [[ -d "$PARENT_DIR/overcooked_ai" ]]; then
-    # Relax Python version constraint if needed (upstream pins <3.11 but works on 3.11)
-    PYPROJECT="$PARENT_DIR/overcooked_ai/pyproject.toml"
-    if [[ -f "$PYPROJECT" ]] && grep -q '">=3.10,<3.11"' "$PYPROJECT"; then
-        sed -i 's/">=3.10,<3.11"/">=3.10,<3.12"/' "$PYPROJECT"
-        echo "  Relaxed overcooked_ai Python version constraint to <3.12"
-    fi
-    "$PIP" install --quiet -e "$PARENT_DIR/overcooked_ai"
-    echo "  Installed overcooked_ai (editable)"
-fi
-echo
-
-# ---------------------------------------------------------------------------
-# Step 6: AgentEvolver (Avalon + Diplomacy)
-# ---------------------------------------------------------------------------
-echo "[6/7] Installing AgentEvolver eval dependencies (diplomacy, coloredlogs, loguru) ..."
+echo "[4/5] Installing AgentEvolver eval dependencies (diplomacy, coloredlogs, loguru) ..."
 "$PIP" install --quiet \
     "diplomacy>=1.1.2" \
     "coloredlogs" \
@@ -192,14 +147,14 @@ fi
 echo
 
 # ---------------------------------------------------------------------------
-# Step 7: Final numpy pin & verification
+# Step 5: Final numpy pin & verification
 # ---------------------------------------------------------------------------
-echo "[7/7] Pinning numpy==1.26.4 and verifying ..."
+echo "[5/5] Pinning numpy==1.26.4 and verifying ..."
 "$PIP" install --quiet "numpy==1.26.4"
 
 echo
 echo "Running import checks ..."
-PYTHONPATH="$PARENT_DIR/Game-AI-Agent:$PARENT_DIR/overcooked_ai/src:$PARENT_DIR/AgentEvolver:$PARENT_DIR/videogamebench:$PARENT_DIR/GamingAgent" \
+PYTHONPATH="$PARENT_DIR/Game-AI-Agent:$PARENT_DIR/AgentEvolver:$PARENT_DIR/GamingAgent" \
 "$PYTHON" -c "
 import sys
 
@@ -223,19 +178,8 @@ check('sentence_transformers',lambda: __import__('sentence_transformers'))
 check('omegaconf',            lambda: __import__('omegaconf'))
 check('hydra',                lambda: __import__('hydra'))
 
-# VideoGameBench
-check('playwright',           lambda: __import__('playwright'))
-check('litellm',              lambda: __import__('litellm'))
-check('pydantic',             lambda: __import__('pydantic'))
-
 # GamingAgent
 check('gymnasium',            lambda: __import__('gymnasium'))
-check('vizdoom',              lambda: __import__('vizdoom'))
-check('stable_retro',         lambda: __import__('stable_retro'))
-check('xai_sdk',              lambda: __import__('xai_sdk'))
-
-# Overcooked
-check('overcooked_ai_py',     lambda: __import__('overcooked_ai_py'))
 
 # AgentEvolver (Avalon)
 check('games.games.avalon',   lambda: __import__('games.games.avalon.engine'))
@@ -267,7 +211,7 @@ echo "  Activate:"
 echo "    conda activate $ENV_NAME"
 echo
 echo "  Set PYTHONPATH (from the parent directory of all repos):"
-echo "    export PYTHONPATH=\$(pwd)/Game-AI-Agent:\$(pwd)/overcooked_ai/src:\$(pwd)/AgentEvolver:\$(pwd)/videogamebench:\$(pwd)/GamingAgent:\$PYTHONPATH"
+echo "    export PYTHONPATH=\$(pwd)/Game-AI-Agent:\$(pwd)/AgentEvolver:\$(pwd)/GamingAgent:\$PYTHONPATH"
 echo
 echo "  Known nominal warning:"
 echo "    gamingagent 0.1.0 requires numpy==1.24.4 (we use 1.26.4 — works fine)"

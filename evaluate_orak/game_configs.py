@@ -1,11 +1,11 @@
 """
 Orak-specific game configurations.
 
-12 games from krafton-ai/Orak across 6 genres, categorised by cost:
+11 games from krafton-ai/Orak across 6 genres, categorised by cost:
 
-  FREE (7 entries, 6 unique games):
+  FREE (6 entries, 5 unique games):
     2048, Super Mario, Street Fighter III, StarCraft II, StarCraft II Multi,
-    Pokemon Red, Minecraft*
+    Minecraft*
 
   PAID (6 games):
     Baba Is You, Ace Attorney, Her Story, Darkest Dungeon,
@@ -15,7 +15,7 @@ Orak-specific game configurations.
 
 Availability tiers for free games:
   easy   -- pip-only, no external deps, runs anywhere (2048, Super Mario)
-  medium -- free account or ROM needed (Street Fighter, Pokemon Red)
+  medium -- free account or ROM needed (Street Fighter)
   hard   -- complex multi-component setup (StarCraft II, Minecraft)
 """
 
@@ -112,19 +112,7 @@ ORAK_GAME_CONFIGS: Dict[str, OrakGameConfig] = {
         notes="Steam purchase ~$25; ModTheSpire + BaseMod + CommunicationMod required.",
         setup_difficulty="medium",
     ),
-    # ── FREE: RPG ────────────────────────────────────────────────────────
-    "orak_pokemon_red": OrakGameConfig(
-        name="orak_pokemon_red",
-        display_name="Pokemon Red (Orak)",
-        genre="rpg",
-        cost_tier="free",
-        max_steps=200,
-        episodes=3,
-        description="Progress through Pokemon Red storyline milestones (0-12 flags).",
-        notes="Needs pokered.gbc ROM (legally obtained) + PyBoy + pret/pokered map data.",
-        rom_required=True,
-        setup_difficulty="medium",
-    ),
+    # ── RPG ────────────────────────────────────────────────────────
     "orak_darkest_dungeon": OrakGameConfig(
         name="orak_darkest_dungeon",
         display_name="Darkest Dungeon (Orak)",

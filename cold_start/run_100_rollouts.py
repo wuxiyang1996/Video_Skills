@@ -27,7 +27,7 @@ Usage (from Game-AI-Agent root):
     python cold_start/run_100_rollouts.py
 
     # Specific game(s)
-    python cold_start/run_100_rollouts.py --games twenty_forty_eight sokoban tetris
+    python cold_start/run_100_rollouts.py --games twenty_forty_eight candy_crush tetris
 
     # Fewer episodes (for testing)
     python cold_start/run_100_rollouts.py --episodes 5 --max_steps 30

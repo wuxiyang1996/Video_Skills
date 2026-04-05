@@ -1,7 +1,7 @@
 """
 Walkthrough: how the hybrid (LLM + rule-based) extractor works.
 
-This example simulates a 12-step Overcooked trajectory and shows exactly
+This example simulates a 10-step Avalon trajectory and shows exactly
 what each layer (LLM predicates vs rule-based events) contributes to the
 final boundary candidates.
 
@@ -13,12 +13,6 @@ No real LLM call is made — we mock ask_model to show the data flow.
 
 import json
 import numpy as np
-
-# -- 1.  Simulate an Overcooked trajectory -----------------------------------
-#
-# 12 timesteps of natural-language state descriptions, rewards, and done flags.
-# We use simple objects with .state, .action, .reward, .next_state, .done
-# to avoid importing the full data_structure module.
 
 
 class FakeExperience:
@@ -41,114 +35,83 @@ class FakeEpisode:
         self.task = task
 
 
-# A realistic Overcooked trajectory
 experiences = [
     FakeExperience(
-        "Agent 0 at (2,1) facing east, holding nothing. Pot at (3,0) is empty. No orders pending.",
-        "move east", 0.0,
-        "Agent 0 at (3,1) facing east, holding nothing. Pot at (3,0) is empty.", False),
+        "Round 1 Team Selection. Leader: Player 0. Players: 5. Must pick 2 for quest.",
+        "propose [Player 0, Player 2]", 0.0,
+        "Round 1 Team Vote. Proposed team: [Player 0, Player 2].", False),
     FakeExperience(
-        "Agent 0 at (3,1) facing east, holding nothing. Pot at (3,0) is empty.",
-        "move north", 0.0,
-        "Agent 0 at (3,0) facing north, holding nothing. Near pot.", False),
+        "Round 1 Team Vote. Proposed team: [Player 0, Player 2].",
+        "approve", 0.0,
+        "Round 1 Team Approved. Team goes on quest.", False),
     FakeExperience(
-        "Agent 0 at (3,0) facing north, holding nothing. Near onion dispenser.",
-        "interact", 0.0,
-        "Agent 0 at (3,0) facing north, holding onion.", False),
-    # --- t=3: picked up onion (inventory change) ---
+        "Round 1 Quest. You are on the quest team. You are Merlin (Good).",
+        "succeed", 1.0,
+        "Round 1 Quest Result: SUCCESS (2 succeed, 0 fail).", False),
     FakeExperience(
-        "Agent 0 at (3,0) facing north, holding onion. Pot is empty.",
-        "move south", 0.0,
-        "Agent 0 at (3,1) facing south, holding onion.", False),
+        "Round 2 Team Selection. Leader: Player 1. Score: Good 1, Evil 0.",
+        "propose [Player 1, Player 3]", 0.0,
+        "Round 2 Team Vote. Proposed team: [Player 1, Player 3].", False),
     FakeExperience(
-        "Agent 0 at (3,1) facing south, holding onion. Near pot.",
-        "interact", 0.0,
-        "Agent 0 at (3,1) facing south, holding nothing. Pot has 1 onion.", False),
-    # --- t=5: dropped onion in pot ---
+        "Round 2 Team Vote. Proposed team: [Player 1, Player 3].",
+        "reject", 0.0,
+        "Round 2 Team Rejected. Vote track: 1/5.", False),
     FakeExperience(
-        "Agent 0 at (3,1) facing south, holding nothing. Pot has 1 onion.",
-        "move west", 0.0,
-        "Agent 0 at (2,1) facing west. Pot has 1 onion.", False),
+        "Round 2 Team Selection (attempt 2). Leader: Player 2.",
+        "propose [Player 0, Player 2]", 0.0,
+        "Round 2 Team Vote. Proposed team: [Player 0, Player 2].", False),
     FakeExperience(
-        "Agent 0 at (2,1) facing west. Pot has 3 onions, cooking.",
-        "stay", 0.0,
-        "Agent 0 at (2,1). Pot has 3 onions, cooking.", False),
+        "Round 2 Team Vote. Proposed team: [Player 0, Player 2].",
+        "approve", 0.0,
+        "Round 2 Team Approved. Team goes on quest.", False),
     FakeExperience(
-        "Agent 0 at (2,1). Pot has 3 onions, soup is ready!",
-        "move east", 0.0,
-        "Agent 0 at (3,1). Soup is ready in pot.", False),
-    # --- t=8: soup became ready ---
+        "Round 2 Quest. You are on the quest team.",
+        "succeed", 1.0,
+        "Round 2 Quest Result: SUCCESS (2 succeed, 0 fail).", False),
     FakeExperience(
-        "Agent 0 at (3,1). Soup is ready in pot.",
-        "interact", 0.0,
-        "Agent 0 at (3,1), holding soup. Pot is empty.", False),
+        "Round 3 Team Selection. Leader: Player 3. Score: Good 2, Evil 0.",
+        "propose [Player 0, Player 2, Player 4]", 0.0,
+        "Round 3 Team Vote. Proposed team: [Player 0, Player 2, Player 4].", False),
     FakeExperience(
-        "Agent 0 at (3,1), holding soup. Serving counter at (1,3).",
-        "move south", 0.0,
-        "Agent 0 at (3,2), holding soup.", False),
-    FakeExperience(
-        "Agent 0 at (3,2), holding soup. Near serving counter.",
-        "interact", 20.0,
-        "Agent 0 at (3,2), holding nothing. Soup delivered! +20 reward.", False),
-    # --- t=11: soup delivered, +20 reward spike ---
-    FakeExperience(
-        "Agent 0 at (3,2), holding nothing. Order complete.",
-        "stay", 0.0,
-        "Agent 0 at (3,2), holding nothing.", True),
+        "Round 3 Team Vote. Proposed team: [Player 0, Player 2, Player 4].",
+        "approve", 1.0,
+        "Good wins 3-0! Assassination phase begins.", True),
 ]
 
-episode = FakeEpisode(experiences, task="deliver onion soup")
+episode = FakeEpisode(experiences, task="win 3 quests as Good team")
 
-
-# -- 2.  Mock the LLM call ---------------------------------------------------
-#
-# In production, ask_model sends the state strings to GPT/Claude/Gemini.
-# Here we return what the LLM *would* return: structured predicates.
 
 def mock_ask_model(prompt, **kwargs):
     """Simulate what the LLM returns for predicate extraction."""
-    # The LLM reads the NL states and extracts structured facts
-    # A well-prompted LLM focuses on SEMANTICALLY MEANINGFUL facts:
-    #   - holding: what the agent carries (changes = inventory event)
-    #   - pot_status: cooking progress (changes = workflow milestone)
-    #   - objective: current sub-goal (changes = task switch)
-    # It does NOT include trivial per-step changes like grid position.
     mock_predicates = [
-        {"holding": "nothing", "pot_status": "empty",   "objective": "get_ingredient"},
-        {"holding": "nothing", "pot_status": "empty",   "objective": "get_ingredient"},
-        {"holding": "nothing", "pot_status": "empty",   "objective": "get_ingredient"},
-        {"holding": "onion",   "pot_status": "empty",   "objective": "deliver_to_pot"},    # <- flip: picked up onion
-        {"holding": "onion",   "pot_status": "empty",   "objective": "deliver_to_pot"},
-        {"holding": "nothing", "pot_status": "has_onion","objective": "fill_pot"},          # <- flip: put onion in pot
-        {"holding": "nothing", "pot_status": "has_onion","objective": "fill_pot"},
-        {"holding": "nothing", "pot_status": "cooking", "objective": "wait_for_soup"},     # <- flip: pot started cooking
-        {"holding": "nothing", "pot_status": "ready",   "objective": "pick_up_soup"},      # <- flip: soup ready
-        {"holding": "soup",    "pot_status": "empty",   "objective": "deliver_soup"},      # <- flip: grabbed soup
-        {"holding": "soup",    "pot_status": "empty",   "objective": "deliver_soup"},
-        {"holding": "nothing", "pot_status": "empty",   "objective": "order_complete"},    # <- flip: delivered soup
+        {"phase": "team_selection", "round": 1, "role": "leader",    "quest_score": "0-0"},
+        {"phase": "team_vote",      "round": 1, "role": "voter",     "quest_score": "0-0"},
+        {"phase": "quest",          "round": 1, "role": "quester",   "quest_score": "0-0"},
+        {"phase": "team_selection", "round": 2, "role": "non_leader","quest_score": "1-0"},
+        {"phase": "team_vote",      "round": 2, "role": "voter",     "quest_score": "1-0"},
+        {"phase": "team_selection", "round": 2, "role": "non_leader","quest_score": "1-0"},
+        {"phase": "team_vote",      "round": 2, "role": "voter",     "quest_score": "1-0"},
+        {"phase": "quest",          "round": 2, "role": "quester",   "quest_score": "1-0"},
+        {"phase": "team_selection", "round": 3, "role": "non_leader","quest_score": "2-0"},
+        {"phase": "game_end",       "round": 3, "role": "voter",     "quest_score": "3-0"},
     ]
     return json.dumps(mock_predicates)
 
 
-# -- 3.  Run the hybrid extractor ---------------------------------------------
-
 from skill_agents.boundary_proposal.signal_extractors import get_signal_extractor
 
 hybrid = get_signal_extractor(
-    "llm+overcooked",
+    "llm+avalon",
     ask_model_fn=mock_ask_model,
     model="mock",
-    chunk_size=30,  # all 12 states fit in one chunk
+    chunk_size=30,
 )
 
-# LAYER 1: LLM extracts predicates
 predicates = hybrid.extract_predicates(experiences)
-
-# LAYER 2: Rule-based extracts hard events
 event_times = hybrid.extract_event_times(experiences)
 
 print("=" * 70)
-print("HYBRID EXTRACTOR WALKTHROUGH: Overcooked")
+print("HYBRID EXTRACTOR WALKTHROUGH: Avalon")
 print("=" * 70)
 
 print("\n-- Layer 1: LLM-extracted predicates --")
@@ -165,7 +128,7 @@ for t in range(1, len(predicates)):
         print(f"  t={t:2d}: {changes}")
 
 print("\n-- Layer 2: Rule-based hard events --")
-print("(Overcooked rules: done flags + any positive reward)")
+print("(Avalon rules: phase transitions + done flags)")
 for t in event_times:
     reason = []
     if experiences[t].done:
@@ -175,8 +138,6 @@ for t in event_times:
         reason.append(f"reward={r}")
     print(f"  t={t:2d}: {', '.join(reason)}")
 
-
-# -- 4.  Run full boundary proposal -------------------------------------------
 
 from skill_agents.boundary_proposal import ProposalConfig
 from skill_agents.boundary_proposal.proposal import propose_boundary_candidates, candidate_centers_only
@@ -199,14 +160,11 @@ centers = candidate_centers_only(candidates)
 print(f"\n  Final C = {centers}  (|C|={len(centers)} out of T={len(experiences)})")
 
 
-# -- 5.  Show what each source contributed ------------------------------------
-
 print("\n-- Attribution: what caught each boundary --")
 for c in candidates:
     t = c.center
     reasons = []
     if "predicate" in c.source:
-        # Show nearby predicate flips (within the merge window)
         for tt in range(max(0, t - 1), min(len(predicates), t + 2)):
             if tt > 0:
                 prev_p = predicates[tt - 1]
@@ -223,17 +181,17 @@ for c in candidates:
 
 print("\n-- Interpretation --")
 print("""
-  t=3:  Picked up onion           (LLM: holding nothing -> onion, objective -> deliver_to_pot)
-  t=5:  Put onion in pot          (LLM: holding onion -> nothing, pot empty -> has_onion)
-  t=7:  Pot started cooking       (LLM: pot has_onion -> cooking, objective -> wait_for_soup)
-  t=8:  Soup became ready         (LLM: pot cooking -> ready, objective -> pick_up_soup)
-  t=9:  Grabbed soup from pot     (LLM: holding nothing -> soup, pot ready -> empty)
-  t=10: Delivered soup! +20       (Rule: reward=20.0)
-  t=11: Episode ends              (LLM: holding soup -> nothing, objective -> order_complete)
-                                  (Rule: done=True)
+  t=1:  Team vote phase          (LLM: phase team_selection -> team_vote)
+  t=2:  Quest phase              (LLM: phase team_vote -> quest; Rule: reward=1.0)
+  t=3:  New round, team select   (LLM: round 1->2, quest_score 0-0->1-0)
+  t=4:  Team rejected            (LLM: phase team_selection -> team_vote)
+  t=5:  Re-proposal              (LLM: phase team_vote -> team_selection)
+  t=7:  Quest phase again        (LLM: phase team_vote -> quest; Rule: reward=1.0)
+  t=8:  Round 3 begins           (LLM: round 2->3, quest_score 1-0->2-0)
+  t=9:  Game ends, Good wins     (LLM: phase -> game_end; Rule: done=True)
 
-  The RULE-BASED layer catches t=10 and t=11 for FREE (reward spike + done).
-  The LLM layer catches SEMANTIC transitions (t=3,5,7,8,9) that no
-  keyword list could find without per-env hardcoding.
+  The RULE-BASED layer catches quest completions and game end for FREE.
+  The LLM layer catches SEMANTIC transitions (phase changes, round shifts)
+  that require understanding the game state description.
   Together they give complete boundary coverage.
 """)

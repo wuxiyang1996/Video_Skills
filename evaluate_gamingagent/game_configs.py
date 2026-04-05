@@ -3,13 +3,13 @@ Per-game default configurations for the LMGame-Bench evaluation suite.
 
 LMGame-Bench (GamingAgent) contains 11 games across 3 categories:
 
-  CUSTOM (6):  2048, Sokoban, Candy Crush, Tetris, Doom, Pokemon Red
+  CUSTOM (4):  2048, Candy Crush, Tetris, Doom
   RETRO  (3):  Super Mario Bros, Ace Attorney, 1942
   ZOO    (2):  Tic-Tac-Toe, Texas Hold'em
 
 Orak benchmark (krafton-ai/Orak) adds 12 games across 6 genres:
 
-  FREE (6):    2048, Super Mario, Street Fighter III, StarCraft II, Pokemon Red, Minecraft
+  FREE (5):    2048, Super Mario, Street Fighter III, StarCraft II, Minecraft
   PAID (6):    Baba Is You, Ace Attorney, Her Story, Darkest Dungeon, Slay the Spire, Stardew Valley
 
 Availability tiers for Orak free games:
@@ -17,7 +17,6 @@ Availability tiers for Orak free games:
   - Super Mario:      pip-only (gym-super-mario-bros bundles the ROM)
   - Street Fighter:   needs Diambra account (free) + Docker + ROM
   - StarCraft II:     needs Battle.net (free) + SC2 client (free-to-play) + maps
-  - Pokemon Red:      needs ROM file (.gbc) + PyBoy
   - Minecraft:        needs Minecraft Java ($30 client) + Voyager + Node.js
 """
 
@@ -52,15 +51,6 @@ GAME_CONFIGS: Dict[str, GameConfig] = {
         description="Slide tiles to reach 2048",
         notes="Reward = tile merges score",
     ),
-    "sokoban": GameConfig(
-        name="sokoban",
-        display_name="Sokoban",
-        category="custom",
-        max_steps=100,
-        episodes=3,
-        description="Push boxes onto target locations",
-        notes="Spatial reasoning; stuck-detection triggers early termination",
-    ),
     "candy_crush": GameConfig(
         name="candy_crush",
         display_name="Candy Crush",
@@ -90,18 +80,6 @@ GAME_CONFIGS: Dict[str, GameConfig] = {
         description="VizDoom basic scenario: shoot the monster",
         notes="Excluded: text-only mode too limited for meaningful training",
     ),
-    "pokemon_red": GameConfig(
-        name="pokemon_red",
-        display_name="Pokemon Red",
-        category="custom",
-        max_steps=200,
-        episodes=1,
-        available=True,
-        rom_required=True,
-        description="Navigate the world of Pokemon Red (Game Boy)",
-        notes="Requires Pokemon Red .gb ROM file + PyBoy; ROM at GamingAgent/gamingagent/configs/custom_06_pokemon_red/rom/pokemon.gb",
-    ),
-
     # ── Retro games ─────────────────────────────────────────────────────
     "super_mario_bros": GameConfig(
         name="super_mario_bros",
@@ -140,7 +118,7 @@ GAME_CONFIGS: Dict[str, GameConfig] = {
     # ── Orak benchmark games (krafton-ai/Orak, 12 games, 6 genres) ────
     #
     # FREE games (no purchase required):
-    #   2048, Super Mario, Street Fighter III, StarCraft II, Pokemon Red, Minecraft
+    #   2048, Super Mario, Street Fighter III, StarCraft II, Minecraft
     # PAID games ($10-$25 one-time purchase each):
     #   Baba Is You, Ace Attorney, Her Story, Darkest Dungeon, Slay the Spire, Stardew Valley
     #
@@ -196,18 +174,6 @@ GAME_CONFIGS: Dict[str, GameConfig] = {
         description="Orak StarCraft II 2-player: Agent vs Agent, 5 actions per step",
         notes="Same setup as orak_star_craft; two-player variant",
         setup_difficulty="hard",
-    ),
-    # ── FREE: RPG ───────────────────────────────────────────────────────
-    "orak_pokemon_red": GameConfig(
-        name="orak_pokemon_red",
-        display_name="Pokemon Red (Orak)",
-        category="orak_free",
-        max_steps=200,
-        episodes=3,
-        description="Orak Pokemon Red: storyline milestones (0-12 flags)",
-        notes="Needs pokered.gbc ROM (legally obtained) + PyBoy + pret/pokered map data",
-        rom_required=True,
-        setup_difficulty="medium",
     ),
     # ── FREE: Simulation ────────────────────────────────────────────────
     "orak_minecraft": GameConfig(

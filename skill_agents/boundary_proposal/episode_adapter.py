@@ -9,9 +9,9 @@ This is the main integration point.  Given an Episode, it:
   4. Segments the Episode into SubTask_Experience objects at those boundaries.
 
 Signal extraction strategies (via ``env_name``):
-  - ``"overcooked"`` etc.       — rule-based (fast, brittle keyword matching)
+  - ``"avalon"`` etc.           — rule-based (fast, brittle keyword matching)
   - ``"llm"``                   — LLM-based (general, adaptive to any env)
-  - ``"llm+overcooked"`` etc.   — hybrid: LLM predicates + per-env hard events (recommended)
+  - ``"llm+avalon"`` etc.       — hybrid: LLM predicates + per-env hard events (recommended)
 
 Usage:
     from skill_agents.boundary_proposal.episode_adapter import segment_episode
@@ -21,7 +21,7 @@ Usage:
     # Recommended: hybrid LLM + rule-based
     sub_episodes = segment_episode(
         episode,
-        env_name="llm+overcooked",
+        env_name="llm+avalon",
         config=ProposalConfig(merge_radius=5),
         extractor_kwargs={"model": "gpt-4o-mini"},
     )
@@ -149,7 +149,7 @@ def propose_from_episode(
     episode : Episode
         From data_structure.experience.
     env_name : str
-        "overcooked", "avalon", "diplomacy", or "generic".
+        "avalon", "diplomacy", or "generic".
     config : ProposalConfig, optional
     embedder : TextEmbedderBase, optional
         If provided, computes embedding change-point scores from summaries.

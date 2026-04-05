@@ -14,10 +14,10 @@ Usage:
     from env_wrappers.gamingagent_nl_wrapper import GamingAgentNLWrapper
     from GamingAgent.gym_like import make_gaming_env
 
-    base_env = make_gaming_env("sokoban", max_steps=200)
+    base_env = make_gaming_env("twenty_forty_eight", max_steps=200)
     env = GamingAgentNLWrapper(base_env)
     obs, info = env.reset()   # obs: str (text state)
-    obs, reward, term, trunc, info = env.step("push up")
+    obs, reward, term, trunc, info = env.step("up")
 """
 
 import ast
@@ -32,7 +32,6 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 _GAME_HINTS = [
-    (re.compile(r"sokoban|box|wall|goal|push", re.I), "sokoban"),
     (re.compile(r"maze|corridor|exit", re.I), "maze"),
     (re.compile(r"tetris|block|rotate|drop", re.I), "tetris"),
     (re.compile(r"2048|twenty.?forty.?eight|highest.?tile", re.I), "2048"),
@@ -279,7 +278,7 @@ class GamingAgentNLWrapper:
         Args:
             env: GamingAgentEnv (or any env with obs["text"] and string-action step).
             include_action_hint: If True, append valid action names to the NL state.
-            game_name: Specific game identifier (e.g. "sokoban", "2048").
+            game_name: Specific game identifier (e.g. "tetris", "2048").
                        Auto-detected from observation text if not provided.
         """
         self._env = env

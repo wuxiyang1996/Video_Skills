@@ -23,8 +23,6 @@ Paper: [arXiv:2506.03610](https://arxiv.org/pdf/2506.03610)
 | **Street Fighter III** | Action | Diambra (free) + Docker + ROM | Character move names (e.g. `Fireball`) | Stages cleared |
 | **StarCraft II** | Strategy | Battle.net (free) + SC2 client + maps | 5 macro actions per step (e.g. `TRAIN ZEALOT`) | Victory / Defeat |
 | **StarCraft II Multi** | Strategy | Same as StarCraft II | 5 macro actions per step | Win / Loss |
-| **Pokemon Red** | RPG | `pyboy` + `.gb` ROM + map data | Directional + tool calls (e.g. `move_to(x,y)`, `warp_with_warp_point`) | Milestone flags (0-12) |
-
 ### Paid Games ($6-$25 Steam purchase each)
 
 | Game | Genre | Price | Action Format | Scoring |
@@ -136,42 +134,7 @@ compatible 2019 ladder maps on Linux.
 # Street Fighter III
 pip install diambra-arena diambra ultralytics
 
-# Pokemon Red
-pip install pyboy==2.5.2
 ```
-
----
-
-## Pokemon Red — Full Setup (text-only, no screens)
-
-Pokemon Red in this repo is **text-only**: state is derived from PyBoy memory reads (map, position, party, dialog, battle), not from screenshots. Cold-start and evaluation use the Orak Pokemon Red env and toolset.
-
-### Requirements
-
-1. **ROM**: A `.gb` ROM (e.g. `Pokemon - Red Version (USA, Europe).gb`). Place or symlink at `GamingAgent/gamingagent/configs/custom_06_pokemon_red/rom/pokemon.gb` (or pass `--rom_path` to the cold-start script).
-2. **PyBoy**: `pip install pyboy==2.5.2`
-3. **Map data** (for navigation tools): Clone the [pret/pokered](https://github.com/pret/pokered) disassembly into `Orak/src/mcp_game_servers/pokemon_red/game/pokered`, then from the Orak repo root run:
-   ```bash
-   cd game_agent/Orak
-   python3 src/mcp_game_servers/pokemon_red/game/utils/map_preprocess.py
-   ```
-   This generates `processed_map/` with collision and warp data. On Linux, map names from memory (e.g. `RedsHouse2f`) may differ in case from generated files (`RedsHouse2F.py`); symlinks can be added so both resolve.
-
-### Cold-start (trajectory generation)
-
-From `Game-AI-Agent`:
-
-```bash
-export PYTHONPATH="$(pwd):$(pwd)/../GamingAgent:$(pwd)/../Orak/src:$PYTHONPATH"
-bash cold_start/run_coldstart_pokemon_red.sh --episodes 3 --max_steps 200 --verbose --no_label
-```
-
-Output: `cold_start/output/gpt54_pokemon_red/pokemon_red/`. See `cold_start/readme.md` for full options and natural termination conditions.
-
-### Observation and actions
-
-- **State**: Field/Dialog/Battle/Title; map name, dimensions, position; full map grid (walkable, warp points, objects); party, badges, bag, money; dialog text when in Dialog state.
-- **Actions**: High-level tools (`move_to`, `warp_with_warp_point`, `continue_dialog`, `select_move_in_battle`, `interact_with_object`, etc.) when map data exists; raw buttons (`up`/`down`/`left`/`right`/`a`/`b`/`start`/`select`) for menu/dialog choices and fallback movement.
 
 ---
 
@@ -283,12 +246,6 @@ decision agents expect.
 - **Obs**: Player HP/energy, cards in hand, monsters, relics
 - **Actions**: `PLAY <card_idx> [target_idx]`, `END`, `CHOOSE <idx>`, `SKIP`
 - **Score**: Floor reached (max 50 = boss defeated)
-
-### Pokemon Red (RPG)
-- **Env class**: `PokemonRedEnv` (Orak)
-- **Obs**: Text-only: map name, (x,y), full map grid (O/X/WarpPoint/objects), party, badges, bag, money, dialog text. No screens.
-- **Actions**: High-level tools (`move_to(x,y)`, `warp_with_warp_point`, `continue_dialog`, `select_move_in_battle`, `interact_with_object`, etc.) when `processed_map` data exists; raw buttons (`up`/`down`/`left`/`right`/`a`/`b`/`start`/`select`) for choices and fallback.
-- **Score**: Orak storyline milestone flags (0-12). Cold-start: `cold_start/run_coldstart_pokemon_red.sh`; see `cold_start/readme.md`.
 
 ### Darkest Dungeon (RPG)
 - **Env class**: `DarkestDungeonEnv`

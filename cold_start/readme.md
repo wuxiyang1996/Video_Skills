@@ -4,39 +4,28 @@ Cold-start data generation for the **COS-PLAY** co-evolution framework (COLM 202
 
 ## Scope: Environments and Games We Use
 
-We have **four** cold-start generators covering **8 games** across three environment stacks:
+We have **three** cold-start generators covering **6 games** across three environment stacks:
 
 ### 1. LMGame-Bench (`generate_cold_start_gpt54.py`)
 
 | # | Game | Registry Key | Actions |
 |---|------|--------------|---------|
 | 1 | **2048** | `twenty_forty_eight` | `up`, `down`, `left`, `right` |
-| 2 | **Sokoban** | `sokoban` | `up`, `down`, `left`, `right` |
-| 3 | **Candy Crush** | `candy_crush` | coordinate swaps, e.g. `((0,5),(1,5))` |
-| 4 | **Tetris** | `tetris` | `move_left`, `move_right`, `rotate_cw`, `rotate_ccw`, `hard_drop`, `soft_drop` |
+| 2 | **Candy Crush** | `candy_crush` | coordinate swaps, e.g. `((0,5),(1,5))` |
+| 3 | **Tetris** | `tetris` | `move_left`, `move_right`, `rotate_cw`, `rotate_ccw`, `hard_drop`, `soft_drop` |
 
 ### 2. AgentEvolver (`generate_cold_start_evolver.py`)
 
 | # | Game | Registry Key | Actions |
 |---|------|--------------|---------|
-| 5 | **Avalon** | `avalon` | team proposals, approve/reject votes, pass/fail, assassination target |
-| 6 | **Diplomacy** | `diplomacy` | unit orders (move, hold, support, convoy, retreat, build, disband) |
+| 4 | **Avalon** | `avalon` | team proposals, approve/reject votes, pass/fail, assassination target |
+| 5 | **Diplomacy** | `diplomacy` | unit orders (move, hold, support, convoy, retreat, build, disband) |
 
 ### 3. Orak (`generate_cold_start_orak.py`)
 
 | # | Game | Registry Key | Actions |
 |---|------|--------------|---------|
-| 7 | **Super Mario** | `super_mario` | `Jump Level : 0` … `6` |
-
-### 4. Pokemon Red — Orak (`generate_cold_start_pokemon_red.py`)
-
-| # | Game | Registry Key | Actions |
-|---|------|--------------|---------|
-| 8 | **Pokemon Red** | `pokemon_red` | High-level tools: `move_to`, `warp_with_warp_point`, `continue_dialog`, `select_move_in_battle`, etc.; raw buttons: `up`/`down`/`left`/`right`/`a`/`b` |
-
-Uses the **Orak** Pokemon Red environment and toolset (PyBoy + `pokered` map data). Text-only (no screens). See [Pokemon Red cold-start](#pokemon-red-rollouts--orak) below.
-
-Other envs and games (e.g. Doom, Ace Attorney, 1942, Tic-Tac-Toe, Texas Hold'em from the full LMGame-Bench set) are **not available** in our setup.
+| 6 | **Super Mario** | `super_mario` | `Jump Level : 0` … `6` |
 
 ### End conditions (how episodes terminate)
 
@@ -45,13 +34,11 @@ All cold-start generators use the **natural end condition** of each game engine.
 | Game | Natural end condition | Source |
 |------|----------------------|--------|
 | **2048** | No valid moves (game over), or reach 2048 tile; also terminates after 10 steps with no board change. | GamingAgent env |
-| **Sokoban** | All boxes on targets (win); or env `max_steps_episode` (200); or 5 steps with no change. | GamingAgent env |
 | **Candy Crush** | Run out of moves (`num_moves` = 50 in env config). | GamingAgent env |
 | **Tetris** | Stack reaches top (game over); or 30 steps with no change. | GamingAgent env |
 | **Avalon** | 3 quest failures (Evil wins) or assassination resolves after 3 quest successes. Always finite. | `AvalonGameEnvironment.done` |
 | **Diplomacy** | Solo victory (`game.is_game_done`) or 20 phases elapsed (`DiplomacyConfig.max_phases = 20`). | `DiplomacyNLWrapper.done` |
 | **Super Mario** | Level complete or game over; capped at 100 steps. | Orak env |
-| **Pokemon Red** | Whiteout (all party HP=0); no progress (80 steps same location); Orak 12-milestone completion; or max_steps. | Orak env + cold-start script |
 
 ## Goal
 
@@ -73,16 +60,16 @@ cd /path/to/Game-AI-Agent
 export PYTHONPATH="$(pwd):$(pwd)/../GamingAgent:$PYTHONPATH"
 ```
 
-## LMGame-Bench Rollouts (games 1-4)
+## LMGame-Bench Rollouts (games 1-3)
 
 ### Batch rollouts (100 per game)
 
 ```bash
-# All 4 games, 100 episodes each (default)
+# All 3 games, 100 episodes each (default)
 python cold_start/run_100_rollouts.py
 
 # Specific games only
-python cold_start/run_100_rollouts.py --games twenty_forty_eight sokoban tetris candy_crush
+python cold_start/run_100_rollouts.py --games twenty_forty_eight tetris candy_crush
 
 # Fewer episodes for testing
 python cold_start/run_100_rollouts.py --episodes 5 --max_steps 30
@@ -100,7 +87,7 @@ python cold_start/run_100_rollouts.py --label
 ### Per-game GPT-5.4 rollouts
 
 ```bash
-# All 4 games, 50 episodes each (run until natural end per game)
+# All 3 games, 50 episodes each (run until natural end per game)
 bash cold_start/run_coldstart_gpt54_per_game.sh --episodes 50
 
 # Only 2048 and Tetris, 20 episodes each
@@ -131,7 +118,7 @@ python cold_start/generate_cold_start.py --all_games --episodes 3 --max_steps 50
 
 Output: `cold_start/data/<game_name>/`
 
-## AgentEvolver Rollouts — Avalon & Diplomacy (games 5-6)
+## AgentEvolver Rollouts — Avalon & Diplomacy (games 4-5)
 
 Both games always run to their **natural end condition**. There is no `--max_steps` flag; the engines themselves decide when a game is over:
 
@@ -170,7 +157,7 @@ python cold_start/generate_cold_start_evolver.py --resume
 
 Output: `cold_start/output/gpt54_evolver/<game_name>/`
 
-## Orak Rollouts — Super Mario (game 7)
+## Orak Rollouts — Super Mario (game 6)
 
 Each Orak game needs its own conda environment.
 
@@ -184,34 +171,6 @@ bash cold_start/run_coldstart_orak_mario.sh --episodes 10
 
 Output: `cold_start/output/gpt54_orak/<game_name>/`
 
-## Pokemon Red Rollouts — Orak
-
-Pokemon Red cold-start uses the **Orak** environment and toolset (PyBoy emulator, text-only state). It requires:
-
-1. **ROM**: A `.gb` ROM (e.g. `Pokemon - Red Version (USA, Europe).gb`). A symlink is typically used at `GamingAgent/gamingagent/configs/custom_06_pokemon_red/rom/pokemon.gb`.
-2. **PyBoy**: `pip install pyboy==2.5.2`
-3. **Map data**: The `pokered` disassembly must be cloned and processed so navigation tools (`move_to`, `warp_with_warp_point`, etc.) work:
-   - Clone: `game_agent/Orak/src/mcp_game_servers/pokemon_red/game/pokered` from [pret/pokered](https://github.com/pret/pokered).
-   - From Orak root: `python3 src/mcp_game_servers/pokemon_red/game/utils/map_preprocess.py` to generate `processed_map/` (and fix case symlinks if needed for Linux).
-
-```bash
-# From Game-AI-Agent root (labeling off by default; use labeling/ for that)
-bash cold_start/run_coldstart_pokemon_red.sh --episodes 3 --max_steps 200 --verbose
-
-# With custom ROM path
-bash cold_start/run_coldstart_pokemon_red.sh --episodes 5 --max_steps 200 --rom_path /path/to/pokemon.gb
-
-# Resume interrupted run
-bash cold_start/run_coldstart_pokemon_red.sh --episodes 10 --resume
-
-# Enable labeling (optional)
-bash cold_start/run_coldstart_pokemon_red.sh --episodes 3 --label
-```
-
-Output: `cold_start/output/gpt54_pokemon_red/pokemon_red/`
-
-Natural termination: whiteout, no-progress cap (80 steps same location), Orak 12-milestone score completion, or `--max_steps`.
-
 ## Output Structure
 
 All generators produce the same directory layout per game:
@@ -224,7 +183,7 @@ cold_start/output/<suite>/<game_name>/
 └── rollout_summary.json                     # Per-game stats
 ```
 
-Suites: `gpt54/` (LMGame-Bench), `gpt54_evolver/` (Avalon/Diplomacy), `gpt54_orak/` (Mario), `gpt54_pokemon_red/` (Pokemon Red via Orak).
+Suites: `gpt54/` (LMGame-Bench), `gpt54_evolver/` (Avalon/Diplomacy), `gpt54_orak/` (Mario).
 
 A `batch_rollout_summary.json` sits at the suite root with cross-game stats.
 
@@ -247,10 +206,7 @@ agent.ingest_episodes(episodes)
 agent.run_until_stable(max_iterations=3)
 
 # --- Trainer ingestion (Episode → RolloutRecord) ---
-from trainer.skillbank.ingest_rollouts import ingest_rollouts
-
 records = episodes_to_rollout_records(episodes)
-trajectories = ingest_rollouts(records)
 
 # --- Load all games at once ---
 all_rollouts = load_all_game_rollouts("cold_start/output/gpt54")

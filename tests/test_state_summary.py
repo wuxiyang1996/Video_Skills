@@ -101,8 +101,8 @@ class TestJoinKV:
         assert result == "a=1 | b=2 | c=3"
 
     def test_budget_respected(self):
-        parts = [("game", "overcooked"), ("self", "hold:onion pos:1,2"),
-                 ("ally", "hold:dish"), ("critical", "pot:2ing:cooking")]
+        parts = [("game", "tetris"), ("self", "lines:4 level:2"),
+                 ("board", "holes:3"), ("critical", "height:15")]
         result = _join_kv(parts, 50)
         assert len(result) <= 50
 
@@ -117,21 +117,6 @@ class TestJoinKV:
 # ---------------------------------------------------------------------------
 
 class TestCompactStructuredState:
-    def test_overcooked_example(self):
-        state = {
-            "game": "overcooked",
-            "self": "hold:onion pos:1,2",
-            "ally": "hold:dish",
-            "critical": "pot:2ing:cooking",
-            "orders": "onion_soup",
-            "time_left": "47",
-        }
-        result = compact_structured_state(state)
-        assert len(result) <= HARD_SUMMARY_CHAR_LIMIT
-        assert "game=overcooked" in result
-        assert "self=" in result
-        print(f"  Overcooked structured: [{len(result)}] {result}")
-
     def test_avalon_example(self):
         state = {
             "game": "avalon",
@@ -173,22 +158,6 @@ class TestCompactStructuredState:
         assert len(result) <= HARD_SUMMARY_CHAR_LIMIT
         assert "game=" in result
         print(f"  GamingAgent structured: [{len(result)}] {result}")
-
-    def test_videogamebench_example(self):
-        from env_wrappers.videogamebench_nl_wrapper import build_structured_state_summary
-        state = build_structured_state_summary(
-            step=37,
-            last_action=5,
-            last_reward=0.0,
-            recent_actions=[5, 5, 5, 5, 5, 5, 5, 5],
-            recent_rewards=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            game_name="kirby",
-        )
-        result = compact_structured_state(state)
-        assert len(result) <= HARD_SUMMARY_CHAR_LIMIT
-        assert "game=kirby" in result
-        assert "stall" in result.lower() or "repeat" in result.lower()
-        print(f"  VideoGameBench structured: [{len(result)}] {result}")
 
     def test_respects_hard_limit(self):
         state = {f"key{i}": f"value{'x' * 50}{i}" for i in range(20)}
@@ -289,7 +258,7 @@ class TestGetStateSummary:
     def test_backward_compat_kwargs(self):
         """Legacy game= and model= kwargs should not raise."""
         obs = "Game state info here."
-        result = get_state_summary(obs, game="overcooked", model="gpt-4o-mini")
+        result = get_state_summary(obs, game="tetris", model="gpt-4o-mini")
         assert result
 
     def test_max_chars_clamped_to_400(self):
@@ -309,32 +278,6 @@ def demo_examples():
     print("STATE SUMMARY PIPELINE — DEMO EXAMPLES")
     print(f"Budget: DEFAULT={DEFAULT_SUMMARY_CHAR_BUDGET}  HARD={HARD_SUMMARY_CHAR_LIMIT}")
     print("=" * 60)
-
-    # --- Overcooked ---
-    oc_struct = {
-        "game": "overcooked",
-        "self": "hold:onion pos:1,2",
-        "ally": "hold:dish",
-        "critical": "pot:2ing:cooking",
-        "orders": "onion_soup",
-        "time_left": "47",
-    }
-    oc_text = (
-        "You are at position (1, 2), facing north, holding onion.\n"
-        "Your teammate is at position (3, 1), facing east, holding dish.\n"
-        "Objects on the grid:\n  - At (2, 0): soup (onion, onion; cooking)\n"
-        "Current timestep: 53.\nSteps remaining in episode: 47.\n"
-        "Choose one action: north, south, east, west, stay, or interact."
-    )
-    print("\n--- Overcooked (structured) ---")
-    s = compact_structured_state(oc_struct)
-    print(f"  [{len(s)} chars] {s}")
-    print("--- Overcooked (text fallback) ---")
-    s = compact_text_observation(oc_text)
-    print(f"  [{len(s)} chars] {s}")
-    print("--- Overcooked (get_state_summary, structured) ---")
-    s = get_state_summary(oc_text, structured_state=oc_struct)
-    print(f"  [{len(s)} chars] {s}")
 
     # --- Avalon ---
     av_struct = {
@@ -382,32 +325,6 @@ def demo_examples():
     )
     print("\n--- GamingAgent (structured) ---")
     s = compact_structured_state(ga_struct)
-    print(f"  [{len(s)} chars] {s}")
-
-    # --- VideoGameBench ---
-    from env_wrappers.videogamebench_nl_wrapper import build_structured_state_summary as vgb_build
-    vgb_struct = vgb_build(
-        step=37,
-        last_action=5,
-        last_reward=0.0,
-        recent_actions=[5, 5, 5, 5, 5, 5, 5, 5],
-        recent_rewards=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        game_name="kirby",
-    )
-    print("\n--- VideoGameBench (structured) ---")
-    s = compact_structured_state(vgb_struct)
-    print(f"  [{len(s)} chars] {s}")
-
-    vgb_progress = vgb_build(
-        step=12,
-        last_action=1,
-        last_reward=10.0,
-        recent_actions=[5, 5, 7, 1, 1],
-        recent_rewards=[0.0, 0.0, 5.0, 10.0, 10.0],
-        game_name="kirby",
-    )
-    print("--- VideoGameBench (with progress) ---")
-    s = compact_structured_state(vgb_progress)
     print(f"  [{len(s)} chars] {s}")
 
     print("\n" + "=" * 60)

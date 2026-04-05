@@ -18,27 +18,23 @@ SKILL_BANK_GAMES = [
     "twenty_forty_eight",
     "tetris",
     "avalon",
-    "sokoban",
     "candy_crush",
+    "super_mario",
 ]
 
 # Evaluation-only: rollouts collected for metrics but NOT fed into GRPO training.
-# pokemon_red: PyBoy emulator race condition under concurrent episode init.
-# super_mario: nes_py 8.2.1 + NumPy 2.x incompatibility.
 EVAL_ONLY_GAMES: List[str] = []
 
 GAME_MAX_STEPS: Dict[str, int] = {
-    "pokemon_red": 200,
     "diplomacy": 20,
     "twenty_forty_eight": 200,
     "tetris": 200,
     "avalon": 50,
-    "sokoban": 200,
     "candy_crush": 50,
-    "super_mario": 500,  # kept for reference if re-enabled
+    "super_mario": 500,
 }
 
-EMULATOR_GAMES = {"pokemon_red"}
+EMULATOR_GAMES: set = set()
 
 # ── Multi-role rollout constants ─────────────────────────────────────
 # When ``unified_role_rollouts`` is enabled, the same decision agent
@@ -99,9 +95,8 @@ GAME_DURATION_ORDER = [
     "twenty_forty_eight",
     "tetris",
     "avalon",
-    "sokoban",
     "candy_crush",
-    "pokemon_red",
+    "super_mario",
 ]
 
 ADAPTER_NAMES = [
@@ -117,13 +112,13 @@ ADAPTER_NAMES = [
 
 CURRICULUM_GRADUAL: Dict[int, List[str]] = {
     0: ["twenty_forty_eight", "tetris", "candy_crush"],
-    10: ["twenty_forty_eight", "tetris", "candy_crush", "sokoban"],
-    15: ["twenty_forty_eight", "tetris", "candy_crush", "sokoban", "avalon"],
-    20: ["twenty_forty_eight", "tetris", "candy_crush", "sokoban", "avalon", "diplomacy"],
+    10: ["twenty_forty_eight", "tetris", "candy_crush", "super_mario"],
+    15: ["twenty_forty_eight", "tetris", "candy_crush", "super_mario", "avalon"],
+    20: ["twenty_forty_eight", "tetris", "candy_crush", "super_mario", "avalon", "diplomacy"],
 }
 
 CURRICULUM_FOCUSED: Dict[int, List[str]] = {
-    0: ["twenty_forty_eight", "tetris", "candy_crush", "sokoban"],
+    0: ["twenty_forty_eight", "tetris", "candy_crush", "super_mario"],
     40: ["avalon", "diplomacy"],
 }
 

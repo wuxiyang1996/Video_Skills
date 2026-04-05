@@ -43,7 +43,7 @@ From the Game-AI-Agent codebase root with GamingAgent on PYTHONPATH:
 cd D:\ICML2026\Game-AI-Agent
 $env:PYTHONPATH = (Get-Location).Path + ";" + (Get-Location).Path + "\..\GamingAgent"
 python evaluate_gamingagent/test_gamingagent_dummy.py --game twenty_forty_eight --max_steps 20
-python evaluate_gamingagent/test_gamingagent_dummy.py --game sokoban --max_steps 30 --mode random_nl
+python evaluate_gamingagent/test_gamingagent_dummy.py --game candy_crush --max_steps 30 --mode random_nl
 ```
 
-Available games (run with `--list-games`): twenty_forty_eight, sokoban, candy_crush, tetris, pokemon_red (requires ROM).
+Available games (run with `--list-games`): twenty_forty_eight, candy_crush, tetris.

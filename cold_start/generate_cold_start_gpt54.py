@@ -22,7 +22,7 @@ Usage (from Game-AI-Agent root):
     python cold_start/generate_cold_start_gpt54.py
 
     # Specific game(s)
-    python cold_start/generate_cold_start_gpt54.py --games tic_tac_toe sokoban tetris
+    python cold_start/generate_cold_start_gpt54.py --games twenty_forty_eight candy_crush tetris
 
     # Fewer episodes (for testing)
     python cold_start/generate_cold_start_gpt54.py --episodes 5 --max_steps 30

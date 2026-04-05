@@ -11,18 +11,16 @@ Both share the same code path; `API_func.ask_model` routes to the correct API ba
 
 ## Supported games
 
-**8 games** across three environment stacks (matching `cold_start/`):
+**6 games** across three environment stacks (matching `cold_start/`):
 
 | # | Stack | Game | Registry Key |
 |---|-------|------|-------------|
 | 1 | LMGame-Bench | **2048** | `twenty_forty_eight` |
-| 2 | LMGame-Bench | **Sokoban** | `sokoban` |
-| 3 | LMGame-Bench | **Candy Crush** | `candy_crush` |
-| 4 | LMGame-Bench | **Tetris** | `tetris` |
-| 5 | AgentEvolver | **Avalon** | `avalon` |
-| 6 | AgentEvolver | **Diplomacy** | `diplomacy` |
-| 7 | Orak | **Super Mario** | `super_mario` |
-| 8 | Orak | **Pokemon Red** | `pokemon_red` |
+| 2 | LMGame-Bench | **Candy Crush** | `candy_crush` |
+| 3 | LMGame-Bench | **Tetris** | `tetris` |
+| 4 | AgentEvolver | **Avalon** | `avalon` |
+| 5 | AgentEvolver | **Diplomacy** | `diplomacy` |
+| 6 | Orak | **Super Mario** | `super_mario` |
 
 ---
 
@@ -89,10 +87,9 @@ General-purpose evaluation script across multiple benchmarks, with optional skil
 | Runner | Games | Features |
 |--------|-------|----------|
 | `run_qwen3_episode()` | 2048, Tetris, Candy Crush | Standard LMGame-Bench loop |
-| `run_qwen3_sokoban_episode()` | Sokoban | `SokobanNLWrapper` with grid prompts, periodic reflection every N steps |
 | `run_qwen3_avalon_episode()` | Avalon | Multi-agent (all players = Qwen3), `ThreadPoolExecutor` parallel queries |
 | `run_qwen3_diplomacy_episode()` | Diplomacy | 7 powers, order parsing, SC delta tracking, 20-phase cap |
-| `run_qwen3_orak_episode()` | Super Mario, Pokemon Red | Orak env wrappers |
+| `run_qwen3_orak_episode()` | Super Mario | Orak env wrappers |
 
 **Key features:**
 
@@ -108,7 +105,7 @@ export PYTHONPATH="$(pwd):$(pwd)/../GamingAgent:$PYTHONPATH"
 export VLLM_BASE_URL="http://localhost:8000/v1"
 
 python -m scripts.run_qwen3_8b_eval --games twenty_forty_eight --episodes 3
-python -m scripts.run_qwen3_8b_eval --episodes 10                   # all available games
+python -m scripts.run_qwen3_8b_eval --episodes 10                   # all 6 games
 python -m scripts.run_qwen3_8b_eval --resume                       # resume interrupted run
 python -m scripts.run_qwen3_8b_eval --bank path/to/bank.jsonl      # with optional skill bank
 python -m scripts.run_qwen3_8b_eval --list-games                   # show available games
@@ -125,7 +122,7 @@ python -m scripts.run_qwen3_8b_eval --list-games                   # show availa
 | Action parsing | Fuzzy + edit distance + RAG embedding | Exact match + `extract_action()` |
 | Anti-repetition | Yes | No |
 | Action format in prompt | Numbered list | Comma-separated |
-| Game coverage | LMGame-Bench (+ Sokoban special) | LMGame-Bench + Avalon + Diplomacy + Orak |
+| Game coverage | LMGame-Bench | LMGame-Bench + Avalon + Diplomacy + Orak |
 | Experience summary | State summary only | Extra LLM call for strategic note |
 | Output dir | `test_rollout/decision_agent/` | `output/<model>/` |
 | Resume support | No | Yes |
@@ -166,7 +163,7 @@ Skills are sorted by confidence and top-k returned as `SkillSelectionResult` obj
 | `agent.py` | `VLMDecisionAgent` (LLM decision agent), `run_tool()`, `run_episode_vlm_agent()`, tool handlers (e.g. `TOOL_SELECT_SKILL` → `active_skill_plan` from protocol steps) |
 | `agent_helper.py` | `get_state_summary()`, `build_rag_summary()`, `extract_game_facts()`, `infer_intention()`, `EpisodicMemoryStore`, `skill_bank_to_text()`, `query_skill_bank()` / `select_skill_from_bank()`, `_get_protocol_for_skill()` |
 | `reward_func.py` | `RewardConfig`, `RewardResult`, `RewardComputer`, `compute_reward()` (r_follow uses skill contract `eff_add`) |
-| `dummy_agent.py` | Baseline `language_agent_action()` + game detection + action extraction for all 8 supported games (LMGame-Bench, AgentEvolver, Orak) |
+| `dummy_agent.py` | Baseline `language_agent_action()` + game detection + action extraction for all 6 supported games (LMGame-Bench, AgentEvolver, Orak) |
 | `__init__.py` | Re-exports the above |
 
 ---
@@ -302,17 +299,17 @@ summary = get_state_summary(
     obs_text,
     structured_state=info.get("structured_state"),
 )
-# → "game=sokoban | self=Player at (2,3) | objective=push box to goal | boxes=3 goals=3"
+# → "game=tetris | phase=midgame | stack_h=14 | holes=32 | next=T,Z,I,J | level=1"
 ```
 
 **Supported wrappers with `build_structured_state_summary()`:**
 
 | Wrapper | Key fields | Example |
 |---------|-----------|---------|
-| GamingAgent (LMGame-Bench) | game, step, self, objective, critical, affordance | `game=sokoban \| self=Player at (2,3) \| objective=push box` |
+| GamingAgent (LMGame-Bench) | game, step, self, objective, critical, affordance | `game=2048 \| self=highest:256 \| objective=merge tiles` |
 | Avalon | game, phase, self, progress, critical, objective | `game=avalon \| phase=team_vote \| self=role:Percival(G)` |
 | Diplomacy | game, phase, self, resources, critical, objective | `game=diplomacy \| phase=S1902M \| self=power:FRANCE centers:5` |
-| Orak (Mario / Pokemon Red) | game, step, self, objective, critical, affordance | `game=super_mario \| self=pos:(120,80) \| objective=reach flag` |
+| Orak (Mario) | game, step, self, objective, critical, affordance | `game=super_mario \| self=pos:(120,80) \| objective=reach flag` |
 
 ### `build_rag_summary(state, game_name, *, step_idx, total_steps, reward, max_chars)`
 
@@ -331,7 +328,7 @@ summary = build_rag_summary(
 # → "game=tetris | phase=midgame | step=50/86 | stack_h=14 | holes=32 | next=T,Z,I,J | level=1 | reward=+1"
 ```
 
-Uses `extract_game_facts()` internally — game-specific parsers for Tetris (stack_h, holes, piece, next), 2048 (highest, empty, tiles, merges), Candy Crush (score, moves, pairs), Sokoban (boxes, goals, worker), Super Mario (x_pos, y_pos, coins, time), Avalon (phase, role, quest), and Diplomacy (phase, power, centers, units).
+Uses `extract_game_facts()` internally — game-specific parsers for Tetris (stack_h, holes, piece, next), 2048 (highest, empty, tiles, merges), Candy Crush (score, moves, pairs), Super Mario (mario position, enemies, items), Avalon (phase, role, quest), and Diplomacy (phase, power, centers, units).
 
 ### `infer_intention(summary_or_observation, game=None, model=None, context=None)`
 
@@ -440,12 +437,12 @@ from decision_agents import language_agent_action
 
 action = language_agent_action(
     state_nl=observation_text,
-    game="sokoban",
+    game="gamingagent",
     model="Qwen/Qwen3-8B",    # or "gpt-5.4"
 )
 ```
 
-Supports all 8 games: 2048, Sokoban, Candy Crush, Tetris (LMGame-Bench), Avalon, Diplomacy (AgentEvolver), Super Mario, Pokemon Red (Orak).
+Supports all 6 games: 2048, Candy Crush, Tetris (LMGame-Bench), Avalon, Diplomacy (AgentEvolver), Super Mario (Orak).
 
 ---
 

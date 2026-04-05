@@ -25,7 +25,7 @@ This module plugs directly into the framework's data structures:
 | `Episode.separate_into_sub_episodes()` | Can be augmented via `annotate_episode_boundaries()` which marks cuts on Experience objects |
 | RAG `TextEmbedder` | Optional: used to compute embedding change-point scores from experience summaries |
 | `ask_model()` | LLM-based predicate extraction (general, adaptive) |
-| Environment wrappers | Per-env signal extractors know how to read Overcooked/Avalon/Diplomacy state dicts |
+| Environment wrappers | Per-env signal extractors know how to read Avalon/Diplomacy state dicts |
 
 ### Where it fits in the pipeline
 
@@ -58,7 +58,7 @@ The `env_name` parameter controls how predicates are extracted from Experience s
 ### 1. Rule-based (legacy, per-env)
 
 ```python
-env_name="overcooked"   # or "avalon", "diplomacy", "generic"
+env_name="avalon"   # or "diplomacy", "generic"
 ```
 
 Fast (zero LLM cost), but uses hardcoded keyword matching on NL state strings. Brittle — breaks if wrapper phrasing changes. Good only when states are structured dicts with known keys.
@@ -81,7 +81,7 @@ How it works:
 ### 3. Hybrid (recommended for production)
 
 ```python
-env_name="llm+overcooked"   # or "llm+avalon", "llm+diplomacy"
+env_name="llm+avalon"   # or "llm+diplomacy"
 ```
 
 Combines the best of both:
@@ -124,7 +124,7 @@ sub_episodes = segment_episode(
 ```python
 sub_episodes = segment_episode(
     episode,
-    env_name="llm+overcooked",
+    env_name="llm+avalon",
     config=ProposalConfig(merge_radius=5),
     extractor_kwargs={"model": "gemini-2.5-flash"},
 )
@@ -135,7 +135,7 @@ sub_episodes = segment_episode(
 ```python
 sub_episodes = segment_episode(
     episode,
-    env_name="overcooked",
+    env_name="avalon",
     config=ProposalConfig(merge_radius=5),
 )
 ```
@@ -167,7 +167,7 @@ embedder = get_text_embedder()  # Qwen3-Embedding-0.6B
 
 sub_episodes = segment_episode(
     episode,
-    env_name="llm+overcooked",
+    env_name="llm+avalon",
     embedder=embedder,
     changepoint_method="cusum",
     extractor_kwargs={"model": "gpt-4o-mini"},
@@ -367,7 +367,6 @@ skill_agents/boundary_proposal/
 ├── llm_extractor.py       # LLM-based predicate extraction (batched, JSON output)
 ├── episode_adapter.py     # Episode → signals → candidates → SubTask_Experience
 ├── boundary_preference.py # BoundaryPreferenceScorer: plausibility scoring for cut points
-├── example_toy.py         # Standalone toy example (no LLM needed)
 └── requirements.txt       # numpy
 ```
 
@@ -387,10 +386,10 @@ skill_agents/boundary_proposal/
 
 ---
 
-## Toy Example (standalone, no LLM)
+## Hybrid Example (standalone, no LLM)
 
 ```bash
-python -m skill_agents.boundary_proposal.example_toy
+python -m skill_agents.boundary_proposal.example_hybrid
 ```
 
-Runs on synthetic data with predicate flips, surprisal spikes, change-point peaks, and hard events.
+Runs on a simulated Avalon trajectory showing how LLM predicates and rule-based events combine for boundary detection.

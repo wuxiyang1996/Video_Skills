@@ -15,7 +15,7 @@ Usage (from Game-AI-Agent root):
     python -m scripts.run_inference \
         --model runs/coevolution/models/decision_v3/global_step_20/actor/huggingface \
         --bank  runs/coevolution/skillbank/bank.jsonl \
-        --games twenty_forty_eight sokoban \
+        --games twenty_forty_eight candy_crush \
         --episodes 10 --max-steps 200 \
         --output-dir runs/inference_results
 
@@ -99,11 +99,6 @@ if not GAME_REGISTRY:
     except ImportError:
         pass
     try:
-        from gamingagent.envs.custom_02_sokoban.sokobanEnv import SokobanEnv
-        _ENVS["sokoban"] = SokobanEnv
-    except ImportError:
-        pass
-    try:
         from gamingagent.envs.custom_03_candy_crush.candyCrushEnv import CandyCrushEnv
         _ENVS["candy_crush"] = CandyCrushEnv
     except ImportError:
@@ -111,16 +106,6 @@ if not GAME_REGISTRY:
     try:
         from gamingagent.envs.custom_04_tetris.tetrisEnv import TetrisEnv
         _ENVS["tetris"] = TetrisEnv
-    except ImportError:
-        pass
-    try:
-        from gamingagent.envs.custom_05_doom.doomEnv import DoomEnvWrapper as DoomEnv
-        _ENVS["doom"] = DoomEnv
-    except ImportError:
-        pass
-    try:
-        from gamingagent.envs.custom_06_pokemon_red.pokemonRedEnv import PokemonRedEnv
-        _ENVS["pokemon_red"] = PokemonRedEnv
     except ImportError:
         pass
     GAME_REGISTRY = _ENVS
@@ -193,12 +178,9 @@ def make_env(game_name: str, **kwargs: Any) -> Any:
 
     # Try env_wrappers directly
     wrapper_map = {
-        "overcooked": "OvercookedNLWrapper",
         "avalon": "AvalonNLWrapper",
         "diplomacy": "DiplomacyNLWrapper",
         "gamingagent": "GamingAgentNLWrapper",
-        "videogamebench": "VideoGameBenchNLWrapper",
-        "videogamebench_dos": "VideoGameBenchDOSNLWrapper",
     }
     if game_name in wrapper_map:
         import env_wrappers
@@ -449,7 +431,7 @@ def parse_args() -> argparse.Namespace:
 
     # Games
     p.add_argument("--games", nargs="+", default=None,
-                    help="Game names to evaluate (e.g. twenty_forty_eight sokoban). "
+                    help="Game names to evaluate (e.g. twenty_forty_eight candy_crush). "
                          "Omit to run all available games.")
     p.add_argument("--list-games", action="store_true",
                     help="List available games and exit.")
@@ -498,8 +480,7 @@ def main() -> int:
         if not available:
             print("  (none — GamingAgent envs not found on PYTHONPATH)")
         print("\nEnv-wrapper games (require underlying env):")
-        for g in ["overcooked", "avalon", "diplomacy", "gamingagent",
-                   "videogamebench", "videogamebench_dos"]:
+        for g in ["avalon", "diplomacy", "gamingagent"]:
             print(f"  - {g}")
         return 0
 

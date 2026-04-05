@@ -200,43 +200,6 @@ def _extract_mario_phases(experiences: Sequence) -> List[str]:
     return phases
 
 
-def _extract_sokoban_phases(experiences: Sequence) -> List[str]:
-    """Sokoban: phase by boxes-on-goals progress.
-
-    Uses ``summary_state`` (``solved=M/N | boxes=K``) for reliable
-    progress tracking.  The raw state is an item table that lacks
-    "dark_storage"/"box_on_goal" labels.
-    """
-    phases = []
-    for exp in experiences:
-        summary = _get_summary_str(exp)
-        solved_m = re.search(r'solved=(\d+)/(\d+)', summary)
-        if solved_m:
-            solved, total = int(solved_m.group(1)), int(solved_m.group(2))
-            if total == 0:
-                phases.append("explore")
-            elif solved == 0:
-                phases.append("setup")
-            elif solved < total:
-                phases.append("solving")
-            else:
-                phases.append("finishing")
-            continue
-
-        state_str = _get_state_str(exp).lower()
-        n_dark = state_str.count("dark_storage") + state_str.count("box_on_goal")
-        n_box = state_str.count("box")
-        if n_box == 0:
-            phases.append("explore")
-        elif n_dark == 0:
-            phases.append("setup")
-        elif n_dark < n_box:
-            phases.append("solving")
-        else:
-            phases.append("finishing")
-    return phases
-
-
 def _extract_candy_phases(experiences: Sequence) -> List[str]:
     """Candy Crush: phase by temporal progress (no strong state signal)."""
     T = len(experiences)
@@ -309,37 +272,6 @@ def _extract_diplomacy_phases(experiences: Sequence) -> List[str]:
                 phases.append("adjustment")
             else:
                 phases.append("orders")
-    return phases
-
-
-def _extract_pokemon_phases(experiences: Sequence) -> List[str]:
-    """Pokemon Red: phase from context (battle, overworld, menu).
-
-    Checks both ``summary_state`` and raw ``state`` for ``State: X``
-    (Battle, Field, Dialog, Menu).  The raw state always starts with
-    ``State: <context>`` while the summary may omit it after early steps.
-    Uses ``\\bState:\\s*(\\w+)`` to avoid matching "Not in battle".
-    """
-    phases = []
-    for exp in experiences:
-        ctx = None
-        for source in (_get_summary_str(exp), _get_state_str(exp)):
-            m = re.search(r'\bState:\s*(\w+)', source)
-            if m:
-                ctx = m.group(1).lower()
-                break
-
-        if ctx:
-            if ctx == "battle":
-                phases.append("battle")
-            elif ctx in ("menu", "shop"):
-                phases.append("menu")
-            elif ctx == "dialog":
-                phases.append("dialog")
-            else:
-                phases.append("overworld")
-        else:
-            phases.append("overworld")
     return phases
 
 
@@ -496,10 +428,7 @@ _GAME_EXTRACTORS: Dict[str, Any] = {
     "2048": _extract_2048_phases,
     "tetris": _extract_tetris_phases,
     "super_mario": _extract_mario_phases,
-    "sokoban": _extract_sokoban_phases,
     "candy_crush": _extract_candy_phases,
     "avalon": _extract_avalon_phases,
     "diplomacy": _extract_diplomacy_phases,
-    "pokemon_red": _extract_pokemon_phases,
-    "pokemon": _extract_pokemon_phases,
 }

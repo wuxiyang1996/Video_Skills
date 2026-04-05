@@ -204,7 +204,7 @@ from skill_agents_grpo.infer_segmentation import infer_and_segment
 result, sub_episodes, store = infer_and_segment(
     episode,
     skill_names=["move", "attack", "gather", "craft"],
-    env_name="overcooked",
+    env_name="avalon",
 )
 
 # Inspect results
@@ -389,7 +389,6 @@ infer_segmentation/
 ├── diagnostics.py       # SegmentationResult, margins, breakdowns
 ├── episode_adapter.py   # Full pipeline: Stage 1 → prefs → train → decode
 ├── requirements.txt     # Dependencies
-└── example_toy.py       # Example with simulated preferences (no LLM needed)
 ```
 
 ---
@@ -473,10 +472,6 @@ Defines how each segment–skill pair is scored (weighted sum of four terms).
 ### `__init__.py` — Public API
 
 Re-exports configs, SegmentScorer, diagnostics, decoders, preference types, LLM teacher functions, and the three pipeline functions.
-
-### `example_toy.py` — Example script
-
-Runs the pipeline without the LLM: simulated rankings → preferences → train PreferenceScorer → Viterbi and beam → show diagnostics and preference queries.
 
 ### Data flow (concise)
 

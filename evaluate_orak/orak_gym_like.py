@@ -1,5 +1,5 @@
 """
-Gymnasium-compatible interface for Orak game environments (all 12 games).
+Gymnasium-compatible interface for Orak game environments (all 11 games).
 
 Provides make_orak_gaming_env() so evaluation harnesses can create and
 interact with Orak environments using the standard Gymnasium API.
@@ -184,7 +184,7 @@ def make_orak_gaming_env(
 
     cfg = omegaconf.OmegaConf.load(config_path)
 
-    _NO_SCREENSHOT_GAMES = {"orak_pokemon_red", "orak_super_mario"}
+    _NO_SCREENSHOT_GAMES = {"orak_super_mario"}
 
     log_dir = str(_CODEBASE_ROOT / "orak_logs" / game)
     os.makedirs(log_dir, exist_ok=True)

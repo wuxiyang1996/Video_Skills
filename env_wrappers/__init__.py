@@ -2,20 +2,12 @@
 Env wrappers: convert environment state to/from natural language for language-model agents.
 
 Available wrappers:
-  - OvercookedNLWrapper:    Overcooked cooperative cooking (2 agents)
   - AvalonNLWrapper:       Avalon hidden-role deduction (5-10 agents)
   - DiplomacyNLWrapper:    Diplomacy strategic negotiation (7 agents / powers)
-  - GamingAgentNLWrapper:  GamingAgent / LMGame-Bench (2048, Sokoban, Tetris, etc.)
-  - VideoGameBenchNLWrapper: VideoGameBench Game Boy games (PyBoy)
+  - GamingAgentNLWrapper:  GamingAgent / LMGame-Bench (2048, Candy Crush, Tetris, Super Mario)
+  - OrakNLWrapper:         Orak environments (Super Mario, StarCraft II)
+  - TetrisMacroWrapper:    Tetris macro-action wrapper (placement-level actions)
 """
-
-from env_wrappers.overcooked_nl_wrapper import (
-    OvercookedNLWrapper,
-    joint_action_to_indices,
-    natural_language_to_action_index,
-    state_to_natural_language,
-    state_to_natural_language_for_all_agents,
-)
 
 from env_wrappers.avalon_nl_wrapper import (
     AvalonNLWrapper,
@@ -38,27 +30,15 @@ from env_wrappers.gamingagent_nl_wrapper import (
     state_to_natural_language as gamingagent_state_to_nl,
 )
 
-from env_wrappers.videogamebench_nl_wrapper import (
-    VideoGameBenchNLWrapper,
-    state_to_natural_language as videogamebench_state_to_nl,
-    natural_language_to_action_index as videogamebench_nl_to_action,
-    VIDEOGAMEBENCH_BUTTON_NAMES,
+from env_wrappers.orak_nl_wrapper import (
+    ORAK_GAMES,
+    OrakNLWrapper,
+    make_orak_env,
 )
 
-from env_wrappers.videogamebench_dos_nl_wrapper import (
-    VideoGameBenchDOSNLWrapper,
-    list_dos_games,
-    state_to_natural_language as videogamebench_dos_state_to_nl,
-    VIDEOGAMEBENCH_DOS_VALID_KEYS,
-)
+from env_wrappers.tetris_macro_wrapper import TetrisMacroWrapper
 
 __all__ = [
-    # Overcooked
-    "OvercookedNLWrapper",
-    "joint_action_to_indices",
-    "natural_language_to_action_index",
-    "state_to_natural_language",
-    "state_to_natural_language_for_all_agents",
     # Avalon
     "AvalonNLWrapper",
     "avalon_state_to_nl",
@@ -74,14 +54,10 @@ __all__ = [
     # GamingAgent
     "GamingAgentNLWrapper",
     "gamingagent_state_to_nl",
-    # VideoGameBench (Game Boy - deprecated in evaluate_videogamebench)
-    "VideoGameBenchNLWrapper",
-    "videogamebench_state_to_nl",
-    "videogamebench_nl_to_action",
-    "VIDEOGAMEBENCH_BUTTON_NAMES",
-    # VideoGameBench DOS (DOS games only, no ROMs)
-    "VideoGameBenchDOSNLWrapper",
-    "list_dos_games",
-    "videogamebench_dos_state_to_nl",
-    "VIDEOGAMEBENCH_DOS_VALID_KEYS",
+    # Orak
+    "ORAK_GAMES",
+    "OrakNLWrapper",
+    "make_orak_env",
+    # Tetris Macro
+    "TetrisMacroWrapper",
 ]

@@ -76,11 +76,8 @@ GAME_DURATION_PRIORS: Dict[str, Tuple[float, float]] = {
     "candy_crush": (12.0, 6.0),
     "twenty_forty_eight": (18.0, 10.0),
     "2048": (18.0, 10.0),
-    "sokoban": (14.0, 7.0),
     "avalon": (12.0, 6.0),
     "diplomacy": (18.0, 10.0),
-    "pokemon_red": (12.0, 7.0),
-    "pokemon": (12.0, 7.0),
     "super_mario": (10.0, 6.0),
 }
 

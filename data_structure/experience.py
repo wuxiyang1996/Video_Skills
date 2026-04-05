@@ -244,10 +244,10 @@ class Episode:
         # Unique identifier for this episode (auto-generated if not provided).
         self.episode_id: str = episode_id or str(uuid.uuid4())
 
-        # Platform / wrapper name (e.g. "gamingagent", "videogamebench_dos", "overcooked").
+        # Platform / wrapper name (e.g. "gamingagent", "avalon", "diplomacy").
         self.env_name: Optional[str] = env_name
 
-        # Specific game within the platform (e.g. "sokoban", "2048", "doom2", "kirby").
+        # Specific game within the platform (e.g. "twenty_forty_eight", "tetris", "candy_crush").
         self.game_name: Optional[str] = game_name
 
         # The summary of the episode.

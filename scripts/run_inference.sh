@@ -22,7 +22,7 @@
 #   bash scripts/run_inference.sh \
 #       --model runs/coevolution/models/decision_v3/global_step_20/actor/huggingface \
 #       --bank  runs/coevolution/skillbank/bank.jsonl \
-#       --games twenty_forty_eight sokoban \
+#       --games twenty_forty_eight candy_crush \
 #       --episodes 10
 #
 #   # Co-evolution shortcut (latest iteration)

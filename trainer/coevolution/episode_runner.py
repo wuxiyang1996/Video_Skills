@@ -36,14 +36,14 @@ logger = logging.getLogger(__name__)
 _IMPORTS_CACHE: Dict[str, Any] = {}
 
 # Games that use Orak env (evaluate_orak.orak_nl_wrapper.make_orak_env)
-ORAK_GAMES_SET = {"super_mario", "pokemon_red"}
+ORAK_GAMES_SET = {"super_mario"}
 # Orak games that MUST use SubprocessEnv (nes_py / NumPy 2.x incompatibility)
 ORAK_SUBPROCESS_GAMES = {"super_mario"}
 # Games that use AgentEvolver wrappers (env_wrappers)
 EVOLVER_GAMES_SET = {"diplomacy", "avalon"}
 # Games that use GamingAgent make_gaming_env
 GAMINGAGENT_GAMES = {
-    "twenty_forty_eight", "sokoban", "candy_crush", "tetris",
+    "twenty_forty_eight", "candy_crush", "tetris",
 }
 
 
@@ -54,11 +54,6 @@ def _lazy_imports():
         from evaluate_gamingagent.game_configs import GAME_CONFIGS
         from evaluate_gamingagent.gym_like import make_gaming_env
         from env_wrappers.gamingagent_nl_wrapper import GamingAgentNLWrapper
-        try:
-            from env_wrappers.sokoban_nl_wrapper import SokobanNLWrapper
-        except ImportError:
-            SokobanNLWrapper = None
-
         # Orak env (Super Mario, etc.)
         try:
             from evaluate_orak.orak_nl_wrapper import make_orak_env
@@ -97,7 +92,6 @@ def _lazy_imports():
             "make_orak_env": make_orak_env,
             "SubprocessEnv": SubprocessEnv,
             "GamingAgentNLWrapper": GamingAgentNLWrapper,
-            "SokobanNLWrapper": SokobanNLWrapper,
             "DiplomacyNLWrapper": DiplomacyNLWrapper,
             "AvalonNLWrapper": AvalonNLWrapper,
             "build_rag_summary": build_rag_summary,
@@ -289,81 +283,6 @@ class _DiplomacyAdapter:
 # Data structures
 # ---------------------------------------------------------------------------
 
-class _PokemonExploreTracker:
-    """Tracks tile/map exploration for Pokemon Red reward shaping.
-
-    Produces per-step bonuses so that GRPO sees meaningful reward
-    variance instead of the flat +1.0 that starves the training signal.
-
-    Reward components:
-      +NEW_TILE_BONUS   first visit to a tile
-      +NEW_MAP_BONUS    first visit to a map
-      -REVISIT_PENALTY  revisiting a tile seen in the last REVISIT_WINDOW steps
-      -STAGNATION_PENALTY  no new tile discovered for STAGNATION_WINDOW steps
-      -BOUNCE_PENALTY   returning to a map visited in the last BOUNCE_WINDOW steps
-    """
-
-    NEW_TILE_BONUS = 0.5
-    NEW_MAP_BONUS = 3.0
-    REVISIT_PENALTY = -0.2
-    STAGNATION_WINDOW = 5
-    STAGNATION_PENALTY = -0.3
-    REVISIT_WINDOW = 4
-    BOUNCE_PENALTY = -0.4
-    BOUNCE_WINDOW = 6
-
-    def __init__(self) -> None:
-        self.visited_tiles: set = set()
-        self.visited_maps: set = set()
-        self.recent_tiles: List[Any] = []
-        self.recent_maps: List[str] = []
-        self.steps_since_new_tile: int = 0
-
-    def update(self, info: Dict[str, Any]) -> float:
-        """Return exploration bonus (or penalty) for this step."""
-        map_name = info.get("pokemon_map_name", "")
-        px = info.get("pokemon_player_x")
-        py = info.get("pokemon_player_y")
-        if not map_name or px is None or py is None:
-            self.steps_since_new_tile += 1
-            if self.steps_since_new_tile >= self.STAGNATION_WINDOW:
-                return self.STAGNATION_PENALTY
-            return 0.0
-
-        bonus = 0.0
-        tile = (map_name, int(px), int(py))
-
-        if tile not in self.visited_tiles:
-            self.visited_tiles.add(tile)
-            bonus += self.NEW_TILE_BONUS
-            self.steps_since_new_tile = 0
-        else:
-            self.steps_since_new_tile += 1
-            if tile in self.recent_tiles[-self.REVISIT_WINDOW:]:
-                bonus += self.REVISIT_PENALTY
-            if self.steps_since_new_tile >= self.STAGNATION_WINDOW:
-                bonus += self.STAGNATION_PENALTY
-
-        if (self.recent_maps
-                and map_name != self.recent_maps[-1]
-                and map_name in self.recent_maps[-self.BOUNCE_WINDOW:]):
-            bonus += self.BOUNCE_PENALTY
-
-        if map_name not in self.visited_maps:
-            self.visited_maps.add(map_name)
-            bonus += self.NEW_MAP_BONUS
-
-        self.recent_tiles.append(tile)
-        if len(self.recent_tiles) > 50:
-            self.recent_tiles = self.recent_tiles[-50:]
-
-        self.recent_maps.append(map_name)
-        if len(self.recent_maps) > 50:
-            self.recent_maps = self.recent_maps[-50:]
-
-        return bonus
-
-
 @dataclass
 class GRPORecord:
     adapter: str  # "action_taking" or "skill_selection"
@@ -505,8 +424,8 @@ def _build_rich_state_observation(
     info: Dict[str, Any],
     summary_state: str,
 ) -> str:
-    """Build a rich spatial observation for games that provide grid data
-    (e.g. sokoban).  Falls back to *summary_state* when grid is absent."""
+    """Build a rich spatial observation for games that provide grid data.
+    Falls back to *summary_state* when grid is absent."""
     parts: List[str] = []
     grid_str = info.get("grid_string")
     if grid_str:
@@ -614,13 +533,10 @@ async def _generate_intention(
         "  candy_crush, moves=4, target=500 → [CLEAR] maximize cascade combos now\n"
         "  candy_crush, special candy available → [EXECUTE] activate combo for big score\n"
         "  candy_crush, board cluttered → [OPTIMIZE] clear blockers to open matches\n"
-        "  sokoban, box misaligned → [POSITION] push box toward its target square\n"
-        "  sokoban, path blocked by wall → [NAVIGATE] find route around obstacle\n"
         "  avalon, suspicious player → [DEFEND] block suspected spy from mission\n"
         "  avalon, team forming → [ATTACK] push to lead the next mission\n"
         "  diplomacy, ally requesting support → [BUILD] strengthen alliance for next turn\n"
         "  diplomacy, unexplored border → [EXPLORE] scout neighbor's intentions\n"
-        "  pokemon, item on ground → [COLLECT] pick up item before moving on\n"
     )
 
     prompt = (
@@ -663,91 +579,6 @@ async def _generate_intention(
 
 def _format_numbered_actions(action_names: List[str]) -> str:
     return "\n".join(f"  {i+1}. {a}" for i, a in enumerate(action_names))
-
-
-_POKEMON_SYSTEM_PROMPT = """\
-You are an expert AI player for Pokemon Red (Game Boy).
-Your goal is to progress: explore, talk to NPCs, battle, earn badges.
-
-# GAME STATES
-- **Field**: Move, interact, use menu. You have a map with tile data.
-- **Dialog**: Advance with continue_dialog tool, or press b to exit.
-  If choices appear, use d-pad + a to select (raw buttons, NOT continue_dialog).
-- **Battle**: Use battle tools (select_move_in_battle, run_away, etc.).
-
-# AVAILABLE TOOLS
-## Field State Tools
-- move_to(x_dest, y_dest): A* pathfind to walkable tile ('O' or 'G').
-  Usage: use_tool(move_to, (x_dest=X, y_dest=Y))
-  CRITICAL: Dest MUST be walkable ('O','G'). NOT '?','X','WarpPoint','TalkTo', etc.
-- warp_with_warp_point(x_dest, y_dest): Move to 'WarpPoint' tile and warp.
-  Usage: use_tool(warp_with_warp_point, (x_dest=X, y_dest=Y))
-  Use this for stairs, doors, cave entrances marked 'WarpPoint' on the map.
-- overworld_map_transition(direction): Cross 'overworld'-type map boundary.
-  Usage: use_tool(overworld_map_transition, (direction="north"))
-  direction: 'north'|'south'|'west'|'east'. Only for overworld-type maps.
-- interact_with_object(object_name): Pathfind to + face + interact with named object.
-  Usage: use_tool(interact_with_object, (object_name="SPRITE_OAK_1"))
-  Object must appear in [Notable Objects] list.
-
-## Dialog State Tools
-- continue_dialog(): Advance dialog until choices appear or dialog ends.
-  Usage: use_tool(continue_dialog, ())
-  ONLY use when in Dialog state with NO selection/choice box visible.
-
-## Battle State Tools
-- select_move_in_battle(): Use first available attack move.
-  Usage: use_tool(select_move_in_battle, ())
-- switch_pkmn_in_battle(): Switch active Pokemon.
-  Usage: use_tool(switch_pkmn_in_battle, ())
-- use_item_in_battle(): Use item.
-  Usage: use_tool(use_item_in_battle, ())
-- run_away(): Flee from wild battle.
-  Usage: use_tool(run_away, ())
-
-## Raw buttons (only when no tool applies)
-a | b | start | select | up | down | left | right
-
-# MAP READING (CRITICAL — read EVERY turn)
-- [Full Map] shows tile grid: 'O'=walkable, 'G'=grass, 'X'=wall, '?'=unexplored.
-  'WarpPoint' = door/stairs (use warp tool). Named objects = interact.
-- ALWAYS read [Full Map] to find the ACTUAL coordinates of WarpPoints.
-  DO NOT guess or reuse coordinates from a different floor/map.
-- '?' tiles are unexplored. You MUST explore them by using move_to on a
-  nearby 'O' or 'G' tile. This reveals hidden doors, exits, and items.
-- If the map has many '?' tiles, PRIORITIZE exploring before warping.
-  The exit from a building is often behind unexplored tiles.
-- To leave a room: find a WarpPoint in [Notable Objects], use warp tool on it.
-  If no exit WarpPoint is visible, explore '?' areas to reveal it.
-
-# CRITICAL NAVIGATION RULES
-- NEVER call warp_with_warp_point on coordinates that show '?' on the map.
-- NEVER reuse coordinates from a previous map — each map has different layout.
-- If you keep returning to the same room, you are using the wrong WarpPoint.
-  Look for a DIFFERENT WarpPoint or explore '?' tiles to find the exit.
-- To leave Red's House: go downstairs (warp), then walk to the exit door
-  (it may be hidden in unexplored '?' tiles at the bottom of 1F).
-
-# IMPORTANT RULES
-- In Field: prefer tools (move_to, warp, interact) over raw buttons.
-- In Dialog WITHOUT choices: use continue_dialog.
-- In Dialog WITH choices: use raw buttons (d-pad to select, a to confirm).
-- In Battle: use battle tools.
-
-Output format (strict):
-REASONING: <1-2 sentences about tool/action choice>
-ACTION: <use_tool(...) or raw button>
-"""
-
-_POKEMON_ACTION_SECTION = """\
-Output your action as a tool call or raw button.
-Examples:
-  ACTION: use_tool(move_to, (x_dest=5, y_dest=3))
-  ACTION: use_tool(warp_with_warp_point, (x_dest=7, y_dest=7))
-  ACTION: use_tool(overworld_map_transition, (direction="south"))
-  ACTION: use_tool(continue_dialog, ())
-  ACTION: use_tool(select_move_in_battle, ())
-  ACTION: up"""
 
 
 def _build_recent_context(recent_actions: List[str], recent_rewards: List[float]) -> str:
@@ -895,34 +726,6 @@ class _ActionFallback(str):
     pass
 
 
-_POKEMON_TOOL_NAMES = frozenset({
-    "move_to", "interact_with_object", "warp_with_warp_point",
-    "continue_dialog", "select_move_in_battle",
-    "switch_pkmn_in_battle", "run_away", "use_item_in_battle",
-    "overworld_map_transition",
-})
-
-
-def _unwrap_use_tool(raw: str) -> str:
-    """Convert use_tool(tool_name, (kwargs)) -> tool_name(args) for env.step()."""
-    m = re.match(
-        r'^use_tool\s*\(\s*(\w+)\s*,\s*\(([^)]*)\)\s*\)',
-        raw.strip(), re.IGNORECASE,
-    )
-    if not m:
-        return raw
-    tool_name = m.group(1)
-    args_str = m.group(2).strip()
-    if not args_str:
-        return tool_name
-    kvs = [kv.strip() for kv in args_str.split(",") if "=" in kv]
-    vals = []
-    for kv in kvs:
-        _, v = kv.split("=", 1)
-        vals.append(v.strip().strip('"').strip("'"))
-    return f"{tool_name}({', '.join(vals)})"
-
-
 def _fuzzy_match_action(raw: str, valid_actions: List[str]) -> Optional[str]:
     if not raw or not valid_actions:
         return None
@@ -930,32 +733,6 @@ def _fuzzy_match_action(raw: str, valid_actions: List[str]) -> Optional[str]:
     lower_map = {a.lower(): a for a in valid_actions}
     if raw_lower in lower_map:
         return lower_map[raw_lower]
-
-    # use_tool(...) wrapper from SFT cold-start format
-    if raw_lower.startswith("use_tool("):
-        unwrapped = _unwrap_use_tool(raw)
-        unwrapped_lower = unwrapped.lower().strip()
-        if unwrapped_lower in lower_map:
-            return lower_map[unwrapped_lower]
-        tool_m2 = re.match(r'^(\w+)\s*\(', unwrapped_lower)
-        if tool_m2 and tool_m2.group(1) in _POKEMON_TOOL_NAMES:
-            return unwrapped.strip()
-        if unwrapped_lower in _POKEMON_TOOL_NAMES:
-            return unwrapped.strip()
-
-    # "use tool: tool_name" or "use_tool: tool_name" (malformed variant)
-    _use_tool_colon = re.match(r'^use[\s_]tool\s*:\s*(\w+)', raw_lower)
-    if _use_tool_colon:
-        _tname = _use_tool_colon.group(1)
-        if _tname in _POKEMON_TOOL_NAMES:
-            return _tname
-
-    # Parametric tool call: move_to(5, 3), warp_with_warp_point(7, 7), etc.
-    tool_m = re.match(r'^(\w+)\s*\(', raw_lower)
-    if tool_m:
-        tool_name = tool_m.group(1)
-        if tool_name in _POKEMON_TOOL_NAMES:
-            return raw.strip()
 
     raw_compact = re.sub(r"\s+", "", raw_lower)
     compact_map = {re.sub(r"\s+", "", a.lower()): a for a in valid_actions}
@@ -992,14 +769,6 @@ def _apply_anti_repetition(
         alternatives = [a for a in valid_actions if a != action]
         if alternatives:
             return random.choice(alternatives)
-
-    if game == "pokemon_red" and len(recent_actions) >= 4:
-        last6 = recent_actions[-6:]
-        last6_rewards = recent_rewards[-6:]
-        action_set = set(last6 + [action])
-        if len(action_set) <= 2 and sum(last6_rewards) <= 0:
-            explore_actions = ["move_to", "down", "left", "right", "up"]
-            return random.choice(explore_actions)
 
     return action
 
@@ -1217,7 +986,6 @@ async def run_episode_async(
     make_gaming_env = imp["make_gaming_env"]
     make_orak_env = imp["make_orak_env"]
     GamingAgentNLWrapper = imp["GamingAgentNLWrapper"]
-    SokobanNLWrapper = imp["SokobanNLWrapper"]
     DiplomacyNLWrapper = imp["DiplomacyNLWrapper"]
     AvalonNLWrapper = imp["AvalonNLWrapper"]
     HARD_SUMMARY_CHAR_LIMIT = imp["HARD_SUMMARY_CHAR_LIMIT"]
@@ -1312,12 +1080,6 @@ async def run_episode_async(
             except ImportError:
                 logger.warning("TetrisMacroActionWrapper unavailable, using primitive actions")
                 env = GamingAgentNLWrapper(base_env)
-        elif game == "sokoban" and SokobanNLWrapper is not None:
-            env = SokobanNLWrapper(
-                base_env, reflect_every=3,
-                enable_restart=True, auto_detect_deadlock=True,
-                distance_shaping=True,
-            )
         else:
             env = GamingAgentNLWrapper(base_env)
 
@@ -1366,11 +1128,6 @@ async def run_episode_async(
     last_candidates: List[Dict[str, Any]] = []
     last_chosen_idx = 0
     last_skill_reasoning: Optional[str] = None
-
-    pokemon_explore: Optional[_PokemonExploreTracker] = None
-    if game == "pokemon_red":
-        pokemon_explore = _PokemonExploreTracker()
-        pokemon_explore.update(info)
 
     while step_count < max_steps:
         step_actions = action_names if action_names else ["stay"]
@@ -1530,9 +1287,7 @@ async def run_episode_async(
         recent_context = _build_recent_context(recent_actions, recent_rewards)
         _use_raw_obs = getattr(env, "_is_macro_action", False)
         _use_rich_obs = getattr(env, "_has_rich_observation", False)
-        if game == "pokemon_red":
-            summary_for_action = obs_nl[:4000]
-        elif _use_raw_obs:
+        if _use_raw_obs:
             summary_for_action = obs_nl[:4000]
         elif _use_rich_obs and current_info:
             summary_for_action = _build_rich_state_observation(
@@ -1549,23 +1304,14 @@ async def run_episode_async(
 
         imp_tags = imp["SUBGOAL_TAGS"]
         tags_str = "|".join(imp_tags)
-        if game == "pokemon_red":
-            action_user = (
-                f"## Current Game State\n{summary_for_action}\n\n"
-                f"Subgoal: {assigned_subgoal}\n"
-                f"{urgency_line}{skill_context}{recent_context}\n"
-                f"{_POKEMON_ACTION_SECTION}"
-            )
-            action_prompt = _POKEMON_SYSTEM_PROMPT + "\n" + action_user
-        else:
-            action_user = (
-                f"Game state:\n\n{summary_for_action}\n\n"
-                f"Subgoal: {assigned_subgoal}\n"
-                f"{urgency_line}{skill_context}{recent_context}"
-                f"Available actions (pick ONE by number):\n{_format_numbered_actions(step_actions)}\n\n"
-                f"Output ACTION number."
-            )
-            action_prompt = SYSTEM_PROMPT + skill_text + "\n" + action_user
+        action_user = (
+            f"Game state:\n\n{summary_for_action}\n\n"
+            f"Subgoal: {assigned_subgoal}\n"
+            f"{urgency_line}{skill_context}{recent_context}"
+            f"Available actions (pick ONE by number):\n{_format_numbered_actions(step_actions)}\n\n"
+            f"Output ACTION number."
+        )
+        action_prompt = SYSTEM_PROMPT + skill_text + "\n" + action_user
 
         if step_sync is not None:
             await step_sync.arrive()
@@ -1619,16 +1365,6 @@ async def run_episode_async(
             if _format_failed:
                 action_completion = action_result.text.strip()[:150]
                 _action_reward = 0.0
-            elif game == "pokemon_red":
-                _poke_action_str = str(action)
-                _ptm = re.match(r'^(\w+)\s*\((.+)\)$', _poke_action_str)
-                if _ptm and _ptm.group(1) in _POKEMON_TOOL_NAMES:
-                    _poke_action_str = f"use_tool({_ptm.group(1)}, ({_ptm.group(2)}))"
-                elif _poke_action_str in _POKEMON_TOOL_NAMES:
-                    _poke_action_str = f"use_tool({_poke_action_str}, ())"
-                action_completion = f"REASONING: {reasoning or 'Expert play.'}\nACTION: {_poke_action_str}"
-                _explore_bonus = pokemon_explore.update(next_info) if pokemon_explore else 0.0
-                _action_reward = float(reward) + _explore_bonus + skill_tracker._intrinsic_bonus
             else:
                 action_completion = f"{subgoal_line}REASONING: {reasoning or 'Expert play.'}\nACTION: {action_num}"
                 _action_reward = float(reward) + skill_tracker._intrinsic_bonus + 1.0
@@ -1732,9 +1468,7 @@ async def run_episode_async(
 
         # Early termination: stuck detection
         # Skip for games with sparse rewards (reward only at game end).
-        # Sokoban now uses distance-based reward shaping, so it produces
-        # positive rewards on productive pushes and can use stuck detection.
-        _STUCK_EXEMPT_GAMES = {"avalon", "diplomacy", "pokemon_red"}
+        _STUCK_EXEMPT_GAMES = {"avalon", "diplomacy"}
         if (game not in _STUCK_EXEMPT_GAMES
                 and step_count >= min_steps_before_stuck
                 and len(recent_rewards) >= stuck_window

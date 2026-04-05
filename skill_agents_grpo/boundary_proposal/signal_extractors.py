@@ -19,17 +19,17 @@ Two extraction strategies:
 
   Hybrid (recommended):  Per-env hard-event detection (rule-based) +
                          LLM-based predicate extraction.  Get this via
-                         ``get_signal_extractor("llm+overcooked")`` etc.
+                         ``get_signal_extractor("llm+avalon")`` etc.
 
 Usage:
     # Pure rule-based (legacy, per-env)
-    extractor = get_signal_extractor("overcooked")
+    extractor = get_signal_extractor("avalon")
 
     # Pure LLM (fully general, no per-env rules)
     extractor = get_signal_extractor("llm")
 
     # Hybrid: LLM predicates + per-env hard events (recommended)
-    extractor = get_signal_extractor("llm+overcooked")
+    extractor = get_signal_extractor("llm+avalon")
 """
 
 from __future__ import annotations
@@ -94,66 +94,6 @@ class SignalExtractorBase(ABC):
         predicates = self.extract_predicates(experiences)
         event_times = self.extract_event_times(experiences)
         return predicates, event_times
-
-
-# ---------------------------------------------------------------------------
-# Overcooked
-# ---------------------------------------------------------------------------
-
-
-class OvercookedSignalExtractor(SignalExtractorBase):
-    """
-    Extract signals from Overcooked experiences.
-
-    Predicates (from state NL or state dict):
-      - held_object: what the agent is holding
-      - position: agent grid position
-      - pot_status: soup cooking/ready/empty
-      - order_pending: whether there's a pending order
-
-    Events:
-      - reward spikes (soup delivered)
-      - done flags
-    """
-
-    def extract_predicates(self, experiences: list) -> List[Optional[dict]]:
-        predicates = []
-        for exp in experiences:
-            preds: dict = {}
-            state = exp.state
-            if isinstance(state, dict):
-                # Structured state dict from env info
-                if "overcooked_state" in state:
-                    preds["has_overcooked_state"] = True
-                preds["done"] = bool(exp.done)
-            elif isinstance(state, str):
-                # NL state string — extract keywords
-                sl = state.lower()
-                preds["holding_something"] = "holding" in sl and "nothing" not in sl
-                preds["soup_ready"] = "ready" in sl
-                preds["soup_cooking"] = "cooking" in sl
-                preds["at_counter"] = "counter" in sl
-                preds["at_pot"] = "pot" in sl
-                preds["at_serving"] = "serving" in sl or "deliver" in sl
-            else:
-                preds["unknown_state"] = True
-            predicates.append(preds)
-        return predicates
-
-    def extract_event_times(self, experiences: list) -> List[int]:
-        events = []
-        for t, exp in enumerate(experiences):
-            if exp.done:
-                events.append(t)
-            # Reward spike: soup delivered gives +20 in Overcooked
-            r = exp.reward if exp.reward is not None else 0.0
-            if isinstance(r, (tuple, list)):
-                r = sum(r)
-            if isinstance(r, dict):
-                r = sum(r.values())
-            if float(r) > 0:
-                events.append(t)
-        return sorted(set(events))
 
 
 # ---------------------------------------------------------------------------
@@ -612,7 +552,6 @@ class HybridSignalExtractor(SignalExtractorBase):
 # ---------------------------------------------------------------------------
 
 _RULE_EXTRACTORS = {
-    "overcooked": OvercookedSignalExtractor,
     "avalon": AvalonSignalExtractor,
     "diplomacy": DiplomacySignalExtractor,
     "generic": GenericSignalExtractor,
@@ -628,14 +567,14 @@ def get_signal_extractor(
 
     Supported patterns:
 
-    - ``"overcooked"`` / ``"avalon"`` / ``"diplomacy"`` / ``"generic"``
+    - ``"avalon"`` / ``"diplomacy"`` / ``"generic"``
         Pure rule-based extractor (legacy, per-env).
 
     - ``"llm"``
         Pure LLM-based extractor (fully general).
         kwargs are passed to LLMSignalExtractor (model, chunk_size, etc.).
 
-    - ``"llm+overcooked"`` / ``"llm+avalon"`` / ``"llm+diplomacy"``
+    - ``"llm+avalon"`` / ``"llm+diplomacy"``
         Hybrid: LLM predicates + per-env hard events (recommended).
         LLM kwargs: model, chunk_size, temperature, filter_significance.
         Env kwargs: e.g. controlled_power for Diplomacy.

@@ -117,10 +117,7 @@ cos-play/
 ├── ablation_study/         # Ablation study scripts (Table 1)
 ├── evaluate_gamingagent/   # GamingAgent evaluation harness
 ├── evaluate_orak/          # Orak (Super Mario) evaluation harness
-├── evaluation_evolver/     # AgentEvolver (Avalon, Diplomacy) evaluation harness
-├── tests/                  # Unit tests
-├── training_curves/        # Training reward curves (Figure 3)
-└── diplomacy_skillbank_snapshots/  # Skill bank evolution analysis (Figure 2)
+└── tests/                  # Unit tests
 ```
 
 Each module has its own README:
@@ -135,7 +132,7 @@ The full pipeline has 5 stages. Each stage produces outputs consumed by the next
 Generate seed trajectories using a teacher model (GPT-5.4). This produces 60 episodes per game.
 
 ```bash
-# All GamingAgent games (2048, Candy Crush, Tetris, Sokoban)
+# All GamingAgent games (2048, Candy Crush, Tetris)
 bash cold_start/run_coldstart_gpt54.sh --episodes 60
 
 # Specific games only
@@ -377,7 +374,7 @@ All ablation variants from Table 1 in the paper. Each script evaluates a specifi
 
 ## Single-Player Games
 
-Runs on all 6 single-player environments (2048, Candy Crush, Tetris, Super Mario, Sokoban, Pokemon Red):
+Runs on all 4 single-player environments (2048, Candy Crush, Tetris, Super Mario):
 
 ```bash
 # COS-PLAY (full system): co-evolution LoRA + best skill bank
@@ -452,9 +449,6 @@ Each game has a dedicated training script with game-specific hyperparameters:
 **Multi-game bootstrapping:**
 
 ```bash
-# Tetris + Sokoban from a prior checkpoint
-bash scripts/run_tetris_sokoban.sh
-
 # Avalon + Diplomacy from a prior checkpoint
 bash scripts/run_avalon_diplomacy.sh
 ```
@@ -480,7 +474,7 @@ Multi-player social reasoning (vs GPT-5.4 opponents):
 | Claude-4.6-Sonnet | 40.0 ± 13.1 | 3.16 ± 0.19 |
 | **COS-PLAY (8B)** | **39.0 ± 9.4** | **2.96 ± 0.20** |
 
-All results are reported with 95% confidence intervals, based on 16 evaluation rollouts for single-player games and 10 rollouts per player for multi-player games. Training curves are available in [`training_curves/`](training_curves/).
+All results are reported with 95% confidence intervals, based on 16 evaluation rollouts for single-player games and 10 rollouts per player for multi-player games.
 
 General reasoning (catastrophic forgetting check):
 

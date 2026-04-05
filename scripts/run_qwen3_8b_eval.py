@@ -7,6 +7,9 @@ Uses the GamingAgentNLWrapper + gym_like env from evaluate_gamingagent,
 and calls get_state_summary / infer_intention from decision_agents.agent_helper
 at every step so that rollouts contain rich intention + summary fields.
 
+Supported games: twenty_forty_eight, candy_crush, tetris (LMGame-Bench),
+avalon, diplomacy (AgentEvolver), super_mario (Orak).
+
 Output is saved in Episode / Experience format (data_structure.experience) to:
     Game-AI-Agent/output/<model_name>/<game_name>/<YYYYMMDD_HHMMSS>/
         episode_NNN.json        Per-episode JSON
@@ -107,12 +110,7 @@ try:
 except ImportError:
     SkillQueryEngine = None
 
-# --- Additional environment wrappers (Avalon, Diplomacy, Orak, Sokoban) ---
-try:
-    from env_wrappers.sokoban_nl_wrapper import SokobanNLWrapper
-except ImportError:
-    SokobanNLWrapper = None  # type: ignore[assignment,misc]
-
+# --- Additional environment wrappers (Avalon, Diplomacy, Orak) ---
 try:
     from env_wrappers.avalon_nl_wrapper import AvalonNLWrapper
 except ImportError:
@@ -144,7 +142,6 @@ except ImportError:
 # super_mario runs as a subprocess via ORAK_PYTHON (orak-mario env), so we
 # only need the binary to exist — gym-super-mario-bros is NOT required in
 # the current process.
-# pokemon_red requires pyboy (in game-ai-agent env).
 import os as _os
 _ORAK_GAME_AVAILABLE: Dict[str, bool] = {}
 _orak_python = _os.environ.get("ORAK_PYTHON", "")
@@ -157,12 +154,6 @@ else:
     except ImportError:
         _ORAK_GAME_AVAILABLE["super_mario"] = False
 
-try:
-    import pyboy  # noqa: F401
-    _ORAK_GAME_AVAILABLE["pokemon_red"] = True
-except ImportError:
-    _ORAK_GAME_AVAILABLE["pokemon_red"] = False
-
 # ---------------------------------------------------------------------------
 # Qwen3-8B model defaults
 # ---------------------------------------------------------------------------
@@ -171,9 +162,9 @@ DEFAULT_MODEL = "Qwen/Qwen3-8B"
 # ---------------------------------------------------------------------------
 # Game categories for routing
 # ---------------------------------------------------------------------------
-LMGAME_BENCH_NAMES = {"twenty_forty_eight", "sokoban", "candy_crush", "tetris"}
+LMGAME_BENCH_NAMES = {"twenty_forty_eight", "candy_crush", "tetris"}
 EVOLVER_GAME_NAMES = {"avalon", "diplomacy"}
-ORAK_EVAL_GAME_NAMES = {"super_mario", "pokemon_red"}
+ORAK_EVAL_GAME_NAMES = {"super_mario"}
 
 EVOLVER_GAME_INFO: Dict[str, Dict[str, Any]] = {
     "avalon": {
@@ -197,11 +188,6 @@ ORAK_EVAL_INFO: Dict[str, Dict[str, Any]] = {
         "task": "Advance Mario as far right as possible. Score = x_pos / 3161 * 100.",
         "max_steps": 100,
         "display_name": "Super Mario (Orak)",
-    },
-    "pokemon_red": {
-        "task": "Progress through Pokemon Red storyline milestones (0-12 flags).",
-        "max_steps": 200,
-        "display_name": "Pokemon Red (Orak)",
     },
 }
 
@@ -389,7 +375,7 @@ QWEN_DIPLOMACY_USER = (
     "Submit your orders using the format above."
 )
 
-# --- Orak (Super Mario, Pokemon Red) ---
+# --- Orak (Super Mario) ---
 QWEN_ORAK_SYSTEM = (
     "You are an expert game-playing agent powered by Qwen3-8B.\n"
     "You receive a textual description of the current game state and must choose exactly one action.\n\n"
@@ -558,7 +544,7 @@ def qwen3_diplomacy_action(
 
 
 # ---------------------------------------------------------------------------
-# Orak (Super Mario, Pokemon Red): Qwen3 action
+# Orak (Super Mario): Qwen3 action
 # ---------------------------------------------------------------------------
 
 def qwen3_orak_action(
@@ -774,198 +760,6 @@ def run_qwen3_episode(
         "model": model,
         "agent_type": "qwen3_8b",
         "macro_actions": use_macro and game == "tetris",
-    }
-    return episode, stats
-
-
-# ---------------------------------------------------------------------------
-# Episode runner: Sokoban (specialized grid prompts, memory, reflection)
-# ---------------------------------------------------------------------------
-
-def run_qwen3_sokoban_episode(
-    max_steps: int = 200,
-    model: str = DEFAULT_MODEL,
-    temperature: float = 0.3,
-    verbose: bool = False,
-    label: bool = True,
-    reflect_every: int = 3,
-    skill_bank: Any = None,
-) -> Tuple[Episode, Dict[str, Any]]:
-    """Run one Sokoban episode using the SokobanNLWrapper with domain-specific
-    grid prompts, rolling memory, and periodic reflection — all powered by Qwen3."""
-
-    task = "Push all boxes onto target locations in Sokoban"
-    game_cfg = GAME_CONFIGS.get("sokoban")
-    if game_cfg:
-        task = game_cfg.description
-
-    base_env = make_gaming_env(game="sokoban", max_steps=max_steps)
-    env = SokobanNLWrapper(base_env, reflect_every=reflect_every)
-
-    obs_nl, info = env.reset()
-
-    experiences: List[Experience] = []
-    total_reward = 0.0
-    step_count = 0
-    terminated = False
-    truncated = False
-
-    last_state_summary = ""
-    current_intention = ""
-
-    while step_count < max_steps:
-        # --- Optional reflection via Qwen3 ---
-        if env.should_reflect() and ask_model is not None:
-            env.generate_reflection(ask_model, model)
-
-        # --- Skill guidance (same path as VLMDecisionAgent) ---
-        guidance = get_skill_guidance(skill_bank, obs_nl, game_name="sokoban")
-        skill_text = format_skill_guidance_for_prompt(guidance)
-
-        # --- Build Sokoban-specific prompt and query LLM ---
-        user_prompt = env.build_user_prompt()
-        system_prompt = env.system_prompt
-        full_prompt = system_prompt + skill_text + "\n\n" + user_prompt
-
-        action = "up"
-        reasoning = None
-        if ask_model is not None:
-            try:
-                reply = ask_model(
-                    full_prompt, model=model,
-                    temperature=temperature, max_tokens=1024,
-                )
-                if reply and not reply.startswith("Error"):
-                    cleaned = strip_think_tags(reply) or reply
-                    action = env.parse_action(cleaned)
-                    reasoning = env.parse_reasoning(cleaned)
-            except Exception as exc:
-                if verbose:
-                    print(f"    [WARN] Sokoban Qwen3 call failed ({exc}), using fallback")
-
-        # --- State summary (deterministic) ---
-        summary = get_state_summary(
-            obs_nl,
-            structured_state=info.get("structured_state"),
-            game=GAME_GAMINGAGENT,
-            model=model,
-        )
-        if summary:
-            last_state_summary = summary[:HARD_SUMMARY_CHAR_LIMIT]
-
-        # --- Intention (Qwen3) ---
-        intention = infer_intention(
-            last_state_summary or obs_nl,
-            game=GAME_GAMINGAGENT,
-            model=model,
-            context={
-                "last_actions": [e.action for e in experiences[-5:]],
-                "task": task,
-            },
-        )
-        if intention:
-            current_intention = intention
-
-        # --- Step environment ---
-        try:
-            next_obs_nl, reward, terminated, truncated, next_info = env.step(action)
-        except Exception as e:
-            if verbose:
-                print(f"    [ERROR at step {step_count}] env.step failed: {e}")
-            break
-
-        done = terminated or truncated
-        total_reward += reward
-
-        # --- Build Experience ---
-        exp = Experience(
-            state=obs_nl,
-            action=str(action),
-            reward=float(reward),
-            next_state=next_obs_nl,
-            done=done,
-            intentions=current_intention if current_intention else reasoning,
-            tasks=task,
-        )
-        exp.idx = step_count
-        exp.action_type = "primitive"
-        exp.summary_state = last_state_summary if last_state_summary else None
-        exp.available_actions = list(env.action_names)
-        exp.interface = {"env_name": "gamingagent", "game_name": "sokoban"}
-
-        if ask_model is not None:
-            try:
-                ss = exp.summary_state or ""
-                grid_ctx = info.get("grid_string", obs_nl[:600])
-                summary_prompt = (
-                    "Compress this Sokoban step into a short strategic note (max 10 words). "
-                    "Focus on the key threat or opportunity.\n"
-                    f"Facts: {ss}\n"
-                    f"Board:\n{grid_ctx}\n"
-                    f"Action: {action}\n"
-                    "Note:"
-                )
-                raw_note = ask_model(
-                    summary_prompt, model=model,
-                    temperature=0.2, max_tokens=40,
-                )
-                if raw_note and not raw_note.startswith("Error"):
-                    note = strip_think_tags(raw_note) or raw_note
-                    note = note.split("\n")[0].strip().strip('"').strip("'")[:80]
-                    exp.summary = f"{ss} | note={note}"[:HARD_SUMMARY_CHAR_LIMIT] if ss else note
-                else:
-                    exp.summary = ss or None
-            except Exception:
-                exp.summary = exp.summary_state or None
-
-        experiences.append(exp)
-
-        if verbose:
-            intent_short = (current_intention[:60] + "...") if len(current_intention) > 60 else current_intention
-            reason_short = (reasoning[:60] + "...") if reasoning and len(reasoning) > 60 else reasoning
-            progress = info.get("element_summary", "")
-            prog_line = [l for l in progress.splitlines() if "Progress" in l]
-            print(
-                f"  step {step_count}: action={action}, reward={reward:.2f}, "
-                f"cum={total_reward:.2f}"
-                + (f", {prog_line[0].strip()}" if prog_line else "")
-                + f"\n    reasoning: {reason_short}"
-            )
-
-        obs_nl = next_obs_nl
-        info = next_info
-        step_count += 1
-
-        if done:
-            break
-
-    env.close()
-
-    episode = Episode(
-        experiences=experiences,
-        task=task,
-        env_name="gamingagent",
-        game_name="sokoban",
-        metadata={
-            "done": terminated or truncated,
-            "steps": step_count,
-            "total_reward": total_reward,
-            "model": model,
-            "agent_type": "qwen3_8b_sokoban",
-            "final_intention": current_intention,
-            "final_state_summary": last_state_summary,
-        },
-    )
-    episode.set_outcome()
-
-    stats = {
-        "game": "sokoban",
-        "steps": step_count,
-        "total_reward": total_reward,
-        "terminated": terminated,
-        "truncated": truncated,
-        "model": model,
-        "agent_type": "qwen3_8b_sokoban",
     }
     return episode, stats
 
@@ -1432,7 +1226,7 @@ def run_qwen3_diplomacy_episode(
 
 
 # ---------------------------------------------------------------------------
-# Episode runner: Orak games (Super Mario, Pokemon Red)
+# Episode runner: Orak games (Super Mario)
 # ---------------------------------------------------------------------------
 
 def run_qwen3_orak_episode(
@@ -1686,17 +1480,7 @@ def run_game_rollouts(
         print(f"\n  [{game_name}] Episode {ep_idx + 1}/{args.episodes}")
 
         try:
-            if game_name == "sokoban" and SokobanNLWrapper is not None:
-                episode, stats = run_qwen3_sokoban_episode(
-                    max_steps=effective_max_steps,
-                    model=args.model,
-                    temperature=args.temperature,
-                    verbose=args.verbose,
-                    label=args.label,
-                    reflect_every=getattr(args, "reflect_every", 3),
-                    skill_bank=skill_bank,
-                )
-            elif game_name == "avalon":
+            if game_name == "avalon":
                 opp_model = getattr(args, "opponent_model", None)
                 cp = None
                 if getattr(args, "per_role", False):
@@ -1830,7 +1614,7 @@ def _game_description(game_name: str) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Qwen3-8B decision agent evaluation across LMGame-Bench, AgentEvolver, and Orak games",
+        description="Qwen3-8B decision agent evaluation across LMGame-Bench, AgentEvolver, and Orak (Super Mario) games",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -1849,7 +1633,6 @@ def main():
     parser.add_argument("--list-games", action="store_true", help="List available games and exit")
     parser.add_argument("--seed", type=int, default=42, help="Base random seed for Avalon/Diplomacy (default: 42)")
     parser.add_argument("--num_players", type=int, default=5, help="Number of Avalon players (default: 5)")
-    parser.add_argument("--reflect_every", type=int, default=3, help="Sokoban: run reflection every N steps (default: 3)")
     parser.add_argument(
         "--bank", type=str, default=None,
         help="Path to skill bank JSONL file or directory (same format as run_inference.py --bank).",
@@ -1934,7 +1717,6 @@ def main():
             elif not _ORAK_GAME_AVAILABLE.get(g, True):
                 hint = {
                     "super_mario": "gym-super-mario-bros (activate orak-mario conda env)",
-                    "pokemon_red": "pyboy (activate game-ai-agent conda env)",
                 }.get(g, "game-specific deps")
                 print(f"[WARNING] Game '{g}' requires {hint}, skipping.")
                 skipped_games.append(g)

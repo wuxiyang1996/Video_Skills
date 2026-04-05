@@ -153,7 +153,6 @@ DEFAULT_INPUT_DIRS: List[Path] = [
     _OUTPUT_ROOT / "gpt54",
     _OUTPUT_ROOT / "gpt54_evolver",
     _OUTPUT_ROOT / "gpt54_orak",
-    _OUTPUT_ROOT / "gpt54_sokoban",
 ]
 DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "output" / "gpt54_skills"
 

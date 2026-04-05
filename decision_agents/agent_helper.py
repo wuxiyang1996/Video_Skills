@@ -374,38 +374,6 @@ def _extract_2048_facts(state: str) -> Dict[str, str]:
     return facts
 
 
-def _extract_sokoban_facts(state: str) -> Dict[str, str]:
-    facts: Dict[str, str] = {}
-    boxes, docks = [], []
-    worker_pos = None
-    for line in state.split("\n"):
-        m = re.match(
-            r"\s*\d+\s*\|\s*(.+?)\s*\|\s*\((\d+),\s*(\d+)\)", line.strip()
-        )
-        if not m:
-            continue
-        item = m.group(1).strip().lower()
-        pos = (int(m.group(2)), int(m.group(3)))
-        if "worker" in item:
-            worker_pos = pos
-            if "dock" in item:
-                docks.append(pos)
-        elif "box" in item and "dark" not in item:
-            boxes.append(pos)
-            if "dock" in item:
-                docks.append(pos)
-        elif "dock" in item:
-            docks.append(pos)
-    if worker_pos:
-        facts["worker"] = f"({worker_pos[0]},{worker_pos[1]})"
-    if boxes:
-        facts["boxes"] = str(len(boxes))
-    if docks:
-        on_dock = len(set(boxes) & set(docks))
-        facts["solved"] = f"{on_dock}/{len(docks)}"
-    return facts
-
-
 def _extract_mario_facts(state: str) -> Dict[str, str]:
     facts: Dict[str, str] = {}
     m = re.search(r"Position\s+of\s+Mario\s*:\s*\((\d+),\s*(\d+)\)", state)
@@ -527,7 +495,6 @@ _GAME_EXTRACTORS: Dict[str, Any] = {
     "candy": _extract_candy_crush_facts,
     "twenty_forty_eight": _extract_2048_facts,
     "2048": _extract_2048_facts,
-    "sokoban": _extract_sokoban_facts,
     "super_mario": _extract_mario_facts,
     "mario": _extract_mario_facts,
     "avalon": _extract_avalon_facts,
@@ -539,7 +506,7 @@ def extract_game_facts(state: str, game_name: str = "") -> Dict[str, str]:
     """Deterministically extract structured facts from raw game state text.
 
     Returns ``{fact_name: value_string}``.  No LLM is called.
-    Supports: tetris, candy_crush, twenty_forty_eight, sokoban, super_mario,
+    Supports: tetris, candy_crush, twenty_forty_eight, super_mario,
     avalon, diplomacy.  Falls back to generic score/level extraction.
     """
     gn = game_name.lower().replace(" ", "_")

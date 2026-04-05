@@ -17,11 +17,6 @@ Usage (from Game-AI-Agent root):
         --game twenty_forty_eight \
         --episodes 3 --max_steps 50 --model gpt-5-mini
 
-    # Generate for sokoban with VLM decision agent
-    python cold_start/generate_cold_start.py \
-        --game sokoban \
-        --agent_type vlm --episodes 2 --max_steps 100
-
     # Generate for all supported games
     python cold_start/generate_cold_start.py --all_games --episodes 2 --max_steps 40
 """
@@ -70,22 +65,14 @@ from decision_agents.reward_func import RewardConfig, RewardResult
 
 # ---------------------------------------------------------------------------
 # GamingAgent environment imports: LAZY to avoid loading retro/pyglet (X11) when
-# only running custom games (2048, Sokoban, Candy Crush, Tetris) on headless servers.
+# only running custom games (2048, Candy Crush, Tetris) on headless servers.
 # ---------------------------------------------------------------------------
 import importlib
 
 _ENV_IMPORT_MAP = {
     "twenty_forty_eight": ("gamingagent.envs.custom_01_2048.twentyFortyEightEnv", "TwentyFortyEightEnv"),
-    "sokoban": ("gamingagent.envs.custom_02_sokoban.sokobanEnv", "SokobanEnv"),
     "candy_crush": ("gamingagent.envs.custom_03_candy_crush.candyCrushEnv", "CandyCrushEnv"),
     "tetris": ("gamingagent.envs.custom_04_tetris.tetrisEnv", "TetrisEnv"),
-    "doom": ("gamingagent.envs.custom_05_doom.doomEnv", "DoomEnvWrapper"),
-    "pokemon_red": ("gamingagent.envs.custom_06_pokemon_red.pokemonRedEnv", "PokemonRedEnv"),
-    "super_mario_bros": ("gamingagent.envs.retro_01_super_mario_bros.superMarioBrosEnv", "SuperMarioBrosEnv"),
-    "ace_attorney": ("gamingagent.envs.retro_02_ace_attorney.aceAttorneyEnv", "AceAttorneyEnv"),
-    "nineteen_forty_two": ("gamingagent.envs.retro_03_1942.NineteenFortyTwo_env", "NineteenFortyTwoEnv"),
-    "tic_tac_toe": ("gamingagent.envs.zoo_01_tictactoe.TicTacToeEnv", "SingleTicTacToeEnv"),
-    "texas_holdem": ("gamingagent.envs.zoo_02_texasholdem.TexasHoldemEnv", "SingleTexasHoldemEnv"),
 }
 
 
@@ -123,7 +110,7 @@ def _config_path(game_dir: str) -> str:
 
 
 def _adapter_kwargs(cache_dir: str, config_path: str) -> Dict[str, Any]:
-    """Standard GymEnvAdapter kwargs (2048, sokoban, tetris)."""
+    """Standard GymEnvAdapter kwargs (2048, tetris)."""
     return dict(
         render_mode=None,
         observation_mode_for_adapter="text",
@@ -141,63 +128,6 @@ def _candy_crush_kwargs(cache_dir: str, config_path: str) -> Dict[str, Any]:
     )
 
 
-def _retro_kwargs(game_name: str):
-    """Factory for retro envs (SuperMarioBros, NineteenFortyTwo) that take
-    (game_name, config_dir_path, observation_mode, base_log_dir)."""
-    def _build(cache_dir: str, config_path: str) -> Dict[str, Any]:
-        return dict(
-            game_name=game_name,
-            config_dir_path=str(Path(config_path).parent),
-            observation_mode="text",
-            base_log_dir=cache_dir,
-        )
-    return _build
-
-
-def _doom_kwargs(cache_dir: str, config_path: str) -> Dict[str, Any]:
-    """DoomEnvWrapper — retro-style args plus render_mode."""
-    return dict(
-        game_name="doom",
-        config_dir_path=str(Path(config_path).parent),
-        observation_mode="text",
-        base_log_dir=cache_dir,
-        render_mode=None,
-        headless=True,
-    )
-
-
-def _pokemon_red_kwargs(cache_dir: str, config_path: str) -> Dict[str, Any]:
-    """PokemonRedEnv — adapter pattern but also needs rom_path from config."""
-    import json as _json
-    rom_path = None
-    try:
-        with open(config_path) as _f:
-            _cfg = _json.load(_f)
-            rom_path = _cfg.get("env_init_kwargs", {}).get("rom_path")
-    except Exception:
-        pass
-    if rom_path and not os.path.isabs(rom_path):
-        rom_path = str(GAMINGAGENT_ROOT / rom_path)
-    kwargs: Dict[str, Any] = dict(
-        render_mode=None,
-        observation_mode_for_adapter="text",
-        agent_cache_dir_for_adapter=cache_dir,
-        game_specific_config_path_for_adapter=config_path,
-    )
-    if rom_path:
-        kwargs["rom_path"] = rom_path
-    return kwargs
-
-
-def _ace_attorney_kwargs(cache_dir: str, config_path: str) -> Dict[str, Any]:
-    """AceAttorneyEnv — uses adapter_ prefixed args."""
-    return dict(
-        adapter_observation_mode="text",
-        adapter_agent_cache_dir=cache_dir,
-        adapter_config_path=config_path,
-    )
-
-
 # "lazy" = load env class on first use (avoids importing retro/pyglet on headless servers)
 GAME_REGISTRY: Dict[str, Dict[str, Any]] = {
     "twenty_forty_eight": {
@@ -205,13 +135,6 @@ GAME_REGISTRY: Dict[str, Dict[str, Any]] = {
         "config_path": _config_path("custom_01_2048"),
         "action_names": ["up", "down", "left", "right"],
         "task": "Achieve the highest possible tile in 2048 by merging tiles strategically.",
-        "init_kwargs": _adapter_kwargs,
-    },
-    "sokoban": {
-        "env_class": "lazy",
-        "config_path": _config_path("custom_02_sokoban"),
-        "action_names": ["up", "down", "left", "right", "push up", "push down", "push left", "push right", "no_op"],
-        "task": "Push all boxes onto goal positions in the Sokoban puzzle.",
         "init_kwargs": _adapter_kwargs,
     },
     "candy_crush": {
@@ -228,58 +151,7 @@ GAME_REGISTRY: Dict[str, Dict[str, Any]] = {
         "task": "Clear as many lines as possible in Tetris by placing tetrominoes strategically.",
         "init_kwargs": _adapter_kwargs,
     },
-    "doom": {
-        "env_class": "lazy",
-        "config_path": _config_path("custom_05_doom"),
-        "action_names": ["move_left", "move_right", "attack"],
-        "task": "Survive and defeat enemies in Doom by shooting and dodging.",
-        "init_kwargs": _doom_kwargs,
-    },
-    "pokemon_red": {
-        "env_class": "lazy",
-        "config_path": _config_path("custom_06_pokemon_red"),
-        "action_names": ["a", "b", "start", "select", "up", "down", "left", "right"],
-        "task": "Progress through Pokemon Red by exploring, battling, and catching Pokemon.",
-        "init_kwargs": _pokemon_red_kwargs,
-    },
-    "super_mario_bros": {
-        "env_class": "lazy",
-        "config_path": _config_path("retro_01_super_mario_bros"),
-        "action_names": ["noop", "right", "right_a", "right_b", "right_a_b", "a", "b", "left", "left_a", "left_b", "left_a_b", "down", "up"],
-        "task": "Complete levels in Super Mario Bros by running, jumping, and avoiding enemies.",
-        "init_kwargs": _retro_kwargs("super_mario_bros"),
-    },
-    "ace_attorney": {
-        "env_class": "lazy",
-        "config_path": _config_path("retro_02_ace_attorney"),
-        "action_names": ["a", "b", "l", "r", "up", "down", "left", "right", "no_op"],
-        "task": "Solve cases in Ace Attorney by investigating evidence and cross-examining witnesses.",
-        "init_kwargs": _ace_attorney_kwargs,
-    },
-    "nineteen_forty_two": {
-        "env_class": "lazy",
-        "config_path": _config_path("retro_03_1942"),
-        "action_names": ["noop", "right", "right_b", "a", "b", "left", "left_b", "down", "up"],
-        "task": "Survive waves of enemy aircraft in 1942 by dodging and shooting.",
-        "init_kwargs": _retro_kwargs("nineteen_forty_two"),
-    },
-    "tic_tac_toe": {
-        "env_class": "lazy",
-        "config_path": _config_path("zoo_01_tictactoe"),
-        "action_names": ["place 0", "place 1", "place 2", "place 3", "place 4", "place 5", "place 6", "place 7", "place 8"],
-        "task": "Win at Tic-Tac-Toe by placing marks to get three in a row.",
-        "init_kwargs": _adapter_kwargs,
-    },
-    "texas_holdem": {
-        "env_class": "lazy",
-        "config_path": _config_path("zoo_02_texasholdem"),
-        "action_names": ["call", "raise", "fold", "check"],
-        "task": "Win at Texas Hold'em poker by making optimal betting decisions.",
-        "init_kwargs": _adapter_kwargs,
-    },
-    # ── Orak benchmark (krafton-ai/Orak, 12 games, 6 genres) ─────────
-    # All use Orak's BaseEnv implementations, loaded via make_orak_env.
-    # Puzzle
+    # ── Orak benchmark (krafton-ai/Orak) ──────────────────────────────
     "orak_twenty_fourty_eight": {
         "env_class": "orak",
         "config_path": str(_ORAK_MCP_AGENTS / "configs" / "twenty_fourty_eight" / "config.yaml"),
@@ -287,111 +159,11 @@ GAME_REGISTRY: Dict[str, Dict[str, Any]] = {
         "task": "Merge tiles to reach 2048. Score = min(score/20000*100, 100).",
         "init_kwargs": None,
     },
-    "orak_baba_is_you": {
-        "env_class": "orak",
-        "config_path": str(_ORAK_MCP_AGENTS / "configs" / "baba_is_you" / "config.yaml"),
-        "action_names": ["idle", "left", "right", "up", "down"],
-        "task": "Solve rule-manipulation puzzles by pushing word blocks. 100=win, 40=WIN exists, 20=WALL broken.",
-        "init_kwargs": None,
-    },
-    # Action
     "orak_super_mario": {
         "env_class": "orak",
         "config_path": str(_ORAK_MCP_AGENTS / "configs" / "super_mario" / "config.yaml"),
         "action_names": [f"Jump Level : {i}" for i in range(7)],
         "task": "Advance Mario right. Score = x_pos/3161*100.",
-        "init_kwargs": None,
-    },
-    "orak_street_fighter": {
-        "env_class": "orak",
-        "config_path": str(_ORAK_MCP_AGENTS / "configs" / "street_fighter" / "config.yaml"),
-        "action_names": [
-            "Move Closer", "Move Away", "Fireball", "Megapunch", "Hurricane",
-            "Low Kick", "Medium Kick", "High Kick", "Jump Closer", "Jump Away",
-            "Crouch", "Block", "Low Punch", "Medium Punch", "High Punch",
-        ],
-        "task": "Defeat opponents in Street Fighter III. Score = stages cleared.",
-        "init_kwargs": None,
-    },
-    # Strategy
-    "orak_star_craft": {
-        "env_class": "orak",
-        "config_path": str(_ORAK_MCP_AGENTS / "configs" / "star_craft" / "config.yaml"),
-        "action_names": [
-            "TRAIN PROBE", "TRAIN ZEALOT", "TRAIN STALKER", "BUILD PYLON",
-            "BUILD GATEWAY", "BUILD ASSIMILATOR", "BUILD NEXUS",
-            "BUILD CYBERNETICSCORE", "RESEARCH WARPGATERESEARCH",
-            "RESEARCH CHARGE", "SCOUTING PROBE", "MULTI-ATTACK",
-            "MULTI-RETREAT", "CHRONOBOOST NEXUS", "EMPTY ACTION",
-        ],
-        "task": "Win 1v1 as Protoss vs Zerg bot. Provide 5 sequential macro actions per step.",
-        "init_kwargs": None,
-    },
-    "orak_star_craft_multi": {
-        "env_class": "orak",
-        "config_path": str(_ORAK_MCP_AGENTS / "configs" / "star_craft_multi" / "config.yaml"),
-        "action_names": [],
-        "task": "Win 1v1 StarCraft II (2-player). Provide 5 actions per step.",
-        "init_kwargs": None,
-    },
-    "orak_slay_the_spire": {
-        "env_class": "orak",
-        "config_path": str(_ORAK_MCP_AGENTS / "configs" / "slay_the_spire" / "config.yaml"),
-        "action_names": ["PLAY", "END", "CHOOSE", "SKIP"],
-        "task": "Climb the Spire with card combos. Score = floor reached (max 50).",
-        "init_kwargs": None,
-    },
-    # RPG
-    "orak_pokemon_red": {
-        "env_class": "orak",
-        "config_path": str(_ORAK_MCP_AGENTS / "configs" / "pokemon_red" / "config.yaml"),
-        "action_names": [
-            "up", "down", "left", "right", "a", "b", "start", "select",
-            "move_to", "interact_with_object", "warp_with_warp_point",
-            "continue_dialog", "select_move_in_battle",
-            "switch_pkmn_in_battle", "run_away", "use_item_in_battle",
-        ],
-        "task": "Progress through Pokemon Red storyline milestones (0-12 flags).",
-        "init_kwargs": None,
-    },
-    "orak_darkest_dungeon": {
-        "env_class": "orak",
-        "config_path": str(_ORAK_MCP_AGENTS / "configs" / "darkest_dungeon" / "config.yaml"),
-        "action_names": ["attack", "heal", "swap", "idle", "skip"],
-        "task": "Survive dungeon raids. Score = 0.4*combat + 0.3*survival + 0.3*(1-stress).",
-        "init_kwargs": None,
-    },
-    # Adventure
-    "orak_pwaat": {
-        "env_class": "orak",
-        "config_path": str(_ORAK_MCP_AGENTS / "configs" / "pwaat" / "config.yaml"),
-        "action_names": ["Ok", "Back", "Down", "Up", "Left", "Right", "Present evidence", "Press"],
-        "task": "Solve cases in Ace Attorney. Score = milestone rewards.",
-        "init_kwargs": None,
-    },
-    "orak_her_story": {
-        "env_class": "orak",
-        "config_path": str(_ORAK_MCP_AGENTS / "configs" / "her_story" / "config.yaml"),
-        "action_names": ["Search", "Play Video"],
-        "task": "Uncover the story by searching keywords and watching videos. Score = views/272.",
-        "init_kwargs": None,
-    },
-    # Simulation
-    "orak_minecraft": {
-        "env_class": "orak",
-        "config_path": str(_ORAK_MCP_AGENTS / "configs" / "minecraft" / "config.yaml"),
-        "action_names": [],
-        "task": "Craft target items in Minecraft via JavaScript async functions.",
-        "init_kwargs": None,
-    },
-    "orak_stardew_valley": {
-        "env_class": "orak",
-        "config_path": str(_ORAK_MCP_AGENTS / "configs" / "stardew_valley" / "config.yaml"),
-        "action_names": [
-            "till_soil", "plant_seeds", "water_seeds", "harvest_crops",
-            "sell_item", "buy_item", "get_out_of_house", "go_house_and_sleep",
-        ],
-        "task": "Complete farming tasks in Stardew Valley.",
         "init_kwargs": None,
     },
 }
@@ -400,10 +172,8 @@ GAME_REGISTRY: Dict[str, Dict[str, Any]] = {
 # Used when --max_steps is not passed in run_100_rollouts.py and generate_cold_start_gpt54.py.
 COLD_START_MAX_STEPS_NATURAL_END: Dict[str, int] = {
     "twenty_forty_eight": 200,
-    "sokoban": 200,
     "candy_crush": 50,
     "tetris": 200,
-    "pokemon_red": 200,  # align with orak-2025-starter-kit & Orak benchmark
 }
 
 

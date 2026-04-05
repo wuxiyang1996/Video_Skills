@@ -8,17 +8,15 @@ This module provides a Gymnasium-compatible wrapper around native GamingAgent en
 
 ## Game Inventory
 
-LMGame-Bench contains **11 games** across 3 categories. **7 are included** in the training benchmark:
+LMGame-Bench contains **11 games** across 3 categories. **6 are included** in the training benchmark:
 
 | # | Game | Category | Actions | Status |
 |---|------|----------|---------|--------|
 | 1 | **2048** | custom | `up`, `down`, `left`, `right` | Available |
-| 2 | **Sokoban** | custom | `up`, `down`, `left`, `right` | Available |
-| 3 | **Candy Crush** | custom | coordinate swaps, e.g. `((0,5),(1,5))` | Available |
-| 4 | **Tetris** | custom | `move_left`, `move_right`, `rotate_cw`, `rotate_ccw`, `hard_drop`, `soft_drop` | Available |
-| 5 | **Pokemon Red** | custom | `a`, `b`, `start`, `select`, `up`, `down`, `left`, `right` | Available (ROM) |
-| 6 | **Tic-Tac-Toe** | zoo | `place 0` .. `place 8` | Available |
-| 7 | **Texas Hold'em** | zoo | `call`, `raise`, `fold`, `check` | Available |
+| 2 | **Candy Crush** | custom | coordinate swaps, e.g. `((0,5),(1,5))` | Available |
+| 3 | **Tetris** | custom | `move_left`, `move_right`, `rotate_cw`, `rotate_ccw`, `hard_drop`, `soft_drop` | Available |
+| 4 | **Tic-Tac-Toe** | zoo | `place 0` .. `place 8` | Available |
+| 5 | **Texas Hold'em** | zoo | `call`, `raise`, `fold`, `check` | Available |
 
 ### Excluded Games
 
@@ -31,17 +29,15 @@ LMGame-Bench contains **11 games** across 3 categories. **7 are included** in th
 
 ## Scope of This Wrapper
 
-This wrapper targets the **5 custom-category games** and 2 zoo games:
+This wrapper targets the **3 custom-category games** and 2 zoo games:
 
 | # | Game | Actions | Requirements |
 |---|------|---------|-------------|
 | 1 | **2048** | `up`, `down`, `left`, `right` | None |
-| 2 | **Sokoban** | `up`, `down`, `left`, `right` | None |
-| 3 | **Candy Crush** | coordinate swaps, e.g. `((0,5),(1,5))` | None |
-| 4 | **Tetris** | `move_left`, `move_right`, `rotate_cw`, `rotate_ccw`, `hard_drop`, `soft_drop` | None |
-| 5 | **Pokemon Red** | `a`, `b`, `start`, `select`, `up`, `down`, `left`, `right` | PyBoy + `.gb` ROM |
+| 2 | **Candy Crush** | coordinate swaps, e.g. `((0,5),(1,5))` | None |
+| 3 | **Tetris** | `move_left`, `move_right`, `rotate_cw`, `rotate_ccw`, `hard_drop`, `soft_drop` | None |
 
-The first four games are fully self-contained. Pokemon Red requires `pyboy` and a Game Boy ROM placed at `GamingAgent/gamingagent/configs/custom_06_pokemon_red/rom/pokemon.gb`. The remaining games are either excluded entirely (ROM dependencies for retro games) or deferred (PettingZoo multi-agent environments) and may be added in future iterations.
+All custom games are fully self-contained. The remaining games are either excluded entirely (ROM dependencies for retro games) or deferred (PettingZoo multi-agent environments) and may be added in future iterations.
 
 ## Module Structure
 
@@ -67,18 +63,6 @@ conda activate game-ai-agent
 #   game_agent/
 #     Game-AI-Agent/      <- this repo
 #     GamingAgent/        <- reference repo (read-only)
-```
-
-### Pokemon Red Setup (optional)
-
-```bash
-# Install PyBoy emulator
-pip install pyboy==2.5.2
-
-# Place the ROM (symlink or copy)
-mkdir -p ../GamingAgent/gamingagent/configs/custom_06_pokemon_red/rom
-ln -s /path/to/your/pokemon_red.gb \
-    ../GamingAgent/gamingagent/configs/custom_06_pokemon_red/rom/pokemon.gb
 ```
 
 ### List All Games
@@ -154,7 +138,6 @@ Results from 3 episodes per game using the LLM agent mode:
 | 2048 | 214.67 | 53 | High variance (48-528); actively merging tiles |
 | Candy Crush | 80.33 | 50 | Good match-finding from effective swaps |
 | Tetris | 10.33 | 10 | ~10 pieces placed; tends to spam `hard_drop` |
-| Sokoban | -0.60 | 6 | Spatial reasoning is hard in text; stuck early |
 | Tic-Tac-Toe | 1.00 | 3 | 100% win rate vs random opponent |
 | Texas Hold'em | -1.00 | 2 | Overly conservative (folds too much) |
 

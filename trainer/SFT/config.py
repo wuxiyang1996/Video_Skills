@@ -29,8 +29,6 @@ COLDSTART_GAMES = [
     "avalon",
     "candy_crush",
     "diplomacy",
-    "pokemon_red",
-    "sokoban",
     "super_mario",
     "tetris",
     "twenty_forty_eight",

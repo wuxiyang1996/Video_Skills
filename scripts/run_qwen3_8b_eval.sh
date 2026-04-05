@@ -5,10 +5,10 @@
 # Launches a vLLM server for Qwen/Qwen3-8B, then runs the evaluation script
 # that collects rollouts with intention + state summary annotations.
 #
-# Supports 8 games across 3 environment stacks:
-#   LMGame-Bench:  twenty_forty_eight, sokoban, candy_crush, tetris
+# Supports 6 games across 3 environment stacks:
+#   LMGame-Bench:  twenty_forty_eight, candy_crush, tetris
 #   AgentEvolver:  avalon, diplomacy
-#   Orak:          super_mario, pokemon_red
+#   Orak:          super_mario
 #
 # Uses the game-ai-agent conda environment for the vLLM server and most
 # games. Super Mario is automatically run in the orak-mario conda env
@@ -25,16 +25,16 @@
 #   bash scripts/run_qwen3_8b_eval.sh
 #
 #   # LMGame-Bench games only
-#   bash scripts/run_qwen3_8b_eval.sh --games twenty_forty_eight sokoban candy_crush tetris
+#   bash scripts/run_qwen3_8b_eval.sh --games twenty_forty_eight candy_crush tetris
 #
-#   # All 8 games (LMGame-Bench + AgentEvolver + Orak)
-#   bash scripts/run_qwen3_8b_eval.sh --games twenty_forty_eight sokoban candy_crush tetris avalon diplomacy super_mario pokemon_red
+#   # All 6 games (LMGame-Bench + AgentEvolver + Orak)
+#   bash scripts/run_qwen3_8b_eval.sh --games twenty_forty_eight candy_crush tetris avalon diplomacy super_mario
 #
 #   # AgentEvolver games only
 #   bash scripts/run_qwen3_8b_eval.sh --games avalon diplomacy --episodes 3
 #
 #   # Orak games only
-#   bash scripts/run_qwen3_8b_eval.sh --games super_mario pokemon_red --episodes 3
+#   bash scripts/run_qwen3_8b_eval.sh --games super_mario --episodes 3
 #
 #   # More episodes
 #   bash scripts/run_qwen3_8b_eval.sh --episodes 10
@@ -101,7 +101,7 @@ if [ -d "$AI_DIPLOMACY_DIR" ]; then
     export PYTHONPATH="${AI_DIPLOMACY_DIR}:${PYTHONPATH}"
 fi
 
-# Orak (Super Mario, Pokemon Red)
+# Orak (Super Mario)
 ORAK_SRC_DIR="${REPO_ROOT}/../Orak/src"
 if [ -d "$ORAK_SRC_DIR" ]; then
     export PYTHONPATH="${ORAK_SRC_DIR}:${PYTHONPATH}"

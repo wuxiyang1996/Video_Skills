@@ -18,7 +18,7 @@ Usage:
     result, sub_episodes, store = infer_and_segment(
         episode,
         skill_names=["move", "attack", "gather", "craft"],
-        env_name="overcooked",
+        env_name="avalon",
     )
 """
 

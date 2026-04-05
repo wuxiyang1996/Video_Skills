@@ -40,7 +40,7 @@ Usage (from Game-AI-Agent root):
 
     # Specific games only:
     python scripts/run_coevolution.py \\
-        --games tetris twenty_forty_eight sokoban \\
+        --games tetris twenty_forty_eight candy_crush \\
         --total-steps 10
 
     # Resume from specific step:

@@ -2,11 +2,11 @@
 """
 Run Orak benchmark (krafton-ai/Orak) games through the Game-AI-Agent pipeline.
 
-Supports 12 games across 6 genres, with both the VLM decision agent and
+Supports 11 games across 6 genres, with both the VLM decision agent and
 the dummy language agent.
 
 Games: twenty_fourty_eight, baba_is_you, super_mario, street_fighter,
-       star_craft, star_craft_multi, slay_the_spire, pokemon_red,
+       star_craft, star_craft_multi, slay_the_spire,
        darkest_dungeon, pwaat, her_story, minecraft, stardew_valley
 
 Usage:
@@ -202,7 +202,6 @@ def main():
         "star_craft": 1000,
         "star_craft_multi": 1000,
         "slay_the_spire": 500,
-        "pokemon_red": 200,
         "darkest_dungeon": 300,
         "pwaat": 300,
         "her_story": 400,

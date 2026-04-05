@@ -13,7 +13,7 @@
 #   bash cold_start/run_coldstart.sh                  # All games, 100 eps each
 #   bash cold_start/run_coldstart.sh --episodes 5     # Quick test (5 eps)
 #   bash cold_start/run_coldstart.sh --resume          # Resume interrupted run
-#   bash cold_start/run_coldstart.sh --games tetris sokoban
+#   bash cold_start/run_coldstart.sh --games tetris candy_crush
 #   bash cold_start/run_coldstart.sh --help            # Show all options
 
 set -euo pipefail

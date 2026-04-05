@@ -38,15 +38,13 @@ _ENVS_DIR = str(_GAMINGAGENT_ROOT / "gamingagent" / "envs")
 
 GAME_CONFIG_MAPPING = {
     "twenty_forty_eight": "custom_01_2048",
-    "sokoban": "custom_02_sokoban",
     "candy_crush": "custom_03_candy_crush",
     "tetris": "custom_04_tetris",
-    "pokemon_red": "custom_06_pokemon_red",
     "tictactoe": "zoo_01_tictactoe",
     "texasholdem": "zoo_02_texasholdem",
 }
 
-# Orak benchmark (krafton-ai/Orak, 12 games) are handled via evaluate_orak/
+# Orak benchmark (krafton-ai/Orak, 11 games) are handled via evaluate_orak/
 ORAK_GAME_NAMES = [
     "orak_twenty_fourty_eight",
     "orak_baba_is_you",
@@ -55,7 +53,6 @@ ORAK_GAME_NAMES = [
     "orak_star_craft",
     "orak_star_craft_multi",
     "orak_slay_the_spire",
-    "orak_pokemon_red",
     "orak_darkest_dungeon",
     "orak_pwaat",
     "orak_her_story",
@@ -219,7 +216,7 @@ def make_gaming_env(
     """Create a Gymnasium-compatible GamingAgent environment.
 
     Args:
-        game: One of list_games() (e.g. "twenty_forty_eight", "sokoban").
+        game: One of list_games() (e.g. "twenty_forty_eight", "candy_crush").
         max_steps: Maximum steps per episode before truncation.
         observation_mode: "text", "vision", or "both".
 
@@ -258,23 +255,6 @@ def make_gaming_env(
             **common_adapter_kw,
         )
 
-    elif game == "sokoban":
-        from gamingagent.envs.custom_02_sokoban.sokobanEnv import SokobanEnv
-        init_kw = config.get("env_init_kwargs", {})
-        env = SokobanEnv(
-            render_mode=None,
-            dim_room=tuple(init_kw.get("dim_room", [10, 10])),
-            max_steps_episode=init_kw.get("max_steps_episode", 200),
-            num_boxes=init_kw.get("num_boxes", 3),
-            num_gen_steps=init_kw.get("num_gen_steps"),
-            level_to_load=config.get("level_to_load"),
-            game_name_for_adapter=game,
-            max_stuck_steps_for_adapter=config.get(
-                "max_unchanged_steps_for_termination", 5
-            ),
-            **common_adapter_kw,
-        )
-
     elif game == "candy_crush":
         from gamingagent.envs.custom_03_candy_crush.candyCrushEnv import (
             CandyCrushEnv,
@@ -309,38 +289,6 @@ def make_gaming_env(
             ),
             **common_adapter_kw,
         )
-
-    elif game == "pokemon_red":
-        from gamingagent.envs.custom_06_pokemon_red.pokemonRedEnv import (
-            PokemonRedEnv,
-        )
-        init_kw = config.get("env_init_kwargs", {})
-        rom_path = init_kw.get("rom_path", "")
-        if rom_path and not os.path.isabs(rom_path):
-            rom_path = str(_GAMINGAGENT_ROOT / rom_path)
-        if not os.path.isfile(rom_path):
-            raise FileNotFoundError(
-                f"Pokemon Red ROM not found at '{rom_path}'. "
-                f"Place the .gb ROM at {_GAMINGAGENT_ROOT / 'gamingagent' / 'configs' / 'custom_06_pokemon_red' / 'rom' / 'pokemon.gb'}"
-            )
-        _tmp_dir = tempfile.mkdtemp(prefix="pokemon_red_")
-        _rom_copy = os.path.join(_tmp_dir, os.path.basename(rom_path))
-        shutil.copy2(rom_path, _rom_copy)
-        atexit.register(shutil.rmtree, _tmp_dir, True)
-
-        env = PokemonRedEnv(
-            render_mode=None,
-            rom_path=_rom_copy,
-            sound=init_kw.get("sound", False),
-            game_name_for_adapter=game,
-            observation_mode_for_adapter=observation_mode,
-            agent_cache_dir_for_adapter=cache_dir,
-            game_specific_config_path_for_adapter=config_path,
-            max_stuck_steps_for_adapter=config.get(
-                "max_unchanged_steps_for_termination", 100
-            ),
-        )
-        env._rom_tmp_dir = _tmp_dir
 
     elif game == "tictactoe":
         from gamingagent.envs.zoo_01_tictactoe.TicTacToeEnv import (

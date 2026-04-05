@@ -124,11 +124,6 @@ try:
 except ImportError:
     SkillQueryEngine = None
 
-try:
-    from env_wrappers.sokoban_nl_wrapper import SokobanNLWrapper
-except ImportError:
-    SokobanNLWrapper = None
-
 # RAG embedding for semantic action matching
 try:
     from rag import get_text_embedder
@@ -144,7 +139,7 @@ DEFAULT_MODEL = "Qwen/Qwen3-8B"
 DEFAULT_BANK_DIR = CODEBASE_ROOT / "labeling" / "output" / "gpt54_skillbank"
 DEFAULT_OUTPUT_DIR = CODEBASE_ROOT / "test_rollout" / "decision_agent"
 
-LMGAME_BENCH_NAMES = {"twenty_forty_eight", "sokoban", "candy_crush", "tetris"}
+LMGAME_BENCH_NAMES = {"twenty_forty_eight", "candy_crush", "tetris"}
 
 INTENTION_WORD_BUDGET = 15
 _SUBGOAL_TAG_SET = frozenset(SUBGOAL_TAGS)
@@ -1573,11 +1568,7 @@ def run_episode(
     task = game_cfg.description if game_cfg else f"Play {game}"
 
     base_env = make_gaming_env(game=game, max_steps=max_steps)
-
-    if game == "sokoban" and SokobanNLWrapper is not None:
-        env = SokobanNLWrapper(base_env, reflect_every=3)
-    else:
-        env = GamingAgentNLWrapper(base_env)
+    env = GamingAgentNLWrapper(base_env)
 
     obs_nl, info = env.reset()
     action_names = info.get("action_names", [])

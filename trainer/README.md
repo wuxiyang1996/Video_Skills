@@ -20,7 +20,7 @@ python scripts/run_coevolution.py \
 
 # Quick test (3 games, no GRPO, no W&B)
 python scripts/run_coevolution.py \
-    --games tetris twenty_forty_eight sokoban \
+    --games tetris twenty_forty_eight candy_crush \
     --total-steps 3 --no-grpo --no-wandb
 
 # Resume from checkpoint
@@ -130,7 +130,7 @@ Step 3:
 Phase A + B (overlapped):
   ┌───────────────────────────────────────────────────────────┐
   │  collect_rollouts()                                        │
-  │  ├── LPT schedule: super_mario → pokemon → ... → candy    │
+  │  ├── LPT schedule: super_mario → tetris → ... → candy     │
   │  ├── asyncio.Semaphore(40) caps concurrency                │
   │  ├── run_episode_async() × 64 coroutines                   │
   │  │   ├── summary_state    (deterministic, 0 calls)         │
@@ -184,7 +184,7 @@ Games are sorted by descending duration and interleaved round-robin:
 
 ### Cross-System Overlap (`orchestrator.py`)
 
-As short-game episodes complete, their trajectories immediately enter the skill bank pipeline via `asyncio.Queue`. By the time super_mario finishes, 6/8 games are already through Stage 1+2. Effective Phase B overhead: ~30s (instead of ~4 min serial).
+As short-game episodes complete, their trajectories immediately enter the skill bank pipeline via `asyncio.Queue`. By the time super_mario finishes, the other games are already through Stage 1+2. Effective Phase B overhead: ~30s (instead of ~4 min serial).
 
 ### Cold-Start Handling (`episode_runner.py`)
 
@@ -208,7 +208,7 @@ generation. The subgoal is parsed out and tracked identically to before.
 
 ### Token Budget Tuning (`episode_runner.py`)
 
-`max_tokens` for each LLM call is set based on measured output lengths across all 8 games
+`max_tokens` for each LLM call is set based on measured output lengths across all 6 games
 (~37,776 steps from 61 cold-start episodes per game):
 
 | Call | `max_tokens` | Actual p99 | Actual max | Headroom |
@@ -256,7 +256,7 @@ Logged every step:
 ```python
 @dataclass
 class CoEvolutionConfig:
-    games: List[str]                # Default: all 8 skill bank games
+    games: List[str]                # Default: all 6 skill bank games
     episodes_per_game: int = 8
     max_concurrent_episodes: int = 40
     total_steps: int = 30
@@ -312,11 +312,11 @@ The main `co_evolution_loop()` coroutine. Manages Phase A (rollouts with cross-s
 | 30 steps | ~6-10 hours | Default setting |
 | 100 steps | ~20-33 hours | Recommended for convergence |
 
-Phase A is the bottleneck — limited by 200-step games (2048, tetris, sokoban,
-avalon). Each game step requires 2 sequential LLM rounds (summary ∥ skill
-selection, then merged subgoal + action). With 48-56 concurrent async
-episodes and 4 GPUs on vLLM (TP=4), typical throughput is ~10-13 LLM
-calls/sec globally.
+Phase A is the bottleneck — limited by long-episode games (super_mario 500,
+2048/tetris 200 steps). Each game step requires 2 sequential LLM rounds
+(summary ∥ skill selection, then merged subgoal + action). With 48-56
+concurrent async episodes and 4 GPUs on vLLM (TP=4), typical throughput
+is ~10-13 LLM calls/sec globally.
 
 ---
 

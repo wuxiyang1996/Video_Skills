@@ -31,13 +31,7 @@ from .dummy_agent import (
     detect_game,
     extract_action,
     _default_action,
-    GAME_OVERCOOKED,
     GAME_GAMINGAGENT,
-    GAME_VIDEOGAMEBENCH,
-    GAME_VIDEOGAMEBENCH_DOS,
-    OVERCOOKED_VALID_ACTIONS,
-    VIDEOGAMEBENCH_VALID_ACTIONS,
-    VIDEOGAMEBENCH_DOS_VALID_KEYS,
 )
 
 
@@ -134,12 +128,6 @@ class VLMDecisionAgent:
 
     def _valid_actions_for_game(self, game: str, observation: str = "") -> List[str]:
         """Return list of valid action names for prompt (for take_action)."""
-        if game == GAME_OVERCOOKED:
-            return list(OVERCOOKED_VALID_ACTIONS)
-        if game == GAME_VIDEOGAMEBENCH:
-            return list(VIDEOGAMEBENCH_VALID_ACTIONS)
-        if game == GAME_VIDEOGAMEBENCH_DOS:
-            return list(VIDEOGAMEBENCH_DOS_VALID_KEYS)
         if game == GAME_GAMINGAGENT:
             m = re.search(r"[Vv]alid\s+actions?\s*[:\-]\s*(.+?)(?:\n|\.|$)", observation or "")
             if m:

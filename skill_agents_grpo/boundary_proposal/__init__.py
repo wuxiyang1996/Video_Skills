@@ -20,9 +20,9 @@ Framework integration
 
 Signal extraction strategies
 ----------------------------
-- ``env_name="overcooked"`` etc. — rule-based (fast, brittle)
+- ``env_name="avalon"`` etc. — rule-based (fast, brittle)
 - ``env_name="llm"`` — LLM-based predicates (general, adaptive)
-- ``env_name="llm+overcooked"`` — hybrid: LLM predicates + per-env hard events (recommended)
+- ``env_name="llm+avalon"`` — hybrid: LLM predicates + per-env hard events (recommended)
 
 Low-level API
 -------------

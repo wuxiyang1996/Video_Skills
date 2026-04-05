@@ -11,11 +11,11 @@ Typical usage::
     from skill_agents.pipeline import SkillBankAgent, PipelineConfig
 
     agent = SkillBankAgent(bank_path="skills/bank.jsonl")
-    agent.ingest_episodes(episodes, env_name="llm+overcooked")
+    agent.ingest_episodes(episodes, env_name="llm+avalon")
     agent.run_until_stable(max_iterations=3)
 
     # Decision-agent queries the bank
-    result = agent.query_skill("navigate to pot and place onion")
+    result = agent.query_skill("propose team and vote on quest")
 """
 
 from __future__ import annotations

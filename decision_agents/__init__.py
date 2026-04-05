@@ -5,12 +5,9 @@ from .dummy_agent import (
     detect_game,
     run_episode_with_experience_collection,
     AgentBufferManager,
-    GAME_OVERCOOKED,
     GAME_AVALON,
     GAME_DIPLOMACY,
     GAME_GAMINGAGENT,
-    GAME_VIDEOGAMEBENCH,
-    GAME_VIDEOGAMEBENCH_DOS,
 )
 
 from .agent_helper import (
@@ -52,12 +49,9 @@ __all__ = [
     "detect_game",
     "run_episode_with_experience_collection",
     "AgentBufferManager",
-    "GAME_OVERCOOKED",
     "GAME_AVALON",
     "GAME_DIPLOMACY",
     "GAME_GAMINGAGENT",
-    "GAME_VIDEOGAMEBENCH",
-    "GAME_VIDEOGAMEBENCH_DOS",
     "get_state_summary",
     "compact_structured_state",
     "compact_text_observation",

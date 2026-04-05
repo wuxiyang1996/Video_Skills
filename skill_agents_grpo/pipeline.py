@@ -11,11 +11,11 @@ Typical usage::
     from skill_agents_grpo.pipeline import SkillBankAgent, PipelineConfig
 
     agent = SkillBankAgent(bank_path="skills/bank.jsonl")
-    agent.ingest_episodes(episodes, env_name="llm+overcooked")
+    agent.ingest_episodes(episodes, env_name="llm+avalon")
     agent.run_until_stable(max_iterations=3)
 
     # Decision-agent queries the bank
-    result = agent.query_skill("navigate to pot and place onion")
+    result = agent.query_skill("propose team and vote on quest")
 """
 
 from __future__ import annotations
@@ -259,12 +259,6 @@ class SkillBankAgent:
             "mid_level:NAVIGATE", "mid_level:SURVIVE", "mid_level:ATTACK",
             "late_level:NAVIGATE", "late_level:SURVIVE", "late_level:EXECUTE",
         ],
-        "sokoban": [
-            "explore:NAVIGATE", "explore:EXPLORE",
-            "setup:POSITION", "setup:SETUP",
-            "solving:NAVIGATE", "solving:EXECUTE",
-            "finishing:EXECUTE", "finishing:OPTIMIZE",
-        ],
         "avalon": [
             "early_quests:SETUP", "early_quests:DEFEND",
             "mid_quests:ATTACK", "mid_quests:DEFEND",
@@ -277,18 +271,6 @@ class SkillBankAgent:
             "retreat:DEFEND", "retreat:SURVIVE",
             "adjustment:BUILD", "adjustment:OPTIMIZE",
             "late_orders:ATTACK", "late_orders:DEFEND",
-        ],
-        "pokemon_red": [
-            "battle:ATTACK", "battle:DEFEND", "battle:SURVIVE",
-            "overworld:NAVIGATE", "overworld:EXPLORE", "overworld:COLLECT",
-            "menu:SETUP", "menu:OPTIMIZE",
-            "dialog:EXPLORE", "dialog:EXECUTE",
-        ],
-        "pokemon": [
-            "battle:ATTACK", "battle:DEFEND", "battle:SURVIVE",
-            "overworld:NAVIGATE", "overworld:EXPLORE", "overworld:COLLECT",
-            "menu:SETUP", "menu:OPTIMIZE",
-            "dialog:EXPLORE", "dialog:EXECUTE",
         ],
     }
 
@@ -605,8 +587,7 @@ class SkillBankAgent:
             v_lower = v.lower()
             if v_lower in ("true", "yes", "1"):
                 preds[f"world.{k}"] = 1.0
-            elif v_lower in ("false", "no", "0", "not in battle",
-                              "no more pokemons"):
+            elif v_lower in ("false", "no", "0"):
                 preds[f"world.{k}"] = 0.0
             else:
                 preds[f"world.{k}={v}"] = 1.0
