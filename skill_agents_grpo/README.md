@@ -2,17 +2,11 @@
 
 Build and maintain a **Skill Bank** from long-horizon game trajectories: segment trajectories into skills, learn symbolic contracts (effects), and serve queries for the [decision_agents](../decision_agents/README.md) VLM agent. The pipeline supports **GRPO-trained LoRA adapters** that wrap existing LLM call points: each call produces G samples, is scored with CPU-only rewards, and the best sample is returned so the EM pipeline runs unchanged while adapters improve over time.
 
-**Model convention:** This project uses **Qwen3-8B** for all skill-bank components (vLLM serving, LoRA adapters, boundary/protocol/contract/curator calls). All configs and code references use Qwen3-8B. See [TODO_Lists/SKILLBANK_GRPO_PLAN.md](../TODO_Lists/SKILLBANK_GRPO_PLAN.md) for the full GRPO architecture.
+**Model convention:** This project uses **Qwen3-8B** for all skill-bank components (vLLM serving, LoRA adapters, boundary/protocol/contract/curator calls). All configs and code references use Qwen3-8B.
 
 **Model-agnostic design:** The pipeline and decision agent use the same skill-bank functions regardless of LLM backend. GPT and Qwen differ only in which API `ask_model` calls; set `PipelineConfig.llm_model` and/or `extractor_model` (e.g. `Qwen/Qwen3-8B` or `gpt-4o-mini`) for protocol synthesis and boundary proposal.
 
 **Reasoning-model compatibility:** When using Qwen3 or other reasoning models that emit `<think>` blocks, all LLM call sites are wrapped via [`_llm_compat.py`](_llm_compat.py): prompts get `/no_think` appended and responses are stripped of think tags. See [Reasoning-model compatibility](#reasoning-model-compatibility) below.
-
-**Transient vLLM / HTTP failures:** Contract and curator calls use [`_llm_retry.py`](_llm_retry.py) (`sync_ask_with_retry`) so bursts of `Connection error` or empty responses retry with backoff instead of immediately returning `None` (which GRPO logs as `0/4 non-empty` and reward `0.0`). Env: `SKILLBANK_LLM_RETRIES` (default 5), `SKILLBANK_LLM_RETRY_DELAY_S` (default 1.0), `VLLM_OPENAI_MAX_RETRIES` in [`API_func.py`](../API_func.py) `ask_vllm` (default 3).
-
-**Flat GRPO rewards → no gradient:** If every completion in a group gets the same reward, plain normalization gives **advantage 0 for all** (``r - mean`` is zero). Co-evolution and [`GRPOLoRATrainer`](grpo/trainer.py) therefore use [`compute_grpo_group_advantages`](grpo/advantage_utils.py): when variance is ~0, a small **completion tiebreak** (zero-mean from completion text) is added so LoRA still gets a learning signal. Disable with `GRPO_TIEBREAK_SCALE=0`; tune magnitude with default `0.08`.
-
-**GRPO training text vs parse:** Contract and curator returns are wrapped as [`SkillBankLLMOutput`](grpo/grpo_outputs.py) (a ``dict`` with the parsed JSON keys only). The **raw model string** lives in ``_grpo_raw_completion``; [`GRPOCallWrapper`](grpo/wrapper.py) stores that in ``completions`` for FSDP log-prob training (not ``str(dict)``). Segment uses ``PreferenceListWithRollouts.raw_rollouts`` joined with ``\\n---\\n``.
 
 ---
 
@@ -72,7 +66,7 @@ Stage 4 uses a **propose-filter-execute** flow:
 2. **Filter:** One LLM call (`filter_candidates()`) with the CURATOR LoRA — returns approve/veto/defer per candidate. Conflict resolution and deferral expiry (e.g. auto-approve after 3 defers) apply.
 3. **Execute:** Approved actions run via production `bank_maintenance/` (refine = weaken + strengthen; merge/split with alias map and local re-decode; materialize → proto-skill staging; promote after verification).
 
-New skills enter through **proto-skill staging:** `__NEW__` clusters → materialize → proto-skill in staging → verify → promote to real bank. See [TODO_Lists/SKILLBANK_GRPO_PLAN.md](../TODO_Lists/SKILLBANK_GRPO_PLAN.md) for full lifecycle and guardrails.
+New skills enter through **proto-skill staging:** `__NEW__` clusters → materialize → proto-skill in staging → verify → promote to real bank.
 
 ### Infrastructure (not GRPO)
 
@@ -343,7 +337,7 @@ All fields (see `pipeline.PipelineConfig` dataclass). **Model convention:** use 
 | `llm_model` | `None` | LLM for protocol synthesis and pipeline LLM calls. |
 | `max_concurrent_llm_calls` | `None` | Cap for local GPU concurrency (e.g. `1`). |
 
-**GRPO:** Per-stage hyperparameters (group_size, clip_ratio, kl_coeff, lr) live in `trainer/common/configs/skillbank_grpo.yaml`; see [SKILLBANK_GRPO_PLAN.md](../TODO_Lists/SKILLBANK_GRPO_PLAN.md).
+**GRPO:** Per-stage hyperparameters (group_size, clip_ratio, kl_coeff, lr) live in `trainer/common/configs/skillbank_grpo.yaml`.
 
 ---
 
@@ -473,7 +467,7 @@ Protocol and naming prompts have also been tightened (game-AI expert roles, conc
 
 ## Running skill extraction (with or without GRPO)
 
-The extraction script `extract_skillbank_grpo_gpt54.py` supports three modes. A shell wrapper `extract_skillbank/run_extract_skillbank_grpo.sh` sets up `PYTHONPATH` and API keys automatically.
+The extraction script `extract_skillbank_grpo_gpt54.py` supports three modes. A shell wrapper `extract_skillbank/run_extract_skillbank_grpo.sh` sets up `PYTHONPATH` and checks required environment variables automatically.
 
 ### Mode 1: API-based LLM teacher (default — GPT-5.4)
 
@@ -579,7 +573,7 @@ The `SegmentationStore` keeps per-trajectory segmentations updated during traini
 
 `r_total = r_env + w_follow × r_follow + r_cost + tool_call_reward_weight × r_tool`
 
-See [trainer/README.md](../trainer/README.md) for co-evolution setup and [TODO_Lists/SKILLBANK_GRPO_PLAN.md](../TODO_Lists/SKILLBANK_GRPO_PLAN.md) for the full GRPO plan (rewards, Stage 4 propose-filter-execute, proto-skill lifecycle, guardrails).
+See [trainer/README.md](../trainer/README.md) for co-evolution setup.
 
 ---
 
@@ -598,213 +592,6 @@ Every LLM-calling function that will be replaced or augmented by Qwen+GRPO recor
 | **Cold-start I/O** | `coldstart_io_all.jsonl` | `boundary_proposal`, `stage3_contract`, `bank_curator`, `skill_retrieval`, `pipeline` | API calls always; LoRA adapter calls when configured |
 
 Both are written per-game to the game's output directory. `coldstart_io_all.jsonl` is **incrementally flushed per-episode** (append mode) so data survives crashes.
-
-### Recorded functions and sample formats
-
-#### 1. `segment_ranking` (llm_teacher — SEGMENTATION adapter)
-
-Rank candidate skills for a trajectory segment.
-
-```json
-{
-  "function": "segment_ranking",
-  "prompt": "You are an expert at recognizing skills...\nA trajectory segment spans timesteps 11 to 12...",
-  "response": "{\"ranking\":[\"late:DEFEND\",\"POSITION\",...],\"reasoning\":\"...\"}",
-  "parsed": {"ranking": ["late:DEFEND", "POSITION", "..."], "reasoning": "..."},
-  "model": "gpt-5.4",
-  "temperature": 0.3,
-  "max_tokens": 1000,
-  "elapsed_s": 3.42,
-  "segment_start": 11,
-  "segment_end": 12,
-  "skill_names": ["CLEAR", "POSITION", "early:CLEAR", "late:DEFEND"]
-}
-```
-
-#### 2. `transition_ranking` (llm_teacher — SEGMENTATION adapter)
-
-Rank likely next skills given the previous skill.
-
-```json
-{
-  "function": "transition_ranking",
-  "prompt": "The agent just finished executing skill: \"early:CLEAR\"...",
-  "response": "{\"ranking\":[\"early:POSITION\",...],\"reasoning\":\"...\"}",
-  "parsed": {"ranking": ["early:POSITION", "early:SETUP", "..."], "reasoning": "..."},
-  "model": "gpt-5.4",
-  "temperature": 0.3,
-  "elapsed_s": 2.3,
-  "skill_names": ["CLEAR", "POSITION", "early:CLEAR", "early:POSITION"],
-  "prev_skill": "early:CLEAR"
-}
-```
-
-#### 3. `pairwise_choice` (llm_teacher — SEGMENTATION adapter)
-
-A/B choice for uncertain segment assignments.
-
-```json
-{
-  "function": "pairwise_choice",
-  "prompt": "Segment: timesteps 0 to 13\nObservations: [...]...\nSkill A: POSITION\nSkill B: DEFEND",
-  "response": "{\"choice\":\"A\",\"evidence\":\"...\"}",
-  "parsed": {"choice": "A", "evidence": "The segment is dominated by selecting quest teams..."},
-  "model": "gpt-5.4",
-  "elapsed_s": 2.62,
-  "segment_end": 13,
-  "skill_a": "POSITION",
-  "skill_b": "DEFEND"
-}
-```
-
-#### 4. `skill_naming` (llm_teacher — SEGMENTATION adapter)
-
-Name + description for new skill clusters. Fires when new skills emerge.
-
-```json
-{
-  "function": "skill_naming",
-  "prompt": "Name this skill cluster based on the following segments...",
-  "response": "{\"name\":\"Guard Endgame Reads\",\"description\":\"...\"}",
-  "parsed": {"name": "Guard Endgame Reads", "description": "..."},
-  "model": "gpt-5.4",
-  "elapsed_s": 1.8,
-  "skill_names": ["DEFEND"]
-}
-```
-
-#### 5. `boundary_proposal:predicate_extraction` (BOUNDARY adapter)
-
-Extract structured predicates from state descriptions.
-
-```json
-{
-  "module": "boundary_proposal",
-  "function": "predicate_extraction",
-  "prompt": "You are analyzing a game agent's trajectory...\nTimesteps:\n  t=0: game=2048 | highest_tile=2 ...",
-  "response": "[{\"phase\":\"opening\",\"highest_tile\":\"2\"}, ...]",
-  "parsed": {"n_predicates": 30},
-  "model": "qwen3-14b",
-  "temperature": 0.2,
-  "max_tokens": 3000,
-  "elapsed_s": 1.2,
-  "segment_start": 0,
-  "segment_end": 30,
-  "n_steps": 30
-}
-```
-
-#### 6. `boundary_proposal:boundary_significance` (BOUNDARY adapter)
-
-Filter which predicate changes are real skill boundaries.
-
-```json
-{
-  "module": "boundary_proposal",
-  "function": "boundary_significance",
-  "prompt": "You are analyzing state transitions...\nPairs:\n  t=5: {\"phase\":\"opening\"} -> {\"phase\":\"midgame\"}...",
-  "response": "[true, false, true]",
-  "parsed": {"significances": [true, false, true]},
-  "model": "qwen3-14b",
-  "temperature": 0.1,
-  "max_tokens": 2000,
-  "elapsed_s": 0.8,
-  "n_steps": 3
-}
-```
-
-#### 7. `stage3_contract:contract_summary` (CONTRACT adapter)
-
-Generate effect summary (eff_add / eff_del / description) for a skill.
-
-```json
-{
-  "module": "stage3_contract",
-  "function": "contract_summary",
-  "prompt": "You are analyzing skill effects...\nSkill: endgame:MERGE\nNumber of instances: 5...",
-  "response": "{\"eff_add\":[\"phase=endgame\"],\"eff_del\":[\"phase=midgame\"],\"description\":\"Transition to endgame\"}",
-  "parsed": {"eff_add": ["phase=endgame"], "eff_del": ["phase=midgame"], "description": "Transition to endgame"},
-  "temperature": 0.1,
-  "elapsed_s": 1.5,
-  "skill_id": "endgame:MERGE",
-  "extra": {"n_instances": 5}
-}
-```
-
-#### 8. `bank_curator:filter_candidates` (CURATOR adapter)
-
-Approve / veto / defer bank maintenance actions.
-
-```json
-{
-  "module": "bank_curator",
-  "function": "filter_candidates",
-  "prompt": "You are a skill bank maintenance curator...\nAction 0: REFINE on endgame:MERGE...",
-  "response": "{\"decisions\":[{\"idx\":0,\"verdict\":\"approve\",\"reason\":\"clear evidence\"}]}",
-  "parsed": {"decisions": [{"idx": 0, "verdict": "approve", "reason": "clear evidence"}]},
-  "temperature": 0.2,
-  "elapsed_s": 2.0,
-  "extra": {"n_candidates": 3}
-}
-```
-
-#### 9. `skill_retrieval:retrieve_skills` (RETRIEVAL adapter)
-
-Query rewriting + skill ranking for decision agents.
-
-```json
-{
-  "module": "skill_retrieval",
-  "function": "retrieve_skills",
-  "prompt": "You are a skill retrieval assistant...\nAgent's current goal: merge tiles...",
-  "response": "{\"rewritten_query\":\"endgame merge\",\"ranking\":[\"endgame:MERGE\"],\"reasoning\":\"best fit\"}",
-  "parsed": {"rewritten_query": "endgame merge", "ranking": ["endgame:MERGE"], "reasoning": "best fit"},
-  "temperature": 0.1,
-  "elapsed_s": 0.5,
-  "skill_names": ["endgame:MERGE", "midgame:MERGE"],
-  "extra": {"query": "merge tiles", "top_k": 5}
-}
-```
-
-#### 10. `pipeline:predicate_extraction`
-
-Same as #5 but called from `SkillBankAgent._ensure_predicates_extracted` (Stage 3).
-
-```json
-{
-  "module": "pipeline",
-  "function": "predicate_extraction",
-  "prompt": "You are analyzing a game agent's trajectory...",
-  "response": "[{\"phase\":\"opening\"}]",
-  "parsed": {"n_predicates": 1},
-  "model": "gpt-5.4",
-  "temperature": 0.2,
-  "max_tokens": 3000,
-  "elapsed_s": 1.1,
-  "segment_start": 0,
-  "segment_end": 30,
-  "n_steps": 30
-}
-```
-
-#### 11. `pipeline:protocol_synthesis`
-
-Generate structured execution protocol for a skill.
-
-```json
-{
-  "module": "pipeline",
-  "function": "protocol_synthesis",
-  "prompt": "You are a game-AI protocol designer...\nSkill: endgame:MERGE\nEffects: ...",
-  "response": "{\"preconditions\":[\"high tile\"],\"steps\":[\"merge tiles\"],\"success_criteria\":[\"reached 2048\"],\"abort_criteria\":[\"no moves\"]}",
-  "parsed": {"preconditions": ["high tile"], "steps": ["merge tiles"], "success_criteria": ["reached 2048"], "abort_criteria": ["no moves"]},
-  "model": "gpt-5.4",
-  "temperature": 0.2,
-  "max_tokens": 800,
-  "elapsed_s": 1.8,
-  "skill_id": "endgame:MERGE"
-}
-```
 
 ### Coverage matrix
 
@@ -870,8 +657,6 @@ The main pipeline (`extract_skillbank_grpo_gpt54.py`):
 - [lora/README.md](lora/README.md) — Multi-LoRA model (Qwen3-8B + adapters).
 - [PLAN.md](PLAN.md) — Full operating plan (constraints, thresholds, module map).
 - [PIPELINE_CALL_FLOW.md](PIPELINE_CALL_FLOW.md) — How each function is called from the agent framework.
-- [CHANGELOG_REFACTOR.md](CHANGELOG_REFACTOR.md) — Refactoring history and migration notes.
-- [TODO_Lists/SKILLBANK_GRPO_PLAN.md](../TODO_Lists/SKILLBANK_GRPO_PLAN.md) — GRPO wrapper architecture, 3 LoRA adapters, Stage 4 propose-filter-execute, proto-skill staging, guardrails.
 
 ---
 
@@ -882,7 +667,6 @@ skill_agents_grpo/
 ├── README.md                 # This file
 ├── PLAN.md                   # SkillBank Agent operating plan
 ├── PIPELINE_CALL_FLOW.md     # How each function is called from the agent framework
-├── CHANGELOG_REFACTOR.md     # Refactoring history and migration notes
 ├── __init__.py               # SkillBankAgent, SkillQueryEngine, NewPoolManager, etc.
 ├── _llm_compat.py            # Reasoning-model compatibility (strip_think_tags, /no_think wrapper)
 ├── coldstart_io.py           # Centralized cold-start I/O recording for all GRPO-connected functions
@@ -959,6 +743,6 @@ skill_agents_grpo/
 │   └── skill_function.py     # SkillFunction enum (SEGMENT, CONTRACT, CURATOR, ...)
 └── extract_skillbank/        # Extraction scripts
     ├── extract_skillbank_grpo_gpt54.py  # Main script: --local_model, --use_grpo flags
-    ├── run_extract_skillbank_grpo.sh    # Shell wrapper (PYTHONPATH + API key setup)
+    ├── run_extract_skillbank_grpo.sh    # Shell wrapper (PYTHONPATH + env var setup)
     └── output/               # Per-game outputs (skill_bank.jsonl, catalogs, cold-start I/O)
 ```

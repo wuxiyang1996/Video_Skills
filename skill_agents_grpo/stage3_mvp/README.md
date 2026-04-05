@@ -1,6 +1,6 @@
 # Stage 3 MVP: Effects-Only Contract Learning
 
-**Location:** `skill_agents/stage3_mvp/`
+**Location:** `skill_agents_grpo/stage3_mvp/`
 
 ## Overview
 
@@ -30,7 +30,7 @@ No preconditions, invariants, SPLIT, or MATERIALIZE_NEW. Used by the main pipeli
 ## High-level API
 
 ```python
-from skill_agents.stage3_mvp import run_stage3_mvp, specs_from_segmentation_result
+from skill_agents_grpo.stage3_mvp import run_stage3_mvp, specs_from_segmentation_result
 
 # From Stage 2 SegmentationResult
 specs = specs_from_segmentation_result(result, traj_id, observations_by_traj)

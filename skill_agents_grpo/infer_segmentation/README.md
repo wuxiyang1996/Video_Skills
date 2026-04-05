@@ -1,6 +1,6 @@
 # Stage 2: InferSegmentation — Preference-Learned Skill-Sequence Decoding
 
-**Location:** `skill_agents/infer_segmentation/`
+**Location:** `skill_agents_grpo/infer_segmentation/`
 
 ## Overview
 
@@ -199,7 +199,7 @@ So: **inference mode** = segmentation that can call GPT-5 (or another LLM); **of
 ### Inference with LLM (e.g. GPT-5)
 
 ```python
-from skill_agents.infer_segmentation import infer_and_segment
+from skill_agents_grpo.infer_segmentation import infer_and_segment
 
 result, sub_episodes, store = infer_and_segment(
     episode,
@@ -219,7 +219,7 @@ store.save("preferences.json")
 ### Offline (no LLM) — pre-trained scorer or testing
 
 ```python
-from skill_agents.infer_segmentation import infer_and_segment_offline
+from skill_agents_grpo.infer_segmentation import infer_and_segment_offline
 
 result, sub_episodes = infer_and_segment_offline(
     episode,
@@ -232,7 +232,7 @@ result, sub_episodes = infer_and_segment_offline(
 ### Manual preference training
 
 ```python
-from skill_agents.infer_segmentation import (
+from skill_agents_grpo.infer_segmentation import (
     PreferenceStore, PreferenceScorer, SegmentScorer,
     ranking_to_pairwise, viterbi_decode,
 )
@@ -337,7 +337,7 @@ A special `__NEW__` label handles segments where no existing skill fits:
 ## Configuration
 
 ```python
-from skill_agents.infer_segmentation import (
+from skill_agents_grpo.infer_segmentation import (
     SegmentationConfig, LLMTeacherConfig, PreferenceLearningConfig,
 )
 

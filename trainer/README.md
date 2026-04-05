@@ -1,5 +1,7 @@
 # Training Infrastructure
 
+Training module for the **COS-PLAY** co-evolution framework (COLM 2026, Section 4.3). Implements the co-evolution loop between the Decision Agent and Skill Bank Agent using GRPO with FSDP for the decision agent and Hard-EM for the skill bank, training 5 LoRA adapters on a Qwen3-8B base model across 8×A100 GPUs.
+
 ## Quick Start — Co-Evolution Training
 
 The primary training path is the **async co-evolution loop** in `trainer/coevolution/`. It runs two agents in alternating phases with cross-system overlap, GRPO training on 5 LoRA adapters, and full W&B logging.

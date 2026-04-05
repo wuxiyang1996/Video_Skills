@@ -1,6 +1,6 @@
 # Stage 4: Bank Maintenance — Split / Merge / Refine
 
-**Location:** `skill_agents/bank_maintenance/`
+**Location:** `skill_agents_grpo/bank_maintenance/`
 
 ## Overview
 
@@ -35,7 +35,7 @@ It also updates:
 ## High-level API
 
 ```python
-from skill_agents.bank_maintenance import run_bank_maintenance, BankMaintenanceConfig
+from skill_agents_grpo.bank_maintenance import run_bank_maintenance, BankMaintenanceConfig
 
 result = run_bank_maintenance(
     bank=bank,

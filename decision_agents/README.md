@@ -1,13 +1,13 @@
-# decision_agents
+# Decision Agent
 
-LLM decision-making agent that plays video games step-by-step. Supports **skill-bank retrieval** (RAG-based protocol-driven plans), **episodic memory**, **intention inference**, and **composite reward shaping**.
+The Decision Agent module from the **COS-PLAY** co-evolution framework (COLM 2026). Implements the three-stage decision loop described in Section 4.1 of the paper: **skill retrieval** → **intention update** → **action execution**, with composite reward shaping (r_total = r_env + λ_f · r_follow + r_cost).
 
 **Two model backends:**
 
 - **GPT-5.4** (training-free) — used for cold-start data generation and labeling via OpenRouter / OpenAI API.
-- **Qwen3-8B** (GRPO-trained) — served via vLLM for decision-agent inference and evaluation.
+- **Qwen3-8B** (GRPO-trained with LoRA adapters) — served via vLLM for decision agent inference and evaluation.
 
-Both share the same code path; `API_func.ask_model` routes to the correct API based on the model name. Skill bank loading and querying (`load_skill_bank`, `select_skill_from_bank`, `skill_bank_to_text`) are identical for both backends.
+Both share the same code path; `API_func.ask_model` routes to the correct API based on the model name. Skill bank loading and querying are identical for both backends.
 
 ## Supported games
 
@@ -147,23 +147,13 @@ The function tries four paths in order, stopping at the first success:
 
 ### `SkillQueryEngine.select()` scoring
 
-Three scores per skill, combined into a final confidence:
+Each candidate skill is scored on three axes and combined into a final confidence:
 
-**Retrieval relevance** (per-skill):
-- 60% RAG embedding cosine similarity (query vs skill description embedding)
-- 40% keyword Jaccard, further split: 35% `strategic_tokens` (name + description) + 35% `id_tokens` (skill_id) + 30% `effect_tokens` (eff_add/del/event)
-
-Skill descriptions are built from: `skill_id + name + strategic_description + preconditions[:5] + protocol.steps[:3] + eff_add + eff_del + eff_event`.
-
-**Execution applicability** (per-skill):
-- Uses `_effects_compat_score()` against current state predicates
-- For each `eff_add`: true at end → +1, contradicted → -1, missing → -0.5
-- For each `eff_del`: false at end → +1, still true → -1, missing → -0.5
-- Normalized to [-1, +1]
-- Without state info, falls back to `pass_rate - 0.5`
-
-**Combined confidence:**
-- 40% retrieval relevance + 35% applicability (normalized to [0,1]) + 25% historical pass rate
+| Component | Weight | Source |
+|-----------|--------|--------|
+| Retrieval relevance | 40% | RAG embedding cosine similarity + keyword Jaccard |
+| Execution applicability | 35% | Effect compatibility against current state predicates |
+| Historical pass rate | 25% | Success rate from past executions |
 
 Skills are sorted by confidence and top-k returned as `SkillSelectionResult` objects containing: `skill_id`, `skill_name`, `why_selected`, `relevance`, `applicability_score`, `confidence`, `expected_effects`, `preconditions`, `termination_hint`, `failure_modes`, `execution_hint`, `micro_plan`, `contract`, `pass_rate`.
 
@@ -471,9 +461,7 @@ Every timestep the runner executes:
 
 ### Format consistency
 
-The agent prompt explicitly labels both formats so Qwen agents learn them:
-- **Intention**: `"intention ([TAG] subgoal): [CLEAR] Reduce holes before stack overflows"`
-- **State summary**: `"state_summary (key=value): game=tetris | phase=endgame | stack_h=15 | holes=42"`
-- **Memory results**: returned as key=value summaries from `EpisodicMemoryStore`
-
-This matches the labeling pipeline in `labeling/label_episodes_gpt54.py`, ensuring cold-start data and runtime data share identical formats for RAG retrieval and skill extraction.
+The agent prompt uses consistent formats across cold-start labeling and runtime inference:
+- **Intention**: `"[TAG] subgoal phrase"` (e.g., `"[CLEAR] Reduce holes before stack overflows"`)
+- **State summary**: `"key=value"` pairs (e.g., `"game=tetris | phase=endgame | stack_h=15 | holes=42"`)
+- **Memory results**: `key=value` summaries from `EpisodicMemoryStore`

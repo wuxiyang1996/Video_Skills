@@ -346,7 +346,6 @@ See [trainer/README.md](../trainer/README.md) for full co-evolution setup and co
 skill_agents/
 ├── README.md              # This file
 ├── PLAN.md                # SkillBank Agent operating plan
-├── CHANGELOG_REFACTOR.md  # Detailed changelog for the refactoring
 ├── __init__.py            # SkillBankAgent, SkillQueryEngine, SkillSelectionResult, NewPoolManager, etc.
 ├── _llm_compat.py         # Reasoning-model compatibility (strip_think_tags, /no_think wrapper)
 ├── pipeline.py            # SkillBankAgent orchestrator (contract feedback, NEW pool integration)

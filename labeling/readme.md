@@ -1,8 +1,6 @@
 # Labeling — Episode Annotation with GPT-5.4
 
-This folder contains code and scripts for annotating cold-start episode
-trajectories with concise labels suitable for RAG retrieval, the manager
-agent, and downstream skill extraction.
+Skill labeling pipeline for the **COS-PLAY** co-evolution framework (COLM 2026). Annotates cold-start episode trajectories with concise labels suitable for RAG retrieval, the Decision Agent, and downstream skill extraction by the Skill Bank Agent.
 
 There are **four pipelines** available:
 

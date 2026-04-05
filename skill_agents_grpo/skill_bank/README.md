@@ -1,6 +1,6 @@
 # Skill Bank — Persistent Storage for Skill Contracts
 
-**Location:** `skill_agents/skill_bank/`
+**Location:** `skill_agents_grpo/skill_bank/`
 
 ## Overview
 
@@ -25,12 +25,12 @@ Rich tracking and promotion of `__NEW__` segments into real skills:
 - Promotion criteria: support + consistency + separability
 - Persistence (JSON save/load)
 
-Used by the full [skill_agents](../README.md) pipeline, [contract_verification](../contract_verification/README.md), [bank_maintenance](../bank_maintenance/README.md), and [skill_evaluation](../skill_evaluation/README.md).
+Used by the full [skill_agents_grpo](../README.md) pipeline, [contract_verification](../contract_verification/README.md), [bank_maintenance](../bank_maintenance/README.md), and [skill_evaluation](../skill_evaluation/README.md).
 
 ## High-level API
 
 ```python
-from skill_agents.skill_bank import SkillBankMVP
+from skill_agents_grpo.skill_bank import SkillBankMVP
 
 bank = SkillBankMVP(path="data/skill_bank.jsonl")
 bank.load()
@@ -56,7 +56,7 @@ bank.save()
 ### NewPoolManager
 
 ```python
-from skill_agents.skill_bank.new_pool import NewPoolManager, NewPoolConfig
+from skill_agents_grpo.skill_bank.new_pool import NewPoolManager, NewPoolConfig
 
 pool = NewPoolManager(config=NewPoolConfig(min_cluster_size=5))
 pool.add(record, predecessor_skill="move", successor_skill="attack")

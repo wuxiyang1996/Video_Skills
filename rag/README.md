@@ -1,6 +1,6 @@
 # RAG Embedding Models
 
-This package provides two configurable embedders for the Game-AI-Agent framework:
+RAG retrieval module for the **COS-PLAY** co-evolution framework (COLM 2026). Provides two configurable embedders for the Game-AI-Agent framework:
 
 1. **Text (RAG) embedding** – for experience summaries, queries, and retrieval (default: `Qwen/Qwen3-Embedding-0.6B`).
 2. **Multimodal embedding** – for text + image / video (default: `Qwen/Qwen3-VL-Embedding-2B`).

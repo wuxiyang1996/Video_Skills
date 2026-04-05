@@ -1,6 +1,6 @@
 # Cold-Start Data Generation
 
-Generate initial trajectory data and skill seeds for the Game-AI-Agent system.
+Cold-start data generation for the **COS-PLAY** co-evolution framework (COLM 2026, Section 5). As described in the paper, GPT-5.4 is used as a teacher model to generate seed trajectories per game, which bootstrap the co-evolution training loop between the Decision Agent and Skill Bank Agent.
 
 ## Scope: Environments and Games We Use
 
@@ -298,31 +298,6 @@ LLM calls are parallelized within each phase via `ThreadPoolExecutor`. A shared
 OpenAI client singleton avoids redundant TCP/TLS handshakes. This yields ~7x
 speedup for Diplomacy episodes.
 
-### StringComparator serialization fix
-
-The diplomacy engine uses `StringComparator` objects as dict keys internally
-(for locations, power names, etc.). Python's `json.dump` rejects non-`str` keys
-even with `default=str` (which only handles values). A `_sanitize_keys()` helper
-recursively converts all dict keys to plain `str` before serialization.
-
-## Change Log (generate_cold_start_evolver.py)
-
-Changes from the original codebase:
-
-- Removed artificial `--max_steps` loop guard from both `run_avalon_episode()`
-  and `run_diplomacy_episode()`; loops now use `while not env.done` only.
-- Added `DIPLOMACY_MAX_PHASES = 20` constant, passed to
-  `DiplomacyNLWrapper(max_phases=...)` to match `DiplomacyConfig.max_phases`.
-- Parallelized per-agent API calls in both episode runners using
-  `ThreadPoolExecutor` + `as_completed`.
-- Replaced per-call `_make_client()` with shared singleton `_get_client()`.
-- Added `_sanitize_keys()` to fix `StringComparator` JSON serialization bug in
-  Diplomacy episodes.
-- Removed `--max_steps` CLI argument and `default_max_steps` from
-  `EVOLVER_GAMES` registry.
-- Updated `run_coldstart_evolver.sh` to remove hardcoded `--max_steps 50`
-  default.
-
 ## Output Format
 
 Each episode JSON contains:
@@ -346,63 +321,3 @@ This format is directly compatible with:
 - `SkillBankAgent.ingest_episodes()` for skill pipeline ingestion
 - `episodes_to_rollout_records()` → `ingest_rollouts()` for trainer ingestion
 
-## Orak End-Condition & Recording Audit (2026-03-11)
-
-### What was verified
-
-We traced the full end-condition flow for both Orak games against the
-`orak-2025-starter-kit` and the `Orak` source repo to confirm that the
-cold-start generator uses the **natural termination conditions** of each
-underlying game engine -- not an artificial step cap.
-
-| Game | Natural end condition | How it propagates |
-|------|----------------------|-------------------|
-| **Super Mario** | `gym_super_mario_bros` sets `done=True` on death, timer expiry, or flag reached. | `gym env.step()` → `SuperMarioEnv.step()` → `evaluate()` → `OrakNLWrapper.step()` returns `terminated=True`. |
-
-The wrapper's `max_steps` (Mario=100, matching the starter kit's
-`MAX_STEPS`) acts only as a safety-net truncation. It sets `truncated=True`
-(never `terminated`) and only fires when the game hasn't already ended
-naturally (line 316-317 of `orak_nl_wrapper.py`).
-
-### What was changed in `generate_cold_start_orak.py`
-
-Each `Experience.interface` dict now records the termination details
-separately so downstream training code can distinguish natural game-over
-from step-limit truncation:
-
-```python
-exp.interface = {
-    "env_name": "orak",
-    "game_name": game_name,
-    "step": step_count,
-    "terminated": terminated,   # natural game-end (death, victory, flag, etc.)
-    "truncated": truncated,     # hit max_steps safety limit
-    "score": step_info.get("score"),  # evaluate() result (e.g. x_pos for Mario)
-    "cumulative_reward": total_reward,
-}
-```
-
-Previously `Experience.done` was `terminated or truncated` with no way to
-tell them apart. `done` is still set to `terminated or truncated` for
-backward compatibility, but the interface dict now carries the full picture.
-
-The verbose output also prints `TERM` or `TRUNC` labels per step for easier
-debugging.
-
-### What was already correct (no change needed)
-
-- **State recording**: `exp.state` / `exp.raw_state` = NL observation from `obs2text()`.
-- **Available actions**: `exp.available_actions` = full action name list from the env.
-- **Agent action taken**: `exp.action` = exact string chosen by GPT-5.4.
-- **Agent reasoning**: `exp.intentions` = chain-of-thought from the GPT tool call.
-- **Shell scripts**: `run_coldstart_orak_mario.sh` (max_steps=100) matches the starter kit's
-  `MAX_STEPS` dict.
-
-### Gathering 60 rollouts
-
-```bash
-# Super Mario (from Game-AI-Agent dir, orak-mario conda env)
-bash cold_start/run_coldstart_orak_mario.sh --episodes 60 --max_steps 100 --resume -v
-```
-
-`--resume` makes interrupted runs idempotent.

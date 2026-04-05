@@ -105,7 +105,7 @@ This is the recommended strategy because hard events are structural (no interpre
 ### 1. LLM-based segmentation (general, any environment)
 
 ```python
-from skill_agents.boundary_proposal import segment_episode, ProposalConfig
+from skill_agents_grpo.boundary_proposal import segment_episode, ProposalConfig
 
 sub_episodes = segment_episode(
     episode,
@@ -145,7 +145,7 @@ sub_episodes = segment_episode(
 If you prefer using `Episode.separate_into_sub_episodes()`, call `annotate_episode_boundaries()` first. It sets `sub_tasks` labels and `sub_task_done` flags on each `Experience` so the existing method segments correctly:
 
 ```python
-from skill_agents.boundary_proposal import annotate_episode_boundaries
+from skill_agents_grpo.boundary_proposal import annotate_episode_boundaries
 
 candidates = annotate_episode_boundaries(
     episode,
@@ -161,7 +161,7 @@ If experience summaries exist, pass the RAG `TextEmbedder` to add embedding-base
 
 ```python
 from rag.embedding.text_embedder import get_text_embedder
-from skill_agents.boundary_proposal import segment_episode
+from skill_agents_grpo.boundary_proposal import segment_episode
 
 embedder = get_text_embedder()  # Qwen3-Embedding-0.6B
 
@@ -178,7 +178,7 @@ sub_episodes = segment_episode(
 
 ```python
 import numpy as np
-from skill_agents.boundary_proposal import segment_episode
+from skill_agents_grpo.boundary_proposal import segment_episode
 
 surprisal = np.array([...])  # -log p(a_t | x_t) from your behavior model
 
@@ -193,7 +193,7 @@ sub_episodes = segment_episode(
 ### 7. Low-level: just get boundary candidates
 
 ```python
-from skill_agents.boundary_proposal import propose_from_episode, candidate_centers_only
+from skill_agents_grpo.boundary_proposal import propose_from_episode, candidate_centers_only
 
 candidates = propose_from_episode(
     episode,
@@ -256,7 +256,7 @@ If an LLM call fails (API error, malformed JSON), that chunk gets empty predicat
 ## Configuration
 
 ```python
-from skill_agents.boundary_proposal import ProposalConfig
+from skill_agents_grpo.boundary_proposal import ProposalConfig
 
 config = ProposalConfig(
     # Merge and window
@@ -316,7 +316,7 @@ The composite plausibility score is a weighted combination of these three signal
 ### Usage
 
 ```python
-from skill_agents.boundary_proposal import BoundaryPreferenceScorer, BoundaryPreferenceConfig
+from skill_agents_grpo.boundary_proposal import BoundaryPreferenceScorer, BoundaryPreferenceConfig
 
 scorer = BoundaryPreferenceScorer(config=BoundaryPreferenceConfig(
     signal_strength_weight=1.0,
@@ -342,7 +342,7 @@ bonus = scorer.decoding_bonus(seg_start=10, seg_end=25)
 ### Configuration
 
 ```python
-from skill_agents.boundary_proposal import BoundaryPreferenceConfig
+from skill_agents_grpo.boundary_proposal import BoundaryPreferenceConfig
 
 config = BoundaryPreferenceConfig(
     signal_strength_weight=1.0,   # Weight for number of supporting signals
@@ -358,7 +358,7 @@ config = BoundaryPreferenceConfig(
 ## Module layout
 
 ```
-skill_agents/boundary_proposal/
+skill_agents_grpo/boundary_proposal/
 ├── README.md              # This file
 ├── __init__.py            # Public API (framework-integrated + low-level)
 ├── proposal.py            # Core trigger generation, merge/window, density control
@@ -390,7 +390,7 @@ skill_agents/boundary_proposal/
 ## Toy Example (standalone, no LLM)
 
 ```bash
-python -m skill_agents.boundary_proposal.example_toy
+python -m skill_agents_grpo.boundary_proposal.example_toy
 ```
 
 Runs on synthetic data with predicate flips, surprisal spikes, change-point peaks, and hard events.

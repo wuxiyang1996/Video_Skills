@@ -1,6 +1,6 @@
 # Skill Evaluation — LLM-Agentic Quality Assessment
 
-**Location:** `skill_agents/skill_evaluation/`
+**Location:** `skill_agents_grpo/skill_evaluation/`
 
 ## Overview
 
@@ -27,7 +27,7 @@ Skill Evaluation runs **LLM-as-a-judge** on every skill in the bank. All quality
 ## High-level API
 
 ```python
-from skill_agents.skill_evaluation import run_skill_evaluation
+from skill_agents_grpo.skill_evaluation import run_skill_evaluation
 
 summary = run_skill_evaluation(bank, all_segments)
 print(summary.format_for_llm())

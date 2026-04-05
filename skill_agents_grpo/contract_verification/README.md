@@ -1,6 +1,6 @@
 # Stage 3: Contract Verification — Full Contract Learn / Verify / Refine
 
-**Location:** `skill_agents/contract_verification/`
+**Location:** `skill_agents_grpo/contract_verification/`
 
 ## Overview
 
@@ -35,7 +35,7 @@ Verification produces update actions:
 ## High-level API
 
 ```python
-from skill_agents.contract_verification import run_stage3, run_stage3_batch, SkillBank
+from skill_agents_grpo.contract_verification import run_stage3, run_stage3_batch, SkillBank
 
 # Single trajectory
 summary = run_stage3(result, traj_id, observations, config=...)

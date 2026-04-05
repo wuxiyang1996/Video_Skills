@@ -1,6 +1,6 @@
 # Inference
 
-Run the **decision agent** ([decision_agents/](../decision_agents/)) and store rollouts in the **data_structure** format ([data_structure/experience.py](../data_structure/experience.py)): `Experience` list and `Episode`.
+Inference module for the **COS-PLAY** co-evolution framework (COLM 2026). Runs the trained Decision Agent (Qwen3-8B with LoRA adapters) and stores rollouts in the **data_structure** format ([data_structure/experience.py](../data_structure/experience.py)): `Experience` list and `Episode`.
 
 ## VERL-based inference (recommended for vLLM/sglang)
 
