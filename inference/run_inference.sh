@@ -5,12 +5,10 @@
 # Runs the trained Decision Agent with the stored Skill Bank on game
 # environments and collects rollouts + evaluation metrics.
 #
-# Supports three usage modes:
+# Supports two usage modes:
 #   1. Explicit paths — specify model checkpoint and bank file directly.
 #   2. Co-evolution shortcut — point at a co-evolution output directory and
 #      an iteration number; paths are resolved automatically.
-#   3. VERL inference — delegates to inference.run_verl_inference for
-#      vLLM/sglang-based evaluation (same env+reward as training).
 #
 # GPU Layout:
 #   Uses 1 GPU by default (CUDA_VISIBLE_DEVICES=0).  Override with
@@ -19,28 +17,25 @@
 # ======================== USAGE ==============================================
 #
 #   # Basic: explicit model + bank
-#   bash scripts/run_inference.sh \
+#   bash inference/run_inference.sh \
 #       --model runs/coevolution/models/decision_v3/global_step_20/actor/huggingface \
 #       --bank  runs/coevolution/skillbank/bank.jsonl \
 #       --games twenty_forty_eight candy_crush \
 #       --episodes 10
 #
 #   # Co-evolution shortcut (latest iteration)
-#   bash scripts/run_inference.sh \
+#   bash inference/run_inference.sh \
 #       --coevo-dir runs/coevolution \
 #       --episodes 20
 #
 #   # Co-evolution shortcut (specific iteration)
-#   bash scripts/run_inference.sh \
+#   bash inference/run_inference.sh \
 #       --coevo-dir runs/coevolution \
 #       --iteration 3 \
 #       --episodes 20
 #
-#   # VERL-based inference
-#   bash scripts/run_inference.sh --verl
-#
 #   # No skill bank (baseline)
-#   bash scripts/run_inference.sh --model gpt-4o-mini --no-bank --episodes 5
+#   bash inference/run_inference.sh --model gpt-4o-mini --no-bank --episodes 5
 #
 # =============================================================================
 
@@ -65,23 +60,6 @@ INFERENCE_GPUS="${INFERENCE_GPUS:-0}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 # ---------------------------------------------------------------------------
-# Check for --verl early (delegate immediately)
-# ---------------------------------------------------------------------------
-for arg in "$@"; do
-    if [ "$arg" = "--verl" ]; then
-        echo "[run_inference.sh] Delegating to VERL inference..."
-        # Strip --verl from args, pass the rest
-        VERL_ARGS=()
-        for a in "$@"; do
-            [ "$a" != "--verl" ] && VERL_ARGS+=("$a")
-        done
-        CUDA_VISIBLE_DEVICES="$INFERENCE_GPUS" \
-            python3 -m scripts.run_inference --verl "${VERL_ARGS[@]}"
-        exit $?
-    fi
-done
-
-# ---------------------------------------------------------------------------
 # Parse convenience env vars
 # ---------------------------------------------------------------------------
 COEVO_DIR="${COEVO_DIR:-}"
@@ -104,7 +82,7 @@ echo ""
 # ---------------------------------------------------------------------------
 # Build the Python command
 # ---------------------------------------------------------------------------
-CMD=(python3 -m scripts.run_inference)
+CMD=(python3 -m inference.run_inference)
 
 # Forward all CLI arguments to the Python script
 CMD+=("$@")

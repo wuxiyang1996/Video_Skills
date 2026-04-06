@@ -215,11 +215,11 @@ EVAL_ARGS=(
     "${BANK_ARGS[@]}"
 )
 
-echo "[${TAG}-diplomacy] python -m scripts.run_qwen3_8b_eval ${EVAL_ARGS[*]}"
+echo "[${TAG}-diplomacy] python -m inference.run_qwen3_8b_eval ${EVAL_ARGS[*]}"
 echo ""
 
 EXIT_CODE=0
-python -m scripts.run_qwen3_8b_eval "${EVAL_ARGS[@]}" || EXIT_CODE=$?
+python -m inference.run_qwen3_8b_eval "${EVAL_ARGS[@]}" || EXIT_CODE=$?
 
 echo ""
 echo "══════════════════════════════════════════════════════════════"

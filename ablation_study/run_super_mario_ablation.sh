@@ -185,11 +185,11 @@ EVAL_ARGS=(
     --seed "${SEED}" --output_dir "${GAME_OUTPUT}" --no-bank
 )
 
-echo "[${TAG}-mario] ${ORAK_PYTHON} -m scripts.run_qwen3_8b_eval ${EVAL_ARGS[*]}"
+echo "[${TAG}-mario] ${ORAK_PYTHON} -m inference.run_qwen3_8b_eval ${EVAL_ARGS[*]}"
 echo ""
 
 EXIT_CODE=0
-${ORAK_PYTHON} -m scripts.run_qwen3_8b_eval "${EVAL_ARGS[@]}" || EXIT_CODE=$?
+${ORAK_PYTHON} -m inference.run_qwen3_8b_eval "${EVAL_ARGS[@]}" || EXIT_CODE=$?
 
 # ── Post-run comparison ──────────────────────────────────────────────
 echo ""

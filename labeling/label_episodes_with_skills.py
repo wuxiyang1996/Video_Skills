@@ -113,7 +113,10 @@ try:
 except ImportError:
     OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
-from skill_agents.skill_bank.bank import SkillBankMVP
+try:
+    from skill_agents.skill_bank.bank import SkillBankMVP
+except ImportError:
+    SkillBankMVP = None
 
 try:
     from skill_agents.query import SkillQueryEngine

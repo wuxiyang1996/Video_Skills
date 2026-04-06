@@ -27,8 +27,8 @@ done
 
 # ── Per-variant config ───────────────────────────────────────────────
 case "${VARIANT}" in
-    da)       EVAL_MODULE="scripts.run_qwen3_8b_eval" ;;
-    discrete) EVAL_MODULE="scripts.run_diplomacy_discrete_eval" ;;
+    da)       EVAL_MODULE="inference.run_qwen3_8b_eval" ;;
+    discrete) EVAL_MODULE="inference.run_diplomacy_discrete_eval" ;;
     *)        echo "[ERROR] Unknown variant: ${VARIANT}. Use: da, discrete"; exit 1 ;;
 esac
 
@@ -150,7 +150,7 @@ EVAL_ARGS=(
     --per_power --verbose
 )
 
-if [ "${EVAL_MODULE}" = "scripts.run_qwen3_8b_eval" ]; then
+if [ "${EVAL_MODULE}" = "inference.run_qwen3_8b_eval" ]; then
     EVAL_ARGS=(--games diplomacy "${EVAL_ARGS[@]}")
 fi
 

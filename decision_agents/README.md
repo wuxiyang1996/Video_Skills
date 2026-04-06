@@ -67,7 +67,7 @@ python -m scripts.qwen3_decision_agent --no-bank --episodes 3        # baseline 
 python -m scripts.qwen3_decision_agent --bank /path/to/bank --episodes 3
 ```
 
-### Pipeline B — `scripts/run_qwen3_8b_eval.py` (without skill select)
+### Pipeline B — `inference/run_qwen3_8b_eval.py` (without skill select)
 
 General-purpose evaluation script across multiple benchmarks, with optional skill bank support but no skill lifecycle tracking.
 
@@ -104,11 +104,11 @@ General-purpose evaluation script across multiple benchmarks, with optional skil
 export PYTHONPATH="$(pwd):$(pwd)/../GamingAgent:$PYTHONPATH"
 export VLLM_BASE_URL="http://localhost:8000/v1"
 
-python -m scripts.run_qwen3_8b_eval --games twenty_forty_eight --episodes 3
-python -m scripts.run_qwen3_8b_eval --episodes 10                   # all 6 games
-python -m scripts.run_qwen3_8b_eval --resume                       # resume interrupted run
-python -m scripts.run_qwen3_8b_eval --bank path/to/bank.jsonl      # with optional skill bank
-python -m scripts.run_qwen3_8b_eval --list-games                   # show available games
+python -m inference.run_qwen3_8b_eval --games twenty_forty_eight --episodes 3
+python -m inference.run_qwen3_8b_eval --episodes 10                   # all 6 games
+python -m inference.run_qwen3_8b_eval --resume                       # resume interrupted run
+python -m inference.run_qwen3_8b_eval --bank path/to/bank.jsonl      # with optional skill bank
+python -m inference.run_qwen3_8b_eval --list-games                   # show available games
 ```
 
 ### Pipeline comparison

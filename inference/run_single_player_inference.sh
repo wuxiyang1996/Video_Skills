@@ -142,11 +142,11 @@ EVAL_ARGS=(
     --output_dir "${OUTPUT_DIR}" --bank "${BANK_PATH}"
 )
 
-echo "[infer-${GAME}] python -m scripts.run_qwen3_8b_eval ${EVAL_ARGS[*]}"
+echo "[infer-${GAME}] python -m inference.run_qwen3_8b_eval ${EVAL_ARGS[*]}"
 echo ""
 
 EXIT_CODE=0
-python -m scripts.run_qwen3_8b_eval "${EVAL_ARGS[@]}" || EXIT_CODE=$?
+python -m inference.run_qwen3_8b_eval "${EVAL_ARGS[@]}" || EXIT_CODE=$?
 
 echo ""
 echo "══════════════════════════════════════════════════════════════"

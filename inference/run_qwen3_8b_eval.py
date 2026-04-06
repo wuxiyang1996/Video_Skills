@@ -31,16 +31,16 @@ Usage (from Game-AI-Agent root):
     export VLLM_BASE_URL="http://localhost:8000/v1"
 
     # Single game, 3 episodes
-    python -m scripts.run_qwen3_8b_eval --games twenty_forty_eight --episodes 3
+    python -m inference.run_qwen3_8b_eval --games twenty_forty_eight --episodes 3
 
     # All available games, 10 episodes each
-    python -m scripts.run_qwen3_8b_eval --episodes 10
+    python -m inference.run_qwen3_8b_eval --episodes 10
 
     # Resume an interrupted run
-    python -m scripts.run_qwen3_8b_eval --resume
+    python -m inference.run_qwen3_8b_eval --resume
 
     # With labeling (generates summary/intentions via LLM for each experience)
-    python -m scripts.run_qwen3_8b_eval --label --label_model gpt-4o-mini
+    python -m inference.run_qwen3_8b_eval --label --label_model gpt-4o-mini
 """
 
 from __future__ import annotations
@@ -198,7 +198,7 @@ def load_skill_bank(
 ) -> Tuple[Any, Any]:
     """Load a SkillBankMVP from a JSONL file or directory.
 
-    Same logic as scripts/run_inference.py — ensures GPT and Qwen paths
+    Same logic as inference/run_inference.py — ensures GPT and Qwen paths
     load and query the skill bank identically.
     """
     bp = Path(bank_path)

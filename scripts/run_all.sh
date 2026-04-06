@@ -318,42 +318,6 @@ build_train_args() {
 }
 
 # ======================================================================
-# Launch vLLM if needed (legacy mode)
-# ======================================================================
-if [ "${MANAGE_VLLM}" = "0" ]; then
-    echo ""
-    echo "[run_all] Starting vLLM server (legacy mode)..."
-    bash scripts/launch_vllm_coevolution.sh &
-    VLLM_PID=$!
-    echo "[run_all] vLLM server PID: ${VLLM_PID}"
-
-    echo "[run_all] Waiting for vLLM at http://localhost:${PORT}..."
-    MAX_WAIT=300
-    WAITED=0
-    while [ ${WAITED} -lt ${MAX_WAIT} ]; do
-        if curl -sf "http://localhost:${PORT}/health" >/dev/null 2>&1 || \
-           curl -sf "http://localhost:${PORT}/v1/models" >/dev/null 2>&1; then
-            echo "[run_all] vLLM is ready! (waited ${WAITED}s)"
-            break
-        fi
-        if ! kill -0 "${VLLM_PID}" 2>/dev/null; then
-            echo "[run_all] ERROR: vLLM server exited unexpectedly."
-            exit 1
-        fi
-        sleep 5
-        WAITED=$((WAITED + 5))
-        if [ $((WAITED % 30)) -eq 0 ]; then
-            echo "[run_all]   ... still waiting (${WAITED}s / ${MAX_WAIT}s)"
-        fi
-    done
-
-    if [ ${WAITED} -ge ${MAX_WAIT} ]; then
-        echo "[run_all] ERROR: vLLM did not start within ${MAX_WAIT}s"
-        exit 1
-    fi
-fi
-
-# ======================================================================
 # Curriculum training loop
 # ======================================================================
 echo ""

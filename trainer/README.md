@@ -7,10 +7,6 @@ Training module for the **COS-PLAY** co-evolution framework (Section 4.3). Imple
 The primary training path is the **async co-evolution loop** in `trainer/coevolution/`. It runs two agents in alternating phases with cross-system overlap, GRPO training on 5 LoRA adapters, and full W&B logging.
 
 ```bash
-# 1. Start vLLM server (GPUs 0-3, 5 LoRA adapters)
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/launch_vllm_coevolution.sh
-
-# 2. Run co-evolution (GRPO on GPUs 4-7)
 export PYTHONPATH="$(pwd):$(pwd)/../GamingAgent:$PYTHONPATH"
 python scripts/run_coevolution.py \
     --total-steps 100 \

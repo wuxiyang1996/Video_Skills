@@ -48,20 +48,12 @@ for p in [str(CODEBASE_ROOT), str(GAMINGAGENT_ROOT)]:
 # ---------------------------------------------------------------------------
 from API_func import ask_model
 from data_structure.experience import Experience, Episode, Episode_Buffer
-from decision_agents.agent import (
-    VLMDecisionAgent,
-    run_episode_vlm_agent,
-    run_tool,
-    TOOL_TAKE_ACTION,
-    TOOL_REWARD,
-)
+from decision_agents.agent import VLMDecisionAgent, run_episode_vlm_agent
 from decision_agents.dummy_agent import (
     language_agent_action,
-    detect_game,
     _default_action,
     GAME_GAMINGAGENT,
 )
-from decision_agents.reward_func import RewardConfig, RewardResult
 
 # ---------------------------------------------------------------------------
 # GamingAgent environment imports: LAZY to avoid loading retro/pyglet (X11) when
@@ -169,7 +161,7 @@ GAME_REGISTRY: Dict[str, Dict[str, Any]] = {
 }
 
 # Max steps per game so cold-start runs until natural end (no truncation before win/lose).
-# Used when --max_steps is not passed in run_100_rollouts.py and generate_cold_start_gpt54.py.
+# Used when --max_steps is not passed in generate_cold_start_gpt54.py.
 COLD_START_MAX_STEPS_NATURAL_END: Dict[str, int] = {
     "twenty_forty_eight": 200,
     "candy_crush": 50,

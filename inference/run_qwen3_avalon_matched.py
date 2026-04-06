@@ -14,7 +14,7 @@ Key alignment with trainer/coevolution/episode_runner.py:
 Opponents still use the free-text GPT prompt (no LoRA, no numbered actions).
 
 Usage (from Game-AI-Agent root):
-    python -m scripts.run_qwen3_avalon_matched \\
+    python -m inference.run_qwen3_avalon_matched \\
         --model qwen3-8b-avalon-best \\
         --episodes 50 --per_role \\
         --opponent_model gpt-5.4 \\
@@ -77,12 +77,12 @@ except ImportError:
     AvalonNLWrapper = None
 
 try:
-    from skill_library.skill_bank_mvp import SkillBankMVP
+    from skill_agents.skill_bank.bank import SkillBankMVP
 except ImportError:
     SkillBankMVP = None
 
 try:
-    from skill_library.skill_query_engine import SkillQueryEngine
+    from skill_agents.query import SkillQueryEngine
 except ImportError:
     SkillQueryEngine = None
 

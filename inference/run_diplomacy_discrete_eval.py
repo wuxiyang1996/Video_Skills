@@ -26,7 +26,7 @@ Usage:
     export PYTHONPATH="$(pwd):$(pwd)/../GamingAgent:$(pwd)/../AgentEvolver:$(pwd)/../AI_Diplomacy:$PYTHONPATH"
     export VLLM_BASE_URL="http://localhost:8025/v1"
 
-    python -m scripts.run_diplomacy_discrete_eval \\
+    python -m inference.run_diplomacy_discrete_eval \\
         --model qwen3-8b-diplomacy-best \\
         --opponent_model gpt-5.4 \\
         --episodes 70 --per_power \\

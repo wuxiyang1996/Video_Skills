@@ -2,13 +2,12 @@
 
 Skill labeling pipeline for the **COS-PLAY** co-evolution framework (COLM 2026). Annotates cold-start episode trajectories with concise labels suitable for RAG retrieval, the Decision Agent, and downstream skill extraction by the Skill Bank Agent.
 
-There are **four pipelines** available:
+There are **three pipelines** available:
 
 | Script | Purpose |
 |--------|---------|
 | `label_episodes_gpt54.py` | **Labels only** — annotates episodes with `summary_state`, `summary`, `intentions` (leaves `skills` null). |
 | `label_episodes_with_skills.py` | **Labels + Skill Selection + GRPO Cold-Start** — same annotations as above, **plus** loads a pre-built skill bank, runs top-k skill selection at each step, and exports GRPO cold-start training data for both action-taking and skill-selection LoRA adapters. |
-| `label_and_extract_skills_gpt54.py` | **Labels + Skills** — same annotations **plus** full skill extraction via the `SkillBankAgent` pipeline. Populates `skills` with named, RAG-optimised skill assignments. |
 | `extract_skillbank_gpt54.py` | **Skills only** — reads **already-labeled** rollouts (e.g. from `labeling/output/gpt54/`), runs the full SkillBankAgent pipeline, and writes the skill bank and catalogs. No labeling step. |
 
 ## What Gets Labeled
@@ -120,10 +119,9 @@ step 49/50 (endgame — final move):
 |----------------------------------------|---------|
 | `label_episodes_gpt54.py`             | Labels-only script. Reads episode JSONs, calls GPT-5.4, writes labeled output with `skills=null`. |
 | `label_episodes_with_skills.py`       | **Labels + Skill Selection + GRPO Cold-Start**. Loads a pre-built skill bank, runs top-k skill selection per step, exports GRPO training data for action-taking and skill-selection LoRA adapters. |
-| `label_and_extract_skills_gpt54.py`   | **Full pipeline**: labels + skill extraction via `SkillBankAgent`. Populates the `skills` field with RAG-friendly skill assignments. |
 | `extract_skillbank_gpt54.py`          | **Skills only**: reads already-labeled rollouts, runs SkillBankAgent pipeline, writes skill bank and catalogs. No labeling. |
 | `run_labeling.sh`                      | Shell wrapper for `label_episodes_gpt54.py`. |
-| `run_skill_labeling.sh`               | Shell wrapper for `label_and_extract_skills_gpt54.py`. |
+| `run_label_with_skills.sh`            | Shell wrapper for `label_episodes_with_skills.py`. |
 | `run_extract_skillbank.sh`            | Shell wrapper for `extract_skillbank_gpt54.py`. |
 | `readme.md`                            | This file. |
 
@@ -364,33 +362,7 @@ export_grpo_coldstart_data()                      # called after each episode
 
 ---
 
-## Usage — Labels + Skill Extraction (`label_and_extract_skills_gpt54.py`)
-
-```bash
-# Full pipeline: label episodes AND extract skills for all games
-python labeling/label_and_extract_skills_gpt54.py
-
-# Specific game(s)
-python labeling/label_and_extract_skills_gpt54.py --games tetris candy_crush
-
-# Dry run (preview first episode)
-python labeling/label_and_extract_skills_gpt54.py --dry_run --games tetris
-
-# One rollout per game (quick test)
-python labeling/label_and_extract_skills_gpt54.py --one_per_game -v
-
-# Skip labeling (use already-labeled episodes for skill extraction only)
-python labeling/label_and_extract_skills_gpt54.py --skip_labeling --labeled_dir labeling/output/gpt54
-
-# Labels only, skip skill extraction (equivalent to label_episodes_gpt54.py)
-python labeling/label_and_extract_skills_gpt54.py --skip_skills
-
-# Or use the shell wrapper:
-bash labeling/run_skill_labeling.sh --games tetris -v
-bash labeling/run_skill_labeling.sh --skip_labeling --labeled_dir labeling/output/gpt54
-```
-
-## Usage — Skills only from labeled rollouts (`extract_skillbank_gpt54.py`)
+## Usage — Skills Only from Labeled Rollouts (`extract_skillbank_gpt54.py`)
 
 Use this when you already have labeled episodes (e.g. in `labeling/output/gpt54/`) and want to run **only** the skill extraction pipeline (no labeling, no Phase 1).
 
@@ -448,14 +420,6 @@ bash labeling/run_extract_skillbank.sh --dry_run
 | `--dry_run`       | off                               | Preview without saving |
 | `--verbose / -v`  | off                               | Print per-step details |
 
-### Skill Extraction Options (`label_and_extract_skills_gpt54.py` only)
-
-| Flag                | Default | Description |
-|---------------------|---------|-------------|
-| `--skip_labeling`   | off     | Skip Phase 1; use pre-labeled episodes |
-| `--labeled_dir`     | —       | Path to pre-labeled episodes (for `--skip_labeling`) |
-| `--skip_skills`     | off     | Skip Phase 2; run labels only (like `label_episodes_gpt54.py`) |
-| `--skip_archetypes` | off     | Skip Phase 3; skip cross-game archetype aggregation |
 
 ### Skills-only script (`extract_skillbank_gpt54.py`)
 
@@ -488,26 +452,7 @@ labeling/output/gpt54/
 └── labeling_batch_summary.json   # overall run stats
 ```
 
-### Labels + Skills (`labeling/output/gpt54_skills/`)
-
-```
-labeling/output/gpt54_skills/
-├── tetris/
-│   ├── episode_000.json          # labeled episode with skills populated
-│   ├── episode_001.json
-│   ├── labeling_summary.json     # per-game stats (includes skill counts)
-│   ├── skill_bank.jsonl          # persistent skill bank (contracts)
-│   ├── skill_catalog.json        # RAG-friendly skill catalog (per-game)
-│   └── reports/                  # skill extraction diagnostics
-├── candy_crush/
-│   └── ...
-├── skill_archetypes.json         # cross-game archetype aggregation
-├── skill_rag_index.json          # flat RAG index (archetypes + all instances)
-├── labeling_batch_summary.json   # overall run stats
-└── skill_catalog_all.json        # combined per-game catalog
-```
-
-### Skills only — from labeled rollouts (`extract_skillbank_gpt54.py`)
+### Skills Only — from Labeled Rollouts (`extract_skillbank_gpt54.py`)
 
 **Input:** Already-labeled episode JSONs with `summary_state`, `summary`, and `intentions` populated (e.g. from `label_episodes_gpt54.py` or the labels-only phase). Default input directory: `labeling/output/gpt54/` with layout `<input_dir>/<game>/episode_*.json`.
 
@@ -537,7 +482,7 @@ labeling/output/gpt54_skillbank/
 
 ## Skill Extraction Pipeline
 
-The `label_and_extract_skills_gpt54.py` script runs four phases:
+The `extract_skillbank_gpt54.py` script (and the equivalent pipeline in `label_episodes_with_skills.py`) runs four phases:
 
 ```
 Phase 1 — Annotation (same as label_episodes_gpt54.py)
@@ -642,7 +587,7 @@ the decision agent and skill pipeline use.
 
 **Notes:**
 
-- **Re-run extraction after pipeline changes.** The bank is generated by `extract_skillbank_gpt54.py` or the skill phase of `label_and_extract_skills_gpt54.py`. Any change that fixes truncation, adds `sub_episodes` linking, fills `tags`/`expected_tag_pattern`, or generates `execution_hint` requires re-running the script to refresh `skill_bank.jsonl`.
+- **Re-run extraction after pipeline changes.** The bank is generated by `extract_skillbank_gpt54.py`. Any change that fixes truncation, adds `sub_episodes` linking, fills `tags`/`expected_tag_pattern`, or generates `execution_hint` requires re-running the script to refresh `skill_bank.jsonl`.
 - **Interface (env/game) is not on the skill.** Each experience inside `sub_episodes.json` has an `interface` (e.g. `env_name`, `game_name`). The skill record itself does not store interface; the decision agent infers game from context or from the environment.
 - **Avoid cut-off text.** Descriptions and protocol steps are generated by the LLM with token limits. The pipeline trims incomplete last sentences in steps/preconditions/success_criteria and uses fallbacks when success_criteria or eff_add/eff_event are empty so the agent always has usable “when” and “done” guidance.
 
@@ -746,37 +691,35 @@ label_episode()
             └─ tag shifts when situation changes significantly
 ```
 
-## Architecture — Labels + Skill Extraction
+## Architecture — Skill Extraction (`extract_skillbank_gpt54.py`)
 
 ```
 main()
-  ├─ Phase 1: label_episode()                        # per game, per episode
-  │    └─ (same as labels-only architecture above)
+  ├─ Phase 1: load labeled episodes                   # from labeling/output/gpt54/
   │
   ├─ Phase 2: extract_skills_for_game()              # per game
-  │    ├─ _dict_to_episode()                         # convert JSON → Episode objects
+  │    ├─ dict_to_episode()                           # convert JSON → Episode objects
   │    ├─ SkillBankAgent.segment_episode()            # Stage 1+2 per episode
   │    │    ├─ boundary_proposal (Stage 1)            # candidate cut points
   │    │    └─ infer_segmentation (Stage 2)           # preference-learned decoding
   │    ├─ SkillBankAgent.run_contract_learning()      # Stage 3 effects contracts
   │    ├─ SkillBankAgent.materialize_new_skills()     # promote __NEW__ → named skills
-  │    ├─ _generate_skill_name()                      # GPT-5.4 name + RAG summary
-  │    ├─ _generate_skill_description()               # GPT-5.4 description
+  │    ├─ generate_skill_name()                       # GPT-5.4 name + RAG summary
+  │    ├─ generate_skill_description()                # GPT-5.4 description
   │    └─ annotate_episodes_with_skills()             # populate skills field
   │
   ├─ Phase 3: aggregate_cross_game_archetypes()      # runs AFTER all games
-  │    ├─ _extract_dominant_tag()                     # classify by SUBGOAL_TAG
+  │    ├─ extract_dominant_tag()                      # classify by SUBGOAL_TAG
   │    ├─ Group skills by tag across games            # SURVIVE, CLEAR, etc.
   │    ├─ GPT-5.4: archetype name + transfer summary  # cross-game RAG text
   │    ├─ skill_archetypes.json                       # structured archetypes
   │    └─ skill_rag_index.json                        # flat vector-store index
   │
   └─ Phase 4: save outputs
-       ├─ <game>/episode_NNN.json (with skills)
        ├─ <game>/skill_bank.jsonl
        ├─ <game>/skill_catalog.json
        ├─ skill_catalog_all.json
-       └─ labeling_batch_summary.json
+       └─ extraction_batch_summary.json
 ```
 
 ## Pipeline Integration

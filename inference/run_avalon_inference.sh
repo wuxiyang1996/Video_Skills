@@ -33,7 +33,7 @@ case "${VARIANT}" in
         RUN_DIR="${PROJECT_ROOT}/runs/Qwen3-8B_avalon_20260322_200424"
         CKPT_DIR="${RUN_DIR}/best"
         LORA_NAME="qwen3-8b-avalon-best"
-        EVAL_MODULE="scripts.run_qwen3_8b_eval"
+        EVAL_MODULE="inference.run_qwen3_8b_eval"
         DEFAULT_EPS_PER_PLAYER=8
         USE_OPPONENT=0
         ;;
@@ -41,7 +41,7 @@ case "${VARIANT}" in
         RUN_DIR="${PROJECT_ROOT}/runs/Qwen3-8B_20260326_215431"
         CKPT_DIR="${RUN_DIR}/checkpoints/step_0018"
         LORA_NAME="qwen3-8b-avalon-da"
-        EVAL_MODULE="scripts.run_qwen3_8b_eval"
+        EVAL_MODULE="inference.run_qwen3_8b_eval"
         DEFAULT_EPS_PER_PLAYER=10
         USE_OPPONENT=1
         ;;
@@ -49,7 +49,7 @@ case "${VARIANT}" in
         RUN_DIR="${PROJECT_ROOT}/runs/Qwen3-8B_20260326_215431"
         CKPT_DIR="${RUN_DIR}/checkpoints/step_0018"
         LORA_NAME="qwen3-8b-avalon-matched"
-        EVAL_MODULE="scripts.run_qwen3_avalon_matched"
+        EVAL_MODULE="inference.run_qwen3_avalon_matched"
         DEFAULT_EPS_PER_PLAYER=10
         USE_OPPONENT=1
         ;;
@@ -162,7 +162,7 @@ EVAL_ARGS=(
 )
 
 # Only the standard eval module needs --games
-if [ "${EVAL_MODULE}" = "scripts.run_qwen3_8b_eval" ]; then
+if [ "${EVAL_MODULE}" = "inference.run_qwen3_8b_eval" ]; then
     EVAL_ARGS=(--games avalon "${EVAL_ARGS[@]}")
 fi
 

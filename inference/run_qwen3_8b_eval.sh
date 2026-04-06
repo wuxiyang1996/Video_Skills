@@ -22,39 +22,39 @@
 # ======================== USAGE ==============================================
 #
 #   # Run on all available games, 3 episodes each (default)
-#   bash scripts/run_qwen3_8b_eval.sh
+#   bash inference/run_qwen3_8b_eval.sh
 #
 #   # LMGame-Bench games only
-#   bash scripts/run_qwen3_8b_eval.sh --games twenty_forty_eight candy_crush tetris
+#   bash inference/run_qwen3_8b_eval.sh --games twenty_forty_eight candy_crush tetris
 #
 #   # All 6 games (LMGame-Bench + AgentEvolver + Orak)
-#   bash scripts/run_qwen3_8b_eval.sh --games twenty_forty_eight candy_crush tetris avalon diplomacy super_mario
+#   bash inference/run_qwen3_8b_eval.sh --games twenty_forty_eight candy_crush tetris avalon diplomacy super_mario
 #
 #   # AgentEvolver games only
-#   bash scripts/run_qwen3_8b_eval.sh --games avalon diplomacy --episodes 3
+#   bash inference/run_qwen3_8b_eval.sh --games avalon diplomacy --episodes 3
 #
 #   # Orak games only
-#   bash scripts/run_qwen3_8b_eval.sh --games super_mario --episodes 3
+#   bash inference/run_qwen3_8b_eval.sh --games super_mario --episodes 3
 #
 #   # More episodes
-#   bash scripts/run_qwen3_8b_eval.sh --episodes 10
+#   bash inference/run_qwen3_8b_eval.sh --episodes 10
 #
 #   # Custom model path (local checkpoint instead of HF hub)
-#   bash scripts/run_qwen3_8b_eval.sh --model /path/to/checkpoint
+#   bash inference/run_qwen3_8b_eval.sh --model /path/to/checkpoint
 #
 #   # Run on specific GPU(s)
-#   bash scripts/run_qwen3_8b_eval.sh --gpu 1
-#   bash scripts/run_qwen3_8b_eval.sh --gpu 0,1 --tp 2
+#   bash inference/run_qwen3_8b_eval.sh --gpu 1
+#   bash inference/run_qwen3_8b_eval.sh --gpu 0,1 --tp 2
 #
 #   # Skip vLLM launch (server already running externally)
 #   VLLM_BASE_URL="http://localhost:8000/v1" \
-#       bash scripts/run_qwen3_8b_eval.sh --no-server
+#       bash inference/run_qwen3_8b_eval.sh --no-server
 #
 #   # Resume interrupted run
-#   bash scripts/run_qwen3_8b_eval.sh --resume
+#   bash inference/run_qwen3_8b_eval.sh --resume
 #
 #   # Verbose step-by-step output
-#   bash scripts/run_qwen3_8b_eval.sh --games tetris --episodes 2 -v
+#   bash inference/run_qwen3_8b_eval.sh --games tetris --episodes 2 -v
 #
 # =============================================================================
 
@@ -363,7 +363,7 @@ if [ "$RUN_MAIN" = true ]; then
     echo ""
 
     # shellcheck disable=SC2086
-    python -m scripts.run_qwen3_8b_eval $MAIN_RUN_ARGS
+    python -m inference.run_qwen3_8b_eval $MAIN_RUN_ARGS
     EXIT_CODE=$?
 
     if [ $EXIT_CODE -ne 0 ]; then
@@ -414,7 +414,7 @@ if [ ${#MARIO_GAMES[@]} -gt 0 ]; then
     echo "============================================"
     echo ""
 
-    python -m scripts.run_qwen3_8b_eval "${MARIO_RUN_ARGS[@]}"
+    python -m inference.run_qwen3_8b_eval "${MARIO_RUN_ARGS[@]}"
     MARIO_EXIT=$?
 
     if [ $MARIO_EXIT -ne 0 ]; then

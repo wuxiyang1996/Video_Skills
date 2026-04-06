@@ -2,9 +2,7 @@
 GRPO LoRA trainer: reads the buffer, computes advantages, performs
 policy-gradient updates on LoRA adapter weights.
 
-Uses HuggingFace native PEFT + PyTorch optimizer (Option A from the
-architecture plan). Upgrade to VERL/TRL integration when scaling to
-multi-GPU.
+Uses HuggingFace native PEFT + PyTorch optimizer.
 """
 
 from __future__ import annotations

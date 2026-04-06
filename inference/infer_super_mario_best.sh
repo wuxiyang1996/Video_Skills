@@ -195,12 +195,12 @@ EVAL_ARGS=(
 )
 
 echo "[infer_mario_best] Command:"
-echo "  python -m scripts.run_qwen3_8b_eval ${EVAL_ARGS[*]}"
+echo "  python -m inference.run_qwen3_8b_eval ${EVAL_ARGS[*]}"
 echo ""
 
 # ── Run inference ────────────────────────────────────────────────────
 EXIT_CODE=0
-python -m scripts.run_qwen3_8b_eval "${EVAL_ARGS[@]}" || EXIT_CODE=$?
+python -m inference.run_qwen3_8b_eval "${EVAL_ARGS[@]}" || EXIT_CODE=$?
 
 # ── Summary ──────────────────────────────────────────────────────────
 echo ""

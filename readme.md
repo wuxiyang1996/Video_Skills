@@ -60,21 +60,55 @@ COS-PLAY is a co-evolution framework in which an LLM decision agent retrieves sk
 
 # Installation
 
-### 1. Clone and create environment
+### Hardware Requirements
+
+| Use Case | GPU | RAM | Notes |
+|----------|-----|-----|-------|
+| Full co-evolution training | 8× A100/H100 (80 GB) | 256 GB | GRPO + FSDP + 5 LoRA adapters |
+| Single-game training | 1–2× A100 (80 GB) | 64 GB | |
+| Inference / evaluation | 1× GPU (24+ GB) | 32 GB | vLLM serving Qwen3-8B |
+| API-only baselines | CPU only | 16 GB | GPT-5.4 / Claude / Gemini via API |
+
+### 1. Clone repositories
 
 ```bash
-git clone https://github.com/wuxiyang1996/cos-play.git
-cd cos-play
+mkdir -p ~/cos-play && cd ~/cos-play
 
-# Option A: Conda environment
-conda env create -f environment.yml
-conda activate game-ai-agent
+# This repo
+git clone https://github.com/wuxiyang1996/cos-play.git Game-AI-Agent
 
-# Option B: Automated install script (recommended)
-bash install/install_main_env.sh
+# Game environments (cloned as siblings)
+git clone https://github.com/lmgame-org/GamingAgent.git        # 2048, Candy Crush, Tetris
+git clone https://github.com/modelscope/AgentEvolver.git        # Avalon, Diplomacy
+git clone https://github.com/nicholascpark/orak.git Orak        # Super Mario (optional)
 ```
 
-### 2. Set up API keys
+### 2. Install dependencies
+
+Pick **one** of the following:
+
+```bash
+cd Game-AI-Agent
+
+# Option A: Automated install (recommended — creates conda env + all deps + verification)
+bash install/install_main_env.sh
+
+# Option B: pip install (editable mode, for development)
+pip install -e .
+
+# Option C: pip install from requirements
+pip install -r requirements.txt
+```
+
+Option A is recommended because it also installs PyTorch with the correct CUDA version,
+sets up GamingAgent, and runs 30+ import verification checks.
+
+For **Super Mario**, install the separate `orak-mario` conda environment:
+```bash
+bash install/install_orak_mario.sh
+```
+
+### 3. Set up API keys
 
 ```bash
 cp .env.example .env
@@ -82,20 +116,15 @@ cp .env.example .env
 set -a && source .env && set +a
 ```
 
-### 3. Install external game environments
+### 4. Set PYTHONPATH
 
 ```bash
-# GamingAgent (2048, Candy Crush, Tetris)
-git clone https://github.com/lmgame-org/GamingAgent.git ../GamingAgent
-
-# AgentEvolver (Avalon, Diplomacy)
-git clone https://github.com/modelscope/AgentEvolver.git ../AgentEvolver
-
-# Super Mario (Orak) — separate conda env
-bash install/install_orak_mario.sh
+cd ~/cos-play
+export PYTHONPATH=$(pwd)/Game-AI-Agent:$(pwd)/AgentEvolver:$(pwd)/GamingAgent:$PYTHONPATH
 ```
 
-See [install/README.md](install/README.md) for detailed setup instructions.
+See [install/README.md](install/README.md) for detailed setup, troubleshooting, and
+the orak-mario environment guide.
 
 # Repository Structure
 
@@ -109,8 +138,8 @@ cos-play/
 ├── env_wrappers/           # NL wrappers, Gymnasium adapters, game configs, benchmark runners
 ├── cold_start/             # Seed trajectory generation
 ├── labeling/               # Skill labeling pipeline (for cold-start SFT data)
-├── inference/              # Inference and rollout collection
-├── scripts/                # Training, inference, and evaluation scripts
+├── inference/              # Inference and evaluation (all post-training scripts)
+├── scripts/                # Training scripts (co-evolution, SFT, skill extraction)
 ├── configs/                # Configuration files (YAML)
 ├── baselines/              # Frontier LLM baseline evaluation
 ├── ablation_study/         # Ablation study scripts (Table 1)
@@ -118,7 +147,7 @@ cos-play/
 ```
 
 Each module has its own README:
-[decision_agents](decision_agents/README.md) · [skill_agents](skill_agents/README.md) · [trainer](trainer/README.md) · [env_wrappers](env_wrappers/README.md) · [inference](inference/README.md) · [rag](rag/README.md) · [cold_start](cold_start/readme.md) · [labeling](labeling/readme.md)
+[decision_agents](decision_agents/README.md) · [skill_agents](skill_agents/README.md) · [trainer](trainer/README.md) · [env_wrappers](env_wrappers/README.md) · [inference](inference/README.md) · [scripts](scripts/README.md) · [rag](rag/README.md) · [cold_start](cold_start/readme.md) · [labeling](labeling/readme.md)
 
 # Running COS-PLAY
 
@@ -140,9 +169,6 @@ bash cold_start/run_coldstart_evolver.sh --games avalon diplomacy --episodes 60
 
 # Super Mario (requires Orak env)
 bash cold_start/run_coldstart_orak_mario.sh --episodes 60 -v
-
-# Or generate all at once with GPT-5-mini (faster, lower quality)
-bash cold_start/run_coldstart.sh --episodes 100
 ```
 
 **Python API:**
@@ -160,11 +186,8 @@ Label cold-start episodes with structured states, intentions, and skills, then e
 # Label episodes with summary_state, intentions (no skills)
 bash labeling/run_labeling.sh --games tetris candy_crush
 
-# Label episodes AND extract skills + GRPO cold-start data
+# Label episodes AND run skill selection + GRPO cold-start data export
 bash labeling/run_label_with_skills.sh --one_per_game -v
-
-# Full pipeline: label + skill extraction via SkillBankAgent
-bash labeling/run_skill_labeling.sh --games tetris
 
 # Extract skill bank from already-labeled rollouts
 bash labeling/run_extract_skillbank.sh --games tetris super_mario
@@ -295,7 +318,7 @@ bash inference/run_avalon_inference.sh --variant da
 ### General inference with any model
 
 ```bash
-bash scripts/run_inference.sh --model Qwen/Qwen3-8B --bank path/to/bank.jsonl \
+bash inference/run_inference.sh --model Qwen/Qwen3-8B --bank path/to/bank.jsonl \
     --games twenty_forty_eight --episodes 10
 ```
 
@@ -303,8 +326,7 @@ bash scripts/run_inference.sh --model Qwen/Qwen3-8B --bank path/to/bank.jsonl \
 
 ```bash
 # Check for catastrophic forgetting on MMLU-Pro and Math-500
-python scripts/eval_academic_benchmarks.py --mode base
-python scripts/eval_academic_benchmarks.py --mode adapter --adapter-path runs/best/adapters
+python -m inference.run_academic_benchmarks --adapter_path runs/best/adapters
 ```
 
 

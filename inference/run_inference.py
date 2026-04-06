@@ -12,7 +12,7 @@ Usage (from Game-AI-Agent root):
     export PYTHONPATH="$(pwd):$PYTHONPATH"
 
     # Run with a co-evolution checkpoint and the latest skill bank
-    python -m scripts.run_inference \
+    python -m inference.run_inference \
         --model runs/coevolution/models/decision_v3/global_step_20/actor/huggingface \
         --bank  runs/coevolution/skillbank/bank.jsonl \
         --games twenty_forty_eight candy_crush \
@@ -20,16 +20,13 @@ Usage (from Game-AI-Agent root):
         --output-dir runs/inference_results
 
     # Run with an API model and a bank snapshot directory
-    python -m scripts.run_inference \
+    python -m inference.run_inference \
         --model gpt-4o-mini \
         --bank  runs/coevolution/skillbank \
         --episodes 5 --verbose
 
-    # VERL-based inference (delegates to inference.run_verl_inference)
-    python -m scripts.run_inference --verl [extra overrides...]
-
     # Evaluate a specific co-evolution iteration
-    python -m scripts.run_inference \
+    python -m inference.run_inference \
         --coevo-dir runs/coevolution \
         --iteration 3 \
         --episodes 20
@@ -385,16 +382,6 @@ def resolve_coevo_checkpoint(
 
 
 # ---------------------------------------------------------------------------
-# VERL inference delegate
-# ---------------------------------------------------------------------------
-
-def run_verl_inference(extra_overrides: list[str]) -> int:
-    """Delegate to inference.run_verl_inference."""
-    from inference.run_verl_inference import run_verl_inference as _verl
-    return _verl(extra_overrides)
-
-
-# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -403,13 +390,6 @@ def parse_args() -> argparse.Namespace:
         description="Run inference with a trained Decision Agent and Skill Bank on game environments.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-
-    # Mode selection
-    mode = p.add_mutually_exclusive_group()
-    mode.add_argument("--verl", action="store_true",
-                       help="Use VERL-based inference (vLLM/sglang). Extra args are forwarded as Hydra overrides.")
-    mode.add_argument("--local", action="store_true", default=True,
-                       help="Use local inference with VLMDecisionAgent (default).")
 
     # Model & bank
     p.add_argument("--model", type=str, default=None,
@@ -483,10 +463,6 @@ def main() -> int:
         for g in ["avalon", "diplomacy", "gamingagent"]:
             print(f"  - {g}")
         return 0
-
-    # -- VERL mode --
-    if args.verl:
-        return run_verl_inference(extra)
 
     # -- Resolve model & bank paths --
     model_path = args.model
