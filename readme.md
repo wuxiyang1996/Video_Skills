@@ -86,7 +86,7 @@ git clone https://github.com/wuxiyang1996/cos-play.git Game-AI-Agent
 # Game environments (cloned as siblings)
 git clone https://github.com/lmgame-org/GamingAgent.git        # 2048, Candy Crush, Tetris
 git clone https://github.com/modelscope/AgentEvolver.git        # Avalon, Diplomacy
-git clone https://github.com/krafton-ai/Orak.git -b release Orak  # Super Mario (optional)
+git clone https://github.com/krafton-ai/Orak.git  # Super Mario (optional)
 ```
 
 ### 2. Install dependencies
