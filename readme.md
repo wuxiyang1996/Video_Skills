@@ -8,6 +8,11 @@ This repository is the official codebase for our paper:
 
 COS-PLAY is a co-evolution framework in which an LLM decision agent retrieves skills from a learnable skill bank to guide action taking, while an agent-managed skill pipeline discovers reusable skills from the agent's unlabeled rollouts. Built on Qwen3-8B, COS-PLAY achieves over **25.1% average reward improvement** against four frontier LLM baselines on single-player game benchmarks while remaining competitive on multi-player social reasoning games.
 
+<p align="center">
+    <img src="figs/teaser.png" width="100%"><br/>
+    <em><b>Overview of COS-PLAY.</b> COS-PLAY is a multi-agent co-evolution framework that couples gameplay with skill learning. It consists of a decision agent (<span style="color:orange"><b>Orange Box</b></span>), a skill bank agent (<span style="color:red"><b>Red Box</b></span>), and a skill bank (<span style="color:purple"><b>Purple Box</b></span>). The decision agent interacts with the game by retrieving skills, updating intentions, and selecting actions. After each episode, the skill bank agent segments trajectories, learns skill contracts, adds new skills, and updates existing ones through refinement, merging, splitting, or retirement. This loop enables the agent to acquire reusable skills from prior experience and continually improve its policy.</em>
+</p>
+
 # About
 
 - Multi-agent co-evolution framework for LLM game agents
@@ -399,6 +404,11 @@ Each game has a dedicated training script with game-specific hyperparameters:
 
 # Results
 
+<p align="center">
+    <img src="figs/all_games_combined.png" width="100%"><br/>
+    <em><b>Co-evolution reward curves for all games.</b> Single-player games show steady gains, indicating improved strategies from joint decision-agent and skill-bank training. Multiplayer self-play remains flat because all players improve symmetrically, pushing rewards toward equilibrium.</em>
+</p>
+
 COS-PLAY (Qwen3-8B) achieves **25.1% average improvement** over GPT-5.4 on single-player games:
 
 | Model | 2048 | Tetris | Candy Crush | Super Mario | Avg. |
@@ -419,6 +429,11 @@ Multi-player social reasoning (vs GPT-5.4 opponents):
 | **COS-PLAY (8B)** | **39.0 ± 9.4** | **2.96 ± 0.20** |
 
 All results are reported with 95% confidence intervals, based on 16 evaluation rollouts for single-player games and 10 rollouts per player for multi-player games.
+
+<p align="center">
+    <img src="figs/figure_final.png" width="100%"><br/>
+    <em><b>Skill bank evolution over Diplomacy training.</b> <b>(a)</b> Development of strategic function categories from the first to the last training step — the final bank shows notable increases in phase transition and territory loss skills, indicating a broader tactical repertoire. <b>(b)</b> Changes in intention composition between the first and last training steps, suggesting increasingly goal-directed behavior and greater diversity across skill categories. <b>(c)</b> Skill bank growth during training: the active bank stays at roughly 55–70 skills, while 121 are discovered overall. Periodic curation removes 53 redundant skills via merge and split, keeping the bank compact and effective.</em>
+</p>
 
 General reasoning (catastrophic forgetting check):
 
