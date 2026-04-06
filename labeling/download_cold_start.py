@@ -1,6 +1,23 @@
 #!/usr/bin/env python3
 """Download pre-generated cold-start data from HuggingFace.
 
+Downloads the dataset and restructures it to match the layout that the
+training pipeline expects:
+
+    labeling/output/gpt54_skill_labeled/
+    ├── tetris/
+    │   ├── episode_000.json
+    │   ├── episode_001.json
+    │   └── labeling_summary.json
+    ├── candy_crush/
+    │   └── ...
+    ├── grpo_coldstart/
+    │   ├── tetris/
+    │   │   ├── action_taking.jsonl
+    │   │   └── skill_selection.jsonl
+    │   └── ...
+    └── labeling_batch_summary.json
+
 Usage:
     python labeling/download_cold_start.py
     python labeling/download_cold_start.py --games tetris candy_crush
@@ -8,6 +25,8 @@ Usage:
 """
 import argparse
 import json
+import shutil
+import tempfile
 from pathlib import Path
 
 from huggingface_hub import snapshot_download
@@ -20,34 +39,43 @@ ALL_GAMES = [
 DEFAULT_OUTPUT = Path(__file__).resolve().parent / "output" / "gpt54_skill_labeled"
 
 
-def expand_episodes(download_dir: Path, games: list[str]):
-    """Expand consolidated JSONL back into per-episode JSON files."""
-    episodes_dir = download_dir / "data" / "episodes"
+def restructure(raw_dir: Path, output_dir: Path, games: list[str]):
+    """Convert HuggingFace layout into the format the training pipeline expects."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    episodes_dir = raw_dir / "data" / "episodes"
     for game in games:
         jsonl = episodes_dir / f"{game}.jsonl"
         if not jsonl.exists():
+            print(f"  {game}: no data found, skipping")
             continue
-        out_dir = download_dir / game
-        out_dir.mkdir(parents=True, exist_ok=True)
+        game_dir = output_dir / game
+        game_dir.mkdir(parents=True, exist_ok=True)
         count = 0
         with open(jsonl) as f:
             for line in f:
                 ep = json.loads(line)
-                ep_id = ep.get("episode_id", f"episode_{count:03d}")
-                out_file = out_dir / f"episode_{count:03d}.json"
+                out_file = game_dir / f"episode_{count:03d}.json"
                 with open(out_file, "w") as fout:
                     json.dump(ep, fout, indent=2, ensure_ascii=False)
                 count += 1
-        print(f"  {game}: expanded {count} episodes -> {out_dir}")
+        print(f"  {game}: {count} episodes -> {game_dir}")
 
-    grpo_src = download_dir / "data" / "grpo_coldstart"
-    grpo_dst = download_dir / "grpo_coldstart"
+        summary_file = episodes_dir / "summaries" / f"{game}_summary.json"
+        if summary_file.exists():
+            shutil.copy2(summary_file, game_dir / "labeling_summary.json")
+
+    grpo_src = raw_dir / "data" / "grpo_coldstart"
     if grpo_src.is_dir():
-        import shutil
+        grpo_dst = output_dir / "grpo_coldstart"
         if grpo_dst.exists():
             shutil.rmtree(grpo_dst)
         shutil.copytree(grpo_src, grpo_dst)
-        print(f"  grpo_coldstart -> {grpo_dst}")
+        print(f"  grpo_coldstart/ copied")
+
+    batch_summary = raw_dir / "data" / "labeling_batch_summary.json"
+    if batch_summary.exists():
+        shutil.copy2(batch_summary, output_dir / "labeling_batch_summary.json")
 
 
 def main():
@@ -60,25 +88,20 @@ def main():
         "--output-dir", type=Path, default=DEFAULT_OUTPUT,
         help=f"Output directory (default: {DEFAULT_OUTPUT})",
     )
-    parser.add_argument(
-        "--no-expand", action="store_true",
-        help="Skip expanding JSONL into individual episode JSON files",
-    )
     args = parser.parse_args()
 
-    print(f"Downloading cold-start data from {REPO_ID} ...")
-    snapshot_download(
-        repo_id=REPO_ID,
-        repo_type="dataset",
-        local_dir=str(args.output_dir),
-    )
-    print(f"Downloaded to {args.output_dir}\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        raw_dir = Path(tmp) / "raw"
+        print(f"Downloading from {REPO_ID} ...")
+        snapshot_download(
+            repo_id=REPO_ID,
+            repo_type="dataset",
+            local_dir=str(raw_dir),
+        )
+        print(f"\nRestructuring into pipeline-ready format...")
+        restructure(raw_dir, args.output_dir, args.games)
 
-    if not args.no_expand:
-        print("Expanding episodes to individual JSON files...")
-        expand_episodes(args.output_dir, args.games)
-
-    print("\nDone!")
+    print(f"\nDone! Data ready at {args.output_dir}")
 
 
 if __name__ == "__main__":

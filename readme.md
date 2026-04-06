@@ -180,12 +180,10 @@ Generate seed trajectories using a teacher model (GPT-5.4). This produces 60 epi
 > python labeling/download_cold_start.py --games tetris candy_crush
 > ```
 >
-> Or with the HuggingFace CLI:
-> ```bash
-> huggingface-cli download IntelligenceLab/Cos-Play-Cold-Start \
->     --repo-type dataset \
->     --local-dir labeling/output/gpt54_skill_labeled
-> ```
+> The script downloads from HuggingFace and restructures the data into the
+> exact format the training pipeline expects (individual episode JSONs +
+> GRPO JSONL files). **Use this script rather than `huggingface-cli download`
+> directly**, which would give a different directory layout.
 >
 > Dataset: [IntelligenceLab/Cos-Play-Cold-Start](https://huggingface.co/datasets/IntelligenceLab/Cos-Play-Cold-Start)
 
