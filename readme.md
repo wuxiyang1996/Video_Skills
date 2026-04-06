@@ -165,27 +165,35 @@ Each module has its own README:
 
 The full pipeline has 5 stages. Each stage produces outputs consumed by the next.
 
+## Quick Start: Download Pre-Generated Data (Skip Steps 1 & 2)
+
+Pre-generated cold-start data (8 games, 479 episodes, ~538 MB) is available on
+HuggingFace. This data already includes **both** seed trajectories (Step 1) **and**
+skill labeling with GRPO cold-start exports (Step 2), so you can skip directly
+to [Step 3: SFT Cold-Start Training](#step-3-sft-cold-start-training).
+
+```bash
+# Download all games (installs to labeling/output/gpt54_skill_labeled/)
+python labeling/download_cold_start.py
+
+# Download specific games only
+python labeling/download_cold_start.py --games tetris candy_crush
+```
+
+The script downloads from HuggingFace and restructures the data into the
+exact format the training pipeline expects (individual episode JSONs +
+GRPO JSONL files). **Use this script rather than `huggingface-cli download`
+directly**, which would give a different directory layout.
+
+Dataset: [IntelligenceLab/Cos-Play-Cold-Start](https://huggingface.co/datasets/IntelligenceLab/Cos-Play-Cold-Start)
+
+---
+
 ## Step 1: Cold-Start Data Generation
 
-Generate seed trajectories using a teacher model (GPT-5.4). This produces 60 episodes per game.
+> **Skip:** If you downloaded the pre-generated data above, skip to [Step 3](#step-3-sft-cold-start-training).
 
-> **Skip this step:** Pre-generated cold-start data (8 games, 479 episodes, ~538 MB) is
-> available on HuggingFace. Download it instead of re-running generation:
->
-> ```bash
-> # Download all games (installs to labeling/output/gpt54_skill_labeled/)
-> python labeling/download_cold_start.py
->
-> # Download specific games only
-> python labeling/download_cold_start.py --games tetris candy_crush
-> ```
->
-> The script downloads from HuggingFace and restructures the data into the
-> exact format the training pipeline expects (individual episode JSONs +
-> GRPO JSONL files). **Use this script rather than `huggingface-cli download`
-> directly**, which would give a different directory layout.
->
-> Dataset: [IntelligenceLab/Cos-Play-Cold-Start](https://huggingface.co/datasets/IntelligenceLab/Cos-Play-Cold-Start)
+Generate seed trajectories using a teacher model (GPT-5.4). This produces 60 episodes per game.
 
 To generate fresh data yourself:
 
@@ -211,6 +219,8 @@ python cold_start/generate_cold_start_gpt54.py --games tetris --episodes 5 --res
 Rollouts are saved to `cold_start/output/` as JSONL files.
 
 ## Step 2: Skill Labeling and Extraction
+
+> **Skip:** If you downloaded the pre-generated data above, skip to [Step 3](#step-3-sft-cold-start-training).
 
 Label cold-start episodes with structured states, intentions, and skills, then extract a seed skill bank.
 
