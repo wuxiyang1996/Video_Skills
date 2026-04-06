@@ -126,6 +126,10 @@ set -a && source .env && set +a
 
 ### 4. Set PYTHONPATH 
 
+The three sibling repos (`Game-AI-Agent`, `AgentEvolver`, `GamingAgent`) import modules from
+each other at runtime. Adding them to `PYTHONPATH` lets Python locate these cross-repo imports.
+This must be run in every new terminal session (or added to your `~/.bashrc`).
+
 ```bash
 cd ~/cos-play
 export PYTHONPATH=$(pwd)/Game-AI-Agent:$(pwd)/AgentEvolver:$(pwd)/GamingAgent:$PYTHONPATH
