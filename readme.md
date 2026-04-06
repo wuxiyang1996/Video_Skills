@@ -116,13 +116,15 @@ bash install/install_orak_mario.sh
 
 ### 3. Set up API keys
 
+API keys are used used for cold-start data generation. You can also download our pre-generated cold-start data.
+
 ```bash
 cp .env.example .env
 # Edit .env with your API keys (OpenAI, Anthropic, Google, OpenRouter)
 set -a && source .env && set +a
 ```
 
-### 4. Set PYTHONPATH
+### 4. Set PYTHONPATH 
 
 ```bash
 cd ~/cos-play
