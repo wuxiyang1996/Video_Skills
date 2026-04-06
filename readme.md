@@ -62,7 +62,7 @@ COS-PLAY is a co-evolution framework in which an LLM decision agent retrieves sk
 |------|--------|-------|
 | 2048, Candy Crush, Tetris | [GamingAgent](https://github.com/lmgame-org/GamingAgent) (LMGame-Bench) | Clone as sibling directory |
 | Avalon, Diplomacy | [AgentEvolver](https://github.com/modelscope/AgentEvolver) | Clone as sibling or add to `PYTHONPATH` |
-| Super Mario Bros | [Orak](https://github.com/nicholascpark/orak) (gym_super_mario_bros) | See [env_wrappers/README.md](env_wrappers/README.md) |
+| Super Mario Bros | [Orak](https://github.com/krafton-ai/Orak/tree/release?tab=readme-ov-file) (gym_super_mario_bros) | See [env_wrappers/README.md](env_wrappers/README.md) |
 
 # Installation
 
@@ -86,7 +86,7 @@ git clone https://github.com/wuxiyang1996/cos-play.git Game-AI-Agent
 # Game environments (cloned as siblings)
 git clone https://github.com/lmgame-org/GamingAgent.git        # 2048, Candy Crush, Tetris
 git clone https://github.com/modelscope/AgentEvolver.git        # Avalon, Diplomacy
-git clone https://github.com/nicholascpark/orak.git Orak        # Super Mario (optional)
+git clone https://github.com/krafton-ai/Orak.git -b release Orak  # Super Mario (optional)
 ```
 
 ### 2. Install dependencies
@@ -445,7 +445,7 @@ This repository builds on the following open-source projects:
 - [GamingAgent](https://github.com/lmgame-org/GamingAgent) — LMGame-Bench (2048, Candy Crush, Tetris)
 - [AgentEvolver](https://github.com/modelscope/AgentEvolver) — Avalon, Diplomacy environments
 - [Qwen3](https://github.com/QwenLM/Qwen3) — Base model
-- [Orak](https://github.com/nicholascpark/orak) — Super Mario environment
+- [Orak](https://github.com/krafton-ai/Orak/tree/release?tab=readme-ov-file) — Super Mario environment
 
 # Citation
 
