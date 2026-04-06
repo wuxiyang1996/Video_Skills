@@ -14,23 +14,111 @@ Two collection modes:
      trajectory, ask the LLM to rank skills.  Used for initial cold-start.
   2. **Active** — ``collect_uncertain_preferences``: only query segments where
      the current scorer is uncertain (low margin).  Used in the iterative loop.
+
+GRPO wrapping: ``enable_segment_grpo()`` wraps ``collect_segment_preferences``
+at the batch level (per episode). G complete preference sets are generated,
+each evaluated via scorer-rebuild + decode, and the best is returned.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+
+import logging
+import time as _time
+from dataclasses import dataclass, field, asdict
 
 from skill_agents.infer_segmentation.config import LLMTeacherConfig
 
 _repo_root = Path(__file__).resolve().parent.parent.parent
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
+
+logger = logging.getLogger(__name__)
+
+# ── Global concurrency limiter for LLM teacher calls ─────────────────
+# When multiple episodes are segmented in parallel (each spawning its own
+# ThreadPoolExecutor), the per-episode semaphore from _wrap_ask_with_semaphore
+# does NOT limit cross-episode concurrency.  Without a global cap, N episodes
+# × M workers can flood the vLLM servers with hundreds of simultaneous
+# requests, causing queue buildup and effective deadlock.
+#
+# This module-level semaphore caps the TOTAL in-flight LLM teacher calls
+# across all episodes/threads in this process.
+_GLOBAL_MAX_CONCURRENT_LLM_CALLS = int(
+    os.environ.get("SKILLBANK_GLOBAL_MAX_LLM_CALLS", "32")
+)
+_global_llm_semaphore = threading.Semaphore(_GLOBAL_MAX_CONCURRENT_LLM_CALLS)
+
+
+# ── Cold-start I/O recording ─────────────────────────────────────────
+# Every LLM teacher call is recorded so that (prompt, response) pairs
+# can serve as supervised fine-tuning data for Qwen3-8B cold-start,
+# and as reference outputs for GRPO reward comparison.
+
+@dataclass
+class TeacherIORecord:
+    """One LLM teacher call with full prompt/response for cold-start replay."""
+    function: str                             # segment_ranking | transition_ranking | pairwise_choice | skill_naming
+    prompt: str = ""
+    response: str = ""
+    parsed: Optional[dict] = None             # structured output (ranking list, choice, name)
+    model: str = ""
+    temperature: float = 0.0
+    max_tokens: int = 0
+    elapsed_s: float = 0.0
+    # Segment-level context (when applicable)
+    segment_start: Optional[int] = None
+    segment_end: Optional[int] = None
+    skill_names: List[str] = field(default_factory=list)
+    prev_skill: Optional[str] = None          # for transition rankings
+    skill_a: Optional[str] = None             # for pairwise
+    skill_b: Optional[str] = None             # for pairwise
+    error: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        d = {k: v for k, v in d.items() if v is not None and v != "" and v != [] and v != 0 and v != 0.0}
+        if "function" not in d:
+            d["function"] = self.function
+        return d
+
+
+_teacher_io_records: List[TeacherIORecord] = []
+_teacher_io_lock = threading.Lock()
+
+
+def _record_teacher_io(rec: TeacherIORecord) -> None:
+    """Thread-safe append to the module-level recording buffer."""
+    with _teacher_io_lock:
+        _teacher_io_records.append(rec)
+
+
+def get_teacher_io_records() -> List[dict]:
+    """Return all accumulated records as dicts (non-destructive)."""
+    with _teacher_io_lock:
+        return [r.to_dict() for r in _teacher_io_records]
+
+
+def flush_teacher_io_records() -> List[dict]:
+    """Return and clear all accumulated records."""
+    with _teacher_io_lock:
+        out = [r.to_dict() for r in _teacher_io_records]
+        _teacher_io_records.clear()
+        return out
+
+
+def reset_teacher_io_records() -> None:
+    """Clear all accumulated records without returning them."""
+    with _teacher_io_lock:
+        _teacher_io_records.clear()
 
 
 def _get_ask_model():
@@ -39,18 +127,33 @@ def _get_ask_model():
     Prefers the LoRA segment adapter when available, otherwise falls back
     to the API-based ``ask_model``.  The returned callable is wrapped for
     reasoning-model compatibility (Qwen3 ``/no_think``, think-tag stripping).
+
+    The returned callable is always wrapped with the global concurrency
+    semaphore so that cross-episode parallelism cannot flood the vLLM
+    servers.
     """
     from skill_agents._llm_compat import wrap_ask_for_reasoning_models
 
+    _hint = "Qwen/Qwen3-8B"
+    raw_ask = None
     try:
         from skill_agents.lora import MultiLoraSkillBankLLM, SkillFunction
         llm = MultiLoraSkillBankLLM.get_shared_instance()
         if llm is not None:
-            return wrap_ask_for_reasoning_models(llm.as_ask_fn(SkillFunction.SEGMENT))
+            raw_ask = wrap_ask_for_reasoning_models(
+                llm.as_ask_fn(SkillFunction.SEGMENT), model_hint=_hint,
+            )
     except Exception:
         pass
-    from API_func import ask_model
-    return wrap_ask_for_reasoning_models(ask_model)
+    if raw_ask is None:
+        from API_func import ask_model
+        raw_ask = wrap_ask_for_reasoning_models(ask_model, model_hint=_hint)
+
+    def _globally_limited_ask(*args, **kwargs):
+        with _global_llm_semaphore:
+            return raw_ask(*args, **kwargs)
+
+    return _globally_limited_ask
 
 
 def _wrap_ask_with_semaphore(ask: Callable, max_concurrent: int):
@@ -79,7 +182,43 @@ def _parse_json_from_response(response: str) -> Optional[dict]:
     return None
 
 
+def _fuzzy_match_skill(name: str, skill_names: List[str]) -> Optional[str]:
+    """Match an LLM-produced skill name to canonical skill names.
+
+    Handles common LLM quirks: extra whitespace, casing differences,
+    surrounding quotes, underscores vs spaces.
+    """
+    cleaned = name.strip().strip('"').strip("'").strip()
+    if cleaned in skill_names:
+        return cleaned
+    lower_map = {s.lower(): s for s in skill_names}
+    if cleaned.lower() in lower_map:
+        return lower_map[cleaned.lower()]
+    normed = cleaned.lower().replace(" ", "_")
+    normed_map = {s.lower().replace(" ", "_"): s for s in skill_names}
+    if normed in normed_map:
+        return normed_map[normed]
+    return None
+
+
 # ── Ranking prompts ──────────────────────────────────────────────────
+
+def _format_skill_candidates(
+    skill_names: List[str],
+    skill_descriptions: Optional[Dict[str, str]] = None,
+) -> str:
+    """Format candidate skills, enriching with descriptions when available."""
+    if not skill_descriptions:
+        return "[" + ", ".join(f'"{s}"' for s in skill_names) + "]"
+    lines: List[str] = []
+    for sid in skill_names:
+        desc = skill_descriptions.get(sid, "")
+        if desc:
+            lines.append(f'  - "{sid}": {desc[:150]}')
+        else:
+            lines.append(f'  - "{sid}"')
+    return "\n".join(lines)
+
 
 def _build_segment_ranking_prompt(
     observations: Sequence,
@@ -89,17 +228,19 @@ def _build_segment_ranking_prompt(
     segment_end: int,
     predicates_start: Optional[dict] = None,
     predicates_end: Optional[dict] = None,
+    skill_descriptions: Optional[Dict[str, str]] = None,
 ) -> str:
     """
     Ask the LLM to rank skills for one segment (best fit first).
 
-    The LLM considers behavior fit, duration plausibility, and state-change
-    consistency holistically — but returns a ranking, not scores.
+    When *skill_descriptions* is provided (mapping ``skill_id`` to a
+    short summary), each candidate is shown with its description so the
+    model can make an informed ranking.
     """
     obs_str = str(list(observations))
     act_str = str(list(actions))
     length = len(observations)
-    skills_str = ", ".join(f'"{s}"' for s in skill_names)
+    candidates_block = _format_skill_candidates(skill_names, skill_descriptions)
     preds_s = str(predicates_start) if predicates_start else "N/A"
     preds_e = str(predicates_end) if predicates_end else "N/A"
 
@@ -116,7 +257,7 @@ def _build_segment_ranking_prompt(
         f"State at segment start: {preds_s}\n"
         f"State at segment end:   {preds_e}\n"
         f"\n"
-        f"Candidate skills: [{skills_str}]\n"
+        f"Candidate skills:\n{candidates_block}\n"
         f"\n"
         f"Rank ALL candidate skills from best fit to worst fit for this "
         f"segment.  Consider:\n"
@@ -133,18 +274,22 @@ def _build_segment_ranking_prompt(
 def _build_transition_ranking_prompt(
     prev_skill: str,
     skill_names: List[str],
+    skill_descriptions: Optional[Dict[str, str]] = None,
 ) -> str:
     """
     Ask the LLM to rank which skills most naturally follow prev_skill.
     """
-    skills_str = ", ".join(f'"{s}"' for s in skill_names)
+    candidates_block = _format_skill_candidates(skill_names, skill_descriptions)
+    prev_desc = ""
+    if skill_descriptions and prev_skill in skill_descriptions:
+        prev_desc = f" ({skill_descriptions[prev_skill][:100]})"
 
     return (
         f"You are an expert at modeling skill sequences in agent trajectories.\n"
         f"\n"
-        f"The agent just finished executing skill: \"{prev_skill}\"\n"
+        f"The agent just finished executing skill: \"{prev_skill}\"{prev_desc}\n"
         f"\n"
-        f"Candidate next skills: [{skills_str}]\n"
+        f"Candidate next skills:\n{candidates_block}\n"
         f"\n"
         f"Rank ALL candidate skills from most likely to follow to least "
         f"likely.  Consider natural task ordering, common behavior patterns, "
@@ -163,6 +308,7 @@ def _build_pairwise_prompt(
     skill_b: str,
     segment_start: int,
     segment_end: int,
+    skill_descriptions: Optional[Dict[str, str]] = None,
 ) -> str:
     """
     Ask the LLM which of two skills better fits this segment.
@@ -170,6 +316,9 @@ def _build_pairwise_prompt(
     """
     obs_str = str(list(observations))
     act_str = str(list(actions))
+
+    desc_a = f" ({skill_descriptions[skill_a][:100]})" if skill_descriptions and skill_a in skill_descriptions else ""
+    desc_b = f" ({skill_descriptions[skill_b][:100]})" if skill_descriptions and skill_b in skill_descriptions else ""
 
     return (
         f"You are an expert at recognizing skills in agent trajectories.\n"
@@ -179,8 +328,8 @@ def _build_pairwise_prompt(
         f"Actions:\n{act_str}\n"
         f"\n"
         f"Which skill better explains this segment?\n"
-        f"  A: \"{skill_a}\"\n"
-        f"  B: \"{skill_b}\"\n"
+        f"  A: \"{skill_a}\"{desc_a}\n"
+        f"  B: \"{skill_b}\"{desc_b}\n"
         f"\n"
         f"Return ONLY a JSON object:\n"
         f'{{"choice": "A" or "B", "evidence": "brief explanation"}}\n'
@@ -228,6 +377,9 @@ def _collect_one_segment_prefs(
     predicates: Optional[List[Optional[dict]]],
     cfg: LLMTeacherConfig,
     ask,
+    *,
+    skill_descriptions: Optional[Dict[str, str]] = None,
+    raw_sink: Optional[Dict[Tuple[int, int], str]] = None,
 ) -> list:
     """Get pairwise preferences for a single segment (used by batch workers)."""
     seg_obs = observations[start: end + 1]
@@ -236,15 +388,43 @@ def _collect_one_segment_prefs(
     p_end = predicates[end] if predicates and end < len(predicates) else None
     prompt = _build_segment_ranking_prompt(
         seg_obs, seg_act, skill_names, start, end, p_start, p_end,
+        skill_descriptions=skill_descriptions,
     )
+    t0 = _time.time()
     response = ask(
         prompt, model=cfg.model,
         temperature=cfg.temperature, max_tokens=cfg.max_tokens,
     )
+    elapsed = _time.time() - t0
+    if raw_sink is not None:
+        raw_sink[(start, end)] = response if isinstance(response, str) else str(response)
     parsed = _parse_json_from_response(response)
+
+    _record_teacher_io(TeacherIORecord(
+        function="segment_ranking",
+        prompt=prompt,
+        response=response or "",
+        parsed=parsed,
+        model=cfg.model or "",
+        temperature=cfg.temperature,
+        max_tokens=cfg.max_tokens,
+        elapsed_s=round(elapsed, 3),
+        segment_start=start,
+        segment_end=end,
+        skill_names=list(skill_names),
+        error=None if parsed and "ranking" in parsed else "parse_failed",
+    ))
+
     if not parsed or "ranking" not in parsed:
         return []
-    ranking = [s for s in parsed["ranking"] if s in skill_names]
+    raw_ranking = parsed["ranking"] if isinstance(parsed["ranking"], list) else []
+    ranking = []
+    seen = set()
+    for s in raw_ranking:
+        matched = _fuzzy_match_skill(str(s), skill_names)
+        if matched and matched not in seen:
+            ranking.append(matched)
+            seen.add(matched)
     evidence = parsed.get("reasoning", "")
     if len(ranking) < 2:
         return []
@@ -258,13 +438,18 @@ def collect_segment_preferences(
     skill_names: List[str],
     predicates: Optional[List[Optional[dict]]] = None,
     config: Optional[LLMTeacherConfig] = None,
+    skill_descriptions: Optional[Dict[str, str]] = None,
+    per_step_rewards: Optional[List[float]] = None,
+    episode_total_reward: Optional[float] = None,
+    **_kw: Any,
 ) -> list:
     """
     Proactive preference collection: ask the LLM to rank skills for
     each segment.  Used for cold-start before any scorer is trained.
 
-    When config.max_workers > 1, LLM calls are run in parallel to reduce
-    wall-clock time.
+    When *skill_descriptions* is provided, each candidate skill is shown
+    with its name and strategic description so the model can make an
+    informed ranking.
 
     Parameters
     ----------
@@ -277,26 +462,49 @@ def collect_segment_preferences(
     predicates : list[dict], optional
         Per-timestep predicates.
     config : LLMTeacherConfig, optional
+    skill_descriptions : dict, optional
+        Mapping ``skill_id`` → short summary string.
+    per_step_rewards : list[float], optional
+        Per-timestep game rewards from the episode.
+    episode_total_reward : float, optional
+        Sum of all per-step rewards in the episode.
 
     Returns
     -------
-    list[PreferenceExample]
-        Pairwise preferences derived from LLM rankings.
+    PreferenceListWithRollouts | list
+        Pairwise preferences derived from LLM rankings, normally wrapped as
+        ``PreferenceListWithRollouts`` (a ``list`` subclass) carrying
+        ``raw_rollouts`` — one raw LLM string per segment — for GRPO rewards.
     """
+    from skill_agents.infer_segmentation.preference import PreferenceListWithRollouts
+
+    if len(skill_names) < 2:
+        # With < 2 skills there is nothing to rank.  Return the typed container
+        # (not bare []) so GRPO fingerprinting never crashes on missing attribute.
+        return PreferenceListWithRollouts([], raw_rollouts=[])
     cfg = config or LLMTeacherConfig()
+    if "temperature" in _kw:
+        from copy import copy
+        cfg = copy(cfg)
+        cfg.temperature = _kw["temperature"]
     ask = _get_ask_model()
+    raw_by_seg: Dict[Tuple[int, int], str] = {}
+
+    def _ordered_rollouts() -> List[str]:
+        return [raw_by_seg[k] for k in sorted(raw_by_seg.keys())]
+
     max_workers = getattr(cfg, "max_workers", None)
     if max_workers is None or max_workers <= 1:
-        # Sequential
         all_prefs = []
         for start, end in segments:
             prefs = _collect_one_segment_prefs(
                 start, end, observations, actions, skill_names, predicates, cfg, ask,
+                skill_descriptions=skill_descriptions,
+                raw_sink=raw_by_seg,
             )
             all_prefs.extend(prefs)
-        return all_prefs
+        return PreferenceListWithRollouts(all_prefs, raw_rollouts=_ordered_rollouts())
 
-    # Parallel batch; cap concurrent LLM calls if set (e.g. local GPU)
     max_concurrent = getattr(cfg, "max_concurrent_llm_calls", None)
     if max_concurrent is not None and max_concurrent > 0:
         ask = _wrap_ask_with_semaphore(ask, max_concurrent)
@@ -306,6 +514,8 @@ def collect_segment_preferences(
             executor.submit(
                 _collect_one_segment_prefs,
                 start, end, observations, actions, skill_names, predicates, cfg, ask,
+                skill_descriptions=skill_descriptions,
+                raw_sink=raw_by_seg,
             ): (start, end)
             for start, end in segments
         }
@@ -315,7 +525,7 @@ def collect_segment_preferences(
                 all_prefs.extend(prefs)
             except Exception:
                 pass  # skip failed segments
-    return all_prefs
+    return PreferenceListWithRollouts(all_prefs, raw_rollouts=_ordered_rollouts())
 
 
 def _collect_one_transition_prefs(
@@ -323,19 +533,46 @@ def _collect_one_transition_prefs(
     skill_names: List[str],
     cfg: LLMTeacherConfig,
     ask,
+    skill_descriptions: Optional[Dict[str, str]] = None,
 ) -> list:
     """Get transition preferences for one prev_skill (used by batch workers)."""
     from skill_agents.infer_segmentation.preference import PreferenceExample
 
-    prompt = _build_transition_ranking_prompt(prev_skill, skill_names)
+    prompt = _build_transition_ranking_prompt(
+        prev_skill, skill_names, skill_descriptions=skill_descriptions,
+    )
+    t0 = _time.time()
     response = ask(
         prompt, model=cfg.model,
         temperature=cfg.temperature, max_tokens=cfg.max_tokens,
     )
+    elapsed = _time.time() - t0
     parsed = _parse_json_from_response(response)
+
+    _record_teacher_io(TeacherIORecord(
+        function="transition_ranking",
+        prompt=prompt,
+        response=response or "",
+        parsed=parsed,
+        model=cfg.model or "",
+        temperature=cfg.temperature,
+        max_tokens=cfg.max_tokens,
+        elapsed_s=round(elapsed, 3),
+        prev_skill=prev_skill,
+        skill_names=list(skill_names),
+        error=None if parsed and "ranking" in parsed else "parse_failed",
+    ))
+
     if not parsed or "ranking" not in parsed:
         return []
-    ranking = [s for s in parsed["ranking"] if s in skill_names]
+    raw_ranking = parsed["ranking"] if isinstance(parsed["ranking"], list) else []
+    ranking = []
+    seen: set = set()
+    for s in raw_ranking:
+        matched = _fuzzy_match_skill(str(s), skill_names)
+        if matched and matched not in seen:
+            ranking.append(matched)
+            seen.add(matched)
     evidence = parsed.get("reasoning", "")
     prefs = []
     for i in range(len(ranking)):
@@ -354,6 +591,7 @@ def _collect_one_transition_prefs(
 def collect_transition_preferences(
     skill_names: List[str],
     config: Optional[LLMTeacherConfig] = None,
+    skill_descriptions: Optional[Dict[str, str]] = None,
 ) -> list:
     """
     Ask the LLM to rank transition likelihoods for each skill.
@@ -371,7 +609,9 @@ def collect_transition_preferences(
         all_prefs = []
         for prev_skill in skill_names:
             all_prefs.extend(
-                _collect_one_transition_prefs(prev_skill, skill_names, cfg, ask),
+                _collect_one_transition_prefs(
+                    prev_skill, skill_names, cfg, ask, skill_descriptions,
+                ),
             )
         return all_prefs
 
@@ -381,7 +621,10 @@ def collect_transition_preferences(
     all_prefs = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(_collect_one_transition_prefs, ps, skill_names, cfg, ask): ps
+            executor.submit(
+                _collect_one_transition_prefs,
+                ps, skill_names, cfg, ask, skill_descriptions,
+            ): ps
             for ps in skill_names
         }
         for future in as_completed(futures):
@@ -411,11 +654,30 @@ def _collect_one_uncertain_pref(
     prompt = _build_pairwise_prompt(
         seg_obs, seg_act, skill_a, skill_b, seg.start, seg.end,
     )
+    t0 = _time.time()
     response = ask(
         prompt, model=cfg.model,
         temperature=cfg.temperature, max_tokens=cfg.max_tokens,
     )
+    elapsed = _time.time() - t0
     parsed = _parse_json_from_response(response)
+
+    _record_teacher_io(TeacherIORecord(
+        function="pairwise_choice",
+        prompt=prompt,
+        response=response or "",
+        parsed=parsed,
+        model=cfg.model or "",
+        temperature=cfg.temperature,
+        max_tokens=cfg.max_tokens,
+        elapsed_s=round(elapsed, 3),
+        segment_start=seg.start,
+        segment_end=seg.end,
+        skill_a=skill_a,
+        skill_b=skill_b,
+        error=None if parsed else "parse_failed",
+    ))
+
     if not parsed:
         return None
     choice = parsed.get("choice", "").upper().strip()
@@ -513,13 +775,28 @@ def suggest_skill_name(
         eff_del=eff_del,
         eff_event=eff_event,
     )
+    t0 = _time.time()
     response = ask(
         prompt,
         model=cfg.model,
         temperature=cfg.temperature,
         max_tokens=cfg.max_tokens,
     )
+    elapsed = _time.time() - t0
     parsed = _parse_json_from_response(response)
+
+    _record_teacher_io(TeacherIORecord(
+        function="skill_naming",
+        prompt=prompt,
+        response=response or "",
+        parsed=parsed,
+        model=cfg.model or "",
+        temperature=cfg.temperature,
+        max_tokens=cfg.max_tokens,
+        elapsed_s=round(elapsed, 3),
+        error=None if parsed and "name" in (parsed or {}) else "parse_failed",
+    ))
+
     if not parsed or "name" not in parsed:
         return None
     name = (parsed.get("name") or "").strip()
@@ -579,3 +856,96 @@ def collect_uncertain_preferences(
             except Exception:
                 pass
     return all_prefs
+
+
+# ── GRPO integration ──────────────────────────────────────────────────
+
+_grpo_original_fn: Optional[Callable] = None
+
+
+def enable_segment_grpo(
+    buffer: "Any",
+    group_size: int = 4,
+    temperature: float = 0.7,
+    scorer_factory: Optional[Callable] = None,
+    decode_fn: Optional[Callable] = None,
+) -> None:
+    """Activate GRPO wrapping on ``collect_segment_preferences``.
+
+    Wraps at the **batch level** (per episode): each GRPO sample is a
+    complete set of preferences for all segments. The reward requires
+    rebuilding the scorer and running the decoder per sample.
+
+    Parameters
+    ----------
+    buffer : GRPOBuffer
+    group_size : int
+    temperature : float
+    scorer_factory : callable
+        ``scorer_factory(preference_list) -> SegmentScorer``
+    decode_fn : callable
+        ``decode_fn(scorer, segments, obs, actions, skill_names, preds) -> result``
+    """
+    import skill_agents.infer_segmentation.llm_teacher as _mod
+    from skill_agents.grpo.rewards import segmentation_reward
+    from skill_agents.grpo.wrapper import GRPOCallWrapper
+    from skill_agents.lora.skill_function import SkillFunction
+    from functools import partial
+
+    global _grpo_original_fn
+
+    if _grpo_original_fn is not None:
+        logger.warning("Segment GRPO already enabled — skipping")
+        return
+
+    _grpo_original_fn = _mod.collect_segment_preferences
+
+    bound_reward = partial(
+        segmentation_reward,
+        scorer_factory=scorer_factory,
+        decode_fn=decode_fn,
+    )
+
+    def _prompt_extractor(
+        segments: List[Tuple[int, int]],
+        observations: Sequence,
+        actions: Sequence,
+        skill_names: List[str],
+        predicates: Optional[List[Optional[dict]]] = None,
+        config: Optional[LLMTeacherConfig] = None,
+        **kw: Any,
+    ) -> str:
+        parts = [f"Segment preferences for {len(segments)} segments"]
+        parts.append(f"Skills: {skill_names}")
+        return "\n".join(parts)
+
+    def _metadata_extractor(
+        segments: List[Tuple[int, int]],
+        *a: Any,
+        **kw: Any,
+    ) -> Dict[str, Any]:
+        return {"n_segments": len(segments)}
+
+    wrapper = GRPOCallWrapper(
+        adapter=SkillFunction.SEGMENT,
+        reward_fn=bound_reward,
+        buffer=buffer,
+        group_size=group_size,
+        temperature=temperature,
+        prompt_extractor=_prompt_extractor,
+        metadata_extractor=_metadata_extractor,
+    )
+
+    _mod.collect_segment_preferences = wrapper.wrap(_grpo_original_fn)
+    logger.info("Segment GRPO enabled: G=%d, temp=%.2f", group_size, temperature)
+
+
+def disable_segment_grpo() -> None:
+    """Deactivate GRPO wrapping, restore original function."""
+    import skill_agents.infer_segmentation.llm_teacher as _mod
+
+    global _grpo_original_fn
+    if _grpo_original_fn is not None:
+        _mod.collect_segment_preferences = _grpo_original_fn
+        _grpo_original_fn = None
+        logger.info("Segment GRPO disabled")

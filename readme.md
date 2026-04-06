@@ -56,7 +56,7 @@ COS-PLAY is a co-evolution framework in which an LLM decision agent retrieves sk
 |------|--------|-------|
 | 2048, Candy Crush, Tetris | [GamingAgent](https://github.com/lmgame-org/GamingAgent) (LMGame-Bench) | Clone as sibling directory |
 | Avalon, Diplomacy | [AgentEvolver](https://github.com/modelscope/AgentEvolver) | Clone as sibling or add to `PYTHONPATH` |
-| Super Mario Bros | [Orak](https://github.com/nicholascpark/orak) (gym_super_mario_bros) | See [evaluate_orak/README.md](evaluate_orak/README.md) |
+| Super Mario Bros | [Orak](https://github.com/nicholascpark/orak) (gym_super_mario_bros) | See [env_wrappers/README.md](env_wrappers/README.md) |
 
 # Installation
 
@@ -70,8 +70,8 @@ cd cos-play
 conda env create -f environment.yml
 conda activate game-ai-agent
 
-# Option B: Automated install script
-bash install_game_ai_agent_env.sh
+# Option B: Automated install script (recommended)
+bash install/install_main_env.sh
 ```
 
 ### 2. Set up API keys
@@ -92,22 +92,21 @@ git clone https://github.com/lmgame-org/GamingAgent.git ../GamingAgent
 git clone https://github.com/modelscope/AgentEvolver.git ../AgentEvolver
 
 # Super Mario (Orak) — separate conda env
-bash evaluate_orak/envs/orak-mario/install.sh
+bash install/install_orak_mario.sh
 ```
 
-See [INSTALL.md](INSTALL.md) for detailed setup instructions.
+See [install/README.md](install/README.md) for detailed setup instructions.
 
 # Repository Structure
 
 ```
 cos-play/
 ├── decision_agents/        # LLM decision agent (skill retrieval, action, intention, reward)
-├── skill_agents/           # Skill bank pipeline (boundary, segmentation, contracts, maintenance)
-├── skill_agents_grpo/      # GRPO-wrapped skill bank with 3 LoRA adapters
+├── skill_agents/           # Skill bank pipeline + GRPO training (boundary, segmentation, contracts, maintenance)
 ├── data_structure/         # Episode, Experience, SubTask data structures
 ├── rag/                    # RAG retrieval (Qwen3-Embedding-0.6B)
 ├── trainer/                # Co-evolution training (GRPO + FSDP + Hard-EM + SFT)
-├── env_wrappers/           # NL wrappers for all game environments
+├── env_wrappers/           # NL wrappers, Gymnasium adapters, game configs, benchmark runners
 ├── cold_start/             # Seed trajectory generation
 ├── labeling/               # Skill labeling pipeline (for cold-start SFT data)
 ├── inference/              # Inference and rollout collection
@@ -115,13 +114,11 @@ cos-play/
 ├── configs/                # Configuration files (YAML)
 ├── baselines/              # Frontier LLM baseline evaluation
 ├── ablation_study/         # Ablation study scripts (Table 1)
-├── evaluate_gamingagent/   # GamingAgent evaluation harness
-├── evaluate_orak/          # Orak (Super Mario) evaluation harness
-└── tests/                  # Unit tests
+└── install/                # Install scripts and requirements for all conda envs
 ```
 
 Each module has its own README:
-[decision_agents](decision_agents/README.md) · [skill_agents](skill_agents/README.md) · [skill_agents_grpo](skill_agents_grpo/README.md) · [trainer](trainer/README.md) · [inference](inference/README.md) · [rag](rag/README.md) · [cold_start](cold_start/readme.md) · [labeling](labeling/readme.md) · [evaluate_gamingagent](evaluate_gamingagent/README.md) · [evaluate_orak](evaluate_orak/README.md)
+[decision_agents](decision_agents/README.md) · [skill_agents](skill_agents/README.md) · [trainer](trainer/README.md) · [env_wrappers](env_wrappers/README.md) · [inference](inference/README.md) · [rag](rag/README.md) · [cold_start](cold_start/readme.md) · [labeling](labeling/readme.md)
 
 # Running COS-PLAY
 
@@ -224,14 +221,11 @@ python scripts/run_coevolution.py \
     --total-steps 25 \
     --episodes-per-game 8
 
-# Or use the shell script (from scratch, no SFT warm-start)
-bash scripts/coevolution_train.sh
-
 # Custom co-evolution settings
-Decision_base_model=Qwen/Qwen3-8B \
-SkillBank_base_model=Qwen/Qwen3-8B \
-NUM_ITERATIONS=10 TRAIN_STEPS=30 \
-bash scripts/coevolution_train.sh
+python scripts/run_coevolution.py \
+    --total-steps 30 \
+    --episodes-per-game 12 \
+    --games twenty_forty_eight tetris candy_crush
 ```
 
 **Per-game training** (after cold-start SFT):
@@ -278,21 +272,24 @@ python -m scripts.qwen3_decision_agent --games candy_crush --episodes 5 -v
 ### Best-checkpoint inference (reproducing Table 1)
 
 ```bash
-bash inference/infer_2048_best.sh           # 2048: step-5 checkpoint
-bash inference/infer_tetris_best.sh         # Tetris: step-12 checkpoint
-bash inference/infer_candy_crush_best.sh    # Candy Crush: step-9 checkpoint
-bash inference/infer_super_mario_best.sh    # Super Mario: step-11 checkpoint
-bash inference/infer_avalon_best.sh         # Avalon: step-5 checkpoint
+# Single-player games
+bash inference/run_single_player_inference.sh --game tetris       # step-12 checkpoint
+bash inference/run_single_player_inference.sh --game 2048         # step-5 checkpoint
+bash inference/run_single_player_inference.sh --game candy_crush  # step-9 checkpoint
+bash inference/infer_super_mario_best.sh                          # step-11 checkpoint
+
+# Multi-agent games (self-play, best checkpoint)
+bash inference/run_avalon_inference.sh --variant best             # step-5 checkpoint
 ```
 
 ### Diplomacy and Avalon vs GPT-5.4
 
 ```bash
 # Diplomacy: 10 episodes per power (70 total) vs GPT-5.4
-bash inference/infer_diplomacy_decision_agent.sh
+bash inference/run_diplomacy_inference.sh --variant da
 
-# Avalon: 8 episodes per player (40 total) vs GPT-5.4
-bash inference/infer_avalon_decision_agent.sh
+# Avalon: 10 episodes per player (50 total) vs GPT-5.4
+bash inference/run_avalon_inference.sh --variant da
 ```
 
 ### General inference with any model
@@ -310,58 +307,27 @@ python scripts/eval_academic_benchmarks.py --mode base
 python scripts/eval_academic_benchmarks.py --mode adapter --adapter-path runs/best/adapters
 ```
 
-### Run all tests
-
-```bash
-pytest tests/
-```
 
 # Baselines
 
-All baselines use frontier LLMs as gameplay agents. Set `OPENROUTER_API_KEY` in your environment before running.
-
-## GPT-5.4
+All baselines use frontier LLMs as gameplay agents via OpenRouter API. Set `OPENROUTER_API_KEY` in your environment before running. Each game has one script that accepts a `--model` flag.
 
 ```bash
-bash baselines/run_gpt54_avalon.sh              # Avalon (20 episodes, all roles)
-bash baselines/run_gpt54_diplomacy.sh            # Diplomacy
-bash baselines/run_gpt54_tetris.sh               # Tetris (macro-action)
+# Single-player games (any model)
+bash baselines/run_tetris_baseline.sh                                          # GPT-5.4 (default)
+bash baselines/run_tetris_baseline.sh --model openai/gpt-oss-120b
+bash baselines/run_2048_baseline.sh --model google/gemini-3.1-pro-preview
+bash baselines/run_candy_crush_baseline.sh --model anthropic/claude-4.6-sonnet-20260217
+bash baselines/run_super_mario_baseline.sh --model openai/gpt-oss-120b
+
+# Multi-agent games (controlled model vs GPT-5.4 opponents)
+bash baselines/run_avalon_baseline.sh --model gpt-5.4
+bash baselines/run_diplomacy_baseline.sh --model google/gemini-3.1-pro-preview
 ```
 
-## Claude 4.6 Sonnet
+**Supported models:** `gpt-5.4`, `openai/gpt-oss-120b`, `google/gemini-3.1-pro-preview`, `anthropic/claude-4.6-sonnet-20260217`
 
-```bash
-bash baselines/run_claude46_2048.sh              # 2048
-bash baselines/run_claude46_avalon.sh            # Avalon
-bash baselines/run_claude46_candy_crush.sh       # Candy Crush
-bash baselines/run_claude46_diplomacy.sh         # Diplomacy
-bash baselines/run_claude46_super_mario.sh       # Super Mario
-bash baselines/run_claude46_tetris.sh            # Tetris
-```
-
-## Gemini 3.1 Pro
-
-```bash
-bash baselines/run_gemini31pro_2048.sh           # 2048
-bash baselines/run_gemini31pro_avalon.sh         # Avalon
-bash baselines/run_gemini31pro_candy_crush.sh    # Candy Crush
-bash baselines/run_gemini31pro_diplomacy.sh      # Diplomacy
-bash baselines/run_gemini31pro_super_mario.sh    # Super Mario
-bash baselines/run_gemini31pro_tetris.sh         # Tetris
-```
-
-## GPT-OSS 120B
-
-```bash
-bash baselines/run_gptoss120b_2048.sh            # 2048
-bash baselines/run_gptoss120b_avalon.sh          # Avalon
-bash baselines/run_gptoss120b_candy_crush.sh     # Candy Crush
-bash baselines/run_gptoss120b_diplomacy.sh       # Diplomacy
-bash baselines/run_gptoss120b_super_mario.sh     # Super Mario
-bash baselines/run_gptoss120b_tetris.sh          # Tetris
-```
-
-**Customization:** All baseline scripts accept env vars: `EPISODES=N`, `MAX_STEPS=N`, `TEMPERATURE=0.7`, `SEED=42`.
+**Customization:** All scripts accept env vars: `EPISODES=N`, `MAX_STEPS=N`, `TEMPERATURE=0.3`, `SEED=42`.
 
 **Analyze results:**
 ```bash
@@ -370,66 +336,29 @@ python baselines/analyze_baselines.py
 
 # Ablation Study
 
-All ablation variants from Table 1 in the paper. Each script evaluates a specific configuration.
-
-## Single-Player Games
-
-Runs on all 4 single-player environments (2048, Candy Crush, Tetris, Super Mario):
+Ablation variants from Table 2 in the paper. Each game has one parameterized script with `--adapter` and `--bank` flags.
 
 ```bash
-# COS-PLAY (full system): co-evolution LoRA + best skill bank
-bash ablation_study/run_with_skillbank.sh
+# Super Mario (base model and SFT only, requires Orak environment)
+bash ablation_study/run_super_mario_ablation.sh --adapter base
+bash ablation_study/run_super_mario_ablation.sh --adapter sft
 
-# GRPO W/O SKILL: co-evolution LoRA, no skill bank
-bash ablation_study/run_no_skillbank_ablation.sh
+# Avalon (vs GPT-5.4, 8 episodes per player, 40 total)
+bash ablation_study/run_avalon_ablation.sh --adapter coevo --bank best    # COS-PLAY (full)
+bash ablation_study/run_avalon_ablation.sh --adapter coevo --bank none    # GRPO only
+bash ablation_study/run_avalon_ablation.sh --adapter sft   --bank best    # SFT + best bank
+bash ablation_study/run_avalon_ablation.sh --adapter sft   --bank first   # SFT + initial bank
+bash ablation_study/run_avalon_ablation.sh --adapter sft   --bank none    # SFT only
+bash ablation_study/run_avalon_ablation.sh --adapter base                 # Qwen3-8B base
 
-# SFT W/O SKILL: SFT adapter, no skill bank, no GRPO
-bash ablation_study/run_sft_no_skillbank_ablation.sh
+# Diplomacy (vs GPT-5.4, 4 episodes per power, 28 total)
+bash ablation_study/run_diplomacy_ablation.sh --adapter coevo --bank best # COS-PLAY (full)
+bash ablation_study/run_diplomacy_ablation.sh --adapter base              # Qwen3-8B base
 
-# SFT + FINAL SKILL: SFT adapter + final evolved skill bank
-bash ablation_study/run_sft_best_bank_ablation.sh
-
-# SFT + 1ST SKILL: SFT adapter + first (step 0) skill bank
-bash ablation_study/run_sft_first_bank_ablation.sh
-
-# QWEN3-8B: vanilla base model, no LoRA, no skill bank
-bash ablation_study/run_base_model_ablation.sh
-```
-
-**Customization:** `EVAL_GPUS=N`, `EPISODES=N`, `GAMES="twenty_forty_eight tetris"`.
-
-## Multi-Player Games (Avalon)
-
-All variants play against GPT-5.4 opponents (8 episodes per player, 40 total):
-
-```bash
-# Run ALL Avalon ablations sequentially
-EVAL_GPUS=6 bash ablation_study/run_all_avalon_da_sequential.sh
-
-# Or run individually:
-bash ablation_study/run_with_bank_avalon_da.sh          # COS-PLAY (full)
-bash ablation_study/run_no_bank_avalon_da.sh             # GRPO + 1ST SKILL
-bash ablation_study/run_sft_no_bank_avalon_da.sh         # SFT W/O SKILL
-bash ablation_study/run_sft_best_bank_avalon_da.sh       # SFT + FINAL SKILL
-bash ablation_study/run_sft_first_bank_avalon_da.sh      # SFT + 1ST SKILL
-bash ablation_study/run_base_model_avalon_da.sh           # QWEN3-8B (base)
-```
-
-## Multi-Player Games (Diplomacy)
-
-All variants play against GPT-5.4 opponents (4 episodes per power, 28 total):
-
-```bash
-# Run ALL Diplomacy ablations sequentially
-EVAL_GPUS=6 bash ablation_study/run_all_diplomacy_da_sequential.sh
-
-# Or run individually:
-bash ablation_study/run_with_bank_diplomacy_da.sh        # COS-PLAY (full)
-bash ablation_study/run_no_bank_diplomacy_da.sh           # GRPO + 1ST SKILL
-bash ablation_study/run_sft_no_bank_diplomacy_da.sh       # SFT W/O SKILL
-bash ablation_study/run_sft_best_bank_diplomacy_da.sh     # SFT + FINAL SKILL
-bash ablation_study/run_sft_first_bank_diplomacy_da.sh    # SFT + 1ST SKILL
-bash ablation_study/run_base_model_diplomacy_da.sh         # QWEN3-8B (base)
+# Run ALL ablations for a game sequentially
+bash ablation_study/run_all_ablations.sh --game avalon
+bash ablation_study/run_all_ablations.sh --game diplomacy
+bash ablation_study/run_all_ablations.sh --game all
 ```
 
 # Per-Game Training Scripts
@@ -440,18 +369,11 @@ Each game has a dedicated training script with game-specific hyperparameters:
 |------|----------------|--------------|
 | 2048 | `bash scripts/run_2048.sh` | `TOTAL_STEPS=10`, `EPISODES=8` |
 | Tetris | `bash scripts/run_tetris.sh` | `TOTAL_STEPS=7`, `EPISODES=8` |
-| Candy Crush | `bash scripts/run_resume_candy_crush.sh` | `TOTAL_STEPS=10`, `EPISODES=8` |
+| Candy Crush | Phase 1 of `bash scripts/run_all.sh` | `TOTAL_STEPS=10`, `EPISODES=8` |
 | Super Mario | `bash scripts/run_super_mario.sh` | `TOTAL_STEPS=20`, `EPISODES=8` |
 | Avalon | `bash scripts/run_avalon.sh` | `TOTAL_STEPS=20`, `EPISODES=20` |
 | Diplomacy | `bash scripts/run_diplomacy.sh` | `TOTAL_STEPS=25`, `EPISODES=28` |
 | All games (curriculum) | `bash scripts/run_all.sh` | `DEBUG=1`, `RESUME_PHASE=N` |
-
-**Multi-game bootstrapping:**
-
-```bash
-# Avalon + Diplomacy from a prior checkpoint
-bash scripts/run_avalon_diplomacy.sh
-```
 
 # Results
 

@@ -75,6 +75,9 @@ def check_refine_triggers(
     if confusion_partners and len(confusion_partners) >= 1:
         return True, "too_weak_confusers"
 
+    if not profile.all_effects and profile.n_instances >= 5:
+        return True, "empty_contract"
+
     return False, ""
 
 
@@ -87,10 +90,14 @@ def weaken_contract(
     contract: SkillEffectsContract,
     report: VerificationReport,
     config: BankMaintenanceConfig,
+    min_literals: int = 1,
 ) -> Tuple[SkillEffectsContract, List[str]]:
     """Drop effect literals whose per-instance success rate is below threshold.
 
     Returns the new contract and the list of dropped literal names.
+
+    If dropping would leave fewer than *min_literals* total literals, the
+    top-scoring literals are retained to prevent empty contracts.
     """
     thresh = config.refine_drop_success_rate
     dropped: List[str] = []
@@ -116,6 +123,42 @@ def weaken_contract(
         else:
             dropped.append(f"evt:{e}")
 
+    total_kept = len(new_add) + len(new_del) + len(new_event)
+    total_original = len(contract.eff_add) + len(contract.eff_del) + len(contract.eff_event)
+
+    if total_kept < min_literals and total_original > 0:
+        all_rates: List[Tuple[str, str, float]] = []
+        for p in contract.eff_add:
+            all_rates.append(("add", p, report.eff_add_success_rate.get(p, 0.0)))
+        for p in contract.eff_del:
+            all_rates.append(("del", p, report.eff_del_success_rate.get(p, 0.0)))
+        for e in contract.eff_event:
+            all_rates.append(("evt", e, report.eff_event_rate.get(e, 0.0)))
+        all_rates.sort(key=lambda x: -x[2])
+
+        rescued: List[str] = []
+        for category, literal, _rate in all_rates:
+            if total_kept >= min_literals:
+                break
+            tag = f"{category}:{literal}"
+            if tag not in dropped:
+                continue
+            if category == "add":
+                new_add.add(literal)
+            elif category == "del":
+                new_del.add(literal)
+            else:
+                new_event.add(literal)
+            dropped.remove(tag)
+            rescued.append(tag)
+            total_kept += 1
+
+        if rescued:
+            logger.info(
+                "Rescued %d literal(s) for %s to avoid empty contract: %s",
+                len(rescued), contract.skill_id, rescued,
+            )
+
     new_support = {
         k: v for k, v in contract.support.items()
         if k in new_add or k in new_del or k in new_event
@@ -124,6 +167,8 @@ def weaken_contract(
     new_contract = SkillEffectsContract(
         skill_id=contract.skill_id,
         version=contract.version + 1,
+        name=contract.name,
+        description=contract.description,
         eff_add=new_add,
         eff_del=new_del,
         eff_event=new_event,
@@ -220,6 +265,8 @@ def strengthen_contract(
     new_contract = SkillEffectsContract(
         skill_id=contract.skill_id,
         version=contract.version + 1,
+        name=contract.name,
+        description=contract.description,
         eff_add=new_add,
         eff_del=new_del,
         eff_event=new_event,

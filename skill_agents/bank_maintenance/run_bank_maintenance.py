@@ -80,6 +80,8 @@ class BankMaintenanceResult:
         self.split_results: List[SplitResult] = []
         self.merge_results: List[MergeResult] = []
         self.refine_results: List[RefineResult] = []
+        self.materialized_ids: List[str] = []
+        self.promoted_ids: List[str] = []
         self.redecode_requests: List[RedecodeRequest] = []
         self.alias_map: Dict[str, str] = {}
 
@@ -111,6 +113,8 @@ class BankMaintenanceResult:
                 }
                 for rr in self.refine_results
             ],
+            "materialized": self.materialized_ids,
+            "promoted": self.promoted_ids,
             "n_redecode_requests": len(self.redecode_requests),
             "alias_map": self.alias_map,
         }
@@ -238,6 +242,150 @@ def build_transition_bigrams(
             bigrams[f"_to_{nxt}"][curr] += 1
 
     return dict(bigrams)
+
+
+def _collect_curator_candidates(
+    result: BankMaintenanceResult,
+    bank: Optional[SkillBankMVP] = None,
+) -> List[Dict[str, Any]]:
+    """Summarize all maintenance actions as curator candidates.
+
+    Covers all 5 action types: split, merge, refine, materialize, promote.
+    Uses ``"type"`` as the key for the action kind, matching
+    ``_format_action`` in ``llm_curator.py``.
+    """
+    def _get_skill_score(sid: str) -> float:
+        if bank is None:
+            return 0.5
+        skill = bank.get_skill(sid)
+        return skill.compute_skill_score() if skill else 0.5
+
+    candidates: List[Dict[str, Any]] = []
+    for sr in result.split_results:
+        if sr.accepted:
+            candidates.append({
+                "type": "split",
+                "skill_id": sr.parent_id,
+                "skill_score": _get_skill_score(sr.parent_id),
+                "n_instances": len(sr.children),
+                "details": {
+                    "children": [c.skill_id for c in sr.children],
+                },
+            })
+    for mr in result.merge_results:
+        if mr.accepted:
+            candidates.append({
+                "type": "merge",
+                "skill_id": mr.canonical_id,
+                "skill_score": _get_skill_score(mr.canonical_id),
+                "pass_rate": mr.report.overall_pass_rate if mr.report else 0,
+                "n_instances": len(mr.merged_ids),
+                "details": {
+                    "merged_ids": mr.merged_ids,
+                },
+            })
+    for rr in result.refine_results:
+        if rr.new_contract is not None:
+            candidates.append({
+                "type": "refine",
+                "skill_id": rr.skill_id,
+                "skill_score": _get_skill_score(rr.skill_id),
+                "details": {
+                    "dropped": rr.dropped_literals[:5] if rr.dropped_literals else [],
+                    "added": rr.added_literals[:5] if rr.added_literals else [],
+                },
+            })
+    for mid in result.materialized_ids:
+        skill = bank.get_skill(mid) if bank else None
+        candidates.append({
+            "type": "materialize",
+            "skill_id": mid,
+            "skill_score": _get_skill_score(mid),
+            "trigger": "recurring pattern",
+            "n_instances": len(getattr(skill, "sub_episodes", [])) if skill else 0,
+            "details": {
+                "name": getattr(skill, "name", mid) if skill else mid,
+            },
+        })
+    for pid in result.promoted_ids:
+        skill = bank.get_skill(pid) if bank else None
+        report = bank.get_report(pid) if bank else None
+        candidates.append({
+            "type": "promote",
+            "skill_id": pid,
+            "skill_score": _get_skill_score(pid),
+            "trigger": "proto-skill qualified",
+            "pass_rate": report.overall_pass_rate if report else 0,
+            "n_instances": getattr(skill, "n_instances", 0) if skill else 0,
+            "details": {
+                "name": getattr(skill, "name", pid) if skill else pid,
+            },
+        })
+    return candidates
+
+
+def _build_curator_outcomes(
+    candidates: List[Dict[str, Any]],
+    result: "BankMaintenanceResult",
+    bank: Optional[SkillBankMVP] = None,
+) -> List[Dict[str, Any]]:
+    """Build per-candidate ground-truth outcomes for curator reward.
+
+    Each entry: ``{"succeeded": bool, "quality_delta": float}``.
+    ``succeeded`` is True if the action improved or maintained bank quality
+    (accepted split with good child pass rates, accepted merge, etc.).
+    """
+    split_map = {sr.parent_id: sr for sr in result.split_results}
+    merge_map = {mr.canonical_id: mr for mr in result.merge_results}
+    refine_map = {rr.skill_id: rr for rr in result.refine_results}
+
+    outcomes: List[Dict[str, Any]] = []
+    for cand in candidates:
+        atype = cand.get("type", "")
+        sid = cand.get("skill_id", "")
+        succeeded = False
+        qd = 0.0
+
+        if atype == "split":
+            sr = split_map.get(sid)
+            if sr and sr.accepted and sr.children:
+                child_prs = [
+                    c.report.overall_pass_rate
+                    for c in sr.children if c.report
+                ]
+                if child_prs:
+                    succeeded = True
+                    qd = sum(child_prs) / len(child_prs) - cand.get("skill_score", 0.5)
+
+        elif atype == "merge":
+            mr = merge_map.get(sid)
+            if mr and mr.accepted and mr.report:
+                succeeded = mr.report.overall_pass_rate > 0.5
+                qd = mr.report.overall_pass_rate - cand.get("pass_rate", 0.5)
+
+        elif atype == "refine":
+            rr = refine_map.get(sid)
+            if rr and rr.new_contract is not None:
+                new_rpt = bank.get_report(sid) if bank else None
+                if new_rpt:
+                    succeeded = new_rpt.overall_pass_rate > cand.get("skill_score", 0.5)
+                    qd = new_rpt.overall_pass_rate - cand.get("skill_score", 0.5)
+                else:
+                    succeeded = True
+                    qd = 0.05
+
+        elif atype == "materialize":
+            succeeded = True
+            qd = 0.05
+
+        elif atype == "promote":
+            pr = cand.get("pass_rate", 0)
+            ni = cand.get("n_instances", 0)
+            succeeded = pr > 0.5 and ni >= 3
+            qd = pr - 0.5
+
+        outcomes.append({"succeeded": succeeded, "quality_delta": qd})
+    return outcomes
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -559,6 +707,25 @@ def run_bank_maintenance(
             skill_id=skill_id,
             details={"n_instances": len(instances)},
         ))
+
+    # ── 4b. CURATOR — LLM filtering of maintenance actions ──────
+    # Summarize all proposed actions and call the curator so GRPO
+    # training data is generated for the curator adapter.
+    curator_candidates = _collect_curator_candidates(result, bank=bank)
+    if curator_candidates:
+        try:
+            from skill_agents.bank_maintenance.llm_curator import (
+                filter_candidates,
+                set_curator_reward_context,
+            )
+
+            action_outcomes = _build_curator_outcomes(
+                curator_candidates, result, bank,
+            )
+            set_curator_reward_context(action_outcomes=action_outcomes)
+            filter_candidates(curator_candidates, bank)
+        except Exception as exc:
+            logger.debug("Curator filtering skipped: %s", exc)
 
     # ── 5. Execute local re-decode (if decode_fn provided) ───────
     if decode_fn and result.redecode_requests:

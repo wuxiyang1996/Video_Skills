@@ -389,7 +389,7 @@ skill_agents/boundary_proposal/
 ## Hybrid Example (standalone, no LLM)
 
 ```bash
-python -m skill_agents.boundary_proposal.example_hybrid
+python -m skill_agents.boundary_proposal.proposal
 ```
 
 Runs on a simulated Avalon trajectory showing how LLM predicates and rule-based events combine for boundary detection.

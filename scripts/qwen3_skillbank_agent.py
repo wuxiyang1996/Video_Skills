@@ -2,14 +2,14 @@
 # -*- coding: utf-8 -*-
 """
 Qwen3-8B Skill Bank Agent (GRPO pipeline) — extract skills from GPT-5.4
-rollouts using the **skill_agents_grpo** pipeline with Qwen3-8B as the
+rollouts using the **skill_agents** pipeline with Qwen3-8B as the
 LLM backend (served via vLLM).
 
 Mirrors ``extract_skillbank_grpo_gpt54.py`` but replaces the GPT-5.4
 backend with a locally-hosted Qwen3-8B, and optionally trains per-stage
 LoRA adapters via GRPO.
 
-Pipeline stages (all via ``skill_agents_grpo``):
+Pipeline stages (all via ``skill_agents``):
 
   Stage 1+2 — Boundary proposal + skill-sequence decoding
               (``SkillBankAgent.segment_episode``)
@@ -110,9 +110,9 @@ try:
 except ImportError:
     ask_model = None
 
-# ── skill_agents_grpo imports ────────────────────────────────────────
-from skill_agents_grpo.pipeline import SkillBankAgent, PipelineConfig
-from skill_agents_grpo.stage3_mvp.schemas import (
+# ── skill_agents imports ────────────────────────────────────────
+from skill_agents.pipeline import SkillBankAgent, PipelineConfig
+from skill_agents.stage3_mvp.schemas import (
     ExecutionHint,
     SegmentRecord,
     SkillEffectsContract,
@@ -121,7 +121,7 @@ from skill_agents_grpo.stage3_mvp.schemas import (
 from data_structure.experience import Episode, Experience, SubTask_Experience
 
 try:
-    from skill_agents_grpo.infer_segmentation.episode_adapter import (
+    from skill_agents.infer_segmentation.episode_adapter import (
         _extract_predicates,
     )
 except ImportError:
@@ -149,9 +149,9 @@ def setup_local_model(
     adapter_dir: Optional[str] = None,
 ) -> "MultiLoraSkillBankLLM":
     """Instantiate the local Qwen3-8B model with optional LoRA adapters."""
-    from skill_agents_grpo.lora.config import MultiLoraConfig
-    from skill_agents_grpo.lora.model import MultiLoraSkillBankLLM
-    from skill_agents_grpo.lora.skill_function import SkillFunction
+    from skill_agents.lora.config import MultiLoraConfig
+    from skill_agents.lora.model import MultiLoraSkillBankLLM
+    from skill_agents.lora.skill_function import SkillFunction
 
     adapter_paths: Dict[str, str] = {}
     if adapter_dir:
@@ -179,9 +179,9 @@ def setup_grpo_orchestrator(
     group_size: int = 4,
 ) -> "GRPOOrchestrator":
     """Create and return a GRPO orchestrator."""
-    from skill_agents_grpo.grpo.orchestrator import GRPOOrchestrator
-    from skill_agents_grpo.grpo.config import GRPOConfig, StageGRPOConfig
-    from skill_agents_grpo.lora.skill_function import SkillFunction
+    from skill_agents.grpo.orchestrator import GRPOOrchestrator
+    from skill_agents.grpo.config import GRPOConfig, StageGRPOConfig
+    from skill_agents.lora.skill_function import SkillFunction
 
     grpo_cfg = GRPOConfig(stage_configs={
         SkillFunction.SEGMENT.value: StageGRPOConfig(
@@ -207,7 +207,7 @@ def save_lora_adapters(
     adapter_dir: str,
 ) -> None:
     """Save all loaded LoRA adapters to disk."""
-    from skill_agents_grpo.lora.skill_function import SkillFunction
+    from skill_agents.lora.skill_function import SkillFunction
 
     _ad = Path(adapter_dir)
     _ad.mkdir(parents=True, exist_ok=True)
@@ -362,7 +362,7 @@ class StageIOLog:
         return {
             "game": self.game_name,
             "model": self.model,
-            "pipeline": "skill_agents_grpo",
+            "pipeline": "skill_agents",
             "timestamp": datetime.now().isoformat(),
             "n_stages": len(self.records),
             "stages": [r.to_dict() for r in self.records],
@@ -555,7 +555,7 @@ def load_episode(filepath: Path) -> Dict[str, Any]:
 
 
 def dict_to_episode(episode_data: Dict[str, Any]) -> Episode:
-    """Convert a labeled episode dict to an Episode object for skill_agents_grpo."""
+    """Convert a labeled episode dict to an Episode object for skill_agents."""
     experiences = []
     for exp_d in episode_data.get("experiences", []):
         exp = Experience(
@@ -644,7 +644,7 @@ def generate_skill_name(
                 if len(parsed_summary) > 10:
                     rag_summary = parsed_summary[:HARD_SUMMARY_CHAR_LIMIT]
 
-    from skill_agents_grpo.coldstart_io import record_io, ColdStartRecord
+    from skill_agents.coldstart_io import record_io, ColdStartRecord
     record_io(ColdStartRecord(
         module="skill_naming",
         function="generate_skill_name",
@@ -849,7 +849,7 @@ def generate_skill_description(
                 raw_desc = raw_desc[:cut + 1]
         desc = raw_desc
 
-    from skill_agents_grpo.coldstart_io import record_io, ColdStartRecord
+    from skill_agents.coldstart_io import record_io, ColdStartRecord
     record_io(ColdStartRecord(
         module="skill_naming",
         function="generate_skill_description",
@@ -1273,7 +1273,7 @@ def populate_skill_protocols(
     verbose: bool = False,
 ) -> int:
     """Fill empty protocols on skills in the bank using Qwen3-8B."""
-    from skill_agents_grpo.stage3_mvp.schemas import Protocol
+    from skill_agents.stage3_mvp.schemas import Protocol
 
     updated = 0
     bank = agent.bank
@@ -1365,16 +1365,16 @@ def extract_skills_for_game(
     checkpoint: Optional[ExtractionCheckpoint] = None,
     resume_from_episode: int = 0,
 ) -> Tuple[SkillBankAgent, Dict[str, Dict[str, Any]], List[SubTask_Experience], StageIOLog]:
-    """Run the full skill_agents_grpo SkillBankAgent pipeline on labeled episodes
+    """Run the full skill_agents SkillBankAgent pipeline on labeled episodes
     for one game, recording I/O at every stage boundary.
 
     Returns (agent, skill_catalog, sub_episodes, io_log).
     """
     io_log = StageIOLog(game_name, model)
     _reset_llm_call_log()
-    from skill_agents_grpo.infer_segmentation.llm_teacher import reset_teacher_io_records
+    from skill_agents.infer_segmentation.llm_teacher import reset_teacher_io_records
     reset_teacher_io_records()
-    from skill_agents_grpo.coldstart_io import reset as _reset_coldstart
+    from skill_agents.coldstart_io import reset as _reset_coldstart
     _reset_coldstart()
     game_llm_calls: List[Dict[str, Any]] = []
 
@@ -1655,7 +1655,7 @@ def extract_skills_for_game(
         agent.bank.save(str(_pe_dir / "skill_bank.jsonl"))
 
         # Incrementally flush cold-start I/O records
-        from skill_agents_grpo.coldstart_io import flush as _flush_coldstart
+        from skill_agents.coldstart_io import flush as _flush_coldstart
         _cs_records = _flush_coldstart()
         if _cs_records:
             _cs_path = output_dir / "coldstart_io_all.jsonl"
@@ -1736,7 +1736,7 @@ def extract_skills_for_game(
     # STAGE 4.5: Sub-episode quality check
     # ══════════════════════════════════════════════════════════════
     if len(agent.skill_ids) > 0:
-        from skill_agents_grpo.quality.sub_episode_evaluator import (
+        from skill_agents.quality.sub_episode_evaluator import (
             run_quality_check as _run_qc_single,
         )
 
@@ -2159,7 +2159,7 @@ def extract_skills_for_game(
 
         # Post-fallback quality check
         if n_new_from_fallback > 0 and all_sub_episodes:
-            from skill_agents_grpo.quality.sub_episode_evaluator import (
+            from skill_agents.quality.sub_episode_evaluator import (
                 run_quality_check as _run_qc_single,
             )
             print(f"    [Stage 4.5 post-fallback] Quality-checking {len(agent.skill_ids)} skill(s) ...")
@@ -2523,7 +2523,7 @@ def extract_skills_for_game(
             sub_ep_data = {
                 "game": game_name,
                 "model": model,
-                "pipeline": "skill_agents_grpo",
+                "pipeline": "skill_agents",
                 "timestamp": datetime.now().isoformat(),
                 "n_sub_episodes": len(all_sub_episodes),
                 "sub_episodes": [se.to_dict() for se in all_sub_episodes],
@@ -2549,7 +2549,7 @@ def extract_skills_for_game(
             llm_log_data = {
                 "game": game_name,
                 "model": model,
-                "pipeline": "skill_agents_grpo",
+                "pipeline": "skill_agents",
                 "timestamp": datetime.now().isoformat(),
                 "n_calls": len(game_llm_calls),
                 "total_prompt_chars": sum(c.get("prompt_chars", 0) for c in game_llm_calls),
@@ -2564,7 +2564,7 @@ def extract_skills_for_game(
             print(f"    [WARN] Failed to save LLM call log: {exc}")
 
     # Flush teacher I/O (cold-start data)
-    from skill_agents_grpo.infer_segmentation.llm_teacher import flush_teacher_io_records
+    from skill_agents.infer_segmentation.llm_teacher import flush_teacher_io_records
 
     teacher_records = flush_teacher_io_records()
     if teacher_records:
@@ -2583,7 +2583,7 @@ def extract_skills_for_game(
             print(f"    [WARN] Failed to save teacher I/O: {exc}")
 
     # Flush remaining cold-start I/O
-    from skill_agents_grpo.coldstart_io import flush as _flush_coldstart_final
+    from skill_agents.coldstart_io import flush as _flush_coldstart_final
 
     remaining_cs = _flush_coldstart_final()
     if remaining_cs:
@@ -2862,7 +2862,7 @@ def aggregate_cross_game_archetypes(
     archetypes_data = {
         "timestamp": datetime.now().isoformat(),
         "model": model,
-        "pipeline": "skill_agents_grpo",
+        "pipeline": "skill_agents",
         "n_archetypes": len(archetypes),
         "n_total_skills": len(all_skills),
         "n_games": len(all_catalogs),
@@ -3053,7 +3053,7 @@ def main():
     print("=" * 78)
     print("  Qwen3-8B Skill Bank Agent (GRPO pipeline)")
     print("=" * 78)
-    print(f"  Pipeline:      skill_agents_grpo")
+    print(f"  Pipeline:      skill_agents")
     print(f"  LLM backend:   {args.local_model or args.model}")
     print(f"  vLLM endpoint: {vllm_url}")
     print(f"  GRPO:          {'ON (G=' + str(args.grpo_group_size) + ')' if args.use_grpo else 'off'}")
@@ -3129,7 +3129,7 @@ def main():
                 print(f"\n  [RESUME] {game}: resuming from episode {resume_from_episode}")
 
         print(f"\n{'━' * 78}")
-        print(f"  GAME: {game} ({len(episode_files)} episodes) [Qwen3-8B + skill_agents_grpo]")
+        print(f"  GAME: {game} ({len(episode_files)} episodes) [Qwen3-8B + skill_agents]")
         print(f"{'━' * 78}")
 
         game_out_dir = output_dir / game
@@ -3161,7 +3161,7 @@ def main():
 
         # Enable GRPO wrappers for this game
         if _grpo_orch is not None:
-            from skill_agents_grpo.infer_segmentation.episode_adapter import (
+            from skill_agents.infer_segmentation.episode_adapter import (
                 grpo_scorer_factory,
                 grpo_decode_fn,
             )
@@ -3247,7 +3247,7 @@ def main():
         game_elapsed = time.time() - game_t0
         stat = {
             "game": game,
-            "pipeline": "skill_agents_grpo",
+            "pipeline": "skill_agents",
             "episodes_processed": len(game_episodes_data),
             "skills_extracted": len(skill_catalog),
             "sub_episodes": len(sub_episodes),
@@ -3261,7 +3261,7 @@ def main():
             json.dump({
                 "game": game,
                 "model": args.model,
-                "pipeline": "skill_agents_grpo",
+                "pipeline": "skill_agents",
                 "timestamp": datetime.now().isoformat(),
                 "input_dir": str(input_dir / game),
                 **stat,
@@ -3273,7 +3273,7 @@ def main():
                 json.dump({
                     "game": game,
                     "model": args.model,
-                    "pipeline": "skill_agents_grpo",
+                    "pipeline": "skill_agents",
                     "timestamp": datetime.now().isoformat(),
                     "n_skills": len(skill_catalog),
                     "skills": list(skill_catalog.values()),
@@ -3287,7 +3287,7 @@ def main():
     n_archetypes = 0
     if not args.skip_archetypes and len(all_catalogs) >= 1:
         print(f"\n{'━' * 78}")
-        print(f"  Cross-Game Skill Archetype Aggregation (Qwen3-8B + skill_agents_grpo)")
+        print(f"  Cross-Game Skill Archetype Aggregation (Qwen3-8B + skill_agents)")
         print(f"{'━' * 78}")
         print(f"  Aggregating skills from {len(all_catalogs)} game(s) ...")
         t0 = time.time()
@@ -3308,12 +3308,12 @@ def main():
 
     # Final summary
     print(f"\n{'=' * 78}")
-    print("  SKILL BANK EXTRACTION COMPLETE (Qwen3-8B + skill_agents_grpo)")
+    print("  SKILL BANK EXTRACTION COMPLETE (Qwen3-8B + skill_agents)")
     print(f"{'=' * 78}")
     total_processed = sum(s["episodes_processed"] for s in all_stats)
     total_skills = sum(s["skills_extracted"] for s in all_stats)
     total_sub_eps = sum(s["sub_episodes"] for s in all_stats)
-    print(f"  Pipeline:           skill_agents_grpo")
+    print(f"  Pipeline:           skill_agents")
     print(f"  LLM backend:        {args.local_model or args.model}")
     print(f"  GRPO:               {'ON (G=' + str(args.grpo_group_size) + ')' if args.use_grpo else 'off'}")
     print(f"  Episodes processed: {total_processed}")
@@ -3326,7 +3326,7 @@ def main():
     master = {
         "timestamp": datetime.now().isoformat(),
         "model": args.model,
-        "pipeline": "skill_agents_grpo",
+        "pipeline": "skill_agents",
         "grpo_enabled": args.use_grpo,
         "input_dir": str(input_dir),
         "output_dir": str(output_dir),
@@ -3347,7 +3347,7 @@ def main():
         combined = {
             "timestamp": datetime.now().isoformat(),
             "model": args.model,
-            "pipeline": "skill_agents_grpo",
+            "pipeline": "skill_agents",
             "total_skills": total_skills,
             "per_game": {g: list(cat.values()) for g, cat in all_catalogs.items()},
         }

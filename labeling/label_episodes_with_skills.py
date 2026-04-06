@@ -42,7 +42,7 @@ Usage (from Game-AI-Agent root):
 
     # Specify skill bank directory
     python labeling/label_episodes_with_skills.py \\
-        --bank skill_agents_grpo/extract_skillbank/output/gpt54_skillbank_grpo
+        --bank skill_agents/extract_skillbank/output/gpt54_skillbank_grpo
 
     # Without skill bank (falls back to null skills, like base labeler)
     python labeling/label_episodes_with_skills.py --no-bank
@@ -135,7 +135,7 @@ DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "output" / "gpt54_skill_labeled"
 
 DEFAULT_BANK_DIRS: List[Path] = [
     CODEBASE_ROOT / "labeling" / "output" / "gpt54_skillbank",
-    CODEBASE_ROOT / "skill_agents_grpo" / "extract_skillbank" / "output" / "gpt54_skillbank_grpo",
+    CODEBASE_ROOT / "skill_agents" / "extract_skillbank" / "output" / "gpt54_skillbank_grpo",
 ]
 
 SUMMARY_CHAR_BUDGET = 200

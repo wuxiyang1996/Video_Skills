@@ -53,6 +53,34 @@ class ProposalConfig:
     # Density: for soft signals, keep at most this many per minute (None = no cap)
     soft_max_per_minute: Optional[int] = 20
 
+    # ── Volatile predicate filtering ──────────────────────────────
+    # Keys that flip in more than this fraction of steps are noise
+    # (e.g. moves_remaining, stack_height, empty_cells).
+    volatile_flip_threshold: float = 0.4
+
+    # ── Adaptive merge radius ─────────────────────────────────────
+    # If True, clamp merge_radius to max(1, T // adaptive_merge_divisor)
+    # so short episodes don't collapse all boundaries.
+    adaptive_merge: bool = True
+    adaptive_merge_divisor: int = 8
+
+    # ── Minimum boundary density ────────────────────────────────────
+    # Target segment length in steps.  When signal-based candidates
+    # produce fewer boundaries than T // target_segment_length - 1,
+    # evenly-spaced fallback boundaries are added so the decoder has
+    # enough cut options (especially important for short trajectories).
+    target_segment_length: int = 5
+    # Set to 0 to disable fallback boundaries.
+    min_boundaries_enabled: bool = True
+
+    # ── Adaptive target segment length ────────────────────────────────
+    # When True, ``target_segment_length`` is scaled up for longer
+    # episodes so the decoder doesn't produce an excess of tiny
+    # segments.  The effective target becomes
+    #   max(target_segment_length, T // target_segment_count).
+    adaptive_target: bool = True
+    target_segment_count: int = 12  # aim for ~12 segments per episode
+
     # ── Intention-tag boundary signals ─────────────────────────────
     # Tag change → boundary candidate (tag proposes, Stage 2 decides)
     tag_min_segment_len: int = 3
@@ -65,13 +93,75 @@ class ProposalConfig:
 # ---------------------------------------------------------------------------
 
 
+def _filter_volatile_predicates(
+    predicates: list[dict],
+    threshold: float = 0.4,
+) -> list[dict]:
+    """Remove predicate keys that flip in more than *threshold* fraction of steps.
+
+    Keys like ``moves_remaining``, ``stack_height``, or ``empty_cells`` change
+    almost every step and create noise that bridges real boundaries during
+    merge, causing a cascade that collapses all boundaries into one.
+
+    Safety: if removing volatile keys would eliminate ALL predicate flips,
+    keeps the least-volatile of the flagged keys so boundaries aren't lost.
+    """
+    T = len(predicates)
+    if T < 3:
+        return predicates
+
+    flip_counts: Dict[str, int] = {}
+    all_keys: Set[str] = set()
+    for p in predicates:
+        if p:
+            all_keys.update(p.keys())
+
+    for k in all_keys:
+        flips = 0
+        for t in range(1, T):
+            prev = predicates[t - 1]
+            curr = predicates[t]
+            if prev is None or curr is None:
+                continue
+            if prev.get(k) != curr.get(k):
+                flips += 1
+        flip_counts[k] = flips
+
+    max_flips = int(threshold * (T - 1))
+    volatile = {k for k, v in flip_counts.items() if v > max_flips}
+
+    if not volatile:
+        return predicates
+
+    stable = all_keys - volatile
+    has_stable_flips = any(flip_counts.get(k, 0) > 0 for k in stable)
+
+    if not has_stable_flips:
+        # All flipping keys are volatile — keep the least-volatile one
+        least_volatile = min(volatile, key=lambda k: flip_counts[k])
+        volatile.discard(least_volatile)
+
+    if not volatile:
+        return predicates
+
+    return [
+        {k: v for k, v in (p or {}).items() if k not in volatile}
+        for p in predicates
+    ]
+
+
 def _triggers_from_predicate_flips(
     predicates: list[dict],
+    volatile_threshold: float = 0.4,
 ) -> list[tuple[int, str]]:
     """
     A) Predicate flips: add t when any key predicate changes from t-1 to t.
     predicates[t] = dict of predicate name -> bool (or value).
+
+    Volatile keys (flipping > *volatile_threshold* fraction of steps) are
+    filtered out first so they don't create noise triggers.
     """
+    predicates = _filter_volatile_predicates(predicates, volatile_threshold)
     out: list[tuple[int, str]] = []
     for t in range(1, len(predicates)):
         prev, curr = predicates[t - 1], predicates[t]
@@ -276,25 +366,33 @@ def _merge_and_window(
 ) -> list[BoundaryCandidate]:
     """
     Merge nearby triggers into single candidates; represent as center + half_window.
+
+    Uses a fixed group-anchor (the first trigger in each cluster) to decide
+    membership.  Previous versions averaged the center with each new trigger,
+    causing the center to drift forward and snowball through all remaining
+    triggers — especially problematic for short trajectories.
     """
     if not triggers:
         return []
 
     triggers = sorted(triggers, key=lambda x: x[0])
     merged: list[tuple[int, list[str]]] = []
-    current_center = triggers[0][0]
-    current_sources = [triggers[0][1]]
+    group_anchor = triggers[0][0]
+    group_times = [triggers[0][0]]
+    group_sources = [triggers[0][1]]
 
     for t, src in triggers[1:]:
-        if t <= current_center + merge_radius:
-            current_sources.append(src)
-            # extend center toward new trigger (weight by keeping first event)
-            current_center = (current_center + t) // 2
+        if t <= group_anchor + merge_radius:
+            group_times.append(t)
+            group_sources.append(src)
         else:
-            merged.append((current_center, list(dict.fromkeys(current_sources))))
-            current_center = t
-            current_sources = [src]
-    merged.append((current_center, list(dict.fromkeys(current_sources))))
+            center = group_times[len(group_times) // 2]
+            merged.append((center, list(dict.fromkeys(group_sources))))
+            group_anchor = t
+            group_times = [t]
+            group_sources = [src]
+    center = group_times[len(group_times) // 2]
+    merged.append((center, list(dict.fromkeys(group_sources))))
 
     return [
         BoundaryCandidate(
@@ -392,7 +490,9 @@ def propose_boundary_candidates(
     triggers: list[tuple[int, str]] = []
 
     if predicates is not None and len(predicates) > 0:
-        triggers.extend(_triggers_from_predicate_flips(predicates))
+        triggers.extend(_triggers_from_predicate_flips(
+            predicates, volatile_threshold=cfg.volatile_flip_threshold,
+        ))
 
     if surprisal is not None and len(surprisal) > 0:
         triggers.extend(_triggers_from_surprisal(surprisal, cfg))
@@ -409,12 +509,41 @@ def propose_boundary_candidates(
         )
 
     triggers = [(t, s) for t, s in triggers if 0 <= t < T]
+
+    effective_radius = cfg.merge_radius
+    if cfg.adaptive_merge:
+        effective_radius = min(
+            cfg.merge_radius,
+            max(1, T // cfg.adaptive_merge_divisor),
+        )
+
+    # ── Minimum boundary density: add evenly-spaced fallbacks ─────
+    effective_target_seg_len = cfg.target_segment_length
+    if cfg.adaptive_target and cfg.target_segment_count > 0 and T > 0:
+        effective_target_seg_len = max(
+            cfg.target_segment_length,
+            T // cfg.target_segment_count,
+        )
+
+    if cfg.min_boundaries_enabled and effective_target_seg_len > 0:
+        min_boundaries = max(1, T // effective_target_seg_len - 1)
+        existing_centers = {t for t, _ in triggers}
+        if len(existing_centers) < min_boundaries:
+            n_needed = min_boundaries
+            step = T / (n_needed + 1)
+            for k in range(1, n_needed + 1):
+                fb_t = int(round(k * step))
+                fb_t = max(1, min(fb_t, T - 2))
+                if fb_t not in existing_centers:
+                    triggers.append((fb_t, "uniform_fallback"))
+
+    triggers = [(t, s) for t, s in triggers if 0 <= t < T]
     if not triggers:
         return []
 
     candidates = _merge_and_window(
         triggers,
-        merge_radius=cfg.merge_radius,
+        merge_radius=effective_radius,
         window_half_width=cfg.window_half_width,
     )
     candidates = _density_control(candidates, cfg, steps_per_minute=cfg.steps_per_minute)

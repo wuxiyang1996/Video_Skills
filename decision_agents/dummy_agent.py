@@ -103,8 +103,6 @@ GAME_AVALON = "avalon"
 GAME_DIPLOMACY = "diplomacy"
 GAME_GAMINGAGENT = "gamingagent"
 GAME_ORAK = "orak"
-GAME_ORAK_STARCRAFT = "orak_starcraft"
-GAME_ORAK_STARCRAFT_MULTI = "orak_starcraft_multi"
 GAME_ORAK_MARIO = "orak_mario"
 GAME_ORAK_POKEMON = "orak_pokemon"
 GAME_ORAK_2048 = "orak_2048"
@@ -186,22 +184,6 @@ GAMINGAGENT_USER_TEMPLATE = (
 # ---------------------------------------------------------------------------
 # Orak constants (AIcrowd Game Agent Challenge 2025)
 # ---------------------------------------------------------------------------
-ORAK_STARCRAFT_SYSTEM_PROMPT = (
-    "You are playing StarCraft II as Protoss against a Zerg AI opponent.\n"
-    "You receive the current game state and must output exactly 5 actions per step.\n\n"
-    "Action categories: TRAIN <unit>, BUILD <structure>, RESEARCH <upgrade>, "
-    "SCOUTING <unit>, MULTI-ATTACK, MULTI-RETREAT, CHRONOBOOST <building>, EMPTY ACTION.\n\n"
-    "Reply with 5 numbered actions:\n"
-    "1: <ACTION>\n2: <ACTION>\n3: <ACTION>\n4: <ACTION>\n5: <ACTION>\n\n"
-    "Use exact action names (e.g. TRAIN ZEALOT, BUILD PYLON, RESEARCH CHARGE)."
-)
-
-ORAK_STARCRAFT_USER_TEMPLATE = (
-    "Current game state:\n\n{state}\n\n"
-    "Provide exactly 5 actions in the format:\n"
-    "1: <ACTION>\n2: <ACTION>\n3: <ACTION>\n4: <ACTION>\n5: <ACTION>"
-)
-
 ORAK_MARIO_SYSTEM_PROMPT = (
     "You are playing Super Mario Bros. Mario auto-runs right; you control jump height.\n"
     "Choose a jump level from 0 (no jump) to 6 (highest jump).\n\n"
@@ -346,9 +328,6 @@ ORAK_BABA_IS_YOU_USER_TEMPLATE = (
     "What moves? Reply with directions (e.g. 'up', 'left 2', 'down')."
 )
 
-ORAK_STARCRAFT_MULTI_SYSTEM_PROMPT = ORAK_STARCRAFT_SYSTEM_PROMPT
-ORAK_STARCRAFT_MULTI_USER_TEMPLATE = ORAK_STARCRAFT_USER_TEMPLATE
-
 
 # ---------------------------------------------------------------------------
 # Game auto-detection
@@ -365,12 +344,6 @@ def detect_game(state_nl: str) -> str:
         return GAME_GAMINGAGENT
 
     text = state_nl.lower()
-
-    # Orak StarCraft II markers
-    if "starcraft" in text and ("protoss" in text or "zerg" in text or "minerals" in text):
-        return GAME_ORAK_STARCRAFT
-    if "game time" in text and ("supply" in text or "nexus" in text or "pylon" in text):
-        return GAME_ORAK_STARCRAFT
 
     # Orak Super Mario markers (jump-level based)
     if "position of mario" in text or "jump level" in text:
@@ -471,16 +444,12 @@ def _get_system_prompt(game: str) -> str:
         return DIPLOMACY_SYSTEM_PROMPT
     if game == GAME_GAMINGAGENT:
         return GAMINGAGENT_SYSTEM_PROMPT
-    if game == GAME_ORAK_STARCRAFT:
-        return ORAK_STARCRAFT_SYSTEM_PROMPT
     if game == GAME_ORAK_MARIO:
         return ORAK_MARIO_SYSTEM_PROMPT
     if game == GAME_ORAK_POKEMON:
         return ORAK_POKEMON_SYSTEM_PROMPT
     if game == GAME_ORAK_2048:
         return ORAK_2048_SYSTEM_PROMPT
-    if game == GAME_ORAK_STARCRAFT_MULTI:
-        return ORAK_STARCRAFT_MULTI_SYSTEM_PROMPT
     if game == GAME_ORAK_STREET_FIGHTER:
         return ORAK_STREET_FIGHTER_SYSTEM_PROMPT
     if game == GAME_ORAK_SLAY_THE_SPIRE:
@@ -510,16 +479,12 @@ def _get_user_prompt(state_nl: str, game: str) -> str:
         return DIPLOMACY_USER_TEMPLATE.format(state=state_nl)
     if game == GAME_GAMINGAGENT:
         return GAMINGAGENT_USER_TEMPLATE.format(state=state_nl)
-    if game == GAME_ORAK_STARCRAFT:
-        return ORAK_STARCRAFT_USER_TEMPLATE.format(state=state_nl)
     if game == GAME_ORAK_MARIO:
         return ORAK_MARIO_USER_TEMPLATE.format(state=state_nl)
     if game == GAME_ORAK_POKEMON:
         return ORAK_POKEMON_USER_TEMPLATE.format(state=state_nl)
     if game == GAME_ORAK_2048:
         return ORAK_2048_USER_TEMPLATE.format(state=state_nl)
-    if game == GAME_ORAK_STARCRAFT_MULTI:
-        return ORAK_STARCRAFT_MULTI_USER_TEMPLATE.format(state=state_nl)
     if game == GAME_ORAK_STREET_FIGHTER:
         return ORAK_STREET_FIGHTER_USER_TEMPLATE.format(state=state_nl)
     if game == GAME_ORAK_SLAY_THE_SPIRE:
@@ -661,20 +626,6 @@ def _extract_gamingagent_action(text: str, state_nl: str) -> Optional[str]:
     if valid:
         return valid[0]
     return None
-
-
-def _extract_orak_starcraft_action(text: str) -> Optional[str]:
-    """Extract StarCraft II multi-action string (5 numbered actions)."""
-    if not text or not isinstance(text, str):
-        return "1: TRAIN PROBE\n2: BUILD PYLON\n3: EMPTY ACTION\n4: EMPTY ACTION\n5: EMPTY ACTION"
-    pattern = r"\d+:\s*<?([^>\n]+)>?"
-    matches = re.findall(pattern, text)
-    if matches:
-        actions = [m.strip() for m in matches[:5]]
-        while len(actions) < 5:
-            actions.append("EMPTY ACTION")
-        return "\n".join(f"{i+1}: {a}" for i, a in enumerate(actions))
-    return text.strip()
 
 
 def _extract_orak_mario_action(text: str) -> Optional[str]:
@@ -910,16 +861,12 @@ def extract_action(text: str, game: str, state_nl: str = "") -> Union[str, List[
         return _extract_diplomacy_orders(text)
     if game == GAME_GAMINGAGENT:
         return _extract_gamingagent_action(text, state_nl)
-    if game == GAME_ORAK_STARCRAFT:
-        return _extract_orak_starcraft_action(text)
     if game == GAME_ORAK_MARIO:
         return _extract_orak_mario_action(text)
     if game == GAME_ORAK_POKEMON:
         return _extract_orak_pokemon_action(text)
     if game == GAME_ORAK_2048:
         return _extract_orak_2048_action(text)
-    if game == GAME_ORAK_STARCRAFT_MULTI:
-        return _extract_orak_starcraft_action(text)
     if game == GAME_ORAK_STREET_FIGHTER:
         return _extract_orak_street_fighter_action(text)
     if game == GAME_ORAK_SLAY_THE_SPIRE:
@@ -950,16 +897,12 @@ def _default_action(game: str, state_nl: str = "") -> Union[str, List[str]]:
     if game == GAME_GAMINGAGENT:
         valid = _parse_valid_actions_from_state(state_nl) if state_nl else []
         return valid[0] if valid else "up"
-    if game == GAME_ORAK_STARCRAFT:
-        return "1: TRAIN PROBE\n2: BUILD PYLON\n3: EMPTY ACTION\n4: EMPTY ACTION\n5: EMPTY ACTION"
     if game == GAME_ORAK_MARIO:
         return "Jump Level : 3"
     if game == GAME_ORAK_POKEMON:
         return "a"
     if game == GAME_ORAK_2048:
         return "down"
-    if game == GAME_ORAK_STARCRAFT_MULTI:
-        return "1: TRAIN PROBE\n2: BUILD PYLON\n3: EMPTY ACTION\n4: EMPTY ACTION\n5: EMPTY ACTION"
     if game == GAME_ORAK_STREET_FIGHTER:
         return "Move Closer"
     if game == GAME_ORAK_SLAY_THE_SPIRE:

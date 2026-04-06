@@ -1,8 +1,8 @@
 """
-Training infrastructure for co-evolving Decision Agent (GRPO) and SkillBank Agent (Hard-EM).
+Training infrastructure for the COS-PLAY co-evolution framework.
 
 Subpackages:
-    common   — shared configs, metrics, evaluation harness, logging, seeds
-    decision — VLM decision agent GRPO trainer (env wrapper, rollout collector, replay buffer)
-    skillbank — SkillBank Hard-EM trainer (ingest, decode, contract, update, gating)
+    coevolution — async co-evolution loop (rollouts, skill bank, GRPO)
+    common      — shared data types (RolloutRecord, RolloutStep)
+    SFT         — cold-start LoRA SFT training for 5 adapters
 """

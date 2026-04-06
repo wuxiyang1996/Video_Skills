@@ -88,8 +88,8 @@ for p in [str(CODEBASE_ROOT), str(GAMINGAGENT_ROOT)]:
 from data_structure.experience import Experience, Episode, Episode_Buffer
 
 from env_wrappers.gamingagent_nl_wrapper import GamingAgentNLWrapper
-from evaluate_gamingagent.gym_like import make_gaming_env, list_games
-from evaluate_gamingagent.game_configs import GAME_CONFIGS
+from env_wrappers.gym_like import make_gaming_env, list_games
+from env_wrappers.game_configs import GAME_CONFIGS
 
 from decision_agents.agent_helper import (
     get_state_summary,
@@ -416,10 +416,10 @@ class DualLoRAManager:
     ) -> None:
         """Initialize the local model with optional LoRA adapters."""
         try:
-            from skill_agents_grpo.lora.config import MultiLoraConfig
-            from skill_agents_grpo.lora.model import MultiLoraSkillBankLLM
+            from skill_agents.lora.config import MultiLoraConfig
+            from skill_agents.lora.model import MultiLoraSkillBankLLM
         except ImportError:
-            print("[DualLoRA] skill_agents_grpo.lora not available, using vLLM only")
+            print("[DualLoRA] skill_agents.lora not available, using vLLM only")
             return
 
         adapter_paths: Dict[str, str] = {}
@@ -444,8 +444,8 @@ class DualLoRAManager:
             print(f"  [DualLoRA] Adapters: {list(adapter_paths.keys())}")
 
         try:
-            from skill_agents_grpo.grpo.orchestrator import GRPOOrchestrator
-            from skill_agents_grpo.grpo.config import GRPOConfig, StageGRPOConfig
+            from skill_agents.grpo.orchestrator import GRPOOrchestrator
+            from skill_agents.grpo.config import GRPOConfig, StageGRPOConfig
 
             grpo_cfg = GRPOConfig(stage_configs={
                 "skill_selection": StageGRPOConfig(

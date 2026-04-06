@@ -3,6 +3,7 @@ Segment scoring: the interpretable decomposition.
 
 Score(i, j, k | k_prev) =
     log p_k(a_{i:j} | x_{i:j})          [behavior fit]
+  + IntentionFit(k, i, j)               [intention tag agreement]
   + log p(l = j-i+1 | k)                [duration prior]
   + log p(k | k_prev)                   [transition prior]
   + lambda * Compat(k, P_i, P_j)        [contract compatibility]
@@ -127,6 +128,7 @@ class SegmentScorer:
         duration_stats: Optional[Dict[str, Tuple[float, float]]] = None,
         compat_fn: Optional[Callable] = None,
         boundary_scorer: Optional[Callable] = None,
+        intention_fit_fn: Optional[Callable] = None,
     ) -> None:
         self.config = config or SegmentationConfig()
         self._weights = self.config.weights
@@ -140,6 +142,7 @@ class SegmentScorer:
         self._duration_stats = duration_stats
         self._compat_fn = compat_fn
         self._boundary_scorer = boundary_scorer
+        self._intention_fit_fn = intention_fit_fn
         self._new_cfg = self.config.new_skill
 
         import inspect
@@ -205,6 +208,17 @@ class SegmentScorer:
             return self._compat_fn(skill, predicates_start, predicates_end)
         return 0.0
 
+    def intention_fit(self, skill: str, i: int, j: int) -> float:
+        """Score based on per-step intention tag agreement.
+
+        Returns match_fraction * segment_length so the signal scales
+        consistently with behavior_fit (which also scales by length).
+        Returns 0.0 when no intention tags are available.
+        """
+        if self._intention_fit_fn is None or skill == NEW_SKILL:
+            return 0.0
+        return self._intention_fit_fn(skill, i, j)
+
     def boundary_quality(self, seg_start: int, seg_end: int) -> float:
         """Boundary plausibility bonus from BoundaryPreferenceScorer."""
         if self._boundary_scorer is not None:
@@ -239,13 +253,14 @@ class SegmentScorer:
         length = j - i + 1
 
         bf = w.behavior_fit * self.behavior_fit(observations, actions, skill, i, j)
+        intf = w.intention_fit * self.intention_fit(skill, i, j)
         dp_ = w.duration_prior * self.duration_prior(length, skill)
         tp = w.transition_prior * self.transition_prior(skill, prev_skill)
         cc = w.contract_compat * self.contract_compat(skill, predicates_start, predicates_end)
         bq = self.boundary_quality(i, j)
         bp = w.boundary_preference * self.boundary_preference(i, j)
 
-        return bf + dp_ + tp + cc + bq + bp
+        return bf + intf + dp_ + tp + cc + bq + bp
 
     def score_breakdown(
         self,
@@ -263,6 +278,7 @@ class SegmentScorer:
         length = j - i + 1
 
         bf_raw = self.behavior_fit(observations, actions, skill, i, j)
+        if_raw = self.intention_fit(skill, i, j)
         dp_raw = self.duration_prior(length, skill)
         tp_raw = self.transition_prior(skill, prev_skill)
         cc_raw = self.contract_compat(skill, predicates_start, predicates_end)
@@ -272,6 +288,8 @@ class SegmentScorer:
         return {
             "behavior_fit": bf_raw,
             "behavior_fit_w": w.behavior_fit * bf_raw,
+            "intention_fit": if_raw,
+            "intention_fit_w": w.intention_fit * if_raw,
             "duration_prior": dp_raw,
             "duration_prior_w": w.duration_prior * dp_raw,
             "transition_prior": tp_raw,
@@ -283,6 +301,7 @@ class SegmentScorer:
             "boundary_preference_w": w.boundary_preference * bp_raw,
             "total": (
                 w.behavior_fit * bf_raw
+                + w.intention_fit * if_raw
                 + w.duration_prior * dp_raw
                 + w.transition_prior * tp_raw
                 + w.contract_compat * cc_raw
@@ -330,6 +349,7 @@ class SegmentScorer:
             i, j, skill, prev_skill, obs, actions_slice, p_start, p_end = req
             length = j - i + 1
             bf_raw = bf_results[r]
+            if_raw = self.intention_fit(skill, i, j)
             dp_raw = self.duration_prior(length, skill)
             tp_raw = self.transition_prior(skill, prev_skill)
             cc_raw = self.contract_compat(skill, p_start, p_end)
@@ -338,6 +358,8 @@ class SegmentScorer:
             out.append({
                 "behavior_fit": bf_raw,
                 "behavior_fit_w": w.behavior_fit * bf_raw,
+                "intention_fit": if_raw,
+                "intention_fit_w": w.intention_fit * if_raw,
                 "duration_prior": dp_raw,
                 "duration_prior_w": w.duration_prior * dp_raw,
                 "transition_prior": tp_raw,
@@ -349,6 +371,7 @@ class SegmentScorer:
                 "boundary_preference_w": w.boundary_preference * bp_raw,
                 "total": (
                     w.behavior_fit * bf_raw
+                    + w.intention_fit * if_raw
                     + w.duration_prior * dp_raw
                     + w.transition_prior * tp_raw
                     + w.contract_compat * cc_raw

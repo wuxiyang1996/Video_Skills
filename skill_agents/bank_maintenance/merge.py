@@ -73,6 +73,7 @@ def retrieve_merge_candidates(
       - LSH bucket collisions
       - inverted-index high-overlap pairs
       - (optional) ANN nearest centroid pairs
+      - transition-overlap pairs (for skills with empty effects)
     """
     pairs: Set[FrozenSet[str]] = set()
 
@@ -96,6 +97,25 @@ def retrieve_merge_candidates(
                 if sim > (config.merge_emb_cosine_thresh if config else 0.90):
                     pairs.add(frozenset((sid, peer_id)))
 
+    # For skills with empty effects, use transition overlap to find merge
+    # candidates that the effect-based indices would miss.
+    empty_effect_ids = [
+        sid for sid, prof in profiles.items()
+        if not prof.all_effects
+    ]
+    if len(empty_effect_ids) >= 2:
+        k = config.merge_transition_overlap_k if config else 5
+        min_overlap = config.merge_transition_overlap_min if config else 0.50
+        for i, sid_a in enumerate(empty_effect_ids):
+            pa = profiles[sid_a]
+            for sid_b in empty_effect_ids[i + 1:]:
+                pb = profiles[sid_b]
+                if pa.transition_topk_next and pb.transition_topk_next:
+                    t_next = _transition_overlap(pa.transition_topk_next, pb.transition_topk_next, k)
+                    t_prev = _transition_overlap(pa.transition_topk_prev, pb.transition_topk_prev, k)
+                    if (t_next + t_prev) / 2 >= min_overlap:
+                        pairs.add(frozenset((sid_a, sid_b)))
+
     return pairs
 
 
@@ -106,7 +126,7 @@ def retrieve_merge_candidates(
 
 def _jaccard(a: FrozenSet[str], b: FrozenSet[str]) -> float:
     if not a and not b:
-        return 1.0
+        return 1.0  # both empty → identical signatures
     return len(a & b) / len(a | b)
 
 
@@ -147,12 +167,16 @@ def verify_merge_pair(
       - Effect Jaccard (eff_add, eff_del, eff_event combined)
       - Embedding cosine (if available)
       - Transition top-K overlap (if available)
+
+    When both skills have empty effects, uses relaxed criteria:
+    transition overlap alone is sufficient if high enough.
     """
     scores: Dict[str, float] = {}
+    both_empty = not p1.all_effects and not p2.all_effects
 
     eff_jac = _jaccard(p1.all_effects, p2.all_effects)
     scores["eff_jaccard"] = eff_jac
-    if eff_jac < config.merge_eff_jaccard_thresh:
+    if not both_empty and eff_jac < config.merge_eff_jaccard_thresh:
         return False, scores
 
     if p1.embedding_centroid and p2.embedding_centroid:
@@ -172,7 +196,24 @@ def verify_merge_pair(
         scores["transition_next_overlap"] = t_next
         scores["transition_prev_overlap"] = t_prev
         avg_overlap = (t_next + t_prev) / 2
-        if avg_overlap < config.merge_transition_overlap_min:
+        if both_empty:
+            if avg_overlap < config.merge_transition_overlap_min:
+                return False, scores
+        else:
+            if avg_overlap < config.merge_transition_overlap_min:
+                return False, scores
+    elif both_empty:
+        # Both effects empty AND no transition data → look at duration similarity
+        if p1.duration_mean > 0 and p2.duration_mean > 0:
+            dur_ratio = min(p1.duration_mean, p2.duration_mean) / max(p1.duration_mean, p2.duration_mean)
+            scores["duration_ratio"] = dur_ratio
+            if dur_ratio < 0.3:
+                return False, scores
+        # Same action verb in the label? (e.g. "overworld:CLEAR" and "dialog:CLEAR")
+        verb1 = p1.skill_id.split(":")[-1] if ":" in p1.skill_id else p1.skill_id
+        verb2 = p2.skill_id.split(":")[-1] if ":" in p2.skill_id else p2.skill_id
+        scores["same_verb"] = 1.0 if verb1 == verb2 else 0.0
+        if verb1 != verb2:
             return False, scores
 
     return True, scores

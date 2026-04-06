@@ -40,6 +40,9 @@ class PreferenceExample:
     score_lose: float = 0.0
     evidence: str = ""
     source: str = "llm"  # "llm" | "human" | "agent"
+    # Omit from __repr__ so GRPO ``str([...PreferenceExample])`` reflects semantic
+    # prefs only — otherwise every sample gets a unique repr (new time.time() per
+    # object) while rewards correctly match identical rankings → confusing logs.
     timestamp: float = field(default_factory=time.time, repr=False)
 
     @property
@@ -63,6 +66,19 @@ class PreferenceExample:
     @classmethod
     def from_dict(cls, d: dict) -> PreferenceExample:
         return cls(**d)
+
+
+class PreferenceListWithRollouts(list):
+    """Pairwise preferences plus raw LLM text (one entry per segment call).
+
+    ``collect_segment_preferences`` may return this instead of a plain ``list``
+    so GRPO rewards can distinguish **different JSON rollouts** that fuzzy-parse
+    to identical ``PreferenceExample`` rows (same ranking after normalization).
+    """
+
+    def __init__(self, iterable=(), *, raw_rollouts: Optional[List[str]] = None):
+        super().__init__(iterable)
+        self.raw_rollouts: List[str] = list(raw_rollouts or [])
 
 
 @dataclass
@@ -93,8 +109,9 @@ class PreferenceStore:
     def add(self, example: PreferenceExample) -> None:
         self._examples.append(example)
 
-    def add_batch(self, examples: List[PreferenceExample]) -> None:
-        self._examples.extend(examples)
+    def add_batch(self, examples: Optional[List[PreferenceExample]]) -> None:
+        if examples:
+            self._examples.extend(examples)
 
     @property
     def examples(self) -> List[PreferenceExample]:
@@ -112,6 +129,14 @@ class PreferenceStore:
 
     def __len__(self) -> int:
         return len(self._examples)
+
+    def known_skills(self) -> set:
+        """Return the set of skill names that appear in stored preferences."""
+        skills: set = set()
+        for ex in self._examples:
+            skills.add(ex.skill_win)
+            skills.add(ex.skill_lose)
+        return skills
 
     def save(self, filepath: Optional[str] = None) -> None:
         path = Path(filepath or self._filepath)

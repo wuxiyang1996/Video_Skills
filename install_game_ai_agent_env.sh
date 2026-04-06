@@ -4,7 +4,7 @@
 #
 # Creates the "game-ai-agent" conda environment with all dependencies for:
 #   - Game-AI-Agent trainer (GRPO, SkillBank, co-evolution)
-#   - evaluate_gamingagent (2048, Candy Crush, Tetris)
+#   - env_wrappers (2048, Candy Crush, Tetris, Super Mario, Avalon, Diplomacy)
 #   - AgentEvolver (Avalon + Diplomacy)
 #
 # Prerequisites:
@@ -189,8 +189,7 @@ check('diplomacy',            lambda: __import__('diplomacy'))
 
 # Trainer modules
 check('trainer.common.metrics',         lambda: __import__('trainer.common.metrics'))
-check('trainer.decision.grpo_trainer',  lambda: __import__('trainer.decision.grpo_trainer'))
-check('trainer.skillbank.em_trainer',   lambda: __import__('trainer.skillbank.em_trainer'))
+check('trainer.coevolution.config',     lambda: __import__('trainer.coevolution.config'))
 
 print()
 if failures:

@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 _IMPORTS_CACHE: Dict[str, Any] = {}
 
-# Games that use Orak env (evaluate_orak.orak_nl_wrapper.make_orak_env)
+# Games that use Orak env (env_wrappers.orak_nl_wrapper.make_orak_env)
 ORAK_GAMES_SET = {"super_mario"}
 # Orak games that MUST use SubprocessEnv (nes_py / NumPy 2.x incompatibility)
 ORAK_SUBPROCESS_GAMES = {"super_mario"}
@@ -51,12 +51,12 @@ def _lazy_imports():
     """Return project modules, imported once and cached."""
     global _IMPORTS_CACHE
     if not _IMPORTS_CACHE:
-        from evaluate_gamingagent.game_configs import GAME_CONFIGS
-        from evaluate_gamingagent.gym_like import make_gaming_env
+        from env_wrappers.game_configs import GAME_CONFIGS
+        from env_wrappers.gym_like import make_gaming_env
         from env_wrappers.gamingagent_nl_wrapper import GamingAgentNLWrapper
         # Orak env (Super Mario, etc.)
         try:
-            from evaluate_orak.orak_nl_wrapper import make_orak_env
+            from env_wrappers.orak_nl_wrapper import make_orak_env
         except ImportError:
             make_orak_env = None
 
@@ -1397,7 +1397,7 @@ async def run_episode_async(
             # a simple clamped env reward, incorporating efficiency,
             # success/abort criteria, and RAG confidence.
             if skill_tracker._just_switched and skill_tracker._prev_steps_on_skill > 0:
-                from skill_agents_grpo.grpo.rewards import skill_selection_reward
+                from skill_agents.grpo.rewards import skill_selection_reward
                 _reason = skill_tracker._reselect_reason
                 sk_reward = skill_selection_reward(
                     reward_on_skill=skill_tracker._prev_reward_on_skill,

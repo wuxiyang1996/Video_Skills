@@ -542,7 +542,7 @@ async def co_evolution_loop(config: CoEvolutionConfig) -> None:
                 )
 
         try:
-            from skill_agents_grpo.stage3_mvp.schemas import ProtoSkill
+            from skill_agents.stage3_mvp.schemas import ProtoSkill
             ProtoSkill.set_relaxed(step <= 15)
         except Exception:
             pass

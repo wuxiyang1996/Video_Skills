@@ -55,9 +55,9 @@ class SegmentDiagnostic:
 
     @property
     def margin(self) -> float:
-        """Score gap between rank-1 and rank-2.  inf if < 2 candidates."""
+        """Score gap between rank-1 and rank-2.  1e6 if < 2 candidates."""
         if len(self.candidates) < 2:
-            return float("inf")
+            return 1e6
         return self.candidates[0].total_score - self.candidates[1].total_score
 
     @property
@@ -147,7 +147,7 @@ class SegmentationDiagnostics:
     def from_result(cls, result: "SegmentationResult") -> "SegmentationDiagnostics":
         segs = result.segments
         n = len(segs) or 1
-        margins = [s.margin for s in segs if s.margin != float("inf")]
+        margins = [s.margin for s in segs if s.margin < 1e6]
         entropies = [s.label_entropy for s in segs]
         bconfs = [s.boundary_confidence for s in segs]
         categories = [s.label_category for s in segs]

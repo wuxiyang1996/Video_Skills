@@ -121,7 +121,8 @@ def _parse_json_array(text: str) -> Optional[list]:
     """
     Try to parse a JSON array from LLM output.
     Handles common issues: markdown fences, trailing commas, partial output,
-    thinking blocks, and truncated responses.
+    thinking blocks, truncated responses, single quotes, and top-level objects
+    wrapping an inner array.
     """
     if not text or not text.strip():
         return None
@@ -140,6 +141,10 @@ def _parse_json_array(text: str) -> Optional[list]:
         result = json.loads(text)
         if isinstance(result, list):
             return result
+        if isinstance(result, dict):
+            for v in result.values():
+                if isinstance(v, list):
+                    return v
     except json.JSONDecodeError:
         pass
 
@@ -148,6 +153,23 @@ def _parse_json_array(text: str) -> Optional[list]:
     if match:
         candidate = match.group(0)
         # Fix trailing commas before ] or }
+        candidate = re.sub(r",\s*([}\]])", r"\1", candidate)
+        try:
+            result = json.loads(candidate)
+            if isinstance(result, list):
+                return result
+        except json.JSONDecodeError:
+            pass
+
+    # Single-quote fallback: replace single quotes with double quotes
+    # (handles Python-style dict output from some models)
+    sq_text = text
+    sq_text = sq_text.replace("'", '"')
+    sq_text = sq_text.replace("True", "true").replace("False", "false")
+    sq_text = sq_text.replace("None", "null")
+    match = re.search(r"\[[\s\S]*\]", sq_text)
+    if match:
+        candidate = match.group(0)
         candidate = re.sub(r",\s*([}\]])", r"\1", candidate)
         try:
             result = json.loads(candidate)
@@ -171,6 +193,15 @@ def _parse_json_array(text: str) -> Optional[list]:
                     return result
             except json.JSONDecodeError:
                 pass
+
+    # ast.literal_eval fallback for Python-style output
+    try:
+        import ast
+        result = ast.literal_eval(text)
+        if isinstance(result, list):
+            return result
+    except (ValueError, SyntaxError):
+        pass
 
     return None
 
@@ -267,6 +298,9 @@ class LLMSignalExtractor(SignalExtractorBase):
         chunk_offset: int,
     ) -> List[dict]:
         """Extract predicates for one chunk of states via LLM."""
+        import time as _time
+        from skill_agents.coldstart_io import record_io, ColdStartRecord
+
         ask = self._get_ask_model()
 
         states_block = "\n".join(
@@ -282,12 +316,30 @@ class LLMSignalExtractor(SignalExtractorBase):
             kwargs["model"] = self._model
 
         try:
+            t0 = _time.time()
             response = ask(prompt, **kwargs)
+            elapsed = _time.time() - t0
             parsed = _parse_json_array(response)
+
+            record_io(ColdStartRecord(
+                module="boundary_proposal",
+                function="predicate_extraction",
+                prompt=prompt,
+                response=response or "",
+                parsed={"n_predicates": len(parsed)} if parsed else None,
+                model=self._model or "",
+                temperature=self._temperature,
+                max_tokens=3000,
+                elapsed_s=round(elapsed, 3),
+                segment_start=chunk_offset,
+                segment_end=chunk_offset + len(states),
+                n_steps=len(states),
+                error=None if parsed else "parse_failed",
+            ))
+
             if parsed is not None and len(parsed) == len(states):
                 return [p if isinstance(p, dict) else {} for p in parsed]
             elif parsed is not None:
-                # Length mismatch — pad or truncate
                 result = [p if isinstance(p, dict) else {} for p in parsed]
                 while len(result) < len(states):
                     result.append({})
@@ -312,6 +364,7 @@ class LLMSignalExtractor(SignalExtractorBase):
 
         States are chunked into groups of ``chunk_size``.  Each chunk is
         sent as one LLM call that returns a JSON array of predicate dicts.
+
         Prefers ``summary_state`` over raw ``state`` when available, since
         summary_state is a compact key=value string ideal for predicate
         extraction (raw state can be huge ASCII grids for visual games).
@@ -350,6 +403,9 @@ class LLMSignalExtractor(SignalExtractorBase):
         significant boundary.  Non-significant changes are smoothed out
         (set to match the previous step so they don't trigger a flip).
         """
+        import time as _time
+        from skill_agents.coldstart_io import record_io, ColdStartRecord
+
         ask = self._get_ask_model()
         T = len(predicates)
 
@@ -378,12 +434,28 @@ class LLMSignalExtractor(SignalExtractorBase):
             kwargs["model"] = self._model
 
         try:
+            t0 = _time.time()
             response = ask(prompt, **kwargs)
+            elapsed = _time.time() - t0
             parsed = _parse_json_array(response)
+
+            record_io(ColdStartRecord(
+                module="boundary_proposal",
+                function="boundary_significance",
+                prompt=prompt,
+                response=response or "",
+                parsed={"significances": parsed} if parsed else None,
+                model=self._model or "",
+                temperature=0.1,
+                max_tokens=2000,
+                elapsed_s=round(elapsed, 3),
+                n_steps=len(change_pairs),
+                error=None if parsed and len(parsed) >= len(change_pairs) else "parse_failed",
+            ))
+
             if parsed and len(parsed) >= len(change_pairs):
                 significances = [bool(v) for v in parsed[: len(change_pairs)]]
             else:
-                # Can't parse — keep all changes (safe default)
                 return predicates
         except Exception:
             return predicates

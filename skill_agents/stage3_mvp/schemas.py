@@ -18,7 +18,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, ClassVar, Dict, List, Optional, Set
 
 
 @dataclass
@@ -46,6 +46,9 @@ class SegmentRecord:
     eff_add: Set[str] = field(default_factory=set)
     eff_del: Set[str] = field(default_factory=set)
     eff_event: Set[str] = field(default_factory=set)
+
+    # Cumulative game reward earned during this segment (optional, 0.0 if unknown)
+    cumulative_reward: float = 0.0
 
     def effect_signature(self) -> str:
         """Canonical string for debugging: ``A:p1,p2|D:q1,q2|E:e1``."""
@@ -474,19 +477,84 @@ class Skill:
         n_selections: int = 0,
         n_total_selections: int = 0,
         n_bank_skills: int = 1,
+        contract_pass_rate: Optional[float] = None,
+        weights: Optional[Dict[str, float]] = None,
     ) -> float:
         """Composite skill quality score in [0, 1].
 
-        Two equal-weight components:
-        - reward contribution: mean quality_score (already min-max normalized)
-        - usage frequency: how often the agent selects this skill vs fair share
+        Five components (configurable via *weights* dict):
+          mean_segment_quality (0.30) -- mean quality_score across sub-episodes
+          reuse_success        (0.25) -- successful reuse across instances
+          contract_pass        (0.20) -- contract verification pass rate
+          cross_ep_consistency (0.15) -- reward consistency across episodes
+          exploration_value    (0.10) -- bonus for new skills with evidence
+
+        Backward compatible: old callers without new args still work;
+        the usage_frequency parameter is accepted but no longer dominant.
         """
+        w = {
+            "mean_segment_quality": 0.30,
+            "reuse_success": 0.25,
+            "contract_pass": 0.20,
+            "cross_ep_consistency": 0.15,
+            "exploration_value": 0.10,
+        }
+        if weights:
+            w.update(weights)
+
         if not self.sub_episodes:
             return 0.5
-        r_reward = sum(se.quality_score for se in self.sub_episodes) / len(self.sub_episodes)
-        fair_share = max(1, n_total_selections) / max(1, n_bank_skills)
-        r_usage = min(1.0, n_selections / max(1.0, fair_share))
-        return 0.5 * r_reward + 0.5 * r_usage
+
+        # -- mean_segment_quality: mean quality_score across sub-episodes
+        r_segment = sum(se.quality_score for se in self.sub_episodes) / len(self.sub_episodes)
+
+        # -- reuse_success: fraction of sub-episodes with successful outcomes
+        n_success = sum(1 for se in self.sub_episodes if se.outcome == "success")
+        n_used = len(self.sub_episodes)
+        r_reuse = n_success / max(n_used, 1)
+        reuse_evidence = min(1.0, n_used / 5.0)
+        r_reuse *= reuse_evidence
+
+        # -- contract_pass: contract verification pass rate
+        if contract_pass_rate is not None:
+            r_contract = min(1.0, contract_pass_rate)
+        elif self.contract and self.contract.total_literals > 0:
+            r_contract = 0.5
+        else:
+            r_contract = 0.0
+
+        # -- cross_ep_consistency: reward consistency across different episodes
+        ep_rewards: Dict[str, List[float]] = {}
+        for se in self.sub_episodes:
+            eid = se.episode_id or "unknown"
+            ep_rewards.setdefault(eid, []).append(se.cumulative_reward)
+
+        if len(ep_rewards) >= 2:
+            ep_means = [sum(rs) / len(rs) for rs in ep_rewards.values()]
+            overall_mean = sum(ep_means) / len(ep_means)
+            if overall_mean != 0:
+                cv = (sum((m - overall_mean) ** 2 for m in ep_means) / len(ep_means)) ** 0.5 / (abs(overall_mean) + 1e-8)
+                r_consistency = max(0.0, 1.0 - min(cv, 2.0) / 2.0)
+            else:
+                r_consistency = 0.5
+        else:
+            r_consistency = 0.5
+
+        # -- exploration_value: new skills with growing evidence get a bonus
+        is_young = n_used <= 5
+        has_contract = self.contract is not None and self.contract.total_literals > 0
+        if is_young and has_contract and r_segment > 0.3:
+            r_exploration = min(1.0, r_segment * 1.5)
+        else:
+            r_exploration = 0.0
+
+        return max(0.0, min(1.0,
+            w["mean_segment_quality"] * r_segment
+            + w["reuse_success"] * r_reuse
+            + w["contract_pass"] * r_contract
+            + w["cross_ep_consistency"] * r_consistency
+            + w["exploration_value"] * r_exploration,
+        ))
 
     @property
     def evidence_summaries(self) -> List[str]:
@@ -634,9 +702,28 @@ class ProtoSkill:
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
+    _relaxed_thresholds: "ClassVar[bool]" = False
+
+    @classmethod
+    def set_relaxed(cls, relaxed: bool) -> None:
+        """Enable relaxed thresholds for early training steps (0-15).
+
+        When relaxed, support drops from 5 to 3, consistency from 0.5
+        to 0.35, and pass_rate from 0.6 to 0.4, allowing more
+        proto-skills to promote when data is scarce.
+        """
+        cls._relaxed_thresholds = relaxed
+
     @property
     def is_promotable(self) -> bool:
         """Whether the proto-skill has enough evidence for full promotion."""
+        if self._relaxed_thresholds:
+            return (
+                self.support >= 3
+                and self.consistency >= 0.35
+                and self.verification_pass_rate >= 0.4
+                and self.n_verifications >= 1
+            )
         return (
             self.support >= 5
             and self.consistency >= 0.5

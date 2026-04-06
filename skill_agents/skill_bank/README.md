@@ -25,7 +25,7 @@ Rich tracking and promotion of `__NEW__` segments into real skills:
 - Promotion criteria: support + consistency + separability
 - Persistence (JSON save/load)
 
-Used by the full [skill_agents](../README.md) pipeline, [contract_verification](../contract_verification/README.md), [bank_maintenance](../bank_maintenance/README.md), and [skill_evaluation](../skill_evaluation/README.md).
+Used by the full [skill_agents](../README.md) pipeline, [bank_maintenance](../bank_maintenance/README.md), and [skill_evaluation](../skill_evaluation/README.md).
 
 ## High-level API
 

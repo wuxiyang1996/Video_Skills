@@ -206,7 +206,7 @@ class ColdStartEnvWrapper:
         self._is_orak = (reg["env_class"] == "orak")
 
         if self._is_orak:
-            from evaluate_orak.orak_nl_wrapper import make_orak_env
+            from env_wrappers.orak_nl_wrapper import make_orak_env
             orak_short = game_name.replace("orak_", "")
             self._orak_wrapper = make_orak_env(orak_short, max_steps=max_steps)
             self._env = self._orak_wrapper.env

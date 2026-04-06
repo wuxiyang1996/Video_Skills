@@ -70,7 +70,7 @@ class AsyncSkillBankPipeline:
         if self._agent is not None:
             return self._agent
 
-        from skill_agents_grpo.pipeline import SkillBankAgent, PipelineConfig
+        from skill_agents.pipeline import SkillBankAgent, PipelineConfig
 
         bank_path = str(Path(self.bank_dir) / "skill_bank.jsonl")
         _teacher_max_tokens_env = os.environ.get("SKILLBANK_LLM_TEACHER_MAX_TOKENS")
@@ -427,7 +427,7 @@ class AsyncSkillBankPipeline:
         if self._query_engine is not None:
             return self._query_engine
         try:
-            from skill_agents_grpo.query import SkillQueryEngine
+            from skill_agents.query import SkillQueryEngine
             self._query_engine = SkillQueryEngine(bank)
             return self._query_engine
         except Exception as exc:
@@ -552,7 +552,7 @@ class PerGameSkillBankManager:
         Works at the file level (via ``SkillBankMVP``) rather than
         requiring the lazy ``SkillBankAgent`` to be initialised.
         """
-        from skill_agents_grpo.skill_bank.bank import SkillBankMVP
+        from skill_agents.skill_bank.bank import SkillBankMVP
 
         seed_path = Path(seed_dir)
         if not seed_path.is_dir():
@@ -591,11 +591,11 @@ class PerGameSkillBankManager:
 
     def _enable_grpo_wrappers(self) -> None:
         """Activate GRPO wrappers on skill-bank LLM calls (module-level)."""
-        from skill_agents_grpo.grpo.buffer import GRPOBuffer
-        from skill_agents_grpo.stage3_mvp.llm_contract import enable_contract_grpo
-        from skill_agents_grpo.bank_maintenance.llm_curator import enable_curator_grpo
-        from skill_agents_grpo.infer_segmentation.llm_teacher import enable_segment_grpo
-        from skill_agents_grpo.infer_segmentation.episode_adapter import (
+        from skill_agents.grpo.buffer import GRPOBuffer
+        from skill_agents.stage3_mvp.llm_contract import enable_contract_grpo
+        from skill_agents.bank_maintenance.llm_curator import enable_curator_grpo
+        from skill_agents.infer_segmentation.llm_teacher import enable_segment_grpo
+        from skill_agents.infer_segmentation.episode_adapter import (
             grpo_scorer_factory,
             grpo_decode_fn,
         )
@@ -615,9 +615,9 @@ class PerGameSkillBankManager:
 
     def _disable_grpo_wrappers(self) -> None:
         """Deactivate GRPO wrappers and restore original functions."""
-        from skill_agents_grpo.stage3_mvp.llm_contract import disable_contract_grpo
-        from skill_agents_grpo.bank_maintenance.llm_curator import disable_curator_grpo
-        from skill_agents_grpo.infer_segmentation.llm_teacher import disable_segment_grpo
+        from skill_agents.stage3_mvp.llm_contract import disable_contract_grpo
+        from skill_agents.bank_maintenance.llm_curator import disable_curator_grpo
+        from skill_agents.infer_segmentation.llm_teacher import disable_segment_grpo
 
         disable_segment_grpo()
         disable_contract_grpo()
@@ -630,7 +630,7 @@ class PerGameSkillBankManager:
         Preserves ``metadata`` (including skill_id, game context) from
         each sample for downstream logging and per-game diagnostics.
         """
-        from skill_agents_grpo.lora.skill_function import SkillFunction
+        from skill_agents.lora.skill_function import SkillFunction
 
         collected: Dict[str, List[Dict[str, Any]]] = {
             "segment": [], "contract": [], "curator": [],

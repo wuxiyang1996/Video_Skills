@@ -55,6 +55,8 @@ def refine_effects_contract(
     return SkillEffectsContract(
         skill_id=contract.skill_id,
         version=contract.version + 1,
+        name=contract.name,
+        description=contract.description,
         eff_add=refined_add,
         eff_del=refined_del,
         eff_event=refined_event,

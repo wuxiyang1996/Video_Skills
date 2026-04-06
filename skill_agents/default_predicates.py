@@ -1,5 +1,5 @@
 """
-Shared default predicate extractor used by stage3_mvp and contract_verification.
+Shared default predicate extractor used by stage3_mvp.
 
 Single source of truth for the no-op fallback so callers can plug in
 domain-specific extractors (vision, rule-based, LLM, etc.).

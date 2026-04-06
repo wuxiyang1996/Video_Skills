@@ -107,6 +107,8 @@ class DiffOp(str, Enum):
     SPLIT = "split"
     MERGE = "merge"
     REFINE = "refine"
+    MATERIALIZE = "materialize"
+    PROMOTE = "promote"
     DURATION_UPDATE = "duration_update"
     ADD = "add"
     REMOVE = "remove"
@@ -138,6 +140,8 @@ class BankDiffReport:
     n_splits: int = 0
     n_merges: int = 0
     n_refines: int = 0
+    n_materializations: int = 0
+    n_promotions: int = 0
     n_duration_updates: int = 0
     started_at: float = field(default_factory=time.time)
     finished_at: float = 0.0
@@ -150,6 +154,10 @@ class BankDiffReport:
             self.n_merges += 1
         elif entry.op == DiffOp.REFINE:
             self.n_refines += 1
+        elif entry.op == DiffOp.MATERIALIZE:
+            self.n_materializations += 1
+        elif entry.op == DiffOp.PROMOTE:
+            self.n_promotions += 1
         elif entry.op == DiffOp.DURATION_UPDATE:
             self.n_duration_updates += 1
 
@@ -161,6 +169,8 @@ class BankDiffReport:
             "n_splits": self.n_splits,
             "n_merges": self.n_merges,
             "n_refines": self.n_refines,
+            "n_materializations": self.n_materializations,
+            "n_promotions": self.n_promotions,
             "n_duration_updates": self.n_duration_updates,
             "elapsed_s": (
                 self.finished_at - self.started_at if self.finished_at else 0
@@ -172,6 +182,8 @@ class BankDiffReport:
         lines = [
             f"Bank Maintenance Diff: {self.n_splits} splits, "
             f"{self.n_merges} merges, {self.n_refines} refines, "
+            f"{self.n_materializations} materializations, "
+            f"{self.n_promotions} promotions, "
             f"{self.n_duration_updates} duration updates",
         ]
         for e in self.entries:

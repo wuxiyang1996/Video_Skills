@@ -23,7 +23,7 @@ SKILLBANK_ADAPTERS = ["segment", "contract", "curator"]
 ALL_ADAPTERS = DECISION_ADAPTERS + SKILLBANK_ADAPTERS
 
 DECISION_DATA_DIR = REPO_ROOT / "labeling" / "output" / "gpt54_skill_labeled" / "grpo_coldstart"
-SKILLBANK_DATA_DIR = REPO_ROOT / "skill_agents_grpo" / "extract_skillbank" / "output" / "gpt54_skillbank_grpo"
+SKILLBANK_DATA_DIR = REPO_ROOT / "skill_agents" / "extract_skillbank" / "output" / "gpt54_skillbank_grpo"
 
 COLDSTART_GAMES = [
     "avalon",

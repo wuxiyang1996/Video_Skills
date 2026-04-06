@@ -222,7 +222,7 @@ def enrich_skill_protocols(
 
     Returns the number of skills updated.
     """
-    from skill_agents_grpo.stage3_mvp.schemas import Protocol
+    from skill_agents.stage3_mvp.schemas import Protocol
 
     bank = agent.bank
     updated = 0
@@ -286,7 +286,7 @@ def enrich_execution_hints(agent: Any) -> int:
 
     Mirrors ``_populate_execution_hints()`` in extract_skillbank_gpt54.py.
     """
-    from skill_agents_grpo.stage3_mvp.schemas import ExecutionHint
+    from skill_agents.stage3_mvp.schemas import ExecutionHint
 
     bank = agent.bank
     updated = 0
@@ -394,7 +394,7 @@ def link_sub_episode_outcomes(
 
     Mirrors ``_link_sub_episodes_to_skills()`` in extract_skillbank_gpt54.py.
     """
-    from skill_agents_grpo.stage3_mvp.schemas import SubEpisodeRef
+    from skill_agents.stage3_mvp.schemas import SubEpisodeRef
 
     bank = agent.bank
     linked = 0

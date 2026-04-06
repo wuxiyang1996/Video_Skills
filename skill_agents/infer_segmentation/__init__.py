@@ -70,11 +70,20 @@ from skill_agents.infer_segmentation.llm_teacher import (
     collect_transition_preferences,
     collect_uncertain_preferences,
     ranking_to_pairwise,
+    flush_teacher_io_records,
+    get_teacher_io_records,
+    reset_teacher_io_records,
 )
 from skill_agents.infer_segmentation.episode_adapter import (
     infer_segmentation,
     infer_and_segment,
     infer_and_segment_offline,
+    grpo_scorer_factory,
+    grpo_decode_fn,
+)
+from skill_agents.infer_segmentation.phase_detector import (
+    detect_phases,
+    make_compound_label,
 )
 
 __all__ = [
@@ -112,4 +121,14 @@ __all__ = [
     "infer_segmentation",
     "infer_and_segment",
     "infer_and_segment_offline",
+    # GRPO helpers
+    "grpo_scorer_factory",
+    "grpo_decode_fn",
+    # Teacher I/O recording (cold-start data)
+    "flush_teacher_io_records",
+    "get_teacher_io_records",
+    "reset_teacher_io_records",
+    # Phase detection
+    "detect_phases",
+    "make_compound_label",
 ]

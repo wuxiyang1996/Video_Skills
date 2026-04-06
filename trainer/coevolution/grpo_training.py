@@ -9,7 +9,7 @@ the same set of GPUs using FSDP data parallelism:
    ``curator`` LoRA adapters using stage-specific reward signals.
 
 Both delegate the actual training to
-:func:`skill_agents_grpo.grpo.fsdp_trainer.run_fsdp_grpo` which
+:func:`skill_agents.grpo.fsdp_trainer.run_fsdp_grpo` which
 spawns one process per GPU and uses PyTorch FSDP to shard the frozen
 14B base model across all ranks while each rank processes its own
 data slice.
@@ -121,7 +121,7 @@ def _compute_advantages(
     completions: Optional[List[str]] = None,
 ) -> List[float]:
     """Group-normalize rewards with optional completion tiebreaking."""
-    from skill_agents_grpo.grpo.advantage_utils import compute_grpo_group_advantages
+    from skill_agents.grpo.advantage_utils import compute_grpo_group_advantages
 
     return compute_grpo_group_advantages(rewards, completions=completions)
 
@@ -216,7 +216,7 @@ def _samples_to_training_data(
         rewards = s.get("rewards", [])
         if not prompt or not comps:
             continue
-        from skill_agents_grpo.grpo.advantage_utils import compute_grpo_group_advantages
+        from skill_agents.grpo.advantage_utils import compute_grpo_group_advantages
 
         advs = compute_grpo_group_advantages(rewards, completions=comps)
         for comp, adv in zip(comps, advs):
@@ -379,7 +379,7 @@ class DecisionGRPOTrainer:
         records: Dict[str, List[GRPORecord]],
     ) -> Dict[str, GRPOTrainStats]:
         """Run FSDP GRPO for all decision adapters in a single spawn."""
-        from skill_agents_grpo.grpo.fsdp_trainer import run_fsdp_grpo_multi
+        from skill_agents.grpo.fsdp_trainer import run_fsdp_grpo_multi
 
         jobs, job_names = self.build_jobs(records)
         if not jobs:
@@ -583,7 +583,7 @@ class SkillBankGRPOTrainer:
         grpo_data: Dict[str, List[Dict[str, Any]]],
     ) -> Dict[str, GRPOTrainStats]:
         """Run FSDP GRPO for all skill bank adapters in a single spawn."""
-        from skill_agents_grpo.grpo.fsdp_trainer import run_fsdp_grpo_multi
+        from skill_agents.grpo.fsdp_trainer import run_fsdp_grpo_multi
 
         jobs, job_names = self.build_jobs(grpo_data)
         if not jobs:
@@ -710,7 +710,7 @@ async def run_grpo_training(
 
     # ── Single FSDP spawn for all adapters ──
     if all_jobs:
-        from skill_agents_grpo.grpo.fsdp_trainer import run_fsdp_grpo_multi
+        from skill_agents.grpo.fsdp_trainer import run_fsdp_grpo_multi
 
         logger.info(
             "Phase C: GRPO training %d adapters on GPUs %s",

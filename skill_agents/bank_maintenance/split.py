@@ -104,6 +104,17 @@ def check_split_triggers(
         if fired and ratio > config.split_sse_ratio:
             return True, "sse_drop"
 
+    # (5) High duration variance — skill mixes short and long behaviors
+    if len(instances) >= 2 * config.min_child_size:
+        lengths = [inst.t_end - inst.t_start for inst in instances]
+        if lengths:
+            mean_len = sum(lengths) / len(lengths)
+            if mean_len > 0:
+                cv = (sum((l - mean_len) ** 2 for l in lengths) / len(lengths)) ** 0.5 / mean_len
+                max_ratio = max(lengths) / max(min(lengths), 1)
+                if cv > 1.5 and max_ratio > 10:
+                    return True, "high_duration_variance"
+
     return False, ""
 
 

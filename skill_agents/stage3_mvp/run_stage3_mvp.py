@@ -35,6 +35,20 @@ from skill_agents.stage3_mvp.contract_learn import learn_effects_contract
 from skill_agents.stage3_mvp.contract_verify import verify_effects_contract
 from skill_agents.stage3_mvp.contract_refine import refine_effects_contract
 
+import re as _re
+
+
+def _readable_name_from_id(skill_id: str) -> str:
+    """Derive a human-readable name from a compound skill label or skill ID.
+
+    ``"opening:EXECUTE"`` → ``"Opening Execute"``
+    ``"skill_tetris_clear_0"`` → ``"Skill Tetris Clear 0"``
+    ``"midgame:MERGE"`` → ``"Midgame Merge"``
+    """
+    text = skill_id.replace(":", " ").replace("_", " ")
+    text = _re.sub(r"\s+", " ", text).strip()
+    return text.title()
+
 
 # ── Segment specification (light input schema) ──────────────────────
 
@@ -109,6 +123,11 @@ class Stage3MVPSummary:
 
 # ── Main pipeline ────────────────────────────────────────────────────
 
+def _identity_extract(obs: Any) -> Dict[str, float]:
+    """Pass-through extractor for pre-computed predicate dicts."""
+    return obs if isinstance(obs, dict) else {}
+
+
 def run_stage3_mvp(
     segments: List[SegmentSpec],
     observations_by_traj: Dict[str, Sequence[Any]],
@@ -117,6 +136,7 @@ def run_stage3_mvp(
     extract_fn: Optional[Callable] = None,
     bank: Optional[SkillBankMVP] = None,
     bank_path: Optional[str] = None,
+    precomputed_predicates_by_traj: Optional[Dict[str, List[Dict[str, float]]]] = None,
 ) -> Stage3MVPSummary:
     """Run the full Stage 3 MVP pipeline.
 
@@ -136,6 +156,10 @@ def run_stage3_mvp(
         Existing bank to update.  A new one is created if not provided.
     bank_path : str, optional
         Path to save the skill bank JSONL after the run.
+    precomputed_predicates_by_traj : dict, optional
+        Mapping ``traj_id -> list[{predicate: prob}]`` (one per timestep).
+        When provided, these are used directly instead of calling
+        *extract_fn* on raw observations.
 
     Returns
     -------
@@ -151,10 +175,17 @@ def run_stage3_mvp(
         from skill_agents.skill_bank.bank import SkillBankMVP
         bank = SkillBankMVP(path=bank_path)
 
+    _precomputed = precomputed_predicates_by_traj or {}
+
     # Step 1+2: summarize and compute effects for every segment
     records: List[SegmentRecord] = []
     for spec in segments:
-        obs = observations_by_traj.get(spec.traj_id, [])
+        if spec.traj_id in _precomputed:
+            obs = _precomputed[spec.traj_id]
+            _ef = _identity_extract
+        else:
+            obs = observations_by_traj.get(spec.traj_id, [])
+            _ef = extract_fn
         rec = summarize_segment(
             seg_id=spec.seg_id,
             traj_id=spec.traj_id,
@@ -162,7 +193,7 @@ def run_stage3_mvp(
             t_end=spec.t_end,
             skill_label=spec.skill_label,
             observations=obs,
-            extract_predicates=extract_fn,
+            extract_predicates=_ef,
             config=config,
             vocab=vocab,
             ui_events=spec.ui_events,
@@ -192,6 +223,77 @@ def run_stage3_mvp(
             prev_ver = existing.version
 
         contract = learn_effects_contract(skill_id, instances, config, prev_ver)
+
+        # Call the LLM contract path to enrich the algorithmic contract
+        # with a human-readable description (and generate GRPO training
+        # data for the CONTRACT LoRA adapter).
+        try:
+            import skill_agents.stage3_mvp.llm_contract as _contract_mod
+            _contract_fn = _contract_mod.llm_summarize_contract
+
+            # Set dynamic reward context so the GRPO reward uses the
+            # full verification path instead of the heuristic fallback.
+            n_holdout = max(1, len(instances) // 5)
+            _holdout = instances[-n_holdout:]
+            _train = instances[:-n_holdout] if n_holdout < len(instances) else instances
+            _consensus_add: set = set()
+            _consensus_del: set = set()
+            for _inst in _train:
+                _consensus_add.update(getattr(_inst, "eff_add", set()))
+                _consensus_del.update(getattr(_inst, "eff_del", set()))
+            _instance_rewards = [
+                getattr(inst, "cumulative_reward", 0.0)
+                for inst in _holdout
+            ]
+            _contract_mod.set_contract_reward_context(
+                consensus_add=_consensus_add,
+                consensus_del=_consensus_del,
+                holdout_instances=_holdout,
+                verify_config=config,
+                instance_rewards=_instance_rewards,
+            )
+            sample_obs = []
+            for inst in instances[:5]:
+                parts = []
+                if getattr(inst, "events", None):
+                    parts.append(f"events={inst.events[:6]}")
+                if getattr(inst, "P_start", None):
+                    top = sorted(inst.P_start.items(), key=lambda x: -x[1])[:4]
+                    parts.append(f"start={dict(top)}")
+                if getattr(inst, "P_end", None):
+                    top = sorted(inst.P_end.items(), key=lambda x: -x[1])[:4]
+                    parts.append(f"end={dict(top)}")
+                if parts:
+                    sample_obs.append("; ".join(parts))
+            agg_preds_start: set = set()
+            agg_preds_end: set = set()
+            for inst in instances[:10]:
+                agg_preds_start.update(getattr(inst, "B_start", set()))
+                agg_preds_end.update(getattr(inst, "B_end", set()))
+            llm_result = _contract_fn(
+                skill_id=skill_id,
+                segment_observations=sample_obs,
+                predicates_start=agg_preds_start or (contract.eff_del or set()),
+                predicates_end=agg_preds_end or (contract.eff_add or set()),
+                n_instances=len(instances),
+                model=getattr(config, "model", ""),
+            )
+            if isinstance(llm_result, dict):
+                if llm_result.get("description") and not contract.description:
+                    contract.description = llm_result["description"]
+                if llm_result.get("name") and not contract.name:
+                    contract.name = llm_result["name"]
+        except Exception as _contract_exc:
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                "Contract LLM call failed for %s: %s", skill_id, _contract_exc,
+            )
+
+        # Fallback: derive a readable name from the skill_id when the
+        # LLM didn't produce one.  "opening:EXECUTE" → "Opening Execute",
+        # "skill_tetris_clear_0" → "Skill Tetris Clear 0".
+        if not contract.name:
+            contract.name = _readable_name_from_id(skill_id)
 
         # Step 4: verify
         report = verify_effects_contract(contract, instances, config)

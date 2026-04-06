@@ -97,6 +97,9 @@ def summarize_segment(
     per_step: List[Dict[str, float]] = []
     for t in range(t_start, min(t_end + 1, len(observations))):
         preds = extract_predicates(observations[t])
+        if preds:
+            for k in preds:
+                vocab.register(k, reliability=0.9)
         per_step.append(preds if preds else {})
 
     seg_len = len(per_step)

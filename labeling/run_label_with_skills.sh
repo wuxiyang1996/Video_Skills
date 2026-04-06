@@ -19,7 +19,7 @@ if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
     echo "Warning: OPENROUTER_API_KEY not set. See .env.example for required keys."
 fi
 
-BANK_DIR="${ROOT_DIR}/skill_agents_grpo/extract_skillbank/output/gpt54_skillbank_grpo"
+BANK_DIR="${ROOT_DIR}/skill_agents/extract_skillbank/output/gpt54_skillbank_grpo"
 
 echo "============================================================"
 echo "  GPT-5.4 Episode Labeling + Skill Selection + GRPO Export"

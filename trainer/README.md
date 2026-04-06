@@ -1,6 +1,6 @@
 # Training Infrastructure
 
-Training module for the **COS-PLAY** co-evolution framework (COLM 2026, Section 4.3). Implements the co-evolution loop between the Decision Agent and Skill Bank Agent using GRPO with FSDP for the decision agent and Hard-EM for the skill bank, training 5 LoRA adapters on a Qwen3-8B base model across 8×A100 GPUs.
+Training module for the **COS-PLAY** co-evolution framework (Section 4.3). Implements the co-evolution loop between the Decision Agent and Skill Bank Agent using GRPO with FSDP for the decision agent and Hard-EM for the skill bank, training 5 LoRA adapters on a Qwen3-8B base model across 8×A100 GPUs.
 
 ## Quick Start — Co-Evolution Training
 
@@ -34,57 +34,27 @@ python scripts/run_coevolution.py --resume
 ```
 trainer/
   README.md
-  coevolution/                       ← PRIMARY: async co-evolution loop
+  coevolution/                       ← async co-evolution loop
     __init__.py
     config.py                        # CoEvolutionConfig: games, GPUs, checkpointing, W&B
     vllm_client.py                   # AsyncVLLMClient: async wrapper for vLLM multi-LoRA API
+    vllm_server.py                   # VLLMServerManager: persistent vLLM lifecycle
     episode_runner.py                # run_episode_async(): async port of run_episode()
     rollout_collector.py             # collect_rollouts(): LPT scheduling + semaphore
     skillbank_pipeline.py            # AsyncSkillBankPipeline: async Stage 1-4 wrapper
     grpo_training.py                 # DecisionGRPOTrainer + SkillBankGRPOTrainer
     checkpoint.py                    # save/load/find checkpoints (bank + 5 adapters)
     orchestrator.py                  # co_evolution_loop(): Phase A+B+C main loop
+    skill_enrichment.py              # Post-update protocol/hint enrichment
 
-  common/                            ← DEPRECATED (used by legacy modules below)
-    configs/
-      decision_grpo.yaml             # GRPO hyperparams, costs, shaping weights
-      skillbank_em.yaml              # EM hyperparams, gating thresholds
-    logging.py                       # TrainLogger (W&B wrapper)
-    eval_harness.py                  # Fixed-seed evaluation harness
-    seeds.py                         # Deterministic seed management
-    metrics.py                       # RolloutRecord schema, metric aggregation
+  common/                            ← shared data types
+    metrics.py                       # RolloutRecord, RolloutStep, DecisionMetrics
 
-  decision/                          ← DEPRECATED (replaced by coevolution/)
-    env_wrapper.py                   # EnvWrapper: retrieval-as-action
-    policy_interface.py              # PolicyInterface: logprob extraction
-    reward_shaping.py                # Reward shaping with tool-call reward
-    rollout_collector.py             # Synchronous rollout collection
-    grpo_trainer.py                  # GRPO training loop + GameAITrainer (VERL)
-    replay_buffer.py                 # Episode replay buffer
-    launch_train.py                  # CLI entry point (standalone / VERL)
-    coevolution_callback.py          # SkillBank co-evolution callback (VERL)
-
-  skillbank/                         ← DEPRECATED (replaced by coevolution/)
-    ingest_rollouts.py               # Convert rollouts → trajectory objects
-    em_trainer.py                    # Hard-EM loop driver
-    stages/                          # Stage 0-4 pipeline
-    learners/                        # Optional supervised learners
-    bank_io/                         # VersionedBankStore, indices, diff logger
-    lora/                            # LoRA SFT training scripts (still used by tests)
-
-  launch_coevolution.py              ← DEPRECATED (replaced by coevolution/orchestrator.py)
+  SFT/                               ← cold-start LoRA SFT training
+    config.py                        # SFTConfig: adapter names, LoRA hyperparams
+    data_loader.py                   # Load & align cold-start data for 5 adapters
+    train.py                         # HuggingFace Trainer + PEFT LoRA SFT pipeline
 ```
-
-### Deprecation notes
-
-The `common/`, `decision/`, `skillbank/`, and `launch_coevolution.py` modules are the **legacy synchronous training path**. They are kept for backward compatibility because:
-
-- `cold_start/load_rollouts.py` imports `trainer.common.metrics.RolloutRecord`
-- `tests/test_lora_dispatch.py` imports `trainer.skillbank.lora.data_builder`
-- `scripts/skillbank_agent_train.sh` imports from `trainer.skillbank.lora`
-- `install_game_ai_agent_env.sh` verification checks reference them
-
-The new `trainer/coevolution/` package is **completely self-contained** and does not import from any of these legacy modules. All new development should use `trainer/coevolution/`.
 
 ---
 
@@ -203,32 +173,6 @@ BEFORE (3 serial rounds):          AFTER (2 serial rounds):
   env.step()
 ```
 
-The model outputs `SUBGOAL: [TAG] phrase\nREASONING: ...\nACTION: N` in one
-generation. The subgoal is parsed out and tracked identically to before.
-
-### Token Budget Tuning (`episode_runner.py`)
-
-`max_tokens` for each LLM call is set based on measured output lengths across all 6 games
-(~37,776 steps from 61 cold-start episodes per game):
-
-| Call | `max_tokens` | Actual p99 | Actual max | Headroom |
-|------|-------------|-----------|-----------|----------|
-| `summary_prose` (base) | 25 | ~15 tok | ~20 tok | 1.25× |
-| `skill_selection` | 128 | ~80 tok | ~91 tok | 1.4× |
-| `action_taking` (merged) | 256 | ~100 tok | ~130 tok | 2.0× |
-
-All calls use stop sequences (`\n`, `\n\nAvailable`, etc.) so outputs terminate
-naturally well before hitting the token limit. The completions API (raw prompt)
-is used — Qwen3's `<think>` mode is not activated, so no hidden token overhead.
-
-Diplomacy has the largest prompts (~5K words) but its actions are presented as
-discrete numbered choices via `_DiplomacyAdapter`, so output length is the same
-"SUBGOAL: ... REASONING: ... ACTION: N" format as all other games.
-
-### Stuck Detection (`episode_runner.py`)
-
-Early episode termination if the last N steps (default 15) have zero cumulative reward. Saves vLLM tokens on hopeless episodes without affecting good runs.
-
 ### Checkpointing (`checkpoint.py`)
 
 Every `checkpoint_interval` steps (default 5) and at step 0:
@@ -288,11 +232,11 @@ LPT-ordered scheduling with `asyncio.Semaphore` concurrency cap. Calls `on_episo
 
 ### `trainer/coevolution/skillbank_pipeline.py`
 
-Wraps `skill_agents_grpo.pipeline.SkillBankAgent` for async operation. Receives episodes incrementally during rollout collection, then finalizes with contract learning + bank maintenance.
+Wraps `skill_agents.pipeline.SkillBankAgent` for async operation. Receives episodes incrementally during rollout collection, then finalizes with contract learning + bank maintenance.
 
 ### `trainer/coevolution/grpo_training.py`
 
-Two independent trainers (`DecisionGRPOTrainer`, `SkillBankGRPOTrainer`) that wrap `skill_agents_grpo.grpo.GRPOOrchestrator`. Run concurrently on separate GPU groups via `asyncio.gather`.
+Two independent trainers (`DecisionGRPOTrainer`, `SkillBankGRPOTrainer`) that wrap `skill_agents.grpo.GRPOOrchestrator`. Run concurrently on separate GPU groups via `asyncio.gather`.
 
 ### `trainer/coevolution/checkpoint.py`
 
@@ -317,25 +261,3 @@ Phase A is the bottleneck — limited by long-episode games (super_mario 500,
 (summary ∥ skill selection, then merged subgoal + action). With 48-56
 concurrent async episodes and 4 GPUs on vLLM (TP=4), typical throughput
 is ~10-13 LLM calls/sec globally.
-
----
-
-## Legacy Modules (deprecated)
-
-The following modules are the original synchronous training infrastructure. They are **not used** by `trainer/coevolution/` and are kept only for backward compatibility with `cold_start/`, `tests/`, and shell scripts.
-
-### `trainer/launch_coevolution.py`
-
-Old synchronous co-evolution loop. Replaced by `trainer/coevolution/orchestrator.py`.
-
-### `trainer/decision/`
-
-Old synchronous decision agent training: `GRPOTrainer`, `LLMPolicy`, `collect_batch`, `ReplayBuffer`, `EnvWrapper`. Also contains unused VERL scaffolding (`GameAITrainer`, `VERLActorProxy`) behind `try/except ImportError` guards — VERL is not installed.
-
-### `trainer/skillbank/`
-
-Old Hard-EM pipeline driver: `EMTrainer`, `VersionedBankStore`, stages 0-4, `ingest_rollouts`. The `lora/` subdirectory (standalone LoRA SFT scripts) is still referenced by `tests/test_lora_dispatch.py`.
-
-### `trainer/common/`
-
-Shared types (`RolloutRecord`, `RolloutStep`, `DecisionMetrics`, `SkillBankMetrics`), `TrainLogger`, `SeedManager`, evaluation harness, and YAML config files. Still imported by `cold_start/load_rollouts.py`.

@@ -1,12 +1,22 @@
 """
-Env wrappers: convert environment state to/from natural language for language-model agents.
+Unified game-environment package for Game-AI-Agent.
 
-Available wrappers:
+Includes NL wrappers (convert game state to/from natural language),
+Gymnasium-compatible adapters, game configurations, and benchmark runners
+for all supported environments.
+
+NL Wrappers:
   - AvalonNLWrapper:       Avalon hidden-role deduction (5-10 agents)
   - DiplomacyNLWrapper:    Diplomacy strategic negotiation (7 agents / powers)
-  - GamingAgentNLWrapper:  GamingAgent / LMGame-Bench (2048, Candy Crush, Tetris, Super Mario)
-  - OrakNLWrapper:         Orak environments (Super Mario, StarCraft II)
+  - GamingAgentNLWrapper:  GamingAgent / LMGame-Bench (2048, Candy Crush, Tetris)
+  - OrakNLWrapper:         Orak environments (Super Mario)
   - TetrisMacroWrapper:    Tetris macro-action wrapper (placement-level actions)
+
+Evaluation helpers:
+  - game_configs:          Per-game default configs (GameConfig, GAME_CONFIGS)
+  - gym_like:              Gymnasium adapter for GamingAgent (make_gaming_env)
+  - run_benchmark:         CLI benchmark runner for LMGame-Bench
+  - run_orak_benchmark:    CLI benchmark runner for Orak games
 """
 
 from env_wrappers.avalon_nl_wrapper import (
@@ -38,6 +48,17 @@ from env_wrappers.orak_nl_wrapper import (
 
 from env_wrappers.tetris_macro_wrapper import TetrisMacroWrapper
 
+from env_wrappers.game_configs import (
+    GAME_CONFIGS,
+    GameConfig,
+    ALL_GAME_NAMES,
+    AVAILABLE_GAME_NAMES,
+    TOTAL_GAMES,
+    AVAILABLE_GAMES,
+)
+
+from env_wrappers.gym_like import make_gaming_env, list_games
+
 __all__ = [
     # Avalon
     "AvalonNLWrapper",
@@ -60,4 +81,13 @@ __all__ = [
     "make_orak_env",
     # Tetris Macro
     "TetrisMacroWrapper",
+    # Game configs & Gymnasium adapters
+    "GAME_CONFIGS",
+    "GameConfig",
+    "ALL_GAME_NAMES",
+    "AVAILABLE_GAME_NAMES",
+    "TOTAL_GAMES",
+    "AVAILABLE_GAMES",
+    "make_gaming_env",
+    "list_games",
 ]

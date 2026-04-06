@@ -3,7 +3,7 @@
 """
 Evaluate Qwen3-8B as a decision agent on GamingAgent (LMGame-Bench) games.
 
-Uses the GamingAgentNLWrapper + gym_like env from evaluate_gamingagent,
+Uses the GamingAgentNLWrapper + gym_like env from env_wrappers,
 and calls get_state_summary / infer_intention from decision_agents.agent_helper
 at every step so that rollouts contain rich intention + summary fields.
 
@@ -74,8 +74,8 @@ for p in [str(CODEBASE_ROOT), str(GAMINGAGENT_ROOT)]:
 from data_structure.experience import Experience, Episode, Episode_Buffer
 
 from env_wrappers.gamingagent_nl_wrapper import GamingAgentNLWrapper
-from evaluate_gamingagent.gym_like import make_gaming_env, list_games
-from evaluate_gamingagent.game_configs import GAME_CONFIGS
+from env_wrappers.gym_like import make_gaming_env, list_games
+from env_wrappers.game_configs import GAME_CONFIGS
 
 from decision_agents.agent_helper import (
     get_state_summary,
@@ -128,7 +128,7 @@ except ImportError:
     _diplo_structured_summary = None  # type: ignore[assignment]
 
 try:
-    from evaluate_orak.orak_nl_wrapper import make_orak_env, ORAK_GAMES
+    from env_wrappers.orak_nl_wrapper import make_orak_env, ORAK_GAMES
 except ImportError:
     make_orak_env = None  # type: ignore[assignment]
     ORAK_GAMES = {}  # type: ignore[assignment]

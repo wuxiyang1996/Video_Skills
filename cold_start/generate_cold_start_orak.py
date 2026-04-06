@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """
-Cold-start rollout generation for Orak games (Super Mario, StarCraft II)
+Cold-start rollout generation for Orak Super Mario
 using GPT-5.4 with structured chain-of-thought reasoning.
 
-Uses the evaluate_orak.orak_nl_wrapper env wrappers directly.  Output format
+Uses the env_wrappers.orak_nl_wrapper env wrappers directly.  Output format
 matches the rest of cold_start/output/ so data feeds into the skill pipeline
 and co-evolution trainer.
 
@@ -16,29 +16,21 @@ Output structure (cold_start/output/gpt54_orak/<game_name>/):
 Usage (from Game-AI-Agent root):
 
     # --- Super Mario (activate orak-mario first) ---
-    source evaluate_orak/setup_orak_mario.sh
+    source env_wrappers/setup_orak_mario.sh
     python cold_start/generate_cold_start_orak.py --games super_mario --episodes 5
-
-    # --- StarCraft II (activate orak-sc2 first) ---
-    source evaluate_orak/setup_orak_sc2.sh
-    python cold_start/generate_cold_start_orak.py --games star_craft --episodes 3
-
-    # Both games (needs matching conda env for each)
-    python cold_start/generate_cold_start_orak.py --games super_mario star_craft
 
     # Quick test
     python cold_start/generate_cold_start_orak.py --games super_mario \\
         --episodes 1 --max_steps 5 -v
 
     # Resume an interrupted run
-    python cold_start/generate_cold_start_orak.py --games star_craft --resume
+    python cold_start/generate_cold_start_orak.py --games super_mario --resume
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import logging
 import os
 import re
 import sys
@@ -61,18 +53,10 @@ for _p in [str(CODEBASE_ROOT), str(ORAK_SRC)]:
     if Path(_p).exists() and _p not in sys.path:
         sys.path.insert(0, _p)
 
-# Quiet SC2 library logs (protocol, controller, main) so cold-start runs are readable
-logging.getLogger("sc2").setLevel(logging.WARNING)
-try:
-    import loguru
-    loguru.logger.disable("sc2")
-except Exception:
-    pass
-
 # ---------------------------------------------------------------------------
 # Imports
 # ---------------------------------------------------------------------------
-from evaluate_orak.orak_nl_wrapper import make_orak_env, ORAK_GAMES
+from env_wrappers.orak_nl_wrapper import make_orak_env, ORAK_GAMES
 from data_structure.experience import Experience, Episode, Episode_Buffer
 
 try:
@@ -102,11 +86,6 @@ ORAK_COLD_START_GAMES: Dict[str, Dict[str, Any]] = {
         "display_name": "Super Mario Bros",
         "task": ORAK_GAMES["super_mario"]["task"],
     },
-    "star_craft": {
-        "max_steps": 1000,
-        "display_name": "StarCraft II (1v1 Protoss)",
-        "task": ORAK_GAMES["star_craft"]["task"],
-    },
 }
 
 # ---------------------------------------------------------------------------
@@ -125,43 +104,10 @@ _SYSTEM_PROMPT_MARIO = (
     "Use the EXACT action name from the valid actions list."
 )
 
-_SYSTEM_PROMPT_SC2 = (
-    "You are an expert StarCraft II agent powered by GPT-5.4, playing Protoss "
-    "vs Zerg in the Orak benchmark.\n"
-    "Each turn you must provide EXACTLY 5 sequential macro actions.\n\n"
-    "Action categories:\n"
-    "  TRAIN: PROBE, ZEALOT, ADEPT, STALKER, SENTRY, HIGHTEMPLAR, DARKTEMPLAR, "
-    "VOIDRAY, CARRIER, TEMPEST, ORACLE, PHOENIX, MOTHERSHIP, OBSERVER, IMMORTAL, "
-    "WARPPRISM, COLOSSUS, DISRUPTOR  |  MORPH ARCHON\n"
-    "  BUILD: PYLON, ASSIMILATOR, NEXUS, GATEWAY, CYBERNETICSCORE, FORGE, "
-    "TWILIGHTCOUNCIL, ROBOTICSFACILITY, STARGATE, TEMPLARARCHIVE, DARKSHRINE, "
-    "ROBOTICSBAY, FLEETBEACON, PHOTONCANNON, SHIELDBATTERY\n"
-    "  RESEARCH: WARPGATERESEARCH, CHARGE, BLINKTECH, ADEPTPIERCINGATTACK, "
-    "PSISTORMTECH, EXTENDEDTHERMALLANCE, GRAVITICDRIVE, OBSERVERGRAVITICBOOSTER, "
-    "ground/air weapons/armor levels 1-3, shields levels 1-3, etc.\n"
-    "  SCOUTING: PROBE, OBSERVER, ZEALOT, PHOENIX\n"
-    "  CHRONOBOOST: NEXUS, CYBERNETICSCORE, TWILIGHTCOUNCIL, STARGATE, FORGE\n"
-    "  MILITARY: MULTI-ATTACK, MULTI-RETREAT\n"
-    "  EMPTY ACTION (no-op)\n\n"
-    "Before choosing, briefly reason about:\n"
-    "1. Current economy (minerals, gas, supply), army composition, and "
-    "opponent threat level.\n"
-    "2. Which build order phase you are in and what the next priority is.\n"
-    "3. Whether to focus on economy, tech, or aggression this turn.\n\n"
-    "Then call the `choose_actions` function with a list of 5 actions.\n"
-    "Use EXACT action names from the valid actions list."
-)
-
 _USER_TEMPLATE = (
     "Game state:\n\n{state}\n\n"
     "Valid actions: {actions}\n\n"
     "Think step-by-step, then choose one action."
-)
-
-_USER_TEMPLATE_SC2 = (
-    "Game state:\n\n{state}\n\n"
-    "Valid actions: {actions}\n\n"
-    "Think step-by-step, then choose exactly 5 sequential macro actions."
 )
 
 
@@ -231,28 +177,6 @@ def _build_tools_single(action_names: List[str]) -> list:
     }]
 
 
-def _build_tools_sc2(action_names: List[str]) -> list:
-    desc = "A valid Protoss macro action from the valid actions list."
-    return [{
-        "type": "function",
-        "function": {
-            "name": "choose_actions",
-            "description": "Choose exactly 5 sequential macro actions for this turn.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "reasoning": {"type": "string", "description": "Brief chain-of-thought reasoning about economy, army, and priorities."},
-                    "action_1": {"type": "string", "description": desc},
-                    "action_2": {"type": "string", "description": desc},
-                    "action_3": {"type": "string", "description": desc},
-                    "action_4": {"type": "string", "description": desc},
-                    "action_5": {"type": "string", "description": desc},
-                },
-                "required": ["action_1", "action_2", "action_3", "action_4", "action_5"],
-            },
-        },
-    }]
-
 
 # ---------------------------------------------------------------------------
 # Safe tool-call argument parsing (handles truncated/malformed JSON from LLM)
@@ -277,7 +201,7 @@ def _parse_tool_args(raw: str) -> Dict[str, Any]:
         pass
     # Extract "key": "value" for known keys (handles truncated/malformed JSON)
     out: Dict[str, Any] = {}
-    for key in ["reasoning", "action", "action_1", "action_2", "action_3", "action_4", "action_5"]:
+    for key in ["reasoning", "action"]:
         pat = re.compile(rf'"{re.escape(key)}"\s*:\s*"((?:[^"\\]|\\.)*)"', re.DOTALL)
         m = pat.search(raw)
         if m:
@@ -324,44 +248,6 @@ def gpt54_mario_action(
         return action_names[0] if action_names else "Jump Level: 0", None
 
 
-def gpt54_sc2_action(
-    state_nl: str,
-    action_names: List[str],
-    model: str = MODEL_GPT54,
-    temperature: float = 0.4,
-) -> Tuple[str, Optional[str]]:
-    client = _make_client()
-    default = "EMPTY ACTION"
-    if client is None:
-        return "\n".join(f"{i}: {default}" for i in range(1, 6)), None
-    tools = _build_tools_sc2(action_names)
-    user = _USER_TEMPLATE_SC2.format(state=state_nl, actions=", ".join(action_names))
-    try:
-        resp = client.chat.completions.create(
-            model=_effective_model(model),
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT_SC2},
-                {"role": "user", "content": user},
-            ],
-            tools=tools,
-            tool_choice={"type": "function", "function": {"name": "choose_actions"}},
-            temperature=temperature,
-            max_tokens=600,
-        )
-        msg = resp.choices[0].message
-        if msg.tool_calls:
-            raw = getattr(msg.tool_calls[0], "arguments", None) or \
-                  getattr(msg.tool_calls[0].function, "arguments", None) or "{}"
-            args = _parse_tool_args(raw) if isinstance(raw, str) else (raw or {})
-            reasoning = args.get("reasoning")
-            acts = [_canonicalize(args.get(f"action_{i}", default), action_names) for i in range(1, 6)]
-            return "\n".join(f"{i}: {a}" for i, a in enumerate(acts, 1)), reasoning
-        content = msg.content or ""
-        return content.strip() or "\n".join(f"{i}: {default}" for i in range(1, 6)), None
-    except Exception as exc:
-        print(f"    [WARN] SC2 call failed ({exc}), fallback")
-        return "\n".join(f"{i}: {default}" for i in range(1, 6)), None
-
 
 # ---------------------------------------------------------------------------
 # Episode runner
@@ -377,9 +263,6 @@ def run_orak_episode(
     """Run one episode of an Orak game with the GPT-5.4 agent."""
     cfg = ORAK_COLD_START_GAMES[game_name]
     task = cfg["task"]
-    is_sc2 = game_name in ("star_craft", "star_craft_multi")
-
-    agent_fn = gpt54_sc2_action if is_sc2 else gpt54_mario_action
 
     env = make_orak_env(game_name, max_steps=max_steps)
     action_names = env.action_names
@@ -392,7 +275,7 @@ def run_orak_episode(
     truncated = False
 
     while step_count < max_steps:
-        action, reasoning = agent_fn(
+        action, reasoning = gpt54_mario_action(
             state_nl=obs,
             action_names=action_names,
             model=model,
@@ -571,10 +454,6 @@ def run_game_rollouts(
     t0 = time.time()
 
     workers = getattr(args, "workers", 1) or 1
-    # StarCraft II env spawns one SC2 process per episode; multiple instances hang (port/single-binary).
-    if game_name in ("star_craft", "star_craft_multi") and workers > 1:
-        print(f"  [NOTE] StarCraft II uses 1 worker only (multiple SC2 instances would hang).")
-        workers = 1
     io_lock = Lock()
 
     if workers > 1:
@@ -679,21 +558,18 @@ def run_game_rollouts(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="GPT-5.4 cold-start rollouts for Orak games (Super Mario, StarCraft II)",
+        description="GPT-5.4 cold-start rollouts for Orak Super Mario",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Super Mario, 5 episodes (activate orak-mario env first)
   python cold_start/generate_cold_start_orak.py --games super_mario --episodes 5
 
-  # StarCraft II, 3 episodes (activate orak-sc2 env first)
-  python cold_start/generate_cold_start_orak.py --games star_craft --episodes 3
-
   # Quick test
   python cold_start/generate_cold_start_orak.py --games super_mario --episodes 1 --max_steps 5 -v
 
   # Resume interrupted run
-  python cold_start/generate_cold_start_orak.py --games star_craft --resume
+  python cold_start/generate_cold_start_orak.py --games super_mario --resume
 """,
     )
     parser.add_argument("--games", type=str, nargs="+", default=None,
@@ -702,7 +578,7 @@ Examples:
     parser.add_argument("--episodes", type=int, default=10,
                         help="Number of episodes per game (default: 10)")
     parser.add_argument("--max_steps", type=int, default=None,
-                        help="Max steps per episode (None = game default: Mario=100, SC2=1000)")
+                        help="Max steps per episode (default: 100)")
     parser.add_argument("--model", type=str, default=MODEL_GPT54,
                         help=f"LLM model (default: {MODEL_GPT54})")
     parser.add_argument("--temperature", type=float, default=0.4,
@@ -716,8 +592,7 @@ Examples:
     parser.add_argument("--resume", action="store_true",
                         help="Resume interrupted run (skip completed episodes)")
     parser.add_argument("--workers", type=int, default=1,
-                        help="Parallel episode workers (default: 1). "
-                             "Each worker runs its own SC2 instance.")
+                        help="Parallel episode workers (default: 1)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Print step-by-step details")
     parser.add_argument("--output_dir", type=str, default=None,
@@ -739,7 +614,7 @@ Examples:
     requested = args.games or list(ORAK_COLD_START_GAMES.keys())
 
     print("=" * 78)
-    print("  GPT-5.4 Cold-Start — Orak Games (Super Mario & StarCraft II)")
+    print("  GPT-5.4 Cold-Start — Orak Super Mario")
     print("=" * 78)
     print(f"  Games:       {', '.join(requested)}")
     print(f"  Episodes:    {args.episodes} per game")

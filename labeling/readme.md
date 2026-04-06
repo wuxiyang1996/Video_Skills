@@ -160,9 +160,9 @@ bash labeling/run_labeling.sh --games tetris -v
 
 ## Usage — Labels + Skill Selection + GRPO Cold-Start (`label_episodes_with_skills.py`)
 
-This pipeline extends the labels-only pipeline by loading a **pre-built skill bank** (e.g. from `skill_agents_grpo`), running top-k skill selection at each step, and exporting GRPO cold-start training data for decision-agent LoRA fine-tuning.
+This pipeline extends the labels-only pipeline by loading a **pre-built skill bank** (e.g. from `skill_agents`), running top-k skill selection at each step, and exporting GRPO cold-start training data for decision-agent LoRA fine-tuning.
 
-**Prerequisites:** A skill bank must already exist (e.g. from `skill_agents_grpo/extract_skillbank/`). The script auto-discovers per-game banks under the default search directories.
+**Prerequisites:** A skill bank must already exist (e.g. from `skill_agents/extract_skillbank/`). The script auto-discovers per-game banks under the default search directories.
 
 ```bash
 # From Game-AI-Agent root
@@ -172,11 +172,11 @@ export PYTHONPATH="$(pwd):$(pwd)/../GamingAgent:$PYTHONPATH"
 # Quick dry run — preview one episode per game
 python labeling/label_episodes_with_skills.py \
     --one_per_game --dry_run -v \
-    --bank skill_agents_grpo/extract_skillbank/output/gpt54_skillbank_grpo
+    --bank skill_agents/extract_skillbank/output/gpt54_skillbank_grpo
 
 # Full run — all episodes, all games, auto-discover banks
 python labeling/label_episodes_with_skills.py \
-    --bank skill_agents_grpo/extract_skillbank/output/gpt54_skillbank_grpo \
+    --bank skill_agents/extract_skillbank/output/gpt54_skillbank_grpo \
     -v
 
 # Specific games
@@ -190,7 +190,7 @@ python labeling/label_episodes_with_skills.py --top_k 5
 
 # Label in-place (overwrite originals)
 python labeling/label_episodes_with_skills.py --in_place \
-    --bank skill_agents_grpo/extract_skillbank/output/gpt54_skillbank_grpo
+    --bank skill_agents/extract_skillbank/output/gpt54_skillbank_grpo
 ```
 
 ### Skill Selection Options
@@ -279,7 +279,7 @@ Step 1: Generate cold-start episodes
   └─ cold_start/generate_cold_start_gpt54.py
 
 Step 2: Extract skill banks
-  └─ skill_agents_grpo/extract_skillbank/extract_skillbank_grpo_gpt54.py
+  └─ skill_agents/extract_skillbank/extract_skillbank_grpo_gpt54.py
 
 Step 3: Label episodes + select skills + export GRPO data    ← this script
   └─ labeling/label_episodes_with_skills.py
@@ -303,7 +303,7 @@ Step 4: Train LoRA adapters via GRPO
 2. **Rollout phase**: Generate G completions per prompt at higher temperature. Evaluate each completion with the reward function (step reward, or a learned reward model).
 3. **Training phase**: Compute GRPO advantages from the G-sample rewards. Update LoRA weights via policy gradient with clipping.
 
-This follows the same two-phase pattern used by the existing `segment`/`contract`/`curator` adapters in `skill_agents_grpo/grpo/`. To integrate, add `ACTION` and `SKILL_SELECT` to the `SkillFunction` enum in `skill_agents_grpo/lora/skill_function.py`.
+This follows the same two-phase pattern used by the existing `segment`/`contract`/`curator` adapters in `skill_agents/grpo/`. To integrate, add `ACTION` and `SKILL_SELECT` to the `SkillFunction` enum in `skill_agents/lora/skill_function.py`.
 
 ```python
 # Example: loading cold-start data for training

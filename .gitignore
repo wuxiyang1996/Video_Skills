@@ -36,9 +36,9 @@ labeling/backup/
 labeling/output/
 
 # ── Skill bank extraction outputs ───────────────────────────────
-skill_agents_grpo/extract_skillbank/output/
-skill_agents_grpo/extract_skillbank/backup/
-skill_agents_grpo/extract_skillbank/backup_2/
+skill_agents/extract_skillbank/output/
+skill_agents/extract_skillbank/backup/
+skill_agents/extract_skillbank/backup_2/
 
 # ── Evaluation / test outputs ───────────────────────────────────
 test_rollout/

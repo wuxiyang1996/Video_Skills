@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# Run GPT-5.4 cold-start per game for evaluate_gamingagent only.
-# Supports only the 3 LMGame-Bench games used by evaluate_gamingagent:
+# Run GPT-5.4 cold-start per game for env_wrappers only.
+# Supports only the 3 LMGame-Bench games used by env_wrappers:
 #   2048, Candy Crush, Tetris.
 #
 # Usage:
 #   bash cold_start/run_coldstart_gpt54_per_game.sh --episodes 50
-#       # All 3 evaluate_gamingagent games, 50 episodes each.
+#       # All 3 env_wrappers games, 50 episodes each.
 #
 #   bash cold_start/run_coldstart_gpt54_per_game.sh --episodes 20 twenty_forty_eight tetris
 #       # Only 2048 and Tetris, 20 episodes each.
@@ -22,7 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CODEBASE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 GAMINGAGENT_ROOT="$(cd "$CODEBASE_ROOT/../GamingAgent" 2>/dev/null && pwd || echo "")"
 
-# evaluate_gamingagent: only these 3 games (see evaluate_gamingagent/game_configs.py)
+# env_wrappers: only these 3 games (see env_wrappers/game_configs.py)
 DEFAULT_EPISODES=100
 EVAL_GAMES=(twenty_forty_eight candy_crush tetris)
 
@@ -67,7 +67,7 @@ if [ -z "${OPENAI_API_KEY:-}" ]; then
 fi
 
 echo "================================================================"
-echo "  GPT-5.4 Cold-Start — evaluate_gamingagent (3 games only)"
+echo "  GPT-5.4 Cold-Start — env_wrappers (3 games only)"
 echo "================================================================"
 echo "  Episodes per game: $EPISODES"
 echo "  Games:             ${GAMES_ARG[*]}"
@@ -86,5 +86,5 @@ done
 echo ""
 echo "================================================================"
 echo "  Done. Output: cold_start/output/gpt54/<game>/"
-echo "  (evaluate_gamingagent games only: 2048, Candy Crush, Tetris)"
+echo "  (env_wrappers games only: 2048, Candy Crush, Tetris)"
 echo "================================================================"

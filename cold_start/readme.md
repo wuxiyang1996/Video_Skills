@@ -163,7 +163,7 @@ Each Orak game needs its own conda environment.
 
 ```bash
 # --- Super Mario ---
-source evaluate_orak/setup_orak_mario.sh
+source env_wrappers/setup_orak_mario.sh
 python cold_start/generate_cold_start_orak.py --games super_mario --episodes 10
 # or:
 bash cold_start/run_coldstart_orak_mario.sh --episodes 10

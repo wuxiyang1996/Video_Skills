@@ -29,7 +29,7 @@ It also updates:
 
 ## Integration
 
-- **Input:** [SkillBankMVP](../skill_bank/README.md), segment records, optional [Stage 3](../stage3_mvp/README.md) / [contract_verification](../contract_verification/README.md) outputs.
+- **Input:** [SkillBankMVP](../skill_bank/README.md), segment records, optional [Stage 3](../stage3_mvp/README.md) outputs.
 - **Output:** Updated bank, `BankDiffReport`, `RedecodeRequest` list for downstream re-segmentation.
 
 ## High-level API

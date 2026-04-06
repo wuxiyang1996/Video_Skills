@@ -1,16 +1,21 @@
 """
-Multi-LoRA infrastructure for the skill-bank agent.
+Multi-LoRA infrastructure for the skill-bank agent (GRPO edition).
 
-One shared Qwen-3-8B backbone + four function-specific LoRA adapters
-(boundary, segment, contract, retrieval).
+One shared Qwen3-8B backbone + 3 GRPO-trained LoRA adapters
+(segment, contract, curator).  BOUNDARY and RETRIEVAL enum values
+are retained for backward compatibility but are not GRPO-trained.
+
+GRPO training uses ``log_probs()`` on ``MultiLoraSkillBankLLM`` to
+compute per-token log-probabilities with gradients, enabling
+policy-gradient updates on LoRA adapter weights.
 
 Quick start::
 
     from skill_agents.lora import MultiLoraSkillBankLLM, MultiLoraConfig, SkillFunction
 
-    cfg = MultiLoraConfig(adapter_paths={"boundary": "path/to/adapter"})
+    cfg = MultiLoraConfig(adapter_paths={"contract": "path/to/adapter"})
     llm = MultiLoraSkillBankLLM(cfg)
-    text = llm.generate(SkillFunction.BOUNDARY, "Your prompt here")
+    text = llm.generate(SkillFunction.CONTRACT, "Your prompt here")
 """
 
 from skill_agents.lora.skill_function import SkillFunction

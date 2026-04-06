@@ -15,8 +15,7 @@ Usage::
 
 Design principles:
   - Modular: all NEW logic in one place (not scattered across pipeline.py).
-  - Reuses existing clustering from ``contract_verification.clustering`` when
-    available; falls back to effect-signature Jaccard otherwise.
+  - Uses effect-signature Jaccard clustering for deduplication.
   - Configurable thresholds for ablation experiments.
 """
 

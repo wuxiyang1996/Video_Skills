@@ -37,7 +37,7 @@ for p in [str(CODEBASE_ROOT), str(GAMINGAGENT_ROOT)]:
     if Path(p).exists() and p not in sys.path:
         sys.path.insert(0, p)
 
-from evaluate_gamingagent.gym_like import make_gaming_env
+from env_wrappers.gym_like import make_gaming_env
 from env_wrappers.gamingagent_nl_wrapper import GamingAgentNLWrapper
 from env_wrappers.tetris_macro_wrapper import TetrisMacroActionWrapper
 from trainer.coevolution.config import GAME_MAX_STEPS

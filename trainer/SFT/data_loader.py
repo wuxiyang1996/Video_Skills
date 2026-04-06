@@ -15,7 +15,7 @@ Data sources
 **Skill-bank adapters**:
 
 ``segment``:
-  ``skill_agents_grpo/extract_skillbank/output/gpt54_skillbank_grpo/<game>/teacher_io_coldstart.jsonl``
+  ``skill_agents/extract_skillbank/output/gpt54_skillbank_grpo/<game>/teacher_io_coldstart.jsonl``
   Functions: ``segment_ranking``, ``transition_ranking``, ``pairwise_choice``
   Each line: ``{"prompt": ..., "response": ..., ...}``
 

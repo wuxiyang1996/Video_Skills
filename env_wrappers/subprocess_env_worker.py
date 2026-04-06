@@ -64,7 +64,7 @@ def main() -> None:
     parser.add_argument("--max-steps", type=int, default=500)
     args = parser.parse_args()
 
-    # Add project paths so evaluate_orak / Orak imports work
+    # Add project paths so Orak imports work
     script_dir = os.path.dirname(os.path.abspath(__file__))
     codebase_root = os.path.dirname(script_dir)
     orak_src = os.path.join(codebase_root, "..", "Orak", "src")
@@ -73,7 +73,7 @@ def main() -> None:
         if os.path.isdir(rp) and rp not in sys.path:
             sys.path.insert(0, rp)
 
-    from evaluate_orak.orak_nl_wrapper import make_orak_env
+    from env_wrappers.orak_nl_wrapper import make_orak_env
 
     with _suppress_stdout():
         env = make_orak_env(args.game, max_steps=args.max_steps)

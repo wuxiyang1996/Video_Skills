@@ -1,5 +1,5 @@
-"""DEPRECATED — Use ``trainer.coevolution`` instead.
+"""Shared training data types.
 
-Legacy shared training utilities: configs, logging, evaluation, seeds,
-metrics.  Kept for backward compatibility with ``cold_start/load_rollouts.py``
-and install verification checks."""
+Provides ``RolloutRecord`` and ``RolloutStep`` used by
+``cold_start/load_rollouts.py`` and the co-evolution pipeline.
+"""

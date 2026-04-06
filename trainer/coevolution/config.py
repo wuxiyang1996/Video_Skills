@@ -286,7 +286,7 @@ class CoEvolutionConfig:
     # 10-20x throughput loss due to the GPU batch-size cliff).
     rollout_sync_timeout_s: float = 0.10
 
-    # LoRA adapter defaults (matches skill_agents_grpo.lora.config)
+    # LoRA adapter defaults (matches skill_agents.lora.config)
     lora_r: int = 16
     lora_alpha: int = 32
     lora_dropout: float = 0.05

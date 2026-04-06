@@ -2,6 +2,43 @@
 
 Inference module for the **COS-PLAY** co-evolution framework (COLM 2026). Runs the trained Decision Agent (Qwen3-8B with LoRA adapters) and stores rollouts in the **data_structure** format ([data_structure/experience.py](../data_structure/experience.py)): `Experience` list and `Episode`.
 
+## Quick Start — Best-Checkpoint Inference
+
+Each script launches a local vLLM server with the best LoRA adapter, then runs evaluation episodes:
+
+```bash
+# Single-player games (tetris, 2048, candy_crush)
+bash inference/run_single_player_inference.sh --game tetris
+bash inference/run_single_player_inference.sh --game 2048
+bash inference/run_single_player_inference.sh --game candy_crush
+
+# Avalon (3 variants)
+bash inference/run_avalon_inference.sh --variant best      # self-play, best checkpoint
+bash inference/run_avalon_inference.sh --variant da         # vs GPT-5.4 opponents
+bash inference/run_avalon_inference.sh --variant matched    # training-matched prompt format
+
+# Diplomacy (2 variants)
+bash inference/run_diplomacy_inference.sh --variant da       # vs GPT-5.4 opponents
+bash inference/run_diplomacy_inference.sh --variant discrete # discrete action format
+
+# Super Mario (separate env: orak-mario)
+bash inference/infer_super_mario_best.sh
+
+# Common overrides (all scripts):
+EPISODES=16 bash inference/run_single_player_inference.sh --game tetris
+EVAL_GPUS=0 bash inference/run_avalon_inference.sh --variant da
+NO_SERVER=1 VLLM_BASE_URL=http://localhost:8022/v1 \
+    bash inference/run_single_player_inference.sh --game tetris
+```
+
+## Academic Benchmarks (catastrophic forgetting)
+
+Evaluates Qwen3-8B on MMLU-Pro and Math-500 before/after game-RL fine-tuning:
+
+```bash
+python inference/run_academic_benchmarks.py --gpu 0 --adapter_path runs/.../best/adapters/decision/action_taking
+```
+
 ## VERL-based inference (recommended for vLLM/sglang)
 
 Inference using [VERL](https://github.com/verl-project/verl) and [verl-agent](https://github.com/verl-project/verl-agent) runs the same env and reward as training, in evaluation-only mode (no PPO updates):

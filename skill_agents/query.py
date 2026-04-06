@@ -44,9 +44,6 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
-from skill_agents.skill_bank.bank import SkillBankMVP, _effects_compat_score
-from skill_agents.stage3_mvp.schemas import SkillEffectsContract, VerificationReport
-
 
 class SelectionTracker:
     """Lightweight per-iteration counter for UCB exploration in skill selection."""
@@ -69,6 +66,9 @@ class SelectionTracker:
     def reset(self) -> None:
         self._counts.clear()
         self._total = 0
+
+from skill_agents.skill_bank.bank import SkillBankMVP, _effects_compat_score
+from skill_agents.stage3_mvp.schemas import SkillEffectsContract, VerificationReport
 
 
 def _tokenize(text: str) -> Set[str]:
@@ -218,7 +218,7 @@ class SkillQueryEngine:
         if self._embedder is None:
             try:
                 from rag import get_text_embedder
-                self._embedder = get_text_embedder()
+                self._embedder = get_text_embedder(device="cpu", shared=True)
             except Exception:
                 self._embedder = None
         self._skill_embeddings: Optional[np.ndarray] = None
@@ -457,12 +457,19 @@ class SkillQueryEngine:
             failure_modes.extend(skill.protocol.abort_criteria[:2])
 
         # --- execution_hint ---
+        # Prefer strategic_description (clean natural-language strategy)
+        # over ExecutionHint.execution_description (often contains raw game
+        # state examples).  This keeps the "Strategy:" line in skill
+        # selection prompts aligned with SFT training data.
         execution_hint = ""
+        if skill is not None and skill.strategic_description:
+            execution_hint = skill.strategic_description
         if skill is not None and getattr(skill, "execution_hint", None) is not None:
             eh = skill.execution_hint
-            execution_hint = eh.execution_description or ""
-            if not execution_hint and eh.state_transition_pattern:
-                execution_hint = eh.state_transition_pattern
+            if not execution_hint:
+                execution_hint = eh.execution_description or ""
+                if not execution_hint and eh.state_transition_pattern:
+                    execution_hint = eh.state_transition_pattern
             if eh.termination_cues and not termination_hint:
                 termination_hint = "; ".join(eh.termination_cues[:3])
             if eh.common_failure_modes and not failure_modes:
@@ -470,9 +477,7 @@ class SkillQueryEngine:
             if eh.common_preconditions and not preconditions:
                 preconditions = list(eh.common_preconditions[:5])
         if not execution_hint:
-            if skill is not None and skill.strategic_description:
-                execution_hint = skill.strategic_description
-            elif skill is not None and skill.protocol.steps:
+            if skill is not None and skill.protocol.steps:
                 execution_hint = " → ".join(skill.protocol.steps[:4])
             elif c is not None and c.description:
                 execution_hint = c.description

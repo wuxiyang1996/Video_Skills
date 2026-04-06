@@ -13,7 +13,7 @@ Output structure (cold_start/output/<game_name>/):
   - rollout_summary.json    Run-level stats for this game
 
 The JSONL and episode_buffer formats are compatible with:
-  - trainer/skillbank/ingest_rollouts.py (TrajectoryForEM conversion)
+  - trainer/coevolution/skillbank_pipeline.py (episode ingestion)
   - skill_agents/pipeline.py (SkillBankAgent.ingest_episodes)
   - data_structure/experience.py (Episode_Buffer.load_from_json)
 
