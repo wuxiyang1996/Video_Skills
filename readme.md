@@ -98,6 +98,7 @@ cd Game-AI-Agent
 
 # Option A: Automated install (recommended — creates conda env + all deps + verification)
 bash install/install_main_env.sh
+conda activate game-ai-agent
 
 # Option B: pip install (editable mode, for development)
 pip install -e .
