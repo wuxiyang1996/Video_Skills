@@ -78,7 +78,7 @@ COS-PLAY is a co-evolution framework in which an LLM decision agent retrieves sk
 ### 1. Clone repositories
 
 ```bash
-mkdir -p ~/cos-play && cd ~/cos-play
+mkdir -p cos-play && cd cos-play
 
 # This repo
 git clone https://github.com/wuxiyang1996/cos-play.git Game-AI-Agent
