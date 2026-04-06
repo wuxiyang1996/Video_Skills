@@ -169,6 +169,28 @@ The full pipeline has 5 stages. Each stage produces outputs consumed by the next
 
 Generate seed trajectories using a teacher model (GPT-5.4). This produces 60 episodes per game.
 
+> **Skip this step:** Pre-generated cold-start data (8 games, 479 episodes, ~538 MB) is
+> available on HuggingFace. Download it instead of re-running generation:
+>
+> ```bash
+> # Download all games (installs to labeling/output/gpt54_skill_labeled/)
+> python labeling/download_cold_start.py
+>
+> # Download specific games only
+> python labeling/download_cold_start.py --games tetris candy_crush
+> ```
+>
+> Or with the HuggingFace CLI:
+> ```bash
+> huggingface-cli download IntelligenceLab/Cos-Play-Cold-Start \
+>     --repo-type dataset \
+>     --local-dir labeling/output/gpt54_skill_labeled
+> ```
+>
+> Dataset: [IntelligenceLab/Cos-Play-Cold-Start](https://huggingface.co/datasets/IntelligenceLab/Cos-Play-Cold-Start)
+
+To generate fresh data yourself:
+
 ```bash
 # All GamingAgent games (2048, Candy Crush, Tetris)
 bash cold_start/run_coldstart_gpt54.sh --episodes 60
