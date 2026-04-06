@@ -131,7 +131,7 @@ each other at runtime. Adding them to `PYTHONPATH` lets Python locate these cros
 This must be run in every new terminal session (or added to your `~/.bashrc`).
 
 ```bash
-cd ~/cos-play
+cd ..
 export PYTHONPATH=$(pwd)/Game-AI-Agent:$(pwd)/AgentEvolver:$(pwd)/GamingAgent:$PYTHONPATH
 ```
 
