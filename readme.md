@@ -101,14 +101,21 @@ bash install/install_main_env.sh
 conda activate game-ai-agent
 
 # Option B: pip install (editable mode, for development)
+conda create -n game-ai-agent python=3.11 -y
+conda activate game-ai-agent
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 pip install -e .
 
 # Option C: pip install from requirements
+conda create -n game-ai-agent python=3.11 -y
+conda activate game-ai-agent
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 pip install -r requirements.txt
 ```
 
 Option A is recommended because it also installs PyTorch with the correct CUDA version,
-sets up GamingAgent, and runs 30+ import verification checks.
+sets up GamingAgent, and runs 30+ import verification checks. Options B and C require
+manually creating the conda environment and installing PyTorch with CUDA first.
 
 For **Super Mario**, install the separate `orak-mario` conda environment:
 ```bash
