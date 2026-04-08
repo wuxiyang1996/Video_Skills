@@ -14,6 +14,117 @@ COS-PLAY is a co-evolution framework in which an LLM decision agent retrieves sk
 
 *Overview of COS-PLAY. The decision agent (orange) retrieves skills, updates intentions, and selects actions. After each episode, the skill bank agent (red) segments trajectories, learns contracts, and curates the skill bank (purple) via refinement, merging, splitting, or retirement.*
 
+## Gameplay Demos
+
+### Single-Player: COS-PLAY (8B) vs GPT-5.4
+
+Best COS-PLAY episode (top) vs average GPT-5.4 episode (bottom).
+
+<table>
+<tr>
+<th align="center">2048</th>
+<th align="center">Tetris</th>
+<th align="center">Candy Crush</th>
+<th align="center">Super Mario</th>
+</tr>
+<tr>
+<td align="center">
+<b>COS-PLAY</b> · <b>2140</b><br>
+<img src="replay/replays/best_twenty_forty_eight.gif" width="180">
+</td>
+<td align="center">
+<b>COS-PLAY</b> · <b>1028</b><br>
+<img src="replay/replays/best_tetris.gif" width="180">
+</td>
+<td align="center">
+<b>COS-PLAY</b> · <b>620</b><br>
+<img src="replay/replays/best_candy_crush.gif" width="180">
+</td>
+<td align="center">
+<b>COS-PLAY</b> · <b>1411</b><br>
+<img src="replay/replays/best_super_mario.gif" width="180">
+</td>
+</tr>
+<tr>
+<td align="center">
+GPT-5.4 · 1204<br>
+<img src="replay/replays/avg_gpt54_twenty_forty_eight.gif" width="180">
+</td>
+<td align="center">
+GPT-5.4 · 832<br>
+<img src="replay/replays/avg_gpt54_tetris.gif" width="180">
+</td>
+<td align="center">
+GPT-5.4 · 547<br>
+<img src="replay/replays/avg_gpt54_candy_crush.gif" width="180">
+</td>
+<td align="center">
+GPT-5.4 · 898<br>
+<img src="replay/replays/avg_gpt54_super_mario.gif" width="180">
+</td>
+</tr>
+</table>
+
+### Multi-Player: Avalon
+
+COS-PLAY controls each role in 5-player Avalon. Best winning episode per role shown below.
+
+<p align="center">
+<img src="replay/replays/best_avalon.gif" width="70%">
+</p>
+
+<details>
+<summary><b>Per-Role Replays</b> (Assassin · Merlin · Minion · Servant)</summary>
+<br>
+<table>
+<tr>
+<td align="center"><b>Assassin</b> · reward 22.0<br><img src="replay/replays/best_avalon_assassin.gif" width="380"></td>
+<td align="center"><b>Merlin</b> · reward 31.1<br><img src="replay/replays/best_avalon_merlin.gif" width="380"></td>
+</tr>
+<tr>
+<td align="center"><b>Minion</b> · reward 26.0<br><img src="replay/replays/best_avalon_minion.gif" width="380"></td>
+<td align="center"><b>Servant</b> · reward 25.1<br><img src="replay/replays/best_avalon_servant.gif" width="380"></td>
+</tr>
+</table>
+</details>
+
+### Multi-Player: Diplomacy
+
+COS-PLAY controls one power against GPT-5.4 opponents. Best episode per power shown below.
+
+<p align="center">
+<img src="replay/replays/best_diplomacy.gif" width="70%">
+</p>
+
+<details>
+<summary><b>Per-Power Replays vs GPT-5.4</b> (Austria · England · France · Germany · Italy · Russia · Turkey)</summary>
+<br>
+<table>
+<tr>
+<td align="center"><b>Austria</b> · SC 3<br><img src="replay/replays/best_diplomacy_austria_vs_gpt54.gif" width="250"></td>
+<td align="center"><b>England</b> · SC 4<br><img src="replay/replays/best_diplomacy_england_vs_gpt54.gif" width="250"></td>
+<td align="center"><b>France</b> · SC 4<br><img src="replay/replays/best_diplomacy_france_vs_gpt54.gif" width="250"></td>
+</tr>
+<tr>
+<td align="center"><b>Germany</b> · SC 4<br><img src="replay/replays/best_diplomacy_germany_vs_gpt54.gif" width="250"></td>
+<td align="center"><b>Italy</b> · SC 4<br><img src="replay/replays/best_diplomacy_italy_vs_gpt54.gif" width="250"></td>
+<td align="center"><b>Russia</b> · SC 4<br><img src="replay/replays/best_diplomacy_russia_vs_gpt54.gif" width="250"></td>
+</tr>
+<tr>
+<td align="center"><b>Turkey</b> · SC 5<br><img src="replay/replays/best_diplomacy_turkey_vs_gpt54.gif" width="250"></td>
+<td></td>
+<td></td>
+</tr>
+</table>
+</details>
+
+General reasoning (catastrophic forgetting check):
+
+| Model | MMLU-Pro Acc. ↑ | Math-500 EM ↑ |
+|-------|-----------------|---------------|
+| Qwen3-8B | 61.99% | 46.40% |
+| COS-PLAY | 61.15% | 44.60% |
+
 # About
 
 - Multi-agent co-evolution framework for LLM game agents
@@ -477,116 +588,6 @@ Multi-player social reasoning (vs GPT-5.4 opponents):
 
 All results are reported with 95% confidence intervals, based on 16 evaluation rollouts for single-player games and 10 rollouts per player for multi-player games.
 
-## Gameplay Demos
-
-### Single-Player: COS-PLAY (8B) vs GPT-5.4
-
-Best COS-PLAY episode (top) vs average GPT-5.4 episode (bottom).
-
-<table>
-<tr>
-<th align="center">2048</th>
-<th align="center">Tetris</th>
-<th align="center">Candy Crush</th>
-<th align="center">Super Mario</th>
-</tr>
-<tr>
-<td align="center">
-<b>COS-PLAY</b> · <b>2140</b><br>
-<img src="replay/replays/best_twenty_forty_eight.gif" width="180">
-</td>
-<td align="center">
-<b>COS-PLAY</b> · <b>1028</b><br>
-<img src="replay/replays/best_tetris.gif" width="180">
-</td>
-<td align="center">
-<b>COS-PLAY</b> · <b>620</b><br>
-<img src="replay/replays/best_candy_crush.gif" width="180">
-</td>
-<td align="center">
-<b>COS-PLAY</b> · <b>1411</b><br>
-<img src="replay/replays/best_super_mario.gif" width="180">
-</td>
-</tr>
-<tr>
-<td align="center">
-GPT-5.4 · 1204<br>
-<img src="replay/replays/avg_gpt54_twenty_forty_eight.gif" width="180">
-</td>
-<td align="center">
-GPT-5.4 · 832<br>
-<img src="replay/replays/avg_gpt54_tetris.gif" width="180">
-</td>
-<td align="center">
-GPT-5.4 · 547<br>
-<img src="replay/replays/avg_gpt54_candy_crush.gif" width="180">
-</td>
-<td align="center">
-GPT-5.4 · 898<br>
-<img src="replay/replays/avg_gpt54_super_mario.gif" width="180">
-</td>
-</tr>
-</table>
-
-### Multi-Player: Avalon
-
-COS-PLAY controls each role in 5-player Avalon. Best winning episode per role shown below.
-
-<p align="center">
-<img src="replay/replays/best_avalon.gif" width="70%">
-</p>
-
-<details>
-<summary><b>Per-Role Replays</b> (Assassin · Merlin · Minion · Servant)</summary>
-<br>
-<table>
-<tr>
-<td align="center"><b>Assassin</b> · reward 22.0<br><img src="replay/replays/best_avalon_assassin.gif" width="380"></td>
-<td align="center"><b>Merlin</b> · reward 31.1<br><img src="replay/replays/best_avalon_merlin.gif" width="380"></td>
-</tr>
-<tr>
-<td align="center"><b>Minion</b> · reward 26.0<br><img src="replay/replays/best_avalon_minion.gif" width="380"></td>
-<td align="center"><b>Servant</b> · reward 25.1<br><img src="replay/replays/best_avalon_servant.gif" width="380"></td>
-</tr>
-</table>
-</details>
-
-### Multi-Player: Diplomacy
-
-COS-PLAY controls one power against GPT-5.4 opponents. Best episode per power shown below.
-
-<p align="center">
-<img src="replay/replays/best_diplomacy.gif" width="70%">
-</p>
-
-<details>
-<summary><b>Per-Power Replays vs GPT-5.4</b> (Austria · England · France · Germany · Italy · Russia · Turkey)</summary>
-<br>
-<table>
-<tr>
-<td align="center"><b>Austria</b> · SC 3<br><img src="replay/replays/best_diplomacy_austria_vs_gpt54.gif" width="250"></td>
-<td align="center"><b>England</b> · SC 4<br><img src="replay/replays/best_diplomacy_england_vs_gpt54.gif" width="250"></td>
-<td align="center"><b>France</b> · SC 4<br><img src="replay/replays/best_diplomacy_france_vs_gpt54.gif" width="250"></td>
-</tr>
-<tr>
-<td align="center"><b>Germany</b> · SC 4<br><img src="replay/replays/best_diplomacy_germany_vs_gpt54.gif" width="250"></td>
-<td align="center"><b>Italy</b> · SC 4<br><img src="replay/replays/best_diplomacy_italy_vs_gpt54.gif" width="250"></td>
-<td align="center"><b>Russia</b> · SC 4<br><img src="replay/replays/best_diplomacy_russia_vs_gpt54.gif" width="250"></td>
-</tr>
-<tr>
-<td align="center"><b>Turkey</b> · SC 5<br><img src="replay/replays/best_diplomacy_turkey_vs_gpt54.gif" width="250"></td>
-<td></td>
-<td></td>
-</tr>
-</table>
-</details>
-
-General reasoning (catastrophic forgetting check):
-
-| Model | MMLU-Pro Acc. ↑ | Math-500 EM ↑ |
-|-------|-----------------|---------------|
-| Qwen3-8B | 61.99% | 46.40% |
-| COS-PLAY | 61.15% | 44.60% |
 
 # Acknowledgement
 
