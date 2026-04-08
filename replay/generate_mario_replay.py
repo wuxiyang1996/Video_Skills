@@ -6,7 +6,7 @@ the actual NES emulator (gym_super_mario_bros).
 Requires the orak-mario conda env with gym_super_mario_bros + nes_py.
 
 Usage:
-    /workspace/anaconda3/envs/orak-mario/bin/python replay/generate_mario_replay.py
+    /workspace/anaconda3/envs/orak-mario/bin/python generate_mario_replay.py
 """
 import json
 import glob
@@ -26,9 +26,8 @@ import gym
 import gym_super_mario_bros
 from nes_py.wrappers import JoypadSpace
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-OUTPUT_DIR = PROJECT_ROOT / "output"
-REPLAY_DIR = Path(__file__).resolve().parent / "replays"
+OUTPUT_DIR = Path(__file__).parent / "output"
+REPLAY_DIR = Path(__file__).parent / "replays"
 
 
 def _pil_font(size: int):
@@ -147,8 +146,8 @@ def replay_mario(experiences: list, fps: float = 4.0) -> List[Image.Image]:
 
         draw.text((6, 2), f"SUPER MARIO BROS  Step {step_i}", fill=(255, 255, 255), font=fnt_title)
         draw.text((6, 19),
-                  f"Action: {action_text[:30]}  Reward: {step_reward:+.0f}  "
-                  f"Total: {cumulative_reward:.0f}  x={info.get('x_pos', '?')}",
+                  f"Action: {action_text[:30]}  Score: {step_reward:.0f}  "
+                  f"x={info.get('x_pos', '?')}",
                   fill=(255, 220, 100), font=fnt)
         frames.append(img)
 
@@ -160,6 +159,11 @@ def replay_mario(experiences: list, fps: float = 4.0) -> List[Image.Image]:
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--format", choices=["mp4", "gif"], default="mp4")
+    args = parser.parse_args()
+
     REPLAY_DIR.mkdir(exist_ok=True)
     best = find_best_mario_episode()
     if best is None:
@@ -179,11 +183,23 @@ def main():
         print("No frames captured!")
         return
 
-    out_path = REPLAY_DIR / "best_super_mario.gif"
+    ext = args.format
+    out_path = REPLAY_DIR / f"best_super_mario.{ext}"
     fps = 4.0
-    duration_ms = int(1000 / fps)
-    frames[0].save(out_path, save_all=True, append_images=frames[1:],
-                   duration=duration_ms, loop=0)
+
+    if ext == "gif":
+        duration_ms = int(1000 / fps)
+        frames[0].save(out_path, save_all=True, append_images=frames[1:],
+                       duration=duration_ms, loop=0)
+    else:
+        import imageio
+        writer = imageio.get_writer(str(out_path), fps=fps, codec="libx264",
+                                    quality=8, pixelformat="yuv420p",
+                                    macro_block_size=2)
+        for f in frames:
+            writer.append_data(np.array(f))
+        writer.close()
+
     print(f"  -> {out_path.name}  ({len(frames)} frames, {fps} fps, "
           f"{out_path.stat().st_size // 1024}KB)")
 
