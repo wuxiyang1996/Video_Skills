@@ -500,11 +500,11 @@ Best COS-PLAY episode (top) vs average GPT-5.4 episode (bottom).
 <img src="replay/replays/best_tetris.gif" width="180">
 </td>
 <td align="center">
-<b>COS-PLAY</b> · <b>807</b><br>
+<b>COS-PLAY</b> · <b>620</b><br>
 <img src="replay/replays/best_candy_crush.gif" width="180">
 </td>
 <td align="center">
-<b>COS-PLAY</b> · <b>17680</b><br>
+<b>COS-PLAY</b> · <b>1411</b><br>
 <img src="replay/replays/best_super_mario.gif" width="180">
 </td>
 </tr>
