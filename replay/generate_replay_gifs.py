@@ -1672,13 +1672,21 @@ def _render_frames(game: str, experiences: list, max_frames: int = 0,
                     macro_items.append({**exp, "_cumulative": cumulative})
             items = macro_items
 
+    # Super Mario: rewards are already cumulative game scores, not deltas
+    mario_cumulative = (game == "super_mario")
+    prev_mario_score = 0.0
+
     piece_num = 0
     for i, exp in enumerate(items):
         state = exp.get("state", "")
         action = exp.get("action", "?")
         reward = exp.get("reward", 0.0)
         if "_cumulative" not in exp:
-            cumulative += reward
+            if mario_cumulative:
+                cumulative += max(0, reward - prev_mario_score)
+                prev_mario_score = reward
+            else:
+                cumulative += reward
         else:
             cumulative = exp["_cumulative"]
 
