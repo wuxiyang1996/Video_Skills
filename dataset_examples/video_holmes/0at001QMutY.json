@@ -1,0 +1,39 @@
+[
+  {
+    "Segment Description": [
+      {
+        "TimeRange": "00:01-00:24",
+        "Description": "The woman walked into the old-fashioned elevator. She looked up and saw a person wearing a plastic bag on the corridor. When she turned her head, the person with the plastic bag on their head also turned toward her."
+      },
+      {
+        "TimeRange": "00:24-01:34",
+        "Description": "The elevator starts to go down, stops at a certain floor, and the woman looks outside in horror, with the plastic bag person right there. The next shot shows the elevator returning to the first floor, the door opens, but the elevator is empty inside."
+      }
+    ],
+    "Key Relationships": [
+      {
+        "Combination": "Women and people wearing plastic bags on their heads",
+        "Relation": "victim and perpetrator",
+        "Reason": "Finally, there was no one in the elevator, and the woman should have been killed."
+      }
+    ],
+    "Inference Shots": [
+      {
+        "Time": "01:28",
+        "Clue": "There is no one in the elevator.",
+        "Conclusion": "The woman was killed."
+      },
+      {
+        "Time": "01:13",
+        "Clue": "The woman looks terrified.",
+        "Conclusion": "The woman saw the plastic bag person and was very scared."
+      }
+    ],
+    "Supernatural Elements": {
+      "Phenomenon": "None",
+      "PositiveImpact": "None",
+      "NegativeImpact": "None"
+    },
+    "Core Theme": "Be careful of criminals."
+  }
+]

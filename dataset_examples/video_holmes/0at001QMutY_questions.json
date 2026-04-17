@@ -1,0 +1,98 @@
+[
+  {
+    "video ID": "0at001QMutY",
+    "Question ID": 35,
+    "Question Type": "SR",
+    "Question": "What is the relationship between the woman and the person wearing a plastic bag on their head in the video?",
+    "Options": {
+      "A": "Witness and murderer",
+      "B": "Police and fugitive",
+      "C": "pranks among friends",
+      "D": "Strangers meet by chance",
+      "E": "victim and perpetrator",
+      "F": "mother-daughter relationship"
+    },
+    "Answer": "E",
+    "Explanation": "The elevator was eventually empty. Combining the woman's terrified reaction with the oppressive actions of the plastic bag person, it can be inferred that the woman was killed by the plastic bag person, and the two are in a victim-perpetrator relationship."
+  },
+  {
+    "video ID": "0at001QMutY",
+    "Question ID": 36,
+    "Question Type": "IMC",
+    "Question": "What is the most likely psychological state of the woman who looks terrified at 1:12?",
+    "Options": {
+      "A": "Concerns about elevator failures",
+      "B": "The nervousness of discovering strangers",
+      "C": "The fear of people approaching plastic bags",
+      "D": "Due to a panic attack of claustrophobia",
+      "E": "Recall past traumas",
+      "F": "Worry about being late."
+    },
+    "Answer": "C",
+    "Explanation": "After the elevator stops at that moment, the plastic bag person appears outside the door. The woman and the plastic bag person look at each other, and her terrified expression directly stems from the fear of the approaching perpetrator."
+  },
+  {
+    "video ID": "0at001QMutY",
+    "Question ID": 37,
+    "Question Type": "TCI",
+    "Question": "What is the direct reason why the elevator is ultimately empty?",
+    "Options": {
+      "A": "The woman left the elevator early.",
+      "B": "Elevator malfunction led to the disappearance.",
+      "C": "The woman hides herself.",
+      "D": "The surveillance footage has been tampered with.",
+      "E": "Supernatural power erases existence.",
+      "F": "The plastic bag man killed the woman."
+    },
+    "Answer": "F",
+    "Explanation": "When the elevator returned to the first floor and there was no one inside, combined with the threatening presence of the plastic bag man, it can be inferred that the woman was killed by the plastic bag man and removed from the elevator when it stopped."
+  },
+  {
+    "video ID": "0at001QMutY",
+    "Question ID": 38,
+    "Question Type": "TA",
+    "Question": "Arrange the following events in chronological order:\n① The woman enters the elevator\n② The elevator descends to a certain floor\n③ The elevator stops and the door opens\n④ The woman shows a terrified expression\n⑤ The elevator, empty, returns to the first floor",
+    "Options": {
+      "A": "①→③→②→④→⑤",
+      "B": "②→①→③→⑤→④",
+      "C": "④→①→③→②→⑤",
+      "D": "⑤→①→②→③→④",
+      "E": "①→②→③→④→⑤",
+      "F": "①→②→④→③→⑤"
+    },
+    "Answer": "E",
+    "Explanation": "The correct order is that the woman enters the elevator first (①), the elevator descends (②), stops and opens the door (③), the woman is terrified upon seeing the plastic bag person (④), and finally, the elevator returns empty (⑤)."
+  },
+  {
+    "video ID": "0at001QMutY",
+    "Question ID": 39,
+    "Question Type": "MHR",
+    "Question": "The shot of no one in the elevator at 1:27 implies what?",
+    "Options": {
+      "A": "The woman successfully escaped.",
+      "B": "The surveillance video has been deleted.",
+      "C": "The woman has been killed.",
+      "D": "The elevator has never been entered by anyone.",
+      "E": "The time-space loop begins.",
+      "F": "Plastic bag man disguised as a woman"
+    },
+    "Answer": "C",
+    "Explanation": "The shot implies that the woman encountered an accident when the elevator stopped, through the empty state of the elevator, which is directly related to the harmful act of the plastic bag person."
+  },
+  {
+    "video ID": "0at001QMutY",
+    "Question ID": 40,
+    "Question Type": "CTI",
+    "Question": "What is the most likely core theme of this film?",
+    "Options": {
+      "A": "The dangers of out-of-control technology",
+      "B": "Family relationship breakdown",
+      "C": "Overcome psychological fear",
+      "D": "Supernatural phenomena exist.",
+      "E": "Be vigilant against potential criminals",
+      "F": "Elevator safety knowledge"
+    },
+    "Answer": "E",
+    "Explanation": "The whole film emphasizes the need to be vigilant against potential crimes in daily life through the plot of strangers threatening in a confined space, which is consistent with the theme of 'Beware of Criminals'."
+  }
+]
