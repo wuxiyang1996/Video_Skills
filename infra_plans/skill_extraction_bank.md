@@ -1,288 +1,362 @@
 # Skill Extraction & Skill Bank — Design Plan
 
-> Goal: Define the **skill bank infrastructure** — how skills are represented,
-> stored, composed, and managed. This covers universal video skills, social
-> inference operators, the skill bank class, and composition patterns.
+> Goal: Define the **skill bank infrastructure** — how **reasoning** skills are represented, stored, composed, and evolved. Skills are **reusable inference operators** over memory outputs and perspective threads, not generic retrieval routines or offline pipeline steps.
 >
 > **Related plans:**
+> - [Atomic skills & hop refactor — execution checklist](atomic_skills_hop_refactor_execution_plan.md) — layer split, constraints, minimal atomic set
 > - [Agentic Memory](agentic_memory_design.md) — episodic / semantic / state stores + evidence layer
 > - [Video Benchmarks & Grounding](video_benchmarks_grounding.md) — benchmarks, memory graph, adapters
-> - [Actors / Reasoning Model](actors_reasoning_model.md) — 8B controller, reasoning core, orchestrator
-> - [Skill Synthetics Agents](skill_synthetics_agents.md) — skill crafting, evolution, quality control
+> - [Actors / Reasoning Model](actors_reasoning_model.md) — 8B controller, hops, orchestration
+> - [Skill Synthetics Agents](skill_synthetics_agents.md) — synthesis, evolution, reflection
 
 ---
 
-## 1. Skills as Reusable Operators
+## 1. Core principle: skills are reasoning operators, not infrastructure steps
 
-Skills in this system are **not** generic retrieval routines. They are
-**reusable inference operators** — each encodes a specific reasoning pattern
-over the memory graph and perspective threads. They come in two flavors:
+Skills in this system are **reusable inference operators** — each encodes a verifiable reasoning pattern over episodic / semantic / state memory outputs, evidence attachments, and perspective threads.
 
-1. **Universal video skills** — applicable to every benchmark regardless of
-   video length (always active)
-2. **Social inference skills** — specialized reasoning patterns for social
-   dynamics, perspective tracking, and theory-of-mind questions
+**Infrastructure** (observation, entity tracking, memory construction, index search) exposes **primitives** the controller calls; those primitives are **not** first-class entries in the reasoning skill bank.
 
----
+One reasoning hop may involve a few atomic skills rather than a single monolithic reasoning skill. Atomic skills are the minimal reusable reasoning operators, while composite skills are stable, reusable short chains of atomic skills that can still be expanded for diagnosis and revision.
 
-## 2. Universal Video Skills
+We treat **one reasoning hop** as a **short, verifiable composition** of several atomic skills rather than a monolithic reasoning step. Composite skills **emerge** from frequently successful atomic chains (see §8).
 
-Always available, regardless of video length or memory layer status.
+### 1.1 Infrastructure primitives (callable, not bank skills)
 
-| skill_id | Name | What it does |
-|---|---|---|
-| `reason_chain` | Chain-of-Thought Reasoning | The core `[Think]/[Answer]` loop. Every benchmark uses this. |
-| `temporal_reason` | Temporal Ordering | Reason about event ordering using visual evidence or timestamps |
-| `causal_reason` | Causal / Physical Inference | Infer cause-effect; applies to Video-Holmes deduction, SIV-Bench counterfactuals |
-| `social_reason` | Social State Inference | Infer unobservable mental states (emotions, intentions, attitudes, relationships) from observable cues |
+These operations remain first-class **system** capabilities but are **not** stored as reasoning skills in the bank:
 
-### Long-video-only skills (activated when memory layer is active)
+| Primitive | Role |
+|-----------|------|
+| `observe_segment` | Run observation on one clip; produce structured observations |
+| `detect_entities` | Face/voice/ID detection; entity graph updates |
+| `build_episodic` | Write timestamped episodic records with entity links and evidence |
+| `build_semantic` | Distill episodic clusters into semantic summaries |
+| `update_state` | Refresh query-time **state memory** (social + spatial subfields) |
+| `search_memory` | Embed a query and return top-k matches from the graph / stores |
 
-| skill_id | Name | What it does |
-|---|---|---|
-| `observe_segment` | Observe Video Segment | Run observation pipeline on one clip; produce episodic descriptions |
-| `detect_entities` | Detect & Track Entities | Face/voice detection and entity graph updates |
-| `build_episodic` | Build Episodic Memory | Store timestamped observations with entity links and evidence attachments |
-| `build_semantic` | Build Semantic Memory | Distill episodic clusters into semantic summaries (long-horizon abstractions) |
-| `update_state` | Maintain State Memory | Refresh **social + spatial** query-time state from new evidence (single store, two subfields; not separate “social” and “spatial” memories) |
-| `search_memory` | Retrieve from Memory | Embed a query and return top-k matches from the graph / stores |
+Reasoning skills **consume** the outputs of these primitives; they are not duplicates of them.
 
-### Example skill definition
-
-```python
-Skill(
-    skill_id="reason_chain",
-    name="Chain-of-Thought Reasoning",
-    strategic_description=(
-        "Iterative Think/Answer reasoning over video evidence. "
-        "Works in direct mode (raw video in context) or retrieval mode "
-        "(search memory graph). Universal across all benchmarks."
-    ),
-    tags=["REASONING", "UNIVERSAL"],
-    protocol=Protocol(
-        preconditions=["question_received=true"],
-        steps=[
-            "Determine mode: direct (video in context) or retrieval (memory graph)",
-            "Generate [Think] step: reason about available evidence",
-            "If evidence insufficient and retrieval available: [Search] for more",
-            "Repeat Think/Search until confident",
-            "Generate [Answer] with final response",
-        ],
-        success_criteria=["answer_produced=true"],
-        abort_criteria=["max_iterations_exceeded"],
-        expected_duration=5,
-    ),
-    contract=SkillEffectsContract(
-        skill_id="reason_chain",
-        eff_add={"answer_produced", "reasoning_chain_generated"},
-        eff_event={"reasoning_completed"},
-    ),
-)
-```
-
-### Composition patterns
-
-**Direct mode** (Video-Holmes, SIV-Bench):
-```
-[raw video + question] → reason_chain
-                           ├─ [Think] (perceive + reason)
-                           ├─ [Think] (connect / infer)
-                           └─ [Answer]
-```
-
-**Retrieval mode** (VRBench, LongVideoBench, CG-Bench, M3-Bench):
-```
-[offline] for each clip:
-              detect_entities → observe_segment → build_episodic
-          build_semantic (aggregate)
-          update_state (social + spatial snapshot for query-time reasoning)
-
-[online]  [question] → reason_chain
-                         ├─ [Think]
-                         ├─ [Search] → search_memory (+ entity translate if needed)
-                         ├─ [Think]
-                         └─ [Answer]
-```
+**Do not** treat generic tool calls or dataset-specific answer templates as the main bank content. The bank emphasizes **reusable, verifiable, evolvable** reasoning operators.
 
 ---
 
-## 3. Core Social Inference Skills
+## 2. Skill hierarchy
 
-Each social skill operates over the memory graph and perspective threads
-maintained by the 8B controller.
+### 2.1 Atomic skills
 
-| Skill | Purpose | Trigger | Execution Pattern | Expected Output |
-|-------|---------|---------|-------------------|-----------------|
-| `who_saw_what` | Determine which characters witnessed a specific event | "did X see/know about Y" | Locate event → check `witnesses` → cross-reference perspective threads | List of witnesses + non-witnesses with evidence |
-| `infer_belief_update` | Track how a character's belief changed after an event | Belief change question | Get perspective thread → find belief before event → check if event in observed_events → infer post-event belief | Before/after belief pair with evidence |
-| `track_commitment` | Track whether a character kept or broke a promise | Promise fulfillment question | Locate commitment event → find subsequent actions → compare against commitment | Kept/broken with timeline |
-| `detect_intention_shift` | Identify when a character's goal changed | Motivation question | Query perspective thread goals across time → identify change points → retrieve causal events | Intention timeline with pivot events |
-| `resolve_conflicting_testimony` | Reconcile contradictory claims by different characters | Multiple conflicting accounts | Retrieve each character's perspective → identify what each observed → determine consistency | Reconciliation with credibility scores |
-| `identify_hidden_action` | Detect an action performed when others weren't present | Concealed behavior question | Find events where actor is sole witness → check if info leaked later | Hidden action + who does/doesn't know |
-| `track_relationship_change` | Trace relationship evolution over time | Relationship trajectory question | Query arc-level memory → retrieve episodes → extract trust/stance at each point | Relationship timeline with evidence |
-| `social_causal_attribution` | Determine why a social state changed | "Why did A become suspicious of B?" | Find target social-state entry → trace supporting_evidence → follow causal edges | Causal chain from trigger to outcome |
-| `deception_hypothesis_check` | Test whether a character is deceiving another | Suspected deception | Compare deceiver's perspective thread with public statements → check information asymmetry → find hidden actions | Deception confirmed/denied with evidence |
-| `multi_perspective_reconciliation` | Compare how multiple characters perceive the same event | Different viewpoints question | Retrieve perspective threads for all entities → extract each character's view → identify divergences | Per-character view table with divergences |
+**Atomic skills** are the **minimal** reusable reasoning operators: single-purpose steps with clear inputs, outputs, and verification hooks (e.g. `order_two_events`, `ground_entity_reference`).
 
-### Failure modes per skill
+### 2.2 Composite skills
 
-| Skill | Known Failure Modes |
-|-------|--------------------|
-| `who_saw_what` | Event not found; ambiguous presence |
-| `infer_belief_update` | Character absent; belief not inferable |
-| `track_commitment` | Commitment ambiguous; outcome unclear |
-| `detect_intention_shift` | Subtle shift; insufficient evidence |
-| `resolve_conflicting_testimony` | Both accounts plausible; no resolution |
-| `identify_hidden_action` | Action not captured by observer |
-| `track_relationship_change` | Sparse interactions; no clear arc |
-| `social_causal_attribution` | Multiple causes; weak evidence |
-| `deception_hypothesis_check` | Deception too subtle; missing data |
-| `multi_perspective_reconciliation` | Perspectives too similar to distinguish |
+**Composite skills** bundle a **stable** sequence of atomic skills under one `skill_id` for efficient invocation. They must remain **expandable** into an explicit atomic trace for debugging, localization, and bank maintenance.
+
+Legacy names such as `who_saw_what` or `infer_belief_update` are best modeled as **composite** macros over atomics (see §5.2), not as opaque monoliths.
+
+### 2.3 Task-level reasoning policies
+
+**Task-level policies** map question families / benchmarks to **preferred hop sequences** or **skill family** emphasis (e.g. more temporal atomics for ordering questions). Policies are **routing hints** for the controller, not additional top-level memory types.
 
 ---
 
-## 4. Skill Representation
+## 3. One reasoning hop as a composition of atomic skills
 
-### 4.1 SocialSkill Schema
+A **hop** is one unit of progress toward an answer: a small goal (e.g. “establish order of A and B”, “determine whether Alice could know X”) realized by **chaining atomics**, each producing an intermediate claim or structured result that the next step can check.
 
-```python
-@dataclass
-class SocialSkill:
-    skill_id: str
-    name: str
-    purpose: str                    # one sentence
-    trigger_conditions: List[str]   # when to apply this skill
-    required_inputs: List[str]      # what the controller must provide
-    execution_steps: List[str]      # ordered steps over memory graph
-    expected_outputs: List[str]     # what the skill produces
-    failure_modes: List[str]        # known ways this skill can fail
-    refinement_signals: List[str]   # what feedback improves this skill
+Multi-hop QA is **multiple hops**, each with its own atomic chain and verification boundary.
 
-    # Performance tracking
-    n_invocations: int = 0
-    success_rate: float = 0.0
-    avg_evidence_quality: float = 0.0
-    version: int = 1
-    protocol_history: List[Dict] = field(default_factory=list)
+---
+
+## 4. Atomic skill families
+
+### 4.1 Question parsing skills
+
+- `identify_question_target`
+- `identify_question_type`
+- `extract_time_anchor`
+- `decompose_into_subgoals`
+- `identify_missing_information`
+
+### 4.2 Retrieval and grounding skills
+
+- `retrieve_relevant_episode`
+- `retrieve_entity_thread`
+- `retrieve_state_snapshot`
+- `ground_event_span`
+- `ground_entity_reference`
+- `check_visibility`
+- `check_co_presence`
+- `locate_supporting_evidence`
+- `locate_counterevidence`
+
+### 4.3 Temporal skills
+
+- `order_two_events`
+- `trace_event_sequence`
+- `check_state_change`
+- `align_cause_before_effect`
+
+### 4.4 Causal skills
+
+- `propose_candidate_causes`
+- `check_causal_support`
+- `compare_candidate_causes`
+- `link_action_to_outcome`
+
+### 4.5 Social / belief skills
+
+- `infer_observation_access`
+- `update_belief_state`
+- `compare_beliefs_between_agents`
+- `detect_belief_conflict`
+- `infer_intention_from_behavior`
+- `infer_deception_possibility`
+- `trace_social_state_transition`
+
+### 4.6 Verification skills
+
+- `check_evidence_sufficiency`
+- `check_reasoning_gap`
+- `check_alternative_hypothesis`
+- `calibrate_answer_confidence`
+- `decide_answer_or_abstain`
+
+### 4.7 Reflection skills (for evolution / repair; may run post-hoc)
+
+- `classify_failure_type`
+- `localize_failed_step`
+- `propose_repair_action`
+- `promote_trace_to_composite_skill`
+- `merge_redundant_skills`
+- `retire_unreliable_skill`
+
+### 4.8 Minimal starter set (implementation v1)
+
+For a practical first version, implement **12** atomics:
+
+- `identify_question_target`
+- `decompose_into_subgoals`
+- `retrieve_relevant_episode`
+- `ground_entity_reference`
+- `ground_event_span`
+- `infer_observation_access`
+- `order_two_events`
+- `check_state_change`
+- `check_causal_support`
+- `update_belief_state`
+- `check_evidence_sufficiency`
+- `decide_answer_or_abstain`
+
+**Second pass:** add `check_alternative_hypothesis`, `locate_counterevidence`, `classify_failure_type`, `localize_failed_step`.
+
+---
+
+## 5. Composite skill examples and worked hops
+
+### 5.1 One reasoning hop as a composition of atomic skills — examples
+
+**Example A: temporal hop**
+
+*Question:* Did event A happen before event B?
+
+*Hop:*
+
+```
+identify_question_target
+  -> ground_event_span(A)
+  -> ground_event_span(B)
+  -> order_two_events
+  -> check_evidence_sufficiency
 ```
 
-### 4.2 COS-PLAY-Compatible Skill Schema
+**Example B: belief hop**
 
-Skills also conform to the existing COS-PLAY `Skill` schema:
+*Question:* Did John know the key was moved?
+
+*Hop:*
+
+```
+ground_entity_reference(John)
+  -> retrieve_entity_thread
+  -> ground_event_span(key moved)
+  -> infer_observation_access
+  -> update_belief_state
+  -> check_evidence_sufficiency
+```
+
+**Example C: deception hop**
+
+*Question:* Why does Alice think Bob is lying?
+
+*Hop:*
+
+```
+identify_question_target
+  -> decompose_into_subgoals
+  -> retrieve_relevant_episode
+  -> compare_beliefs_between_agents
+  -> detect_belief_conflict
+  -> locate_supporting_evidence
+  -> check_alternative_hypothesis
+```
+
+### 5.2 Social composites as macros over atomics
+
+Earlier **coarse** social operators can be expressed as composites, e.g.:
+
+- `who_saw_what` → `ground_event_span` → `check_visibility` / `check_co_presence` → `retrieve_entity_thread` fragments as needed
+- `infer_belief_update` → `infer_observation_access` → `update_belief_state` → `check_evidence_sufficiency`
+- `deception_hypothesis_check` → `compare_beliefs_between_agents` → `locate_counterevidence` → `check_alternative_hypothesis`
+
+---
+
+## 6. Skill schema
+
+Skills conform to a **layered** schema (COS-PLAY-compatible fields can map into `protocol_steps`, `tags`, and contracts). Important fields for **evolvability**:
 
 ```python
 Skill(
     skill_id: str,
-    name: str,
-    strategic_description: str,
-    tags: List[str],           # e.g. ["REASONING", "SOCIAL", "PERSPECTIVE"]
-    protocol: Protocol(
-        preconditions: List[str],
-        steps: List[str],
-        success_criteria: List[str],
-        abort_criteria: List[str],
-        expected_duration: int,
-    ),
-    contract: SkillEffectsContract(
-        skill_id: str,
-        eff_add: Set[str],     # postconditions added
-        eff_event: Set[str],   # events emitted
-    ),
-    sub_episodes: List[str],   # evidence pointers
-    n_instances: int,
+    level: Literal["atomic", "composite"],
+    family: str,
+    trigger_conditions: list[str],
+    inputs: list[str],
+    output_type: str,
+    protocol_steps: list[str],
+    child_skills: list[str] | None,   # composite only
+    required_primitives: list[str],    # e.g. search_memory, not "skills"
+    verification_rule: list[str],
+    failure_modes: list[str],
+    repair_strategies: list[str],
+    reuse_stats: dict,
+    examples: list[dict],
 )
 ```
 
----
+**Field roles:**
 
-## 5. Skill Composition
+| Field | Role |
+|-------|------|
+| `level` | Atomic vs composite |
+| `output_type` | Structured output expectation (claim, span, ordering, belief snapshot, abstain, …) |
+| `child_skills` | Ordered atomic (or nested composite) IDs for expansion |
+| `required_primitives` | Infrastructure / retrieval calls the skill assumes |
+| `verification_rule` | How to check the step locally |
+| `failure_modes` / `repair_strategies` | For reflection and bank maintenance |
 
-### 5.1 Composition Example
-
-```
-Question: "Does Alice know that Bob stole the key?"
-
-Strategy: who_saw_what → infer_belief_update → deception_hypothesis_check
-
-  Step 1: who_saw_what(event="Bob takes key")
-    → Bob was alone; Alice not present [E-7, 02:15]
-
-  Step 2: infer_belief_update(entity="Alice", event="Bob takes key")
-    → Alice has no direct knowledge; check for indirect learning
-    → No dialogue informed Alice [perspective thread shows gap]
-
-  Step 3: deception_hypothesis_check(deceiver="Bob", target="Alice")
-    → Bob has not mentioned the key; Alice asked about it at 04:30
-    → Bob deflected → consistent with concealment
-
-  Answer: No, Alice does not know. Evidence: [E-7], [E-23], [perspective gap]
-```
-
-### 5.2 Prompt variant mapping
-
-| Question type | Skill emphasis | Memory emphasis | Frame emphasis |
-|---------------|---------------|-----------------|----------------|
-| Social Relationship (SR) | Character analysis, interaction tracking | Entity nodes, interaction episodes | Frames with multiple people |
-| Temporal Causal (TCI) | Causal reasoning, temporal tracking | Chronological episodic chain | Frames at cause and effect points |
-| Hidden Reasoning (MHR) | Threat detection, pattern recognition | Semantic inferences, anomaly nodes | Frames with subtle cues |
-| Temporal Arrangement (TA) | Temporal ordering | Timestamped episodic nodes | Spread across timeline |
-| Core Theme (CTI) | Theme extraction, pattern recognition | Semantic summary nodes | Representative frames |
+Optional compatibility shim: map `protocol_steps` ↔ COS-PLAY `Protocol.steps`, and keep `contract` / `SkillEffectsContract` for existing code paths (`skill_agents/stage3_mvp/schemas.py`).
 
 ---
 
-## 6. Skill Bank Infrastructure
+## 7. Composition patterns
 
-### 6.1 SkillBank Class
+**Direct mode** (short video; raw frames in context): hops still use **atomic** reasoning steps internally; there may be no `search_memory` primitive, but atomics like `ground_event_span` may operate on the provided visual/text context.
+
+**Retrieval mode** (long video; graph available):
+
+```
+[offline pipeline — infrastructure, not bank skills]
+  for each clip:
+      detect_entities -> observe_segment -> build_episodic
+  build_semantic
+  update_state
+
+[online reasoning — bank skills over memory outputs]
+  Question -> parse / policy
+         -> Hop 1: atomic chain + verify
+         -> Hop 2: ...
+         -> decide_answer_or_abstain
+```
+
+Legacy **Think / Search / Answer** loops remain the **surface protocol** for the frozen reasoner; **internally**, the controller logs **atomic traces** per hop. `[Search]` invokes **`search_memory`** (primitive), not a reasoning skill.
+
+### Prompt / task mapping (unchanged intent)
+
+| Question type | Skill family emphasis | Memory emphasis |
+|---------------|----------------------|-----------------|
+| Social Relationship (SR) | Social / belief atomics | Entities, perspective threads |
+| Temporal Causal (TCI) | Temporal + causal atomics | Episodic chain, edges |
+| Hidden Reasoning (MHR) | Verification + counterevidence | Semantic + episodic |
+| Temporal Arrangement (TA) | Temporal atomics | Timestamped nodes |
+| Core Theme (CTI) | Parsing + retrieval | Semantic summaries |
+
+---
+
+## 8. Skill promotion, split, merge, retire
+
+Aligned with [Skill Synthetics Agents](skill_synthetics_agents.md):
+
+| Operation | When |
+|-----------|------|
+| **Patch** | Add or revise preconditions, `verification_rule`, or intermediate checks |
+| **Split** | A composite shows divergent failure clusters; carve narrower variants |
+| **Promote** | A frequently successful **atomic chain** stabilizes with a clear verification rule |
+| **Merge** | Near-duplicate composites with similar `child_skills` and triggers |
+| **Retire** | Consistently unreliable or unused skills |
+
+**Promotion criteria (atomic chain → composite):** succeeds repeatedly across multiple examples; has a **stable** `verification_rule`; appears in more than one reasoning context or task family; remains interpretable as a reusable procedure.
+
+---
+
+## 9. Skill bank infrastructure
+
+### 9.1 SkillBank class
 
 ```python
 class SkillBank:
-    skills: Dict[str, SocialSkill]
-    composition_edges: Dict[str, List[str]]  # parent strategy → child skills
+    skills: Dict[str, Skill]  # atomic + composite
+    composition_edges: Dict[str, List[str]]  # parent composite -> child skills
     performance: Dict[str, SkillPerformance]
     co_occurrence: Dict[Tuple[str, str], int]
 
-    def select(self, question_analysis: Dict) -> List[SocialSkill]: ...
+    def select(self, question_analysis: Dict) -> List[Skill]: ...
     def compose(self, skill_ids: List[str]) -> ComposedStrategy: ...
     def update_performance(self, skill_id: str, trace: ReasoningTrace) -> None: ...
-    def craft_new_skill(self, failure_analysis: FailureAnalysis) -> Optional[SocialSkill]: ...
+    def craft_new_skill(self, failure_analysis: FailureAnalysis) -> Optional[Skill]: ...
     def maintain(self) -> MaintenanceReport: ...  # merge, split, retire, promote
 ```
 
-### 6.2 Skill DAG
+### 9.2 Skill DAG
 
-Skills form a directed acyclic graph tracking composition and performance:
+- **Composition edges** link composite strategies to child atomics (or nested composites).
+- **Performance** and **co-occurrence** inform promotion and merge.
 
-- **Composition edges** link parent strategies to child skills
-- **Performance tracking** records success rate, evidence quality, invocation count
-- **Co-occurrence matrix** identifies which skills frequently chain together,
-  informing future composition suggestions
+### 9.3 Skill retrieval
 
-### 6.3 Skill Retrieval
+Skill retrieval uses RAG-style scoring (e.g. from `decision_agents/agent_helper.py`):
 
-Skill retrieval uses RAG scoring with three factors (from
-`decision_agents/agent_helper.py`):
+1. **Relevance** — embedding similarity between question and skill description  
+2. **Applicability** — trigger match against question analysis  
+3. **Pass rate** — historical success  
 
-1. **Relevance** — embedding similarity between question and skill description
-2. **Applicability** — trigger condition match against question analysis
-3. **Pass rate** — historical success rate of the skill
+### 9.4 Bank storage
 
-### 6.4 Bank Storage
-
-- `skill_bank.jsonl` — COS-PLAY-compatible `Skill` objects
-- Each skill carries: `skill_id`, `name`, `strategic_description`, `tags`,
-  `protocol`, `contract`, `sub_episodes` (evidence pointers), `n_instances`
-- Compatible with `SkillBankMVP` from `skill_agents/skill_bank/bank.py`
+- `skill_bank.jsonl` — serialized `Skill` records compatible with `SkillBankMVP` (`skill_agents/skill_bank/bank.py`) where applicable.
 
 ---
 
-## 7. Integration with Existing Components
+## 10. Integration with existing components
 
-| Existing component | How it connects |
-|---|---|
-| `skill_agents/stage3_mvp/schemas.py` → `Skill`, `Protocol`, `SkillEffectsContract` | All skills use these schemas directly |
-| `skill_agents/skill_bank/bank.py` → `SkillBankMVP` | Crafted skill bank stored as SkillBankMVP-compatible JSONL |
-| `skill_agents/skill_evaluation/` → LLM judge | Quality control reuses evaluation dimensions |
-| `decision_agents/agent_helper.py` → `select_skill_from_bank()` | Prompt composer uses the same RAG scoring |
-| `rag/retrieval.py` → `MemoryStore` | Skill bank retrieval uses `SkillQueryEngine` |
-| `rag/embedding/` → embedders | Skill embeddings for retrieval |
-| `data_structure/experience.py` → `Experience`, `Episode` | Each Q&A trace can be packaged as an `Episode` |
+| Component | Connection |
+|-----------|------------|
+| `skill_agents/stage3_mvp/schemas.py` | `Skill`, `Protocol`, `SkillEffectsContract` — map layered fields onto existing structs or extend |
+| `skill_agents/skill_bank/bank.py` | `SkillBankMVP` / JSONL |
+| `skill_agents/skill_evaluation/` | LLM judge dimensions for crafted skills |
+| `decision_agents/agent_helper.py` | `select_skill_from_bank()` — RAG scoring |
+| `rag/retrieval.py`, `rag/embedding/` | Memory and skill embeddings |
+| `data_structure/experience.py` | Package traces as `Experience` / `Episode` |
+
+---
+
+## 11. Failure modes (example)
+
+Atomics fail in **localized** ways; composites inherit failure from child steps. Examples:
+
+| Family | Example failure modes |
+|--------|------------------------|
+| Grounding | Wrong entity; wrong span; missed evidence |
+| Temporal | Order unsupported by timestamps / narrative |
+| Causal | Competing causes; weak support |
+| Social | Perspective confusion; belief update without access |
+| Verification | Premature answer; ignored alternatives |
+
+Full reflection taxonomy: [Skill Synthetics Agents — failure categories](skill_synthetics_agents.md).

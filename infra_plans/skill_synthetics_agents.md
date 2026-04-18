@@ -5,11 +5,14 @@
 > judge), cross-video accumulation, failure-driven self-evolution, and the
 > continuous skill maintenance loop.
 >
+> **Evolution unit:** updates apply to **atomic skill chains**, **reasoning hops**, and **composite skills** — not only coarse monolithic skills. See [Skill Extraction / Bank](skill_extraction_bank.md) for atomic families and hop composition.
+>
 > **Related plans:**
+> - [Atomic skills & hop refactor — execution checklist](atomic_skills_hop_refactor_execution_plan.md)
 > - [Agentic Memory](agentic_memory_design.md) — three memory stores + evidence layer
 > - [Video Benchmarks & Grounding](video_benchmarks_grounding.md) — benchmarks, memory graph, adapters
 > - [Actors / Reasoning Model](actors_reasoning_model.md) — 8B controller, reasoning core, orchestrator
-> - [Skill Extraction / Bank](skill_extraction_bank.md) — skill definitions and bank infrastructure
+> - [Skill Extraction / Bank](skill_extraction_bank.md) — atomic/composite skills and bank infrastructure
 
 ---
 
@@ -89,7 +92,67 @@ but adapted for video reasoning skills rather than game strategies.
 
 ---
 
-## 4. Failure Taxonomy
+## 4. Evolution unit: atomic chains, hops, and composite skills
+
+Bank maintenance and learning signals target **atomic traces** and **hops** (short compositions of atomics), not only whole-answer or whole-skill failures. A **composite skill** is a promoted macro; evolution must still recover the **underlying atomic chain** for diagnosis (see [Skill Extraction / Bank §8](skill_extraction_bank.md)).
+
+### 4.1 Reflection unit: atomic-step failure localization
+
+Failures are **not** attributed only at the whole-skill or whole-answer level. The system first localizes failure to:
+
+1. **Observation / grounding failure** — wrong spans, wrong entities, missed evidence, visibility or access misread.
+2. **Reasoning failure** — atomic skill misapplied or wrong output within a hop (temporal, causal, belief, perspective).
+3. **Verification failure** — sufficiency, alternatives, or confidence not checked before answering.
+
+For reasoning failures, the controller further localizes the failed **atomic skill(s)** within the hop trace before proposing a patch, split, or promotion.
+
+### 4.2 Failure categories (by subsystem)
+
+**Observation-side failures**
+
+- Wrong entity grounding  
+- Wrong event span grounding  
+- Missed relevant evidence  
+- Visibility / access misread  
+
+**Reasoning-side failures**
+
+- Temporal ordering error  
+- Causal linkage error  
+- Belief update error  
+- Perspective confusion  
+- Unsupported social inference  
+
+**Verification-side failures**
+
+- Evidence insufficiency not detected  
+- Alternative hypothesis ignored  
+- Overconfident answer  
+
+These categories refine the finer-grained taxonomy in §5 and drive which bank fields to patch (`verification_rule`, `protocol_steps`, `repair_strategies`).
+
+### 4.3 Update rules
+
+| Rule | Action |
+|------|--------|
+| **Patch** | Add or revise a precondition, `verification_rule`, or intermediate check on an atomic or composite skill |
+| **Split** | Split a broad composite into narrower variants when **failure clusters** differ by child step or trigger |
+| **Promote** | Promote a frequently successful **atomic chain** into a composite skill (criteria below) |
+| **Merge** | Merge near-duplicate composites with similar `child_skills` and triggers |
+| **Retire** | Retire consistently unreliable or unused skills |
+
+### 4.4 Promotion criteria (atomic chain → composite)
+
+A candidate atomic chain is promoted to a composite skill only if it:
+
+- Succeeds **repeatedly** across multiple examples  
+- Has a **stable** `verification_rule` (see [Skill Extraction / Bank §6](skill_extraction_bank.md))  
+- Appears in **more than one** reasoning context or task family  
+- Remains **interpretable** as a reusable procedure (expandable to atomics for diagnosis)  
+
+---
+
+## 5. Failure Taxonomy
 
 When the controller produces a wrong answer, the failure is classified to
 drive targeted skill updates.
@@ -106,7 +169,7 @@ drive targeted skill updates.
 
 ---
 
-## 5. Failure → Update Mapping
+## 6. Failure → Update Mapping
 
 Each failure type triggers a targeted update. The controller identifies the
 structural cause and patches the specific component.
@@ -123,7 +186,7 @@ structural cause and patches the specific component.
 
 ---
 
-## 6. Skill Evolution Mechanisms
+## 7. Skill Evolution Mechanisms
 
 | Mechanism | Trigger | Action |
 |-----------|---------|--------|
@@ -136,7 +199,7 @@ structural cause and patches the specific component.
 
 ---
 
-## 7. Evolution Loop
+## 8. Evolution Loop
 
 ```
 For each evaluation batch:
@@ -146,8 +209,8 @@ For each evaluation batch:
      → Reinforce skills used
      → Extract new skill patterns from novel compositions
   4. For wrong answers:
-     → Classify failure type (§4)
-     → Apply targeted update (§5)
+     → Classify failure type (§5; subsystem: §4.2)
+     → Apply targeted update (§6)
      → If no existing skill addresses the failure pattern → craft new skill
   5. Every K batches:
      → Run bank maintenance (merge, split, retire)
@@ -166,7 +229,7 @@ For each evaluation batch:
 
 ---
 
-## 8. Integration with Existing Components
+## 9. Integration with Existing Components
 
 | Existing component | How it connects |
 |---|---|
@@ -178,7 +241,7 @@ For each evaluation batch:
 
 ---
 
-## 9. Implementation Notes
+## 10. Implementation Notes
 
 ### Skill Crafter Module (`skill_crafter.py`)
 

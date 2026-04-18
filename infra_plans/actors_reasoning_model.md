@@ -5,10 +5,11 @@
 > "actor" that drives all video understanding tasks.
 >
 > **Related plans:**
+> - [Atomic skills & hop refactor — execution checklist](atomic_skills_hop_refactor_execution_plan.md)
 > - [Agentic Memory](agentic_memory_design.md) — three memory stores + evidence layer
 > - [Video Benchmarks & Grounding](video_benchmarks_grounding.md) — benchmarks, memory graph, adapters
-> - [Skill Extraction / Bank](skill_extraction_bank.md) — skill definitions and bank infrastructure
-> - [Skill Synthetics Agents](skill_synthetics_agents.md) — skill crafting, evolution, quality control
+> - [Skill Extraction / Bank](skill_extraction_bank.md) — atomic/composite skills, hops, bank infrastructure
+> - [Skill Synthetics Agents](skill_synthetics_agents.md) — skill crafting, evolution, reflection
 
 ---
 
@@ -114,8 +115,8 @@ The offline artifact is the **`SocialVideoGraph`** index ([Video Benchmarks & Gr
 |-------|-------------------|------------------|
 | **Memory construction** | Fuses observer outputs, resolves entities, builds graph edges, distills semantic summaries, constructs perspective threads | Observers (offline, one-time) |
 | **Question decomposition** | Parses question into retrieval sub-goals, identifies target entities and temporal scope | None |
-| **Skill selection** | Matches question to skill bank via embedding + trigger conditions | Embedder (retrieval) |
-| **Skill execution** | Runs selected skill: traverses memory graph, retrieves evidence, updates evidence chain | None (graph ops are local) |
+| **Skill selection** | Matches question to **atomic / composite** skills via embedding + trigger conditions; plans **hops** | Embedder (retrieval) |
+| **Skill execution** | Runs a **hop** (atomic chain or composite expanded to atomics); traverses memory; updates evidence chain | None (graph ops are local); `search_memory` is a **primitive**, not a bank skill |
 | **Evidence sufficiency** | Evaluates whether collected evidence answers the question | None |
 | **Prompt composition** | Assembles evidence chain + skill protocol + keyframes into prompt for Reasoner | None |
 | **Answer generation** | Delegates to frozen Reasoner | Reasoner (single call) |
@@ -132,6 +133,38 @@ The offline artifact is the **`SocialVideoGraph`** index ([Video Benchmarks & Gr
 | Reasoner | Qwen3-VL-72B | Produce evidence-grounded answer from curated prompt | Online (once per question, max 2 retries) |
 | Text Embedder | Qwen3-Embedding-0.6B | Embed queries and memory nodes for retrieval | On demand |
 | MM Embedder | Qwen3-VL-Embedding-2B | Embed multimodal content (frames + text) | On demand |
+
+### 2.5 Skill execution granularity
+
+The controller does **not** execute only monolithic skills. It plans and executes reasoning as a sequence of **hops**, where each hop is a short composition of **atomic skills** (see [Skill Extraction / Bank](skill_extraction_bank.md)). **Composite skills** may be invoked as macros but must remain **expandable** into an explicit atomic trace for diagnosis, localization, and bank updates ([Skill Synthetics Agents §4](skill_synthetics_agents.md)).
+
+One reasoning hop may involve a few atomic skills rather than a single monolithic reasoning skill. Atomic skills are the minimal reusable reasoning operators, while composite skills are stable, reusable short chains of atomic skills that can still be expanded for diagnosis and revision.
+
+The controller operates over: **atomic skills**, **composite skills**, **hop traces** (ordered atomic invocations with intermediate outputs), and **reflection outputs** (failure class, localized step, repair proposal).
+
+### 2.6 Reasoning loop
+
+1. Parse the question and determine reasoning type / task policy.  
+2. Select the **next hop goal** (what this hop must establish).  
+3. Choose an **atomic chain** or **composite** skill (composite expands to atomics in the trace).  
+4. Execute step-by-step over memory, perspective threads, and evidence.  
+5. **Verify** intermediate outputs (local checks aligned with each atomic’s `verification_rule`).  
+6. Either: continue to the **next hop**, **retrieve more evidence** (via `search_memory` and related primitives), **answer**, or **abstain**.  
+7. On failure, emit a **trace** for reflection and skill-bank update ([Skill Synthetics Agents](skill_synthetics_agents.md)).
+
+Surface protocol to the frozen reasoner may still use `[Think]` / `[Search]` / `[Answer]`; the controller’s **authoritative log** for learning is the **atomic trace** per hop.
+
+### 2.7 Controller outputs during reasoning
+
+During online reasoning, the controller should expose (for logging, GRPO, and evolution):
+
+- Chosen **hop goal**  
+- Selected **skill(s)** (atomic IDs and/or composite ID with expansion)  
+- **Atomic trace** (ordered steps with inputs/outputs)  
+- **Intermediate claims**  
+- **Supporting evidence** pointers  
+- **Verification** result per hop / final  
+- **Confidence** and **abstain** decision  
 
 ---
 

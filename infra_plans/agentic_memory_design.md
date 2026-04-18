@@ -7,7 +7,14 @@
 > **Related plans:**
 >
 > - [Actors / Reasoning Model](actors_reasoning_model.md) — controller, perspective threads, orchestration
+> - [Skill Extraction / Bank](skill_extraction_bank.md) — reasoning skill bank (atomic / composite) over memory outputs
 > - [Video Benchmarks & Social Grounding](video_benchmarks_grounding.md) — grounding pipeline, `SocialVideoGraph`, adapters
+
+---
+
+## Reasoning skills vs memory functions
+
+**Reasoning skills** operate **over** memory outputs; they do **not** replace memory functions. Episodic, semantic, and state memory remain the **storage and retrieval substrates**. Atomic and composite skills **consume** retrieved memory entries, evidence attachments, and perspective-thread state to produce **verifiable intermediate reasoning outputs** ([Skill Extraction / Bank](skill_extraction_bank.md)). Keeping this boundary explicit avoids drifting toward duplicate “skill-shaped” memory modules or a fourth top-level store.
 
 ---
 

@@ -8,7 +8,7 @@
 >
 > - [Agentic Memory](agentic_memory_design.md) — three memory stores (episodic, semantic, state) + evidence layer
 > - [Actors / Reasoning Model](actors_reasoning_model.md) — reasoning core, 8B controller, orchestrator
-> - [Skill Extraction / Bank](skill_extraction_bank.md) — skill definitions and bank infrastructure
+> - [Skill Extraction / Bank](skill_extraction_bank.md) — atomic/composite reasoning skills, hop composition, bank infrastructure
 > - [Skill Synthetics Agents](skill_synthetics_agents.md) — skill crafting, evolution, quality control
 
 ---
