@@ -1,179 +1,104 @@
-# Video Benchmarks & Visual Grounding — Design Plan
+# Video Benchmarks & Social Visual Grounding — Design Plan
 
 > Sub-folder: `Video_Skills/memory_manage/`
 >
-> Goal: Define the benchmark landscape, visual grounding infrastructure
-> (VideoMemoryGraph, observation pipeline), and benchmark-specific
-> evaluation adapters for the COS-PLAY (`Video_Skills`) framework.
+> Goal: Define the benchmark landscape, unified social visual grounding infrastructure, and benchmark-specific evaluation adapters for the COS-PLAY (`Video_Skills`) framework.
 >
 > **Related plans:**
+>
+> - [Agentic Memory](agentic_memory_design.md) — three memory stores (episodic, semantic, state) + evidence layer
 > - [Actors / Reasoning Model](actors_reasoning_model.md) — reasoning core, 8B controller, orchestrator
 > - [Skill Extraction / Bank](skill_extraction_bank.md) — skill definitions and bank infrastructure
 > - [Skill Synthetics Agents](skill_synthetics_agents.md) — skill crafting, evolution, quality control
 
 ---
 
-## 0. Key Insight — Reasoning vs. Context Management
+## 0. Key Insight — Shared Reasoning, Shared Grounding, Different Context Regimes
 
-After auditing all target benchmarks, the core finding is:
+After auditing the target benchmarks, the updated finding is:
 
-> **The reasoning capability needed is the same regardless of video length.
-> What differs is only context management — whether the full video fits inside
-> the model's context window.**
+> The core reasoning capability is the same across short and long videos, and the **core visual grounding schema should also be the same**. What differs is not the semantics of reasoning, but **how grounded observations are stored, compressed, and retrieved**.
 
-| | Short video | Long video |
-|---|---|---|
-| **Benchmarks** | Video-Holmes, SIV-Bench | VRBench, LongVideoBench, CG-Bench, M3-Bench |
-| **Video length** | 5 s – 5 min | 10 min – hours |
-| **Fits in VLM context?** | Yes | No |
-| **Needs explicit memory?** | No — feed raw frames/clip directly | Yes — must segment, index, and retrieve |
-| **Core reasoning** | Chain-of-thought over visual evidence | Same chain-of-thought, but over *retrieved* evidence |
+### Short vs. long video
 
-The memory graph, entity tracking, and segmentation pipeline from M3-Agent
-exist because **the video does not fit in context**. They are a
-compression/indexing strategy, not a fundamentally different reasoning paradigm.
+| Aspect | Short context-rich video | Long video |
+|--------|--------------------------|------------|
+| **Representative benchmarks** | Video-Holmes, SIV-Bench | VRBench, LongVideoBench, CG-Bench, M3-Bench |
+| **Video length** | seconds to minutes | tens of minutes to hours |
+| **Fits in VLM context** | usually yes | usually no |
+| **Needs grounding** | yes | yes |
+| **Needs persistent memory / retrieval** | usually no | yes |
+| **Reasoning style** | multi-step reasoning over grounded local evidence | multi-step reasoning over retrieved grounded evidence |
 
-**Implication for architecture:**
+### Architectural implication
 
-1. **A reasoning core** (always active) — chain-of-thought with optional
-   retrieval, applicable to every benchmark. *(see [Actors plan](actors_reasoning_model.md))*
-2. **A memory/retrieval layer** (conditionally active) — builds an indexed
-   graph only when the video exceeds a configurable context budget.
+The system should always include three conceptual layers:
+
+1. **A reasoning core (always active)**  
+   Performs multi-step causal, temporal, and social reasoning over grounded evidence.
+
+2. **A social grounding layer (always active)**  
+   Converts raw video into structured entity-, interaction-, event-, and social-state representations.
+
+3. **A persistence / retrieval layer (conditionally active)**  
+   Activated only when the grounded video state exceeds the context budget. Short videos keep grounded states in-context; long videos store them in a hierarchical memory index.
+
+### Design consequence
+
+Short videos do **not** mean “no grounding.”  
+They mean **grounding without persistent retrieval**.
+
+Long videos mean **grounding plus hierarchical storage and retrieval**.
 
 ---
 
 ## 1. Benchmark Landscape
 
-All datasets in the workspace, classified by what they actually test:
-
-### Tier 1 — Direct reasoning (short video, no memory needed)
+### Tier 1 — Direct reasoning over grounded short videos
 
 #### Video-Holmes — Multi-hop Visual Deduction
 
-| | |
-|---|---|
-| **Video length** | 1–5 min (suspense film clips) |
-| **QA format** | MC (A/B/C/D) with `<think>` reasoning trace |
-| **Scale** | Curated suspense films |
-
-**What it tests.** Compositional, multi-hop deduction: the model must actively
-locate and connect multiple subtle visual cues scattered across different
-moments in the clip. Perception alone is insufficient — the cues are easy to
-see but hard to *connect*.
-
-**Why it matters for us.** Video-Holmes is the strongest short-video reasoning
-benchmark in the set. Although the video fits in context (no memory layer
-needed), it demands the same chain-of-thought discipline as the long-video
-benchmarks. Its `<think>` tag maps directly to our `[Think]` protocol, making
-it the primary testbed for the reasoning core in direct mode.
-
-**Memory-layer demands.** None. The full clip fits in the VLM context window.
-
----
+- **Video length**: 1–5 min
+- **QA format**: MC with `<redacted_thinking>` reasoning trace
+- **What it tests**: compositional, clue-linking reasoning across multiple moments in a clip
+- **Why it matters**: strongest short-video reasoning benchmark for direct mode; `<redacted_thinking>` maps to our `[Think]` protocol
+- **Grounding demand**: medium — local event/clue grounding, temporal ordering, evidence linking
+- **Persistence demand**: low — grounded windows can remain in-context
 
 #### SIV-Bench — Social Interaction & Mental-State Reasoning
 
-| | |
-|---|---|
-| **Video length** | ~32 s average |
-| **QA format** | MC (A–N, up to 14 options) |
-| **Scale** | 8.4k QA pairs; 14 relationship types; 3 subtitle conditions |
+- **Video length**: short clips (~tens of seconds; ~32 s average in corpus)
+- **QA format**: MC with multiple subtitle conditions (original / added / removed)
+- **What it tests**: intentions, beliefs, emotions, relationship inference, counterfactual social reasoning
+- **Why it matters**: primary benchmark for `social_reason`
+- **Grounding demand**: high — social interaction grounding, social-state hypotheses, subtitle-aware evidence attribution
+- **Persistence demand**: low — grounded states can remain in-context, but the representation must still be structured
 
-**What it tests.** Social cognition: inferring unobservable mental states
-(beliefs, intentions, emotions), counterfactual reasoning ("what would happen
-if..."), and relationship classification — all from short video clips of social
-interactions. Three subtitle conditions (original, added, removed) test
-whether the model relies on visual vs. textual cues.
-
-**Why it matters for us.** SIV-Bench stresses the `social_reason` skill and
-counterfactual inference, which are reasoning flavors not covered by other
-benchmarks. The subtitle-condition ablation also lets us measure how robust the
-reasoning core is when modality availability changes.
-
-**Memory-layer demands.** None. Short clips fit entirely in context.
-
-### Tier 2 — Memory-dependent (long video)
+### Tier 2 — Retrieval-based reasoning over grounded long videos
 
 #### VRBench — Multi-step Narrative Reasoning
 
-| | |
-|---|---|
-| **Video length** | ~1.6 h average (long narrative films) |
-| **QA format** | MC + open-ended; each question includes **timestamped intermediate reasoning steps** |
-| **Scale** | Feature-length narrative videos |
-
-**What it tests.** Whether a model can perform genuine multi-step reasoning
-across hour-long narratives. Questions require connecting evidence scattered
-across different segments of the film.
-
-**Why it matters for us.** VRBench provides **gold intermediate reasoning steps
-with timestamps**, not just a final answer. This maps directly to our
-`[Think] → [Search] → [Think] → [Answer]` protocol.
-
-**Memory-layer demands.** High. The memory graph must index narrative events
-over ~1.6 h and support temporal queries.
-
----
+- **What it tests**: reasoning across hour-long narratives with **timestamped intermediate reasoning steps** (gold supervision for multi-step chains)
+- **Grounding demand**: high
+- **Persistence demand**: high — must retrieve events and evidence across long time spans
 
 #### LongVideoBench — Referring Reasoning under Context Pressure
 
-| | |
-|---|---|
-| **Video length** | Up to 1 hour |
-| **QA format** | MC (referring reasoning) |
-| **Scale** | Large-scale; diverse video types |
-
-**What it tests.** The ability to locate a relevant context window inside a
-long interleaved stream of video frames and subtitles, then reason over that
-retrieved context.
-
-**Why it matters for us.** LongVideoBench puts maximum pressure on the
-**retrieval** side of the pipeline. It complements VRBench (multi-step
-reasoning) and CG-Bench (clue grounding).
-
-**Memory-layer demands.** High. Subtitles are interleaved with visual content,
-so the memory graph should store both modalities and support cross-modal search.
-
----
+- **What it tests**: finding and reasoning over relevant windows in long interleaved video/subtitle streams
+- **Grounding demand**: high
+- **Persistence demand**: high — cross-modal retrieval over video + subtitles
 
 #### CG-Bench — Clue-Grounded QA
 
-| | |
-|---|---|
-| **Video length** | Long videos (varies) |
-| **QA format** | MC + open-ended (clue-grounded) |
-| **Scale** | 1,219 long videos; 12,129 QA pairs |
-
-**What it tests.** Clue-grounded question answering: the model must not only
-produce a correct answer but also **retrieve the key visual clues** that
-support it.
-
-**Why it matters for us.** CG-Bench is the closest existing benchmark to a
-pure memory-retrieval evaluation. It directly measures whether retrieved
-memories are the *right* clues.
-
-**Memory-layer demands.** High. The graph must store fine-grained visual
-observations so that retrieved clues can be traced back to specific frames.
-
----
+- **What it tests**: answer correctness plus retrieval of supporting clues
+- **Grounding demand**: high
+- **Persistence demand**: high — evidence attribution down to clips / windows / frames
 
 #### M3-Bench — Entity-Grounded Factual Recall
 
-| | |
-|---|---|
-| **Video length** | 10 min – hours |
-| **QA format** | Open-ended + `[Search]/[Answer]` protocol |
-| **Scale** | Robot FPV + web videos |
-
-**What it tests.** Entity tracking and factual recall across long timelines.
-Questions reference specific people (faces) and speakers (voices).
-
-**Why it matters for us.** M3-Bench is the only benchmark that requires the
-full **entity-tracking** stack: face detection/embedding, voice diarization,
-entity-ID assignment, and ID ↔ name translation.
-
-**Memory-layer demands.** Highest. Requires entity nodes (face/voice
-embeddings), entity-aware retrieval, and bidirectional entity-name translation.
+- **What it tests**: long-range entity tracking, speaker-aware recall, factual retrieval; open-ended + `[Search]/[Answer]` style protocol
+- **Grounding demand**: highest — face/voice/person tracking and entity grounding
+- **Persistence demand**: highest — entity-centric memory and name/ID translation
 
 ### Tier 3 — Extended social benchmarks (from self-evolving design)
 
@@ -183,82 +108,247 @@ embeddings), entity-aware retrieval, and bidirectional entity-name translation.
 | **EgoLife** | Long-term ego-centric daily life | Long-range memory + social tracking at scale |
 | **LongVidSearch** | Multi-hop evidence retrieval | Evidence chaining quality |
 
-### What this means
+### Summary
 
-- **2 out of 6 core benchmarks need zero memory management.** Video-Holmes and
-  SIV-Bench need strong reasoning, good perception, and chain-of-thought — but
-  the full video fits in context.
-- **4 benchmarks require the memory/retrieval layer**, each stressing it
-  differently:
-  - **VRBench** — explicit multi-step reasoning chains over hour-long narratives
-  - **LongVideoBench** — referring reasoning under heavy long-context pressure
-  - **CG-Bench** — clue retrieval + reasoning
-  - **M3-Bench** — entity-grounded factual recall with face/voice tracking
+All benchmarks need grounded representations.  
+Only long-video benchmarks require persistent indexing and retrieval.
 
 ---
 
-## 2. VideoMemoryGraph — Visual Grounding Data Model
+## 2. SocialVideoGraph — Unified Visual Grounding Data Model
 
-### Data model
+**Persistence model (canonical):** the controller uses **three memory stores** — episodic, semantic, and state (social + spatial subfields) — plus an **evidence attachment layer** for visual/audio/subtitle refs. See [Agentic Memory](agentic_memory_design.md).  
+This section describes the **grounding graph / index schema** (`SocialVideoGraph`): structural node kinds for retrieval and APIs, **not** five independent top-level “memory products.” In particular, **visual evidence is not a separate store**; it attaches to episodic and state records.
+
+The graph combines:
+
+- **Structural nodes** — entities, interactions, events (for indexing and traversal).  
+- **Backbone nodes** — episodic windows and semantic summaries (aligned with episodic / semantic stores).  
+- **Hypotheses and stance** — materialize primarily under **state memory** at query time; the graph may still expose `social_state`-style nodes for search, but they should not duplicate a parallel “social memory bank” outside the three-store model.
+
+### 2.1 Node types
 
 ```python
 @dataclass
-class MemoryNode:
-    node_id: str                # e.g. "episodic_003", "semantic_007"
-    node_type: str              # "episodic" | "semantic" | "entity" | "relational"
-    text: str                   # natural-language description
-    clip_id: Optional[str]      # which video segment produced this
-    timestamp: Tuple[float, float]  # (start_sec, end_sec)
-    entity_ids: List[str]       # linked entities, e.g. ["face_0", "voice_1"]
-    confidence: float           # reinforcement weight (semantic nodes decay/grow)
-    metadata: Dict[str, Any]    # arbitrary extra info (frames, crops, etc.)
+class GroundingNode:
+    node_id: str
+    node_type: str  # "entity" | "interaction" | "event" | "social_hypothesis" | "episodic" | "semantic"
+    text: str
+    timestamp: Tuple[float, float]
+    clip_id: Optional[str]
+    entity_ids: List[str]
+    confidence: float
+    evidence_refs: List[str]
+    metadata: Dict[str, Any]
 ```
 
-### Class: `VideoMemoryGraph`
+### 2.2 Core node semantics
 
-| Responsibility | Method |
-|---|---|
-| Insert episodic memories | `add_episodic(text, clip_id, timestamp, entity_ids, embedding)` |
-| Insert semantic memories | `add_semantic(text, clip_id, entity_ids, embedding)` |
-| Track entities (face/voice) | `add_or_update_entity(entity_type, embedding, metadata)` |
-| Reinforce / decay semantics | `reinforce(node_id, delta)` |
-| Retrieve by query | `search(query, top_k, clip_filter) -> List[MemoryNode]` |
-| Retrieve by entity | `get_by_entity(entity_id) -> List[MemoryNode]` |
-| Translate entity IDs ↔ names | `translate(text) / back_translate(text)` |
-| Serialize | `save(path) / load(path)` |
+**Entity nodes** — Represent people, objects, groups, and optionally speakers.
 
-### Integration point
+Examples: `person_12`, `group_A`, `object_phone_3`
 
-- Wraps a `MemoryStore` (from `rag/retrieval.py`) for the embedding index.
+Attributes may include: appearance, pose, gaze target, speaking state, role, location in scene.
+
+**Interaction nodes** — Represent socially meaningful relations between entities.
+
+Examples: `talking_to`, `looking_at`, `following`, `helping`, `blocking`, `yielding`, `ignoring`, `confronting`, `handing_over`.
+
+**Event nodes** — Represent temporally localized social or physical events.
+
+Examples: `enters_room`, `joins_group`, `starts_argument`, `passes_object`, `leaves_scene`, `group_splits`, `person_returns`.
+
+**Social-hypothesis nodes** — Latent interpretations as **hypotheses** (not hard facts), typically rolled into **state memory** for query-time reasoning while remaining evidence-linked in the graph.
+
+Examples: intention, belief, uncertainty, emotion, alliance, conflict, deception risk, trust shift.
+
+Each hypothesis should include: target entity / pair / group, confidence, evidence refs, optional revision history.
+
+**Episodic nodes** — Local grounded descriptions of short temporal windows.
+
+**Semantic nodes** — Compressed summaries aggregated from multiple episodic / event nodes.
+
+### 2.3 Core graph API
+
+```python
+class SocialVideoGraph:
+    def add_entity(...)
+    def add_interaction(...)
+    def add_event(...)
+    def add_social_hypothesis(...)  # indexes hypotheses; state memory holds query-time snapshot
+    def add_episodic(...)
+    def add_semantic(...)
+
+    def search(query, top_k=5, clip_filter=None, entity_filter=None, time_range=None):
+        ...
+
+    def get_timeline(entity_id):
+        ...
+
+    def get_relations(entity_id):
+        ...
+
+    def get_evidence(node_id):
+        ...
+
+    def translate(text):
+        ...
+
+    def back_translate(text):
+        ...
+
+    def save(path):
+        ...
+
+    def load(path):
+        ...
+```
+
+### 2.4 Design principle
+
+All high-level social conclusions must be **evidence-linked**.  
+No social claim should exist without timestamps, clip refs, subtitle refs, or frame refs.
+
+### 2.5 Integration point
+
+- Wraps a `MemoryStore` (from `rag/retrieval.py`) for the embedding index when operating in retrieval mode.
 - Accepts either a `TextEmbedder` or `MultimodalEmbedder` at construction time.
-- Entity nodes store face/voice embeddings matched via cosine similarity.
+- Entity nodes store face/voice embeddings matched via cosine similarity where applicable (e.g. M3-Bench).
 
 ---
 
-## 3. Observation Pipeline (long-video only)
+## 3. Unified Grounding Pipeline
 
-Converts raw long video into structured `MemoryNode` entries. **Skipped
-entirely for short-video benchmarks.**
+This pipeline is used for **both** short and long videos.  
+The difference is whether outputs stay in-context or are persisted into a retrieval index.
 
-### Pipeline stages
+### 3.1 Pipeline overview
 
 ```
-Long video file (> context budget)
+Raw video
   │
-  ├─ 1. segment_video(path, interval_sec) -> List[Clip]
+  ├─ 1. adaptive_segment(video) -> windows / clips
   │
-  ├─ 2. extract_entities(clip) -> List[EntityDetection]
-  │     Face detection + embedding (InsightFace/ArcFace).
-  │     Voice diarization + embedding (ERes2NetV2 or Gemini).
+  ├─ 2. perceptual grounding
+  │     • frame sampling
+  │     • object / person / face detection
+  │     • optional voice diarization
+  │     • subtitle / ASR alignment
   │
-  ├─ 3. generate_observations(clip, entities, vlm) -> ObservationResult
-  │     VLM generates episodic + semantic descriptions with entity IDs.
+  ├─ 3. local social grounding
+  │     • entities
+  │     • actions
+  │     • spatial relations
+  │     • gaze / speaking / turn-taking
+  │     • interactions
+  │     • local event hypotheses
   │
-  └─ 4. store_observations(observations, graph: VideoMemoryGraph)
-        Embed texts, insert nodes, link entities.
+  ├─ 4. temporal consolidation
+  │     • merge adjacent windows
+  │     • track entities across clips
+  │     • build event nodes
+  │     • update relationship / intention hypotheses
+  │
+  ├─ 5A. direct mode buffer (short videos)
+  │     • keep grounded windows in-context
+  │
+  └─ 5B. retrieval mode memory (long videos)
+        • build hierarchical graph / index
+        • semantic distillation
+        • entity-centric timeline memory
+        • query-time retrieval
 ```
 
-### 8B-driven memory builder variant (from orchestrator plan)
+### 3.2 Per-window grounding output
+
+Each window should produce structured JSON, for example:
+
+```json
+{
+  "time_span": [12.4, 16.8],
+  "scene": "kitchen conversation",
+  "entities": [
+    {
+      "id": "p1",
+      "type": "person",
+      "attributes": {
+        "emotion": "tense",
+        "gaze": "p2",
+        "speaking": true
+      }
+    }
+  ],
+  "interactions": [
+    {
+      "src": "p1",
+      "rel": "talking_to",
+      "dst": "p2",
+      "confidence": 0.84
+    }
+  ],
+  "events": [
+    {
+      "type": "confrontation_start",
+      "agents": ["p1", "p2"],
+      "confidence": 0.66
+    }
+  ],
+  "social_hypotheses": [
+    {
+      "type": "intention",
+      "target": "p1",
+      "value": "seeking explanation",
+      "confidence": 0.61
+    }
+  ],
+  "evidence": {
+    "frames": [188, 196, 204],
+    "subtitle_spans": ["Why didn’t you tell me?"]
+  }
+}
+```
+
+### 3.3 Direct mode for short videos
+
+**Used for:** Video-Holmes, SIV-Bench.
+
+**Procedure:**
+
+- Sample windows densely (or frame-sample + window as needed).
+- Run local social grounding on each window.
+- Keep all grounded windows in an **in-context buffer**.
+- Reason directly over raw frames/clips, subtitles/transcripts, and grounded structured states.
+
+No persistent retrieval index is required.
+
+### 3.4 Retrieval mode for long videos
+
+**Used for:** VRBench, LongVideoBench, CG-Bench, M3-Bench.
+
+**Procedure:**
+
+- Generate local grounded windows.
+- Merge windows into event-level nodes.
+- Build entity timelines and relationship memory.
+- Distill semantic summaries for long-range compression.
+- Support retrieval by: entity, relation, event type, time range, subtitle phrase, social-state hypothesis, evidence chain.
+
+### 3.5 Social reasoning requirements
+
+A social-first pipeline must support at least:
+
+- person tracking across time  
+- group tracking  
+- turn-taking / speaking state  
+- gaze / attention cues  
+- interaction typing  
+- relationship change over time  
+- intention / belief / emotion hypotheses with confidence  
+- evidence attribution for every high-level claim  
+
+### 3.6 8B-driven builder variant (orchestrator-aligned)
+
+For long videos, an implementation can follow the adaptive sampling + batched VLM pattern:
 
 ```
 Video
@@ -266,23 +356,21 @@ Video
   ├─ 1. Adaptive frame sampling
   │     • Base rate: 1 frame / 2s (short), 1 frame / 5s (long)
   │     • + keyframes at scene-change boundaries (pixel diff > threshold)
-  │     • + subtitle-aligned frames (M3-Bench robot)
+  │     • + subtitle-aligned frames (e.g. M3-Bench robot)
   │
-  ├─ 2. Batch VLM grounding  (Qwen3-VL-8B)
+  ├─ 2. Batch VLM grounding  (e.g. Qwen3-VL-8B)
   │     • Send frames in batches of 4-8 (multi-image input)
-  │     • Per-frame output: structured JSON
-  │       {objects, actions, spatial, scene, emotions, predicates}
-  │     • Cross-frame: entity tracking via face/voice embeddings
+  │     • Per-frame or per-window output: structured JSON
+  │       {objects, actions, spatial, scene, emotions, predicates, interactions}
+  │     • Cross-window: entity tracking via face/voice embeddings
   │
-  ├─ 3. Episodic memory construction
-  │     • Each frame → MemoryNode(type="episodic")
-  │     • Temporal window aggregation: merge 3-5 consecutive frames
-  │       into a single episodic node when predicate delta is low
+  ├─ 3. Episodic / window nodes -> SocialVideoGraph
+  │     • Temporal aggregation: merge adjacent windows when predicate delta is low
   │     • Entity linking: face_0, voice_1, etc.
   │
-  ├─ 4. Semantic memory distillation  (Qwen3-VL-8B, second pass)
-  │     • Summarize clusters of episodic nodes into semantic nodes
-  │     • Each semantic node carries: text, linked entity_ids, confidence
+  ├─ 4. Semantic distillation  (second pass)
+  │     • Summarize clusters into semantic nodes
+  │     • Each semantic node carries: text, linked entity_ids, confidence, evidence_refs
   │
   └─ 5. Entity resolution
         • Merge face/voice detections across clips
@@ -290,7 +378,7 @@ Video
         • Map <face_N> / <voice_N> IDs to consistent entity_ids
 ```
 
-### Compute budget
+### 3.7 Compute budget (indicative)
 
 | Video length | Frames sampled | 8B inference calls | Wall time (1× A100) |
 |-------------|----------------|-------------------|---------------------|
@@ -300,96 +388,146 @@ Video
 
 ---
 
-## 4. Benchmark Evaluation Adapters
+## 4. Hierarchical Memory for Long Videos
 
-Thin wrappers that map each benchmark's I/O format to the unified pipeline.
+Long videos should be stored hierarchically.
 
-### Tier 1 — Direct mode adapters
+| Level | Role |
+|-------|------|
+| **Level 1 — grounded windows** | Short local clips with entities, interactions, and evidence. |
+| **Level 2 — event memory** | Merged event nodes: greeting, argument, alliance formation, pursuit, help request, refusal, deception cue, group split / merge, … |
+| **Level 3 — entity / relationship memory** | Long-range summaries: e.g. p1 repeatedly avoids p2; p3 aligns with group_A; speaker_2 likely same as face_7. |
+| **Level 4 — semantic summaries** | Compressed cross-scene summaries for retrieval efficiency. |
+| **Level 5 — query-time reasoning trace** | At inference: retrieve relevant events, entity timelines, subtitle/audio evidence, social-state hypotheses; **final answers come from retrieved evidence**, not ungrounded free-form summarization. |
+
+---
+
+## 5. Benchmark Evaluation Adapters
+
+Thin wrappers that map each benchmark’s I/O format to `build_grounded_context(...)` and the unified `reason(...)` entry point.
+
+### 5.1 Direct mode adapters
 
 ```python
 class VideoHolmesAdapter:
-    """Video-Holmes: short suspense films, compositional reasoning."""
     def evaluate(self, video_path, question, options) -> dict:
-        frames = sample_frames(video_path, n=32)
-        return reason(question, options, video_context=frames,
-                      vlm_fn=self.vlm, mode="direct")
+        grounded = build_grounded_context(video_path, mode="direct")
+        return reason(question, options, video_context=grounded, mode="direct")
 
 class SIVBenchAdapter:
-    """SIV-Bench: social interaction understanding + reasoning."""
-    def evaluate(self, video_path, question, options,
-                 subtitle_mode="origin") -> dict:
-        frames = sample_frames(video_path, n=16)
-        subtitle_text = load_subtitles(video_path, subtitle_mode)
-        context = frames + [subtitle_text] if subtitle_text else frames
-        return reason(question, options, video_context=context,
-                      vlm_fn=self.vlm, mode="direct")
+    def evaluate(self, video_path, question, options, subtitle_mode="origin") -> dict:
+        grounded = build_grounded_context(
+            video_path,
+            mode="direct",
+            subtitle_mode=subtitle_mode,
+            social_grounding=True,
+        )
+        return reason(question, options, video_context=grounded, mode="direct")
 ```
 
-### Tier 2 — Retrieval mode adapters
+### 5.2 Retrieval mode adapters
 
 ```python
 class VRBenchAdapter:
-    """VRBench: long narrative video, multi-step reasoning."""
     def evaluate(self, video_path, question, options=None, graph=None) -> dict:
-        if graph is None:
-            graph = build_memory_graph(video_path)
-        return reason(question, options, video_context=graph,
-                      vlm_fn=self.vlm, mode="retrieval")
+        graph = graph or build_grounded_context(video_path, mode="retrieval")
+        return reason(question, options, video_context=graph, mode="retrieval")
 
 class LongVideoBenchAdapter:
-    """LongVideoBench: long video + subtitle referring reasoning."""
     def evaluate(self, video_path, question, options, graph=None) -> dict:
-        if graph is None:
-            graph = build_memory_graph(video_path, include_subtitles=True)
-        return reason(question, options, video_context=graph,
-                      vlm_fn=self.vlm, mode="retrieval")
+        graph = graph or build_grounded_context(
+            video_path,
+            mode="retrieval",
+            include_subtitles=True,
+        )
+        return reason(question, options, video_context=graph, mode="retrieval")
 
 class CGBenchAdapter:
-    """CG-Bench: clue-grounded long-video QA."""
     def evaluate(self, video_path, question, options=None, graph=None) -> dict:
-        if graph is None:
-            graph = build_memory_graph(video_path)
-        return reason(question, options, video_context=graph,
-                      vlm_fn=self.vlm, mode="retrieval")
+        graph = graph or build_grounded_context(video_path, mode="retrieval")
+        return reason(question, options, video_context=graph, mode="retrieval")
 
 class M3BenchAdapter:
-    """M3-Bench: long-video entity-grounded QA."""
     def evaluate(self, video_path, question, graph=None) -> dict:
-        if graph is None:
-            graph = build_memory_graph(video_path)
+        graph = graph or build_grounded_context(
+            video_path,
+            mode="retrieval",
+            include_subtitles=True,
+            entity_tracking=True,
+            voice_tracking=True,
+        )
         question = graph.back_translate(question)
-        result = reason(question, None, video_context=graph,
-                        vlm_fn=self.vlm, mode="retrieval")
+        result = reason(question, None, video_context=graph, mode="retrieval")
         result.answer = graph.translate(result.answer)
         return result
 ```
 
-### Shared interface
+### 5.3 Shared interface
 
-All adapters expose:
 ```python
 def evaluate(self, video_path: str, question: str, **kwargs) -> dict
 ```
-returning at minimum `{"answer": str, "reasoning": str, "mode": str}`.
+
+Returns at minimum:
+
+```json
+{
+  "answer": "…",
+  "reasoning": "…",
+  "mode": "direct | retrieval",
+  "evidence": []
+}
+```
 
 ---
 
-## 5. Per-Benchmark Configuration Cheat Sheet
+## 6. Per-Benchmark Configuration Cheat Sheet
 
-| Benchmark | Mode | `sample_frames` | Subtitles? | Entity tracking? | Special prompt |
-|---|---|---|---|---|---|
-| **Video-Holmes** | direct | 32 | no | no | Compositional deduction prompt |
-| **SIV-Bench** | direct | 16 | yes (3 conditions) | no | Social cognition prompt; relationship types |
-| **VRBench** | retrieval | N/A (graph) | no | no | Multi-step narrative reasoning prompt |
-| **LongVideoBench** | retrieval | N/A (graph) | yes (interleaved) | no | Referring reasoning prompt |
-| **CG-Bench** | retrieval | N/A (graph) | no | no | Clue-grounded prompt |
-| **M3-Bench** | retrieval | N/A (graph) | yes (voice transcripts) | yes (face + voice) | Entity-aware prompt with `<face_N>/<voice_N>` |
+| Benchmark | Mode | Grounding | Subtitles | Entity tracking | Social-state hypotheses | Retrieval |
+|-----------|------|-----------|-----------|-----------------|---------------------------|-----------|
+| Video-Holmes | direct | local clue/event grounding | optional | no | low | no |
+| SIV-Bench | direct | local social grounding | yes | light | high | no |
+| VRBench | retrieval | event/narrative grounding | optional | no | medium | yes |
+| LongVideoBench | retrieval | video + subtitle grounding | yes | no | low–medium | yes |
+| CG-Bench | retrieval | clue/evidence grounding | optional | no | low | yes |
+| M3-Bench | retrieval | entity-aware grounding | yes | high | medium | yes |
 
 ---
 
-## 6. Evaluation Plans
+## 7. Evaluation Plan
 
-### 6.1 Self-Evolving System Benchmarks
+### 7.1 End-task metrics
+
+- answer accuracy  
+- open-ended answer quality  
+- reasoning trace quality  
+- evidence grounding correctness  
+
+### 7.2 Grounding metrics
+
+- entity grounding accuracy  
+- interaction grounding accuracy  
+- event grounding accuracy  
+- evidence attribution correctness  
+- temporal consistency  
+- entity identity consistency  
+- subtitle–visual alignment quality  
+
+### 7.3 Social reasoning metrics
+
+- intention / belief inference accuracy  
+- relationship classification accuracy  
+- counterfactual support quality  
+- consistency of social-state hypotheses over time  
+
+### 7.4 Retrieval metrics for long videos
+
+- retrieval recall@k  
+- evidence chain correctness  
+- cross-segment linkage accuracy  
+- answer correctness conditioned on retrieved evidence  
+
+### 7.5 Self-evolving system benchmarks (extended)
 
 | Benchmark | Focus | Why It Tests Our System |
 |-----------|-------|------------------------|
@@ -398,20 +536,17 @@ returning at minimum `{"answer": str, "reasoning": str, "mode": str}`.
 | **EgoLife** | Long-term ego-centric daily life | Long-range memory + social tracking at scale |
 | **LongVidSearch** | Multi-hop evidence retrieval | Evidence chaining quality |
 
-### 6.2 Metrics
+### 7.6 Additional cross-cutting metrics
 
 | Metric | What It Measures | How |
 |--------|-----------------|-----|
-| **Answer accuracy** | Final answer correctness | Standard MCQ / open-ended eval |
-| **Evidence grounding quality** | Are cited timestamps and facts correct? | Compare cited evidence against ground truth |
-| **Multi-hop retrieval quality** | Does the system chain evidence across distant segments? | Count correct cross-segment links |
-| **Social consistency** | Are social-state inferences consistent across time? | Check for contradictions in perspective threads |
-| **Memory efficiency** | How compact is the memory graph relative to video length? | Nodes per minute of video; retrieval precision |
-| **Tool call count** | How many frozen-model calls per question? | Count observer/reasoner invocations |
-| **Skill reuse rate** | Are skills being reused across questions? | Unique skills / total skill invocations |
-| **Long-range dependency handling** | Can the system answer questions requiring evidence from >5 min apart? | Stratify accuracy by temporal span |
+| **Multi-hop retrieval quality** | Evidence chained across distant segments | Count correct cross-segment links |
+| **Memory efficiency** | Compactness vs. video length | Nodes per minute; retrieval precision |
+| **Tool call count** | Frozen-model calls per question | Count observer/reasoner invocations |
+| **Skill reuse rate** | Skills reused across questions | Unique skills / total invocations |
+| **Long-range dependency handling** | Evidence >5 min apart | Stratify accuracy by temporal span |
 
-### 6.3 Orchestrator Evaluation Commands
+### 7.7 Orchestrator evaluation commands
 
 ```bash
 # Video-Holmes
@@ -437,15 +572,15 @@ python -m small_model_orchestrator.run_eval \
     --large_model Qwen/Qwen3-VL-72B-Instruct
 ```
 
-### 6.4 Expected Improvements
+### 7.8 Expected improvements (reference targets)
 
 | Benchmark | Baseline (72B raw) | With orchestrator | Why |
 |-----------|--------------------|--------------------|-----|
-| Video-Holmes | ~65% acc | ~72-75% acc | Skills provide reasoning scaffolds for causal/temporal questions |
-| M3-Bench | ~55% acc | ~65-70% acc | Memory graph handles long-range entity tracking |
-| SIV-Bench | ~60% acc | ~68-72% acc | Entity relationship skills transfer well to social interaction |
+| Video-Holmes | ~65% acc | ~72–75% acc | Skills provide reasoning scaffolds for causal/temporal questions |
+| M3-Bench | ~55% acc | ~65–70% acc | Memory graph handles long-range entity tracking |
+| SIV-Bench | ~60% acc | ~68–72% acc | Entity relationship skills transfer well to social interaction |
 
-### 6.5 Ablation Designs
+### 7.9 Ablation designs
 
 **Self-evolving system ablations:**
 
@@ -474,26 +609,38 @@ python -m small_model_orchestrator.run_eval \
 
 ---
 
-## 7. Integration with Existing Components
+## 8. Final Design Rule
+
+The system should never treat visual grounding as only “objects in frames.”
+
+For this project, **visual grounding** means:
+
+**grounding socially meaningful state transitions with traceable evidence over time.**
+
+That definition is what makes the same pipeline usable for short context-rich clips, long videos, social reasoning benchmarks, and future skill-bank / memory-agent integration.
+
+---
+
+## 9. Integration with Existing Components
 
 | Existing component | How it connects |
-|---|---|
-| `rag/retrieval.py` → `MemoryStore` | `VideoMemoryGraph` wraps a `MemoryStore` internally |
-| `rag/embedding/` → `TextEmbedder`, `MultimodalEmbedder` | Used by `VideoMemoryGraph` and observation pipeline |
+|-------------------|-----------------|
+| `rag/retrieval.py` → `MemoryStore` | `SocialVideoGraph` wraps a `MemoryStore` in retrieval mode |
+| `rag/embedding/` → `TextEmbedder`, `MultimodalEmbedder` | Used by graph embedding index and grounding pipeline |
 | `data_structure/experience.py` → `Experience`, `Episode` | Each reasoning trace can be packaged as an `Episode` |
-| `skill_agents/stage3_mvp/schemas.py` → `Skill`, `Protocol` | All visual skills use these schemas directly |
+| `skill_agents/stage3_mvp/schemas.py` → `Skill`, `Protocol` | Visual skills use these schemas |
 | `decision_agents/agent.py` → `VLMDecisionAgent` | Future `VideoQAAgent` subclass uses `select_skill` |
 
 ---
 
-## 8. Implementation Order
+## 10. Implementation Order
 
 | Phase | Files | Depends on | Priority |
-|---|---|---|---|
-| **Phase 1** | `reasoning.py` | VLM callable only | **Highest** — unlocks all 6 benchmarks |
-| **Phase 2** | `adapters.py` (Tier 1: direct mode) | Phase 1 | **High** — Video-Holmes + SIV-Bench immediately usable |
-| **Phase 3** | `video_memory.py` | `rag/retrieval.py`, `rag/embedding/` | **High** — unlocks 4 long-video benchmarks |
-| **Phase 4** | `observe.py` | Phase 3, face/voice utils | **High** — needed by all retrieval-mode adapters |
+|-------|-------|------------|----------|
+| **Phase 1** | `reasoning.py` | VLM callable only | **Highest** — unlocks all benchmarks |
+| **Phase 2** | `adapters.py` (Tier 1: direct + `build_grounded_context`) | Phase 1 | **High** — Video-Holmes + SIV-Bench |
+| **Phase 3** | `social_video_graph.py` (or evolve `video_memory.py`) | `rag/retrieval.py`, `rag/embedding/` | **High** — retrieval mode |
+| **Phase 4** | `observe.py` / unified grounding | Phase 3, face/voice utils | **High** — all retrieval-mode adapters |
 | **Phase 5** | `adapters.py` (Tier 2) | Phase 3–4 | **High** |
 | **Phase 6** | `skills.py` | Phase 1–5 | Lower — skill bank integration |
 | **Phase 7** | `__init__.py`, integration tests | All above | Final |

@@ -6,6 +6,7 @@
 > continuous skill maintenance loop.
 >
 > **Related plans:**
+> - [Agentic Memory](agentic_memory_design.md) — three memory stores + evidence layer
 > - [Video Benchmarks & Grounding](video_benchmarks_grounding.md) — benchmarks, memory graph, adapters
 > - [Actors / Reasoning Model](actors_reasoning_model.md) — 8B controller, reasoning core, orchestrator
 > - [Skill Extraction / Bank](skill_extraction_bank.md) — skill definitions and bank infrastructure
@@ -17,12 +18,12 @@
 After a memory graph is built (see [Actors plan §3](actors_reasoning_model.md)),
 the 8B model analyzes the graph to discover reusable reasoning skills. This
 follows the same three-stage pipeline as the COS-PLAY video skill pipeline but
-is driven entirely by the small model over the memory graph.
+is driven entirely by the small model over the memory graph (indexed as `SocialVideoGraph`; backed by episodic / semantic / state stores per [Agentic Memory](agentic_memory_design.md)).
 
 ### Pipeline
 
 ```
-VideoMemoryGraph
+SocialVideoGraph
   │
   ├─ 1. Temporal segmentation
   │     • Boundary detection via predicate delta between consecutive
@@ -186,7 +187,7 @@ Lives in `Video_Skills/small_model_orchestrator/skill_crafter.py`.
 ```python
 class SkillCrafter:
     def __init__(self, vlm_fn, embedder, existing_bank_path=None): ...
-    def craft_from_graph(self, graph: VideoMemoryGraph) -> List[Skill]: ...
+    def craft_from_graph(self, graph: SocialVideoGraph) -> List[Skill]: ...
     def evaluate_skill(self, skill: Skill) -> SkillEvaluation: ...
     def merge_into_bank(self, new_skills: List[Skill], bank: SkillBank) -> SkillBank: ...
 ```

@@ -5,6 +5,7 @@
 > inference operators, the skill bank class, and composition patterns.
 >
 > **Related plans:**
+> - [Agentic Memory](agentic_memory_design.md) — episodic / semantic / state stores + evidence layer
 > - [Video Benchmarks & Grounding](video_benchmarks_grounding.md) — benchmarks, memory graph, adapters
 > - [Actors / Reasoning Model](actors_reasoning_model.md) — 8B controller, reasoning core, orchestrator
 > - [Skill Synthetics Agents](skill_synthetics_agents.md) — skill crafting, evolution, quality control
@@ -41,9 +42,10 @@ Always available, regardless of video length or memory layer status.
 |---|---|---|
 | `observe_segment` | Observe Video Segment | Run observation pipeline on one clip; produce episodic descriptions |
 | `detect_entities` | Detect & Track Entities | Face/voice detection and entity graph updates |
-| `build_episodic` | Build Episodic Memory | Store timestamped observations with entity links |
-| `build_semantic` | Build Semantic Memory | Aggregate episodic memories into high-level conclusions |
-| `search_memory` | Retrieve from Memory | Embed a query and return top-k matches from the graph |
+| `build_episodic` | Build Episodic Memory | Store timestamped observations with entity links and evidence attachments |
+| `build_semantic` | Build Semantic Memory | Distill episodic clusters into semantic summaries (long-horizon abstractions) |
+| `update_state` | Maintain State Memory | Refresh **social + spatial** query-time state from new evidence (single store, two subfields; not separate “social” and “spatial” memories) |
+| `search_memory` | Retrieve from Memory | Embed a query and return top-k matches from the graph / stores |
 
 ### Example skill definition
 
@@ -93,6 +95,7 @@ Skill(
 [offline] for each clip:
               detect_entities → observe_segment → build_episodic
           build_semantic (aggregate)
+          update_state (social + spatial snapshot for query-time reasoning)
 
 [online]  [question] → reason_chain
                          ├─ [Think]

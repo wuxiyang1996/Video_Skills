@@ -5,6 +5,7 @@
 > "actor" that drives all video understanding tasks.
 >
 > **Related plans:**
+> - [Agentic Memory](agentic_memory_design.md) — three memory stores + evidence layer
 > - [Video Benchmarks & Grounding](video_benchmarks_grounding.md) — benchmarks, memory graph, adapters
 > - [Skill Extraction / Bank](skill_extraction_bank.md) — skill definitions and bank infrastructure
 > - [Skill Synthetics Agents](skill_synthetics_agents.md) — skill crafting, evolution, quality control
@@ -89,7 +90,7 @@ fine-tuning a 72B model.
 │                         OFFLINE PHASE                                │
 │                  (Qwen3-VL-8B, runs once per video)                  │
 │                                                                      │
-│   Video ──► Frame Sampler ──► Qwen3-VL-8B ──┬──► VideoMemoryGraph   │
+│   Video ──► Frame Sampler ──► Qwen3-VL-8B ──┬──► SocialVideoGraph    │
 │                                              └──► SkillBank          │
 └──────────────────────────────────────────────────────────────────────┘
                               │
@@ -104,6 +105,8 @@ fine-tuning a 72B model.
 │                               └──► Prompt Composer ──► 72B ──► Ans  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
+
+The offline artifact is the **`SocialVideoGraph`** index ([Video Benchmarks & Grounding](video_benchmarks_grounding.md)), backed logically by **episodic / semantic / state** stores ([Agentic Memory](agentic_memory_design.md)). Existing code may still use the name `SocialVideoGraph` as an alias.
 
 ### 2.3 What the 8B Controller Does at Each Stage
 
@@ -142,7 +145,7 @@ The single module that all benchmarks share.
 def reason(
     question: str,
     options: Optional[List[str]],
-    video_context: Union[str, List[str], "VideoMemoryGraph"],
+    video_context: Union[str, List[str], "SocialVideoGraph"],
     vlm_fn: Callable,
     max_iterations: int = 5,
     mode: str = "auto",  # "direct" | "retrieval" | "auto"
@@ -165,7 +168,7 @@ VLM receives: [video frames] + [question + options]
 
 **Retrieval mode** (long video — VRBench, LongVideoBench, CG-Bench, M3-Bench):
 
-`video_context` is a `VideoMemoryGraph`. The VLM issues `[Search]` queries to
+`video_context` is a `SocialVideoGraph`. The VLM issues `[Search]` queries to
 retrieve relevant memories.
 
 ```
@@ -207,7 +210,19 @@ class ReasoningResult:
 
 ## 4. Hierarchical Memory Design
 
-### 4.1 Three Timescale Levels
+### 4.0 Agentic memory model (three stores + evidence)
+
+The controller’s **persistent semantics** follow [Agentic Memory](agentic_memory_design.md):
+
+1. **Episodic memory** — grounded timeline: clips, timestamps, characters, dialogue/actions, evidence links.  
+2. **Semantic memory** — distilled long-horizon abstractions (traits, stable relationships, patterns).  
+3. **State memory** — query-time world state with **social** and **spatial** subfields (not two top-level stores).
+
+**Visual / subtitle / audio** material is an **evidence attachment and retrieval-feature layer** on episodic and state entries, not a separate top-level memory bank.
+
+The subsections below detail **how** episodic material is organized (timescales, nodes, edges) and how **perspective threads** (§5) feed **state memory**’s social subfield.
+
+### 4.1 Three timescale levels (within episodic memory)
 
 ```
 Arc Level (minutes–hours)
@@ -229,7 +244,9 @@ Arc Level (minutes–hours)
 | **Episode** | 30 s – 5 min | A coherent interaction: a conversation, a conflict, a shared activity | Controller clusters temporally adjacent events with shared participants and causal links |
 | **Arc** | minutes – full video | A long-range development: alliance formation, trust erosion, a plan unfolding | Controller distills episode sequences into arc summaries |
 
-### 4.2 Memory Node Schema
+### 4.2 Memory node schema (episodic backbone + links to semantic/state)
+
+`MemoryNode` primarily implements the **episodic** backbone (event / episode / arc timescales). Distilled **semantic** summaries are separate records (or typed nodes) populated from episodic clusters. **State memory** holds the rolling social+spatial snapshot; `SocialStateEntry` (§5.3) is part of the **state** social subfield, not a fifth memory product.
 
 ```python
 @dataclass
@@ -305,7 +322,9 @@ class MemoryNode:
 
 ## 5. Perspective-Aware Social Memory
 
-### 5.1 The Perspective Confusion Problem
+Perspective threads and `SocialStateEntry` support **state memory** (social subfield): query-time beliefs, knowledge boundaries, and stance — always evidence-linked to episodic entries. They are not an additional top-level memory category beside episodic / semantic / state.
+
+### 5.1 The perspective confusion problem
 
 The most common failure in social reasoning is **perspective confusion**:
 the system answers based on what the viewer knows, rather than what a
@@ -405,7 +424,7 @@ This routing saves 72B inference cost on ~30-40% of questions.
 ```python
 def select_keyframes(
     question_analysis: QuestionAnalysis,
-    memory_graph: VideoMemoryGraph,
+    memory_graph: SocialVideoGraph,
     retrieved_memories: List[MemoryNode],
     max_frames: int = 5,
 ) -> List[KeyFrame]:
@@ -438,7 +457,7 @@ The 8B model assembles a structured prompt for the 72B model:
 ║  Steps: {protocol.steps}                           ║
 ║  --- Skill 2: ... ---                              ║
 ╠═══════════════════════════════════════════════════╣
-║  MEMORY CONTEXT  (from VideoMemoryGraph, top-k)    ║
+║  MEMORY CONTEXT  (from SocialVideoGraph, top-k)    ║
 ║  [Episodic] 00:12-00:24: ...                       ║
 ║  [Semantic] ...                                    ║
 ║  [Entity] <face_0>: ...                            ║
@@ -643,8 +662,8 @@ Video_Skills/small_model_orchestrator/
 ├── __init__.py
 ├── config.py                     # Model paths, thresholds, prompt templates
 ├── orchestrator.py               # SmallModelOrchestrator — top-level controller
-├── memory_builder.py             # Video → VideoMemoryGraph (offline)
-├── skill_crafter.py              # VideoMemoryGraph → SkillBank (offline)
+├── memory_builder.py             # Video → SocialVideoGraph (offline)
+├── skill_crafter.py              # SocialVideoGraph → SkillBank (offline)
 ├── prompt_composer.py            # Question → composed prompt for large VLM
 ├── keyframe_selector.py          # Pick the N most question-relevant frames
 ├── question_analyzer.py          # Decompose question into retrieval signals
@@ -674,7 +693,7 @@ class SmallModelOrchestrator:
         ...
 
     # --- Offline API ---
-    def process_video(self, video_path, subtitle_path=None) -> VideoMemoryGraph: ...
+    def process_video(self, video_path, subtitle_path=None) -> SocialVideoGraph: ...
     def craft_skills(self, graph, existing_bank=None) -> SkillBank: ...
 
     # --- Online API ---
