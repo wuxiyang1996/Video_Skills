@@ -1,0 +1,53 @@
+{
+  "benchmark": "cg_bench",
+  "video": "/fs/gamma-projects/vlm-robot/datasets/CG-Bench/0.mp4",
+  "elapsed_s": 15.06,
+  "status": "ok",
+  "schema_issues": [],
+  "summary": {
+    "stats": {
+      "episodic": 2,
+      "interaction": 3,
+      "event": 1,
+      "social_hypothesis": 3,
+      "semantic": 1,
+      "total": 10,
+      "evidence": 6,
+      "entities": 0
+    },
+    "search_hits": 3
+  },
+  "preview": {
+    "type": "SocialVideoGraph",
+    "stats": {
+      "episodic": 2,
+      "interaction": 3,
+      "event": 1,
+      "social_hypothesis": 3,
+      "semantic": 1,
+      "total": 10,
+      "evidence": 6,
+      "entities": 0
+    },
+    "sample_search": [
+      {
+        "node_id": "win_c1dca61460",
+        "node_type": "episodic",
+        "text": "restaurant menu presentation | p1 showing_to p2; p1 holding menu; p2 looking_at menu | menu_presentation(p1,p2)",
+        "score": 0.0
+      },
+      {
+        "node_id": "int_e29a54e2b1",
+        "node_type": "interaction",
+        "text": "p1 showing_to p2",
+        "score": 0.0
+      },
+      {
+        "node_id": "int_bc9e46e467",
+        "node_type": "interaction",
+        "text": "p1 holding menu",
+        "score": 0.0
+      }
+    ]
+  }
+}

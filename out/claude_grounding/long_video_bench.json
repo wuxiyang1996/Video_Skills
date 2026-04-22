@@ -1,0 +1,53 @@
+{
+  "benchmark": "long_video_bench",
+  "video": "/fs/gamma-projects/vlm-robot/datasets/LongVideoBench/videos/005BeD0c2PA.mp4",
+  "elapsed_s": 29.68,
+  "status": "ok",
+  "schema_issues": [],
+  "summary": {
+    "stats": {
+      "episodic": 4,
+      "interaction": 4,
+      "event": 4,
+      "social_hypothesis": 9,
+      "semantic": 1,
+      "total": 22,
+      "evidence": 8,
+      "entities": 0
+    },
+    "search_hits": 3
+  },
+  "preview": {
+    "type": "SocialVideoGraph",
+    "stats": {
+      "episodic": 4,
+      "interaction": 4,
+      "event": 4,
+      "social_hypothesis": 9,
+      "semantic": 1,
+      "total": 22,
+      "evidence": 8,
+      "entities": 0
+    },
+    "sample_search": [
+      {
+        "node_id": "win_abff0e6285",
+        "node_type": "episodic",
+        "text": "museum exhibition with dinosaur skeleton | p1 observing o1 | museum_visit(p1)",
+        "score": 0.0
+      },
+      {
+        "node_id": "int_1c188e3168",
+        "node_type": "interaction",
+        "text": "p1 observing o1",
+        "score": 0.0
+      },
+      {
+        "node_id": "evt_f0da14f946",
+        "node_type": "event",
+        "text": "museum_visit: person viewing dinosaur skeleton exhibit",
+        "score": 0.0
+      }
+    ]
+  }
+}

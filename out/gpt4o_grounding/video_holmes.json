@@ -1,0 +1,318 @@
+{
+  "benchmark": "video_holmes",
+  "video": "/fs/gamma-projects/vlm-robot/Video_Skills/dataset_examples/video_holmes/0at001QMutY.mp4",
+  "elapsed_s": 1.4,
+  "status": "ok",
+  "schema_issues": [],
+  "summary": {
+    "windows": 5,
+    "entities": 0,
+    "interactions": 0,
+    "events": 0,
+    "hypotheses": 0,
+    "evidence": 10
+  },
+  "preview": {
+    "type": "DirectContext",
+    "duration": 93.02635969302636,
+    "num_windows": 5,
+    "first_window": {
+      "window_id": "win_0a593acfab",
+      "time_span": [
+        0.0,
+        20.0
+      ],
+      "scene": null,
+      "subtitle_mode": "origin",
+      "entities": [],
+      "interactions": [],
+      "events": [],
+      "social_hypotheses": [],
+      "evidence": [
+        {
+          "ref_id": "frm_40d15841e8",
+          "modality": "frame",
+          "timestamp": [
+            0.0,
+            0.0
+          ],
+          "locator": {
+            "path": "/tmp/vg_gpt4o_frames/video_holmes/frm_40d15841e8.jpg",
+            "frame_index": 0
+          },
+          "text": null
+        },
+        {
+          "ref_id": "frm_3390bb1288",
+          "modality": "frame",
+          "timestamp": [
+            10.0,
+            10.0
+          ],
+          "locator": {
+            "path": "/tmp/vg_gpt4o_frames/video_holmes/frm_3390bb1288.jpg",
+            "frame_index": 300
+          },
+          "text": null
+        }
+      ],
+      "frame_indices": [
+        0,
+        300
+      ],
+      "confidence": 1.0,
+      "metadata": {}
+    }
+  },
+  "full_context": {
+    "video_path": "/fs/gamma-projects/vlm-robot/Video_Skills/dataset_examples/video_holmes/0at001QMutY.mp4",
+    "duration": 93.02635969302636,
+    "mode": "direct",
+    "subtitle_mode": "origin",
+    "windows": [
+      {
+        "window_id": "win_0a593acfab",
+        "time_span": [
+          0.0,
+          20.0
+        ],
+        "scene": null,
+        "subtitle_mode": "origin",
+        "entities": [],
+        "interactions": [],
+        "events": [],
+        "social_hypotheses": [],
+        "evidence": [
+          {
+            "ref_id": "frm_40d15841e8",
+            "modality": "frame",
+            "timestamp": [
+              0.0,
+              0.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_gpt4o_frames/video_holmes/frm_40d15841e8.jpg",
+              "frame_index": 0
+            },
+            "text": null
+          },
+          {
+            "ref_id": "frm_3390bb1288",
+            "modality": "frame",
+            "timestamp": [
+              10.0,
+              10.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_gpt4o_frames/video_holmes/frm_3390bb1288.jpg",
+              "frame_index": 300
+            },
+            "text": null
+          }
+        ],
+        "frame_indices": [
+          0,
+          300
+        ],
+        "confidence": 1.0,
+        "metadata": {}
+      },
+      {
+        "window_id": "win_095a726bfc",
+        "time_span": [
+          20.0,
+          40.0
+        ],
+        "scene": null,
+        "subtitle_mode": "origin",
+        "entities": [],
+        "interactions": [],
+        "events": [],
+        "social_hypotheses": [],
+        "evidence": [
+          {
+            "ref_id": "frm_8527597499",
+            "modality": "frame",
+            "timestamp": [
+              20.0,
+              20.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_gpt4o_frames/video_holmes/frm_8527597499.jpg",
+              "frame_index": 599
+            },
+            "text": null
+          },
+          {
+            "ref_id": "frm_b7397e401a",
+            "modality": "frame",
+            "timestamp": [
+              30.0,
+              30.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_gpt4o_frames/video_holmes/frm_b7397e401a.jpg",
+              "frame_index": 899
+            },
+            "text": null
+          }
+        ],
+        "frame_indices": [
+          599,
+          899
+        ],
+        "confidence": 1.0,
+        "metadata": {}
+      },
+      {
+        "window_id": "win_c52966f69e",
+        "time_span": [
+          40.0,
+          60.0
+        ],
+        "scene": null,
+        "subtitle_mode": "origin",
+        "entities": [],
+        "interactions": [],
+        "events": [],
+        "social_hypotheses": [],
+        "evidence": [
+          {
+            "ref_id": "frm_c19e254393",
+            "modality": "frame",
+            "timestamp": [
+              40.0,
+              40.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_gpt4o_frames/video_holmes/frm_c19e254393.jpg",
+              "frame_index": 1199
+            },
+            "text": null
+          },
+          {
+            "ref_id": "frm_8e15809b53",
+            "modality": "frame",
+            "timestamp": [
+              50.0,
+              50.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_gpt4o_frames/video_holmes/frm_8e15809b53.jpg",
+              "frame_index": 1498
+            },
+            "text": null
+          }
+        ],
+        "frame_indices": [
+          1199,
+          1498
+        ],
+        "confidence": 1.0,
+        "metadata": {}
+      },
+      {
+        "window_id": "win_d07875068d",
+        "time_span": [
+          60.0,
+          80.0
+        ],
+        "scene": null,
+        "subtitle_mode": "origin",
+        "entities": [],
+        "interactions": [],
+        "events": [],
+        "social_hypotheses": [],
+        "evidence": [
+          {
+            "ref_id": "frm_6b81f9b7dd",
+            "modality": "frame",
+            "timestamp": [
+              60.0,
+              60.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_gpt4o_frames/video_holmes/frm_6b81f9b7dd.jpg",
+              "frame_index": 1798
+            },
+            "text": null
+          },
+          {
+            "ref_id": "frm_30e1f6e4cb",
+            "modality": "frame",
+            "timestamp": [
+              70.0,
+              70.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_gpt4o_frames/video_holmes/frm_30e1f6e4cb.jpg",
+              "frame_index": 2098
+            },
+            "text": null
+          }
+        ],
+        "frame_indices": [
+          1798,
+          2098
+        ],
+        "confidence": 1.0,
+        "metadata": {}
+      },
+      {
+        "window_id": "win_92c14a0d87",
+        "time_span": [
+          80.0,
+          93.02635969302636
+        ],
+        "scene": null,
+        "subtitle_mode": "origin",
+        "entities": [],
+        "interactions": [],
+        "events": [],
+        "social_hypotheses": [],
+        "evidence": [
+          {
+            "ref_id": "frm_59e718f656",
+            "modality": "frame",
+            "timestamp": [
+              80.0,
+              80.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_gpt4o_frames/video_holmes/frm_59e718f656.jpg",
+              "frame_index": 2398
+            },
+            "text": null
+          },
+          {
+            "ref_id": "frm_7a78c5481b",
+            "modality": "frame",
+            "timestamp": [
+              90.0,
+              90.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_gpt4o_frames/video_holmes/frm_7a78c5481b.jpg",
+              "frame_index": 2697
+            },
+            "text": null
+          }
+        ],
+        "frame_indices": [
+          2398,
+          2697
+        ],
+        "confidence": 1.0,
+        "metadata": {}
+      }
+    ],
+    "subtitles": [],
+    "frame_index_path": "/tmp/vg_gpt4o_frames/video_holmes",
+    "metadata": {
+      "window_seconds": 20.0,
+      "fps": 0.1,
+      "entity_tracking": false,
+      "voice_tracking": false
+    }
+  }
+}

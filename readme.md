@@ -77,17 +77,23 @@ Every cross-module hand-off uses one of seven **canonical typed objects** (`Grou
 
 ## What's implemented today
 
+The **Phase-1 substrate** of the reasoning runtime now exists as runnable Python in [`video_skills/`](video_skills/README.md) — canonical contracts, memory stores + procedures, skill bank + 14 atomics, retriever, verifier, harness, rule-based v0 controller, and the online serving loop. End-to-end smoke tests pass on synthetic windows (`pytest tests/video_skills` → 58/58 green). The trainable 8B controller, live 72B/32B tool calls, learned retrieval, and replay-based skill mining remain Phase-2 work, intentionally targeted at the freeze-line in `video_skills/contracts.py`.
+
 | Layer | Plan | Code | Status |
 |-------|------|------|--------|
 | **Visual grounding** | [`infra_plans/01_grounding/`](infra_plans/01_grounding/README.md) | [`visual_grounding/`](visual_grounding/README.md) — schemas, segmenter, perception, local grounder, social video graph, benchmark adapters | Schema-only smoke test (`out/claude_grounding/`, `out/gpt4o_grounding/`); m3-agent–based pipeline plan in place; Phase 0 → 6 execution pending |
-| **Agentic memory** | [`infra_plans/02_memory/`](infra_plans/02_memory/README.md) | Memory schemas inside `visual_grounding/social_video_graph.py` | Three-store + evidence layer designed; Memory Procedure Registry plan in place; lifecycle implementation pending |
-| **8B controller** | [`infra_plans/03_controller/`](infra_plans/03_controller/README.md) | — | Spec complete (controller + retriever + verifier + abstention + reward table + anti-hacking); implementation pending |
-| **Harness** | [`infra_plans/04_harness/`](infra_plans/04_harness/README.md) | — | Runtime spec complete (hop / atomic contract, MVP failure handling); implementation pending |
-| **Reasoning skill bank** | [`infra_plans/05_skills/`](infra_plans/05_skills/README.md) | — | Bank schema + starter inventory + composite formation rules + synthesis pipeline (gated) all specified; implementation pending |
+| **Canonical runtime contracts** | [`infra_plans/00_overview/runtime_contracts.md`](infra_plans/00_overview/runtime_contracts.md) | [`video_skills/contracts.py`](video_skills/contracts.py) — all 7 typed objects + supporting refs | **Implemented** (Phase-1 freeze-line) |
+| **Agentic memory** | [`infra_plans/02_memory/`](infra_plans/02_memory/README.md) | [`video_skills/memory/`](video_skills/memory/) — Episodic / Semantic / State (Belief + Spatial) / Evidence stores, `EntityProfileRegistry` (union-find aliases), `MemoryProcedureRegistry` (9 fixed procedures + audit log) | **Implemented** (in-memory v1; full eviction / semantic-refresh policies still open) |
+| **Reasoning skill bank** | [`infra_plans/05_skills/`](infra_plans/05_skills/README.md) | [`video_skills/skills/`](video_skills/skills/) — `SkillRecord` schema, `ReasoningSkillBank`, 14 curated v1 atomics across grounding / temporal / belief / perspective / evidence / decision | **Implemented** (atomics only; composite promotion still open) |
+| **Retriever** | [`infra_plans/03_controller/`](infra_plans/03_controller/README.md) | [`video_skills/retriever.py`](video_skills/retriever.py) — rewrite, entity / time / perspective filters, dedup, broaden ladder, counter-retrieval | **Implemented** (lexical v1; learned reranker is Phase-2) |
+| **Verifier** | [`infra_plans/03_controller/`](infra_plans/03_controller/README.md) | [`video_skills/verifier.py`](video_skills/verifier.py) — 6 named checks (`claim_evidence_alignment`, `evidence_sufficiency`, `counterevidence`, `temporal_consistency`, `perspective_consistency`, `entity_consistency`) with `support_threshold` / `abstain_threshold` gates | **Implemented** |
+| **Harness** | [`infra_plans/04_harness/`](infra_plans/04_harness/README.md) | [`video_skills/harness.py`](video_skills/harness.py) — deterministic hop interpreter, atomic-step iteration, evidence binding, all writes routed through the procedure registry, trace logging | **Implemented** |
+| **8B controller** | [`infra_plans/03_controller/`](infra_plans/03_controller/README.md) | [`video_skills/controller.py`](video_skills/controller.py) — rule-based v0 (question analysis, hop planning, skill routing, answer composition) | **Stubbed** (deterministic placeholder; trainable 8B is Phase-2) |
+| **Online serving loop** | [`infra_plans/03_controller/actors_reasoning_model.md`](infra_plans/03_controller/actors_reasoning_model.md) §2D | [`video_skills/loop.py`](video_skills/loop.py) — wires controller + harness + verifier + retriever; cross-hop carryover; produces a `ReasoningTrace` | **Implemented** |
 | **Training (8B SFT → GRPO)** | [`infra_plans/06_training/`](infra_plans/06_training/README.md) | — | Staged plan in place; reward computation against `ReasoningTrace` pending |
-| **Evaluation & ablation** | [`infra_plans/07_evaluation/`](infra_plans/07_evaluation/README.md) | [`tests/visual_grounding/`](tests/visual_grounding/) | Eval matrix and baselines defined; first end-to-end A0 vs B0 / B1 report pending |
+| **Evaluation & ablation** | [`infra_plans/07_evaluation/`](infra_plans/07_evaluation/README.md) | [`tests/video_skills/`](tests/video_skills/) (per-module + end-to-end smoke) and [`tests/visual_grounding/`](tests/visual_grounding/) | Eval matrix and baselines defined; first end-to-end A0 vs B0 / B1 report pending |
 
-The detailed open-work backlog is in [`infra_plans/99_meta/plan_docs_implementation_checklist.md`](infra_plans/99_meta/plan_docs_implementation_checklist.md) and grouped into "middle-layer glue" vs "later-phase capability" in [`infra_plans/00_overview/system_overview.md`](infra_plans/00_overview/system_overview.md).
+The detailed open-work backlog and a full doc-vs-code traceability matrix live in [`infra_plans/99_meta/plan_docs_implementation_checklist.md`](infra_plans/99_meta/plan_docs_implementation_checklist.md); higher-level "middle-layer glue" vs "later-phase capability" grouping is in [`infra_plans/00_overview/system_overview.md`](infra_plans/00_overview/system_overview.md).
 
 ---
 
@@ -107,9 +113,11 @@ Video_Skills/
 │   ├── 06_training/                # staged SFT → GRPO plan for the 8B controller
 │   ├── 07_evaluation/              # eval matrix + ablations + MVP eval priority
 │   └── 99_meta/                    # implementation checklist
+├── video_skills/                   # Phase-1 reasoning runtime (contracts, memory, skills,
+│                                   #   retriever, verifier, harness, controller, loop)
 ├── visual_grounding/               # grounding-layer code (in progress)
 ├── out/                            # grounded outputs (claude_grounding, gpt4o_grounding)
-├── tests/                          # pytest suite (visual_grounding tests)
+├── tests/                          # pytest suite (video_skills + visual_grounding)
 ├── configs/                        # YAML configs
 ├── scripts/                        # entry-point scripts
 ├── install/                        # environment setup
@@ -145,7 +153,7 @@ Phase 2 only begins when Phase 1 evaluation is reproducible. Phase 3 only begins
 
 ## Quick start
 
-> The end-to-end pipeline is still being implemented. The grounding layer is the most mature component; the rest follows the build order above.
+> The Phase-1 reasoning substrate (`video_skills/`) is runnable end-to-end on synthetic windows. The grounding layer (`visual_grounding/`) is the most mature perception component. Live integration of the two and the trainable 8B controller follow the build order above.
 
 ### Install
 
@@ -157,6 +165,34 @@ pip install -r requirements.txt
 ```
 
 See [`INSTALL.md`](INSTALL.md) for full setup including conda environments and CUDA notes.
+
+### Run the Phase-1 reasoning runtime
+
+```python
+from video_skills import build_runtime, run_question
+from tests.video_skills.synthetic import make_alice_bob_key_window
+
+rt = build_runtime()
+
+rt.memory_procedures.update_entity_profile(
+    entity_id="alice", canonical_name="Alice", seen_at=10.0,
+)
+rt.memory_procedures.update_entity_profile(
+    entity_id="bob", canonical_name="Bob", seen_at=10.0,
+)
+rt.memory_procedures.append_grounded_event(window=make_alice_bob_key_window())
+
+trace = run_question(
+    rt,
+    "Did Alice pick up the key before Bob entered?",
+    target_entities=["alice", "bob"],
+)
+print(trace.answer)                     # "Order: a_before_b."
+print(trace.final_verification.passed)  # True
+print(trace.bank_skill_ids_used)        # ['atom.ground_event_span', 'atom.order_two_events']
+```
+
+Every cross-module hand-off in this loop is one of the seven canonical typed objects in `video_skills/contracts.py`. See [`video_skills/README.md`](video_skills/README.md) for the full subsystem map.
 
 ### Run the visual grounding layer
 
@@ -188,7 +224,8 @@ Six benchmark adapters (Video-Holmes, SIV-Bench, VRBench, LongVideoBench, CG-Ben
 ### Tests
 
 ```bash
-pytest tests/
+pytest tests/                  # everything
+pytest tests/video_skills -q   # Phase-1 runtime only (58 tests, ~0.1s)
 ```
 
 ---
@@ -200,6 +237,7 @@ pytest tests/
 | Understand the whole system in one sitting | [`infra_plans/00_overview/system_overview.md`](infra_plans/00_overview/system_overview.md) |
 | Know what gets built first | [`infra_plans/00_overview/mvp_build_order.md`](infra_plans/00_overview/mvp_build_order.md) |
 | Implement any subsystem (need wire format) | [`infra_plans/00_overview/runtime_contracts.md`](infra_plans/00_overview/runtime_contracts.md) |
+| Run the Phase-1 reasoning runtime end-to-end | [`video_skills/README.md`](video_skills/README.md) |
 | Work on the grounding layer | [`infra_plans/01_grounding/`](infra_plans/01_grounding/README.md) |
 | Work on memory | [`infra_plans/02_memory/`](infra_plans/02_memory/README.md) |
 | Work on the 8B controller / retriever / verifier | [`infra_plans/03_controller/`](infra_plans/03_controller/README.md) |

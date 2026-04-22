@@ -1,0 +1,55 @@
+{
+  "benchmark": "m3_bench",
+  "video": "/fs/gamma-projects/vlm-robot/Video_Skills/dataset_examples/m3_bench/robot/bedroom_01.mp4",
+  "elapsed_s": 21.62,
+  "status": "ok",
+  "schema_issues": [],
+  "summary": {
+    "stats": {
+      "entity": 3,
+      "episodic": 2,
+      "interaction": 4,
+      "event": 6,
+      "social_hypothesis": 8,
+      "semantic": 1,
+      "total": 24,
+      "evidence": 10,
+      "entities": 3
+    },
+    "search_hits": 3
+  },
+  "preview": {
+    "type": "SocialVideoGraph",
+    "stats": {
+      "entity": 3,
+      "episodic": 2,
+      "interaction": 4,
+      "event": 6,
+      "social_hypothesis": 8,
+      "semantic": 1,
+      "total": 24,
+      "evidence": 10,
+      "entities": 3
+    },
+    "sample_search": [
+      {
+        "node_id": "person_a45ddb7682",
+        "node_type": "entity",
+        "text": "person_a45ddb7682",
+        "score": 0.0
+      },
+      {
+        "node_id": "object_9d8ae6b965",
+        "node_type": "entity",
+        "text": "object_9d8ae6b965",
+        "score": 0.0
+      },
+      {
+        "node_id": "speaker_32c959f2b8",
+        "node_type": "entity",
+        "text": "speaker_32c959f2b8",
+        "score": 0.0
+      }
+    ]
+  }
+}

@@ -1,0 +1,1101 @@
+{
+  "benchmark": "siv_bench",
+  "video": "/fs/gamma-projects/vlm-robot/datasets/SIV-Bench/origin/boss-employee/video_100.mp4",
+  "elapsed_s": 62.05,
+  "status": "ok",
+  "schema_issues": [],
+  "summary": {
+    "windows": 6,
+    "entities": 18,
+    "interactions": 12,
+    "events": 7,
+    "hypotheses": 23,
+    "evidence": 11
+  },
+  "preview": {
+    "type": "DirectContext",
+    "duration": 102.46666666666667,
+    "num_windows": 6,
+    "first_window": {
+      "window_id": "win_a26ea4cae9",
+      "time_span": [
+        0.0,
+        20.0
+      ],
+      "scene": "Amazon warehouse office confrontation",
+      "subtitle_mode": "origin",
+      "entities": [
+        {
+          "id": "p1",
+          "type": "group",
+          "attributes": {
+            "emotion": "frustrated, confrontational",
+            "gaze": "directed at manager",
+            "speaking": true
+          }
+        },
+        {
+          "id": "p2",
+          "type": "person",
+          "attributes": {
+            "emotion": "defensive, uncomfortable",
+            "gaze": "at workers",
+            "speaking": true
+          }
+        },
+        {
+          "id": "p3",
+          "type": "person",
+          "attributes": {
+            "emotion": "engaged, listening",
+            "gaze": "at confrontation",
+            "speaking": false
+          }
+        }
+      ],
+      "interactions": [
+        {
+          "src": "p1",
+          "rel": "confronting",
+          "dst": "p2",
+          "confidence": 0.95,
+          "metadata": {}
+        },
+        {
+          "src": "p2",
+          "rel": "responding_to",
+          "dst": "p1",
+          "confidence": 0.9,
+          "metadata": {}
+        },
+        {
+          "src": "p3",
+          "rel": "observing",
+          "dst": "p1",
+          "confidence": 0.85,
+          "metadata": {}
+        }
+      ],
+      "events": [
+        {
+          "type": "workplace_confrontation",
+          "agents": [
+            "p1",
+            "p2"
+          ],
+          "confidence": 0.95,
+          "description": "Workers collectively confronting manager about false promises",
+          "metadata": {}
+        },
+        {
+          "type": "group_gathering",
+          "agents": [
+            "p1",
+            "p3"
+          ],
+          "confidence": 0.9,
+          "description": "Multiple workers assembled in office space",
+          "metadata": {}
+        }
+      ],
+      "social_hypotheses": [
+        {
+          "type": "conflict",
+          "target": "p1",
+          "value": "workers distrust management promises",
+          "confidence": 0.9,
+          "provenance": "inferred_from_behavior",
+          "supporting_evidence": [
+            "frame_0",
+            "frame_1"
+          ],
+          "contradicting_evidence": []
+        },
+        {
+          "type": "intention",
+          "target": "p1",
+          "value": "demand accountability from management",
+          "confidence": 0.85,
+          "provenance": "directly_observed",
+          "supporting_evidence": [
+            "frame_0",
+            "frame_1"
+          ],
+          "contradicting_evidence": []
+        },
+        {
+          "type": "alliance",
+          "target": "p1",
+          "value": "workers united in collective action",
+          "confidence": 0.9,
+          "provenance": "inferred_from_behavior",
+          "supporting_evidence": [
+            "frame_0",
+            "frame_1"
+          ],
+          "contradicting_evidence": []
+        },
+        {
+          "type": "trust",
+          "target": "p2",
+          "value": "low worker trust in manager",
+          "confidence": 0.85,
+          "provenance": "inferred_from_behavior",
+          "supporting_evidence": [
+            "frame_0",
+            "frame_1"
+          ],
+          "contradicting_evidence": []
+        },
+        {
+          "type": "emotion",
+          "target": "p1",
+          "value": "collective frustration and anger",
+          "confidence": 0.9,
+          "provenance": "directly_observed",
+          "supporting_evidence": [
+            "frame_0",
+            "frame_1"
+          ],
+          "contradicting_evidence": []
+        },
+        {
+          "type": "goal",
+          "target": "p1",
+          "value": "expose broken promises and seek resolution",
+          "confidence": 0.85,
+          "provenance": "inferred_from_behavior",
+          "supporting_evidence": [
+            "frame_0",
+            "frame_1"
+          ],
+          "contradicting_evidence": []
+        }
+      ],
+      "evidence": [
+        {
+          "ref_id": "frm_f88c72baf3",
+          "modality": "frame",
+          "timestamp": [
+            0.0,
+            0.0
+          ],
+          "locator": {
+            "path": "/tmp/vg_vlm_frames/siv_bench/frm_f88c72baf3.jpg",
+            "frame_index": 0
+          },
+          "text": null
+        },
+        {
+          "ref_id": "frm_21b895dd1b",
+          "modality": "frame",
+          "timestamp": [
+            10.0,
+            10.0
+          ],
+          "locator": {
+            "path": "/tmp/vg_vlm_frames/siv_bench/frm_21b895dd1b.jpg",
+            "frame_index": 300
+          },
+          "text": null
+        }
+      ],
+      "frame_indices": [
+        0,
+        300
+      ],
+      "confidence": 1.0,
+      "metadata": {}
+    }
+  },
+  "full_context": {
+    "video_path": "/fs/gamma-projects/vlm-robot/datasets/SIV-Bench/origin/boss-employee/video_100.mp4",
+    "duration": 102.46666666666667,
+    "mode": "direct",
+    "subtitle_mode": "origin",
+    "windows": [
+      {
+        "window_id": "win_a26ea4cae9",
+        "time_span": [
+          0.0,
+          20.0
+        ],
+        "scene": "Amazon warehouse office confrontation",
+        "subtitle_mode": "origin",
+        "entities": [
+          {
+            "id": "p1",
+            "type": "group",
+            "attributes": {
+              "emotion": "frustrated, confrontational",
+              "gaze": "directed at manager",
+              "speaking": true
+            }
+          },
+          {
+            "id": "p2",
+            "type": "person",
+            "attributes": {
+              "emotion": "defensive, uncomfortable",
+              "gaze": "at workers",
+              "speaking": true
+            }
+          },
+          {
+            "id": "p3",
+            "type": "person",
+            "attributes": {
+              "emotion": "engaged, listening",
+              "gaze": "at confrontation",
+              "speaking": false
+            }
+          }
+        ],
+        "interactions": [
+          {
+            "src": "p1",
+            "rel": "confronting",
+            "dst": "p2",
+            "confidence": 0.95,
+            "metadata": {}
+          },
+          {
+            "src": "p2",
+            "rel": "responding_to",
+            "dst": "p1",
+            "confidence": 0.9,
+            "metadata": {}
+          },
+          {
+            "src": "p3",
+            "rel": "observing",
+            "dst": "p1",
+            "confidence": 0.85,
+            "metadata": {}
+          }
+        ],
+        "events": [
+          {
+            "type": "workplace_confrontation",
+            "agents": [
+              "p1",
+              "p2"
+            ],
+            "confidence": 0.95,
+            "description": "Workers collectively confronting manager about false promises",
+            "metadata": {}
+          },
+          {
+            "type": "group_gathering",
+            "agents": [
+              "p1",
+              "p3"
+            ],
+            "confidence": 0.9,
+            "description": "Multiple workers assembled in office space",
+            "metadata": {}
+          }
+        ],
+        "social_hypotheses": [
+          {
+            "type": "conflict",
+            "target": "p1",
+            "value": "workers distrust management promises",
+            "confidence": 0.9,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "frame_0",
+              "frame_1"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "intention",
+            "target": "p1",
+            "value": "demand accountability from management",
+            "confidence": 0.85,
+            "provenance": "directly_observed",
+            "supporting_evidence": [
+              "frame_0",
+              "frame_1"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "alliance",
+            "target": "p1",
+            "value": "workers united in collective action",
+            "confidence": 0.9,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "frame_0",
+              "frame_1"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "trust",
+            "target": "p2",
+            "value": "low worker trust in manager",
+            "confidence": 0.85,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "frame_0",
+              "frame_1"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "emotion",
+            "target": "p1",
+            "value": "collective frustration and anger",
+            "confidence": 0.9,
+            "provenance": "directly_observed",
+            "supporting_evidence": [
+              "frame_0",
+              "frame_1"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "goal",
+            "target": "p1",
+            "value": "expose broken promises and seek resolution",
+            "confidence": 0.85,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "frame_0",
+              "frame_1"
+            ],
+            "contradicting_evidence": []
+          }
+        ],
+        "evidence": [
+          {
+            "ref_id": "frm_f88c72baf3",
+            "modality": "frame",
+            "timestamp": [
+              0.0,
+              0.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/siv_bench/frm_f88c72baf3.jpg",
+              "frame_index": 0
+            },
+            "text": null
+          },
+          {
+            "ref_id": "frm_21b895dd1b",
+            "modality": "frame",
+            "timestamp": [
+              10.0,
+              10.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/siv_bench/frm_21b895dd1b.jpg",
+              "frame_index": 300
+            },
+            "text": null
+          }
+        ],
+        "frame_indices": [
+          0,
+          300
+        ],
+        "confidence": 1.0,
+        "metadata": {}
+      },
+      {
+        "window_id": "win_631069a2da",
+        "time_span": [
+          20.0,
+          40.0
+        ],
+        "scene": "group training session in office",
+        "subtitle_mode": "origin",
+        "entities": [
+          {
+            "id": "g1",
+            "type": "group",
+            "attributes": {
+              "emotion": "attentive",
+              "gaze": "toward monitors",
+              "speaking": false
+            }
+          },
+          {
+            "id": "p1",
+            "type": "person",
+            "attributes": {
+              "emotion": "engaged",
+              "gaze": "at screen",
+              "speaking": false
+            }
+          },
+          {
+            "id": "p2",
+            "type": "person",
+            "attributes": {
+              "emotion": "focused",
+              "gaze": "at monitor",
+              "speaking": false
+            }
+          },
+          {
+            "id": "obj1",
+            "type": "object",
+            "attributes": {
+              "emotion": "",
+              "gaze": "",
+              "speaking": false
+            }
+          }
+        ],
+        "interactions": [
+          {
+            "src": "g1",
+            "rel": "observing",
+            "dst": "obj1",
+            "confidence": 0.95,
+            "metadata": {}
+          },
+          {
+            "src": "p1",
+            "rel": "standing_near",
+            "dst": "p2",
+            "confidence": 0.9,
+            "metadata": {}
+          }
+        ],
+        "events": [
+          {
+            "type": "group_observation",
+            "agents": [
+              "g1"
+            ],
+            "confidence": 0.9,
+            "description": "workers gathered around computer monitors",
+            "metadata": {}
+          }
+        ],
+        "social_hypotheses": [
+          {
+            "type": "intention",
+            "target": "g1",
+            "value": "learning or receiving training demonstration",
+            "confidence": 0.85,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "frame_20.0",
+              "frame_30.0"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "goal",
+            "target": "g1",
+            "value": "understand computer system or process",
+            "confidence": 0.8,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "frame_20.0",
+              "frame_30.0"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "emotion",
+            "target": "g1",
+            "value": "focused attention and engagement",
+            "confidence": 0.75,
+            "provenance": "directly_observed",
+            "supporting_evidence": [
+              "frame_20.0",
+              "frame_30.0"
+            ],
+            "contradicting_evidence": []
+          }
+        ],
+        "evidence": [
+          {
+            "ref_id": "frm_ed80d1a5f0",
+            "modality": "frame",
+            "timestamp": [
+              20.0,
+              20.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/siv_bench/frm_ed80d1a5f0.jpg",
+              "frame_index": 600
+            },
+            "text": null
+          },
+          {
+            "ref_id": "frm_b0e700ff43",
+            "modality": "frame",
+            "timestamp": [
+              30.0,
+              30.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/siv_bench/frm_b0e700ff43.jpg",
+              "frame_index": 900
+            },
+            "text": null
+          }
+        ],
+        "frame_indices": [
+          600,
+          900
+        ],
+        "confidence": 1.0,
+        "metadata": {}
+      },
+      {
+        "window_id": "win_d525036a49",
+        "time_span": [
+          40.0,
+          60.0
+        ],
+        "scene": "office meeting around computer workstation",
+        "subtitle_mode": "origin",
+        "entities": [
+          {
+            "id": "p1",
+            "type": "group",
+            "attributes": {
+              "emotion": "attentive",
+              "gaze": "toward computer screens",
+              "speaking": false
+            }
+          },
+          {
+            "id": "p2",
+            "type": "person",
+            "attributes": {
+              "emotion": "engaged",
+              "gaze": "at screen",
+              "speaking": false
+            }
+          },
+          {
+            "id": "p3",
+            "type": "person",
+            "attributes": {
+              "emotion": "focused",
+              "gaze": "at screen",
+              "speaking": false
+            }
+          }
+        ],
+        "interactions": [
+          {
+            "src": "p1",
+            "rel": "observing",
+            "dst": "p2",
+            "confidence": 0.9,
+            "metadata": {}
+          },
+          {
+            "src": "p1",
+            "rel": "gathered_around",
+            "dst": "computer workstation",
+            "confidence": 0.95,
+            "metadata": {}
+          }
+        ],
+        "events": [
+          {
+            "type": "group_observation",
+            "agents": [
+              "p1"
+            ],
+            "confidence": 0.9,
+            "description": "workers in safety vests gathered around workstation",
+            "metadata": {}
+          }
+        ],
+        "social_hypotheses": [
+          {
+            "type": "deception_risk",
+            "target": "p1",
+            "value": "false promise regarding safety from discrimination",
+            "confidence": 0.85,
+            "provenance": "inferred_from_dialogue",
+            "supporting_evidence": [
+              "frame_40.0"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "intention",
+            "target": "p1",
+            "value": "receiving training or demonstration",
+            "confidence": 0.8,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "frame_40.0",
+              "frame_50.0"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "suspicion",
+            "target": "p1",
+            "value": "workplace safety commitments may be insincere",
+            "confidence": 0.75,
+            "provenance": "inferred_from_dialogue",
+            "supporting_evidence": [
+              "frame_40.0"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "goal",
+            "target": "p1",
+            "value": "understanding computer system or process",
+            "confidence": 0.85,
+            "provenance": "directly_observed",
+            "supporting_evidence": [
+              "frame_40.0",
+              "frame_50.0"
+            ],
+            "contradicting_evidence": []
+          }
+        ],
+        "evidence": [
+          {
+            "ref_id": "frm_e872654cb1",
+            "modality": "frame",
+            "timestamp": [
+              40.0,
+              40.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/siv_bench/frm_e872654cb1.jpg",
+              "frame_index": 1200
+            },
+            "text": null
+          },
+          {
+            "ref_id": "frm_abe90941eb",
+            "modality": "frame",
+            "timestamp": [
+              50.0,
+              50.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/siv_bench/frm_abe90941eb.jpg",
+              "frame_index": 1500
+            },
+            "text": null
+          }
+        ],
+        "frame_indices": [
+          1200,
+          1500
+        ],
+        "confidence": 1.0,
+        "metadata": {}
+      },
+      {
+        "window_id": "win_d1dda337d8",
+        "time_span": [
+          60.0,
+          80.0
+        ],
+        "scene": "warehouse workers gathered in office room",
+        "subtitle_mode": "origin",
+        "entities": [
+          {
+            "id": "p1",
+            "type": "group",
+            "attributes": {
+              "emotion": "attentive",
+              "gaze": "toward computer screens",
+              "speaking": false
+            }
+          },
+          {
+            "id": "p2",
+            "type": "person",
+            "attributes": {
+              "emotion": "focused",
+              "gaze": "at screen",
+              "speaking": false
+            }
+          }
+        ],
+        "interactions": [
+          {
+            "src": "p1",
+            "rel": "observing",
+            "dst": "p2",
+            "confidence": 0.85,
+            "metadata": {}
+          }
+        ],
+        "events": [
+          {
+            "type": "group_observation",
+            "agents": [
+              "p1"
+            ],
+            "confidence": 0.9,
+            "description": "workers in safety vests gathered around workstation",
+            "metadata": {}
+          }
+        ],
+        "social_hypotheses": [
+          {
+            "type": "intention",
+            "target": "p1",
+            "value": "seeking information or training about work conditions",
+            "confidence": 0.75,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "60.0",
+              "70.0"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "belief",
+            "target": "p1",
+            "value": "workers' needs have been neglected in favor of delivery speed",
+            "confidence": 0.8,
+            "provenance": "inferred_from_context",
+            "supporting_evidence": [
+              "60.0"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "goal",
+            "target": "p1",
+            "value": "understanding workplace rights and conditions",
+            "confidence": 0.7,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "60.0",
+              "70.0"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "emotion",
+            "target": "p1",
+            "value": "concerned but engaged",
+            "confidence": 0.75,
+            "provenance": "directly_observed",
+            "supporting_evidence": [
+              "60.0",
+              "70.0"
+            ],
+            "contradicting_evidence": []
+          }
+        ],
+        "evidence": [
+          {
+            "ref_id": "frm_0d28678fe9",
+            "modality": "frame",
+            "timestamp": [
+              60.0,
+              60.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/siv_bench/frm_0d28678fe9.jpg",
+              "frame_index": 1800
+            },
+            "text": null
+          },
+          {
+            "ref_id": "frm_8954d6a249",
+            "modality": "frame",
+            "timestamp": [
+              70.0,
+              70.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/siv_bench/frm_8954d6a249.jpg",
+              "frame_index": 2100
+            },
+            "text": null
+          }
+        ],
+        "frame_indices": [
+          1800,
+          2100
+        ],
+        "confidence": 1.0,
+        "metadata": {}
+      },
+      {
+        "window_id": "win_50426d8f34",
+        "time_span": [
+          80.0,
+          100.0
+        ],
+        "scene": "office meeting around computer workstation",
+        "subtitle_mode": "origin",
+        "entities": [
+          {
+            "id": "g1",
+            "type": "group",
+            "attributes": {
+              "emotion": "attentive",
+              "gaze": "toward computer screens",
+              "speaking": false
+            }
+          },
+          {
+            "id": "p1",
+            "type": "person",
+            "attributes": {
+              "emotion": "engaged",
+              "gaze": "at screen",
+              "speaking": false
+            }
+          },
+          {
+            "id": "p2",
+            "type": "person",
+            "attributes": {
+              "emotion": "focused",
+              "gaze": "at screen",
+              "speaking": false
+            }
+          }
+        ],
+        "interactions": [
+          {
+            "src": "g1",
+            "rel": "observing",
+            "dst": "computer workstation",
+            "confidence": 0.95,
+            "metadata": {}
+          },
+          {
+            "src": "p1",
+            "rel": "standing_with",
+            "dst": "g1",
+            "confidence": 0.9,
+            "metadata": {}
+          }
+        ],
+        "events": [
+          {
+            "type": "group_observation",
+            "agents": [
+              "g1"
+            ],
+            "confidence": 0.9,
+            "description": "team gathered around workstation for demonstration or training",
+            "metadata": {}
+          }
+        ],
+        "social_hypotheses": [
+          {
+            "type": "goal",
+            "target": "g1",
+            "value": "collaborative learning or problem-solving session",
+            "confidence": 0.85,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "80.0",
+              "90.0"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "commitment",
+            "target": "g1",
+            "value": "unified team working together",
+            "confidence": 0.8,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "80.0",
+              "90.0"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "emotion",
+            "target": "g1",
+            "value": "collective focus and engagement",
+            "confidence": 0.85,
+            "provenance": "directly_observed",
+            "supporting_evidence": [
+              "80.0",
+              "90.0"
+            ],
+            "contradicting_evidence": []
+          }
+        ],
+        "evidence": [
+          {
+            "ref_id": "frm_01ec27640b",
+            "modality": "frame",
+            "timestamp": [
+              80.0,
+              80.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/siv_bench/frm_01ec27640b.jpg",
+              "frame_index": 2400
+            },
+            "text": null
+          },
+          {
+            "ref_id": "frm_18004145e7",
+            "modality": "frame",
+            "timestamp": [
+              90.0,
+              90.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/siv_bench/frm_18004145e7.jpg",
+              "frame_index": 2700
+            },
+            "text": null
+          }
+        ],
+        "frame_indices": [
+          2400,
+          2700
+        ],
+        "confidence": 1.0,
+        "metadata": {}
+      },
+      {
+        "window_id": "win_9d3db3b13b",
+        "time_span": [
+          100.0,
+          102.46666666666667
+        ],
+        "scene": "group training session in office",
+        "subtitle_mode": "origin",
+        "entities": [
+          {
+            "id": "p1",
+            "type": "group",
+            "attributes": {
+              "emotion": "attentive",
+              "gaze": "toward computer screens",
+              "speaking": false
+            }
+          },
+          {
+            "id": "p2",
+            "type": "person",
+            "attributes": {
+              "emotion": "engaged",
+              "gaze": "at screen",
+              "speaking": false
+            }
+          },
+          {
+            "id": "p3",
+            "type": "person",
+            "attributes": {
+              "emotion": "focused",
+              "gaze": "at screen",
+              "speaking": false
+            }
+          }
+        ],
+        "interactions": [
+          {
+            "src": "p1",
+            "rel": "observing",
+            "dst": "p2",
+            "confidence": 0.9,
+            "metadata": {}
+          },
+          {
+            "src": "p1",
+            "rel": "gathered_around",
+            "dst": "p2",
+            "confidence": 0.95,
+            "metadata": {}
+          }
+        ],
+        "events": [
+          {
+            "type": "training_demonstration",
+            "agents": [
+              "p1",
+              "p2"
+            ],
+            "confidence": 0.9,
+            "description": "group observing computer workstation demonstration",
+            "metadata": {}
+          }
+        ],
+        "social_hypotheses": [
+          {
+            "type": "intention",
+            "target": "p1",
+            "value": "learning workplace procedures or systems",
+            "confidence": 0.85,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "100.0"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "goal",
+            "target": "p2",
+            "value": "instructing or demonstrating computer system",
+            "confidence": 0.8,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "100.0"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "commitment",
+            "target": "p1",
+            "value": "participating in safety or operational training",
+            "confidence": 0.85,
+            "provenance": "directly_observed",
+            "supporting_evidence": [
+              "100.0"
+            ],
+            "contradicting_evidence": []
+          }
+        ],
+        "evidence": [
+          {
+            "ref_id": "frm_ee47a4aa2a",
+            "modality": "frame",
+            "timestamp": [
+              100.0,
+              100.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/siv_bench/frm_ee47a4aa2a.jpg",
+              "frame_index": 3000
+            },
+            "text": null
+          }
+        ],
+        "frame_indices": [
+          3000
+        ],
+        "confidence": 1.0,
+        "metadata": {}
+      }
+    ],
+    "subtitles": [],
+    "frame_index_path": "/tmp/vg_vlm_frames/siv_bench",
+    "metadata": {
+      "window_seconds": 20.0,
+      "fps": 0.1,
+      "entity_tracking": true,
+      "voice_tracking": false
+    }
+  }
+}

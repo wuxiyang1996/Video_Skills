@@ -1,0 +1,53 @@
+{
+  "benchmark": "vrbench",
+  "video": "/fs/gamma-projects/vlm-robot/datasets/VRBench/v001_360p/00mFFDva8OE.mp4",
+  "elapsed_s": 20.55,
+  "status": "ok",
+  "schema_issues": [],
+  "summary": {
+    "stats": {
+      "episodic": 2,
+      "interaction": 5,
+      "event": 4,
+      "social_hypothesis": 8,
+      "semantic": 1,
+      "total": 20,
+      "evidence": 4,
+      "entities": 0
+    },
+    "search_hits": 3
+  },
+  "preview": {
+    "type": "SocialVideoGraph",
+    "stats": {
+      "episodic": 2,
+      "interaction": 5,
+      "event": 4,
+      "social_hypothesis": 8,
+      "semantic": 1,
+      "total": 20,
+      "evidence": 4,
+      "entities": 0
+    },
+    "sample_search": [
+      {
+        "node_id": "win_6762cc4ce5",
+        "node_type": "episodic",
+        "text": "volleyball match in indoor arena | g1 watching p1; g1 watching p2 | match_preparation(p1,p2,p3,p4); spectating(g1)",
+        "score": 0.0
+      },
+      {
+        "node_id": "int_f54b87befc",
+        "node_type": "interaction",
+        "text": "g1 watching p1",
+        "score": 0.0
+      },
+      {
+        "node_id": "int_4c52cb172b",
+        "node_type": "interaction",
+        "text": "g1 watching p2",
+        "score": 0.0
+      }
+    ]
+  }
+}

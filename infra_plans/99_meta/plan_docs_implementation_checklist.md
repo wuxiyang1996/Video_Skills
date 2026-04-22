@@ -4,6 +4,8 @@ This is an implementation checklist organized by file. Gaps are phrased as concr
 
 > **Status update:** The grounding-related items (§2 entity schema, §3 entire checklist) are addressed by the new [`grounding_pipeline_execution_plan.md`](../01_grounding/grounding_pipeline_execution_plan.md) plus additions to [`video_benchmarks_grounding.md`](../01_grounding/video_benchmarks_grounding.md) §2.6 / §2.7 / §6.1 / §11 and the "Entity-centric indexing" section in [`agentic_memory_design.md`](../02_memory/agentic_memory_design.md). Checkboxes below are ticked accordingly; remaining unchecked items are still open.
 
+> **Phase-1 substrate landed (code, not just docs):** the canonical contracts, memory stores + 9 procedures, skill bank + 14 atomics, retriever, verifier, harness, rule-based v0 controller, and online serving loop now live in [`video_skills/`](../../video_skills/) (see [`video_skills/README.md`](../../video_skills/README.md)). 58/58 unit + smoke tests pass via `pytest tests/video_skills`. The doc-vs-code mapping is summarized at the bottom of this file under **Implementation status (code)**; checkboxes that have a corresponding code artifact are now ticked **[c]** in addition to whatever status the docs have.
+
 ---
 
 ## 1) `infra_plans/03_controller/actors_reasoning_model.md`
@@ -57,12 +59,12 @@ Add a short **anti-hacking** note: the controller must not win by over-retrievin
 
 ### Checklist (what to add)
 
-- [ ] Canonical object schemas
-- [ ] Retrieval policy
-- [ ] Verification rubric
-- [ ] Abstention policy
-- [ ] Training/reward table
-- [ ] Online serving loop with retry/fallback behavior
+- [c] Canonical object schemas — `video_skills/contracts.py` (all 7 typed dataclasses + supporting refs)
+- [c] Retrieval policy — `video_skills/retriever.py` (rewrite, entity/time/perspective filters, dedup, broaden ladder, counter-retrieval)
+- [c] Verification rubric — `video_skills/verifier.py` (6 named checks + threshold gates)
+- [c] Abstention policy — `video_skills/verifier.py::Verifier.decide_abstain` + `loop.py` integration
+- [ ] Training/reward table *(Phase-2; loop produces traces ready for it)*
+- [c] Online serving loop with retry/fallback behavior — `video_skills/loop.py` (`run_question` ties controller + harness + verifier + retriever)
 
 ---
 
@@ -106,12 +108,12 @@ Add a short **anti-hacking** note: the controller must not win by over-retrievin
 
 ### Checklist (what to add)
 
-- [ ] Write/update triggers
-- [ ] Contradiction and revision rules
-- [ ] Confidence fields and decay
-- [x] Entity profile schema — `agentic_memory_design.md` → "Entity-centric indexing" section; backing implementation in `grounding_pipeline_execution_plan.md` Phase 2
-- [ ] Compression/eviction policy
-- [ ] Semantic refresh policy
+- [c] Write/update triggers — `video_skills/memory/procedures.py` (`append_grounded_event`, `refresh_state_memory`, `compress_episode_cluster` enforce τ thresholds + audit log)
+- [c] Contradiction and revision rules — `procedures.py` (collision detection in `append_grounded_event`, `mark_memory_conflict`, `revise_belief_state`)
+- [c] Confidence fields and decay — `stores.py` (`BeliefState` + `EpisodicEvent.confidence`); decay constant `DEFAULT_BELIEF_DECAY_HALFLIFE_S` in `procedures.py`
+- [xc] Entity profile schema — `agentic_memory_design.md` → "Entity-centric indexing" section; implementation in `video_skills/memory/stores.py::EntityProfileRegistry` (union-find aliases) and `procedures.py::update_entity_profile` / `resolve_entity_alias`
+- [ ] Compression/eviction policy *(stub `compress_episode_cluster` exists; full eviction policy still open)*
+- [ ] Semantic refresh policy *(stub in `refresh_state_memory`; full periodic-refresh policy still open)*
 
 ---
 
@@ -205,12 +207,12 @@ The bank’s primary content is **reasoning skills**. Scene/action/intention pat
 
 ### Checklist (what to add)
 
-- [ ] Formal SkillRecord schema
-- [ ] Canonical starter atomic skill set
-- [ ] Composite skill formation rules
-- [ ] Trigger-condition format
-- [ ] Verification-rule format
-- [ ] Clear boundary between reasoning skills and scene/action tags
+- [c] Formal SkillRecord schema — `video_skills/skills/bank.py::SkillRecord` (id/name/family/io/verification_rule/failure_modes/required_memory_fields/usage)
+- [c] Canonical starter atomic skill set — `video_skills/skills/atomics.py` (14 v1 atomics across grounding, temporal, social/belief, perspective, evidence, decision)
+- [ ] Composite skill formation rules *(harness has `expand` hook; promotion thresholds Phase-2)*
+- [c] Trigger-condition format — `contracts.py::TriggerSpec` consumed by `bank.py`
+- [c] Verification-rule format — `contracts.py::VerificationCheckSpec` consumed by `verifier.py`
+- [ ] Clear boundary between reasoning skills and scene/action tags *(doc edit; code already treats only reasoning skills as bank entries)*
 
 ---
 
@@ -341,3 +343,36 @@ Those are fixable by **tightening the plans** rather than changing direction.
 Turn this into a **copy-paste TODO list** in Cursor with one block per file and **exact section titles** to add — this file is the source list; section titles above can be copied verbatim into each target doc.
 
 For the grounding layer specifically, see [`grounding_pipeline_execution_plan.md`](../01_grounding/grounding_pipeline_execution_plan.md) — it is already the Cursor-ready checklist for §3 of this file and for the entity-indexing addition to §2.
+
+---
+
+## Implementation status (code)
+
+The Phase-1 reasoning substrate now has a runnable Python implementation in
+[`video_skills/`](../../video_skills/). Tests: `pytest tests/video_skills` →
+**58 passed**. Key artefacts and the checklist items they discharge:
+
+| Plan section | Code artefact | Discharges |
+|---|---|---|
+| `03_controller/actors_reasoning_model.md` — Canonical Runtime Data Contracts | `video_skills/contracts.py` | §1 schemas |
+| `03_controller/actors_reasoning_model.md` — Retriever / Verifier subsystems | `video_skills/retriever.py`, `video_skills/verifier.py` | §1 retrieval policy + verification rubric + abstention |
+| `03_controller/actors_reasoning_model.md` §2D — Online serving loop | `video_skills/loop.py::run_question` (+ `Runtime`, `build_runtime`) | §1 online loop |
+| `02_memory/agentic_memory_design.md` — stores | `video_skills/memory/stores.py` (Episodic, Semantic, State{Belief,Spatial}, Evidence, EntityProfileRegistry) | §2 entity profile schema, partial write/contradiction/decay |
+| `02_memory/agentic_memory_design.md` — lifecycle procedures | `video_skills/memory/procedures.py` (9 procedures + audit log) | §2 write/update triggers, contradiction handling, conflict marking, belief revision |
+| `04_harness/atomic_skills_hop_refactor_execution_plan.md` | `video_skills/harness.py` (`Harness`, `HopExecutionContext`, atomic-step iteration, evidence binding, write routing, trace logging) | §6 hop interpreter |
+| `05_skills/skill_extraction_bank.md` — `SkillRecord` schema | `video_skills/skills/bank.py` (`SkillRecord`, `ReasoningSkillBank`) | §4 schema |
+| `05_skills/skill_extraction_bank.md` — atomic starter set | `video_skills/skills/atomics.py` (14 atomics, `register_starter_skills`, `build_starter_bank`) | §4 starter set |
+| Rule-based v0 controller (placeholder for trained 8B) | `video_skills/controller.py` | §1 question analysis + hop planning + skill routing + answer composition |
+| Tests | `tests/video_skills/` (per-module unit tests + `test_end_to_end.py` smoke test on synthetic windows) | runnable verification of all of the above |
+
+Notation in the per-section checklists above:
+
+- `[c]` — discharged by Phase-1 code (the doc gap may still remain; see the artefact column)
+- `[xc]` — discharged in **both** the docs and the code
+- `[x]` — doc-only fix has landed
+- `[ ]` — still open
+
+**Still open (doc + Phase-2 code):** training/reward table for the controller,
+full compression/eviction policy, full semantic-refresh policy, composite-skill
+promotion thresholds, the doc rewrite of `skill_synthetics_agents.md` around
+reasoning traces, and the `evaluation_ablation_plan.md` doc.
