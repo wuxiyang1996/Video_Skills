@@ -10,6 +10,109 @@
 > - [Video Benchmarks & Grounding](video_benchmarks_grounding.md) — benchmarks, memory graph, adapters
 > - [Skill Extraction / Bank](skill_extraction_bank.md) — atomic/composite skills, hops, bank infrastructure
 > - [Skill Synthetics Agents](skill_synthetics_agents.md) — skill crafting, evolution, reflection
+> - [MVP Build Order](mvp_build_order.md) — phased implementation plan
+
+---
+
+## 0. Design Principle: Stable Memory, Evolving Reasoning
+
+This principle frames every section below and is shared across all infra plans.
+
+- **Memory construction and maintenance** are handled by **fixed procedures** and **fixed memory-management skills**. They guarantee stable storage, revision, compression, and evidence attachment.
+- The **evolving skill bank is reserved for reasoning skills** extracted from successful and failed reasoning traces. Memory-management procedures are not bank-evolved in v1.
+- **Memory is the stable substrate; reasoning is the adaptive layer.**
+- The first implementation phase does **not** aim for full self-evolution. Its goal is a **robust memory-aware reasoning controller**: an 8B controller that orchestrates hop-based reasoning over structured memory and frozen 72B grounding tools.
+- The first milestone is to demonstrate that **8B controller + structured memory + hop-based reasoning + 72B grounding** outperforms direct large-VLM QA and naive retrieval baselines on evidence-grounded multi-hop video reasoning.
+
+What this principle excludes from v1: free self-evolving banks, dynamic memory-policy learning, aggressive automatic patch/split/retire loops, and 72B-driven orchestration.
+
+---
+
+## 0.1 Role Split: 72B vs 8B vs Harness
+
+The system has **exactly three runtime roles**. Mixing them is a recurring failure mode in earlier drafts and is forbidden in v1.
+
+### 72B models (frozen visual specialists)
+
+72B models are used **only** as frozen high-precision proposal / grounding tools, called on demand by the 8B controller via the harness:
+
+- visual grounding on selected clips / windows
+- social extraction (faces, gaze, dialogue tone, ToM cues)
+- spatial extraction (objects, layout, trajectories, actions)
+- ambiguity resolution on hard cases flagged by the controller
+- evidence refinement (re-ground a span the controller is uncertain about)
+- high-quality evidence-to-answer generation when the controller decides the assembled prompt warrants it
+
+72B is explicitly **NOT**:
+
+- the orchestrator
+- the harness
+- the memory manager
+- the evolving skill-bank manager
+- the policy that decides when to retrieve, when to abstain, or when to call itself
+
+### 8B controller (central orchestrator)
+
+The 8B model is the **single central controller**. It is the only learnable component in v1. It is responsible for:
+
+- decomposing a question into hop goals
+- skill selection / routing over the reasoning skill bank
+- memory-aware planning (which store, which entity, which time scope)
+- deciding when to retrieve and what to retrieve
+- deciding when to call a 72B grounding tool, and which one
+- deciding when accumulated evidence is sufficient
+- deciding answer vs abstain
+- exporting traces for reflection and (later) skill synthesis
+
+The 8B controller never executes 72B directly; it issues a typed request that the harness fulfills.
+
+### Harness (runtime layer)
+
+The harness is a **runtime layer, not a model**. It does not learn. It executes the controller's plan and emits traces:
+
+- executes hop plans produced by the 8B controller
+- expands composite skills into atomic steps
+- binds slots, entities, and time windows for each atomic call
+- calls retrieval, fixed memory procedures, and 72B tools when the controller requests them
+- performs local verification per step / per hop
+- logs canonical `AtomicStepResult` / `HopRecord` / `ReasoningTrace` objects
+
+The harness does **not** select skills, does **not** decide when to abstain, does **not** modify memory policies, and does **not** modify the bank. Those are the controller's job (orchestration) or the synthesizer's job (later phases).
+
+A single iteration of the loop therefore looks like: **controller plans → harness executes → verifier checks → controller decides next step**.
+
+---
+
+## 0.2 MVP Controller Objective
+
+The first milestone is **not** full self-evolving autonomy. It is a **robust 8B controller over structured memory and grounded evidence**:
+
+- the controller plans and routes hops
+- the harness executes them deterministically
+- memory follows fixed procedures (no policy learning in v1)
+- the bank is a curated starter set of reasoning atomics
+- 72B is a frozen grounding specialist
+
+Success in v1 is defined as outperforming direct large-VLM QA and naive retrieval baselines on evidence-grounded multi-hop video reasoning, with reviewable traces.
+
+---
+
+## 0.3 First-Phase Training Focus
+
+Phase 1 trains / adapts only the controller behaviors that the runtime depends on:
+
+- **hop planning** — decomposing a question into hop goals
+- **skill routing** — selecting atomic / starter composite skills for a hop
+- **answer vs abstain policy** — deciding when evidence is sufficient
+- **evidence-aware control decisions** — when to retrieve more, broaden, switch skill, or call 72B grounding
+
+Phase 1 does **NOT** rely on:
+
+- free bank evolution (no online new-skill creation)
+- dynamic memory-policy learning (memory rules are fixed)
+- full automated patch / split / retire loops over the bank
+
+Those capabilities are explicitly deferred to later phases ([MVP Build Order](mvp_build_order.md)).
 
 ---
 
@@ -22,10 +125,13 @@ behavior across tens of minutes or hours. The core bottleneck is not
 perception quality but **reasoning orchestration**: deciding what to remember,
 what to retrieve, and how to chain evidence across time.
 
-We propose a **trainable 8B controller** that manages hierarchical memory,
-maintains per-character perspective threads, and operates a self-evolving bank
-of social inference skills. Frozen large VLMs serve only as perception tools
-called on demand.
+We propose a **trainable 8B controller** that orchestrates hop-based reasoning
+over hierarchical memory and per-character perspective threads, and that
+selects from a curated bank of reasoning skills. Frozen large VLMs serve only
+as perception / grounding tools called on demand. In phase 1 the bank is
+curated and the memory policy is fixed; later phases introduce conservative
+reasoning-skill evolution (see [§0.2](#02-mvp-controller-objective) and
+[MVP Build Order](mvp_build_order.md)).
 
 | Problem | How the small model solves it |
 |---------|-------------------------------|
@@ -51,15 +157,15 @@ fine-tuning a 72B model.
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    8B CONTROLLER (trainable)                          │
 │                                                                      │
-│  Responsibilities:                                                   │
-│    • Build and update hierarchical memory from observer outputs      │
-│    • Maintain per-character perspective threads                       │
+│  Responsibilities (phase 1):                                         │
+│    • Drive fixed memory procedures from observer outputs (write,     │
+│      update, compress, attach evidence — policy is fixed in v1)      │
+│    • Maintain per-character perspective threads via fixed procedures │
 │    • Decompose questions into multi-hop retrieval plans               │
-│    • Select, compose, and invoke social inference skills              │
-│    • Decide when evidence is sufficient to answer                    │
-│    • Verify answers against memory; trigger reflection on failure    │
-│    • Craft new skills and refine existing ones                       │
-│    • Manage the skill bank: merge, split, retire, promote            │
+│    • Select and route reasoning skills from the curated bank         │
+│    • Decide when evidence is sufficient and when to abstain          │
+│    • Decide when to call 72B grounding tools                         │
+│    • Export traces for reflection (synthesis is a later phase)        │
 │                                                                      │
 │  Inputs:   structured observer outputs, question text                │
 │  Outputs:  memory updates, skill invocations, evidence chains,       │
@@ -121,8 +227,8 @@ The offline artifact is the **`SocialVideoGraph`** index ([Video Benchmarks & Gr
 | **Prompt composition** | Assembles evidence chain + skill protocol + keyframes into prompt for Reasoner | None |
 | **Answer generation** | Delegates to frozen Reasoner | Reasoner (single call) |
 | **Verification** | Checks answer against memory for grounding, consistency, perspective correctness | None |
-| **Reflection** | On failure: classifies error type, updates skill or memory accordingly | None |
-| **Skill evolution** | Extracts new skills from successful traces, refines/retires based on performance | None |
+| **Reflection** | On failure: classifies error type and exports a localized trace for offline review (and, in later phases, the synthesizer) | None |
+| **Skill evolution** | **Deferred to later phases** — phase 1 only collects traces; conservative promotion is introduced in phase 2; broader synthesis in phase 3 | None |
 
 ### 2.4 Frozen Tool Specifications
 
@@ -165,6 +271,315 @@ During online reasoning, the controller should expose (for logging, GRPO, and ev
 - **Supporting evidence** pointers  
 - **Verification** result per hop / final  
 - **Confidence** and **abstain** decision  
+
+---
+
+## 2A. Canonical Runtime Data Contracts
+
+The controller, harness, memory stores, retriever, verifier, and skill bank must all communicate through a **single set of typed runtime objects**. These objects are the only allowed wire format between major modules; ad hoc free-form dicts between subsystems are not permitted.
+
+The schemas below are normative for the v1 runtime. Per-module enrichments are allowed only via documented optional fields, never via shape changes.
+
+### 2A.1 GroundedWindow
+
+A grounded slice of video / dialogue / state delivered by the perception + grounding pipeline ([Grounding Pipeline](grounding_pipeline_execution_plan.md)). It is the primary consumable for memory writers and atomic grounding skills.
+
+```python
+@dataclass
+class GroundedWindow:
+    window_id: str
+    clip_id: str
+    time_span: tuple[float, float]
+    entities: list[EntityRef]              # face/voice/character refs active in window
+    events: list[EventRef]                  # detected actions/utterances/state changes
+    dialogue: list[DialogueSpan]            # subtitle / ASR aligned to time_span
+    spatial_state: dict                     # layout, locations, visibility flags
+    keyframes: list[FrameRef]               # frame ids + timestamps
+    provenance: dict                        # detector ids, model versions
+    confidence: float                       # window-level grounding confidence
+    inferred: bool = False                  # always False for raw GroundedWindow
+```
+
+Consumed by: `build_episodic`, `update_state`, `ground_event_span`, `ground_entity_reference`.
+
+### 2A.2 EvidenceBundle
+
+The unit returned by `Retriever` and consumed by every reasoning skill that makes a claim. An EvidenceBundle is the **only** way evidence is passed between modules.
+
+```python
+@dataclass
+class EvidenceBundle:
+    bundle_id: str
+    refs: list[EvidenceRef]                 # episodic_node | state_entry | semantic_summary | frame
+    query: RetrievalQuery                   # the query that produced this bundle
+    coverage: dict                          # entities/time_spans/perspectives covered
+    contradictions: list[EvidenceRef]       # explicit counter-evidence (may be empty)
+    sufficiency_hint: float                 # retriever's prior on sufficiency, 0..1
+    confidence: float                       # aggregate retrieval confidence
+    inferred: bool = False                  # bundles are non-inferred; their refs may be
+```
+
+Each `EvidenceRef` carries `source_id`, `time_span`, `entities`, `provenance` (`observed | inferred`), `confidence`. **No claim may be emitted without an attached `EvidenceBundle` (or an explicit empty bundle marked `sufficiency_hint=0`).**
+
+### 2A.3 HopGoal
+
+A single hop's contract: what the hop must establish, with retrieval + termination hints. Produced by the planner / policy and consumed by the harness.
+
+```python
+@dataclass
+class HopGoal:
+    hop_id: str
+    parent_question_id: str
+    goal_text: str                          # "establish whether Alice saw the key move"
+    target_claim_type: str                  # "ordering" | "belief" | "causal" | "presence" | ...
+    required_entities: list[str]
+    required_time_scope: tuple[float, float] | None
+    perspective_anchor: str | None          # character_id whose viewpoint matters, if any
+    retrieval_hints: list[RetrievalQuery]
+    success_predicate: str                  # symbolic/textual test for hop success
+    max_atomic_steps: int                   # default 6 (see harness spec)
+```
+
+### 2A.4 AtomicStepResult
+
+Output of every atomic skill invocation. The harness logs one `AtomicStepResult` per atomic call; composites are reconstructed from their child results.
+
+```python
+@dataclass
+class AtomicStepResult:
+    step_id: str
+    hop_id: str
+    skill_id: str
+    inputs: dict                            # named inputs honoring skill input_schema
+    output: dict                            # output honoring skill output_schema
+    output_type: str                        # "claim" | "span" | "ordering" | "belief" | "abstain" | ...
+    evidence: EvidenceBundle | None
+    verification: VerificationResult
+    confidence: float
+    inferred: bool                          # true if output is inferred (vs grounded read)
+    failure_mode: str | None                # one of skill.failure_modes; None on success
+    latency_ms: int
+```
+
+### 2A.5 VerificationResult
+
+Local, per-step verification record produced by either the skill's `verification_rule` or the global `Verifier`.
+
+```python
+@dataclass
+class VerificationResult:
+    passed: bool
+    checks: list[VerificationCheck]         # ordered, named local checks
+    score: float                            # 0..1 aggregate
+    counterevidence: list[EvidenceRef]
+    reasons: list[str]                      # human-readable failure reasons (if any)
+    next_action: str                        # "continue" | "retry" | "broaden" | "switch_skill" | "abstain"
+```
+
+`VerificationCheck` carries `name`, `passed`, `evidence_refs`, `notes`. The set of recognized check names is enumerated by the verifier subsystem (§2C).
+
+### 2A.6 AbstainDecision
+
+Emitted when the controller declines to answer. Required to be reviewable: every abstention must point to which check failed.
+
+```python
+@dataclass
+class AbstainDecision:
+    abstain: bool
+    reason: str                             # "insufficient_evidence" | "contradictions" | "perspective_unresolved" | ...
+    blocking_checks: list[str]              # VerificationCheck.name values
+    last_evidence: EvidenceBundle | None
+    confidence_ceiling: float               # best confidence reached before abstaining
+```
+
+### 2A.7 ReasoningTrace
+
+The end-to-end record of a question's execution. Used for logging, GRPO, reflection, and bank evolution.
+
+```python
+@dataclass
+class ReasoningTrace:
+    trace_id: str
+    question_id: str
+    question_analysis: QuestionAnalysis
+    hops: list[HopRecord]                   # ordered hops; each hop has list[AtomicStepResult]
+    final_claim: dict | None
+    final_evidence: EvidenceBundle | None
+    final_verification: VerificationResult
+    abstain: AbstainDecision | None
+    answer: str | None
+    bank_skill_ids_used: list[str]
+    cost: dict                              # {hops, atomic_steps, retrieval_calls, tokens, latency_ms}
+```
+
+`HopRecord` carries `hop_goal`, `steps: list[AtomicStepResult]`, `hop_verification: VerificationResult`, `outcome: "resolved" | "blocked" | "abstain"`.
+
+### 2A.8 Contract Rules
+
+These rules are normative and apply to every module that participates in the runtime loop:
+
+1. **Canonical objects only.** Controller ↔ harness ↔ memory ↔ retriever ↔ verifier ↔ skill bank communication uses the objects above. No ad hoc free-form dict passing between major runtime components.
+2. **Inferred tagging is mandatory.** Any object whose value was not directly read from grounded perception or stored memory must set `inferred=True` and (where applicable) populate `alternative_hypotheses`.
+3. **Evidence-bearing objects must carry refs and confidence.** Every `AtomicStepResult` whose output is a claim must include either an `EvidenceBundle` with non-empty refs **or** a `VerificationResult.next_action="abstain"`.
+4. **Versioning.** Each object carries an implicit `schema_version` (set by serializer); harness rejects unknown future versions and logs a downgrade path for older ones.
+5. **Idempotent reads.** Memory retrievers return the same `EvidenceBundle` shape for the same `RetrievalQuery` within a session; perturbations require a new query id.
+6. **No silent enrichment.** Modules may not add new top-level keys to canonical objects. Optional fields are documented per object; everything else goes into `meta: dict`.
+
+---
+
+## 2B. Retriever as a First-Class Subsystem
+
+The retriever is not a thin wrapper around `search_memory`. It is a dedicated subsystem that turns a `HopGoal` (and the controller's running context) into one or more `EvidenceBundle`s. Every reasoning hop that needs grounded evidence goes through it.
+
+### 2B.1 Responsibilities
+
+| Capability | Description |
+|---|---|
+| **Query rewriting** | Expand a `HopGoal.goal_text` into one or more `RetrievalQuery`s, normalizing entity refs (alias → `character_id`) and time scopes |
+| **Entity-conditioned retrieval** | Restrict candidates to records whose `entity_ids` intersect the goal's `required_entities` |
+| **Time-conditioned retrieval** | Restrict to `time_span` overlap with the hop's `required_time_scope`; supports "before X", "after Y", interval queries |
+| **Perspective-conditioned retrieval** | When `perspective_anchor` is set, retrieve from that character's perspective thread / local state slice, not the global graph |
+| **Counterevidence retrieval** | For each candidate claim direction, run a paired query for refuting evidence (`contradicts` edges, opposing belief states) |
+| **Top-k fusion** | Score-fuse hits across episodic + semantic + state stores using normalized retrieval scores; prefer evidence with higher `provenance="observed"` weight |
+| **Contradiction-aware retrieval** | Detect when retrieved bundles contain mutually inconsistent refs and surface them in `EvidenceBundle.contradictions` |
+| **Retrieval deduplication** | Collapse near-duplicate refs (same node, overlapping spans, same dialogue line) and merge their confidences rather than double-counting |
+
+### 2B.2 Interface
+
+```python
+class Retriever:
+    def rewrite(self, hop: HopGoal, ctx: ReasoningTrace) -> list[RetrievalQuery]: ...
+    def retrieve(self, query: RetrievalQuery) -> EvidenceBundle: ...
+    def retrieve_counter(self, claim: dict, ctx: ReasoningTrace) -> EvidenceBundle: ...
+    def fuse(self, bundles: list[EvidenceBundle]) -> EvidenceBundle: ...
+```
+
+`RetrievalQuery` carries `text`, `entity_filter`, `time_filter`, `perspective`, `store_filter` (`episodic | semantic | state | any`), `k`, `mode` (`lexical | dense | hybrid`).
+
+### 2B.3 Broaden ladder
+
+When the verifier returns `next_action="broaden"`, the retriever applies, in order:
+
+1. relax entity filter (drop secondary entities first)
+2. widen `time_filter` window by 2× (capped at video duration)
+3. switch `store_filter` from `episodic` to `any`
+4. add a counterevidence pass
+5. fall back to dense-only if hybrid returned empty
+
+Each broaden step bumps the bundle's `meta.broaden_level` for cost accounting.
+
+---
+
+## 2C. Verifier as a First-Class Subsystem
+
+The verifier sits between every atomic step's raw output and the harness's hop-level verdict. It is the only module allowed to set `VerificationResult.next_action`.
+
+### 2C.1 Check catalog
+
+| Check name | What it asserts |
+|---|---|
+| `claim_evidence_alignment` | The claim is entailed (or at least not contradicted) by the cited `EvidenceBundle` |
+| `evidence_sufficiency` | The `EvidenceBundle` covers the entities, time scope, and perspective the claim depends on |
+| `counterevidence` | No higher-confidence refuting evidence exists in the bundle's `contradictions` |
+| `temporal_consistency` | Claimed orderings, durations, and "before/after" relations are consistent with `precedes` edges and timestamps |
+| `perspective_consistency` | If the claim is perspective-bound, the cited evidence lives in that character's perspective thread / local state |
+| `entity_consistency` | Every entity reference resolves to the same `character_id` across the trace |
+
+### 2C.2 Thresholds
+
+Two scalar gates are configurable per task family, with safe defaults:
+
+| Gate | Default | Meaning |
+|---|---|---|
+| `support_threshold` | 0.6 | Minimum aggregate `score` required to accept a hop's claim |
+| `abstain_threshold` | 0.35 | If post-broaden score stays below this, prefer abstention over guessing |
+
+Between the two, the verifier emits `next_action="retry"` (cheap re-run with same query) or `next_action="broaden"` (escalate retriever ladder).
+
+### 2C.3 Interface
+
+```python
+class Verifier:
+    def verify_step(self, step: AtomicStepResult) -> VerificationResult: ...
+    def verify_hop(self, hop: HopRecord) -> VerificationResult: ...
+    def verify_final(self, trace: ReasoningTrace) -> VerificationResult: ...
+    def decide_abstain(self, trace: ReasoningTrace) -> AbstainDecision: ...
+```
+
+The verifier never rewrites a step's output; it can only accept, request retry/broaden, request a skill switch, or abstain.
+
+---
+
+## 2D. Online Serving Loop with Retry and Fallback
+
+The runtime loop unifies §2.6 with the new contracts. It is the canonical control flow the harness implements.
+
+```
+on_question(q):
+  qa            = controller.analyze_question(q)
+  trace         = new ReasoningTrace(qa)
+  while not done(trace):
+      hop_goal  = controller.next_hop(trace)             # decompose
+      skill     = controller.select_skill(hop_goal, bank)
+      hop       = harness.run_hop(hop_goal, skill)       # may call retriever per atomic
+      vresult   = verifier.verify_hop(hop)
+      trace.append(hop, vresult)
+
+      switch vresult.next_action:
+          case "continue":      continue
+          case "retry":         harness.retry_last_step(hop)
+          case "broaden":       retriever.broaden(hop.last_query); harness.replay_step(hop)
+          case "switch_skill":  controller.blacklist(skill); continue
+          case "abstain":       break
+
+  final_v   = verifier.verify_final(trace)
+  if final_v.passed and not abstain_required(trace):
+      trace.answer = controller.compose_answer(trace)
+  else:
+      trace.abstain = verifier.decide_abstain(trace)
+  return trace
+```
+
+Loop invariants:
+
+- Every iteration must either advance hop progress, escalate the retriever, switch skill, or abstain. **No-op iterations are forbidden** (enforced via `cost.atomic_steps` monotonic increase).
+- `max_hops` (default 6) and `max_atomic_steps_per_hop` (default 6) bound the loop. Reaching either triggers `decide_abstain`.
+- The frozen reasoner is invoked **once** at `compose_answer` (with up to `max_reasoner_retries=2`), never inside the hop loop.
+
+---
+
+## 2E. Training Signals for the Controller
+
+Training (GRPO + LoRA per §10) consumes `ReasoningTrace` objects and produces gradient-bearing rewards for the controller adapters. Section 2E supersedes the older outcome-only and step-level reward fragments in §10.3–10.5 by giving them a **subsystem-aligned** breakdown.
+
+### 2E.1 Reward / Supervision Table
+
+| Signal | Source object | Sign | Magnitude | Trigger |
+|---|---|---|---|---|
+| `r_decomp` | `QuestionAnalysis` vs reference decomposition | + | 0.10 | hop goals match labeled subgoals |
+| `r_retrieval_recall` | `EvidenceBundle.refs` vs gold evidence set | + | 0.20 | recall ≥ τ_r (default 0.8) |
+| `r_evidence_precision` | `EvidenceBundle.refs` ∩ gold | + | 0.15 | precision ≥ τ_p (default 0.6) |
+| `r_perspective` | `perspective_consistency` check | + | 0.10 | passed for all perspective-bound claims |
+| `r_temporal` | `temporal_consistency` check | + | 0.10 | passed for all ordering/duration claims |
+| `r_abstain_correct` | `AbstainDecision` vs gold answerability | + | 0.15 | correct abstention or correct non-abstention |
+| `r_answer` | final answer vs gold | + | 0.40 | exact / EM / judge-equivalent match |
+| `p_extra_retrieval` | `cost.retrieval_calls` over budget | − | 0.05 / call | per call beyond `budget.retrieval` |
+| `p_extra_hops` | `cost.hops` over budget | − | 0.10 / hop | per hop beyond `budget.hops` |
+| `p_unsupported_claim` | `claim_evidence_alignment` failed | − | 0.30 | per failing final claim |
+| `p_overconfident` | confidence > 0.8 with `score` < `abstain_threshold` | − | 0.20 | per such claim |
+
+The composite reward is the budget-normalized sum of the above, with the **outcome term capped at 0.4** to prevent answer-only credit hacking.
+
+### 2E.2 Anti-Hacking Constraints
+
+The controller must not be able to win the reward by exploiting any of the following degenerate strategies. Each constraint is enforced either by reward shaping or by hard runtime caps:
+
+1. **Over-retrieving.** Retrieval calls beyond `budget.retrieval` (default 6 per question for long-video, 2 for short-video) incur `p_extra_retrieval` and are **capped** at 2× budget by the harness.
+2. **Abstaining too often.** `r_abstain_correct` is **two-sided**: incorrect abstention on answerable questions is penalized symmetrically with incorrect answering on unanswerable ones. A rolling abstention rate above 1.5× the dataset prior incurs an additional batch-level penalty.
+3. **Producing too many low-value hops.** Hops whose `VerificationResult.score` does not exceed the previous hop's by `δ_hop` (default 0.05) count as "no-progress" and are penalized at 0.5× a normal hop cost; a stretch of 3 consecutive no-progress hops triggers automatic abstention.
+4. **Benchmark shortcut exploitation.** Final answers that match the gold without any cited evidence (`final_evidence.refs == []`) are scored as 0 on `r_answer` regardless of literal match. Bank skills found to be benchmark-specific (e.g., trigger pattern matches a single dataset's question template) are flagged for retirement by the synthesizer ([Skill Synthetics](skill_synthetics_agents.md)).
+5. **Verifier collusion.** The verifier and controller share no parameters; the verifier's checks are deterministic post-hoc tests over canonical objects, not learned during the same GRPO run.
+6. **Trace padding.** `cost.atomic_steps` and `cost.tokens` enter the efficiency penalty linearly; padding the trace with cheap atomics still costs.
 
 ---
 
@@ -542,15 +957,19 @@ Max **2 iterations** to bound cost.
 
 ### 10.1 What Is Trained
 
-**Only the 8B controller.** All other components are frozen.
+**Only the 8B controller.** All other components are frozen. Phase 1 focuses the
+controller's adapters on the four behaviors listed in [§0.3](#03-first-phase-training-focus):
+hop planning, skill routing, answer-vs-abstain, and evidence-aware control
+decisions.
 
 | Component | Trainable? | Optimization Target |
 |-----------|-----------|---------------------|
-| **8B Controller** | **Yes** | Memory management, skill selection, retrieval planning, evidence sufficiency, verification, reflection |
+| **8B Controller** | **Yes** | Hop planning, skill routing, retrieval planning, evidence sufficiency, answer vs abstain, evidence-aware control |
 | Observer-A/B (72B) | No | Frozen perception tools |
-| Reasoner (72B) | No | Frozen answer generator |
+| Reasoner (72B) | No | Frozen answer generator (called only when controller decides) |
 | Embedders | No | Frozen retrieval index |
-| Skill Bank | Evolves (not gradient-trained) | Updated by reflection logic |
+| Memory Procedures | No (fixed in v1) | Stable infrastructure; revised manually between releases |
+| Skill Bank | Curated in v1; conservative promotion in phase 2; synthesis in phase 3 | Evolution is gated by the synthesizer with high thresholds (see [Skill Synthetics](skill_synthetics_agents.md)) |
 
 ### 10.2 LoRA Adapters
 

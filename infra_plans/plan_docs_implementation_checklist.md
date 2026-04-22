@@ -2,6 +2,8 @@
 
 This is an implementation checklist organized by file. Gaps are phrased as concrete edits rather than abstract criticism. Focus: what to add directly to the plan documents.
 
+> **Status update:** The grounding-related items (§2 entity schema, §3 entire checklist) are addressed by the new [`grounding_pipeline_execution_plan.md`](grounding_pipeline_execution_plan.md) plus additions to [`video_benchmarks_grounding.md`](video_benchmarks_grounding.md) §2.6 / §2.7 / §6.1 / §11 and the "Entity-centric indexing" section in [`agentic_memory_design.md`](agentic_memory_design.md). Checkboxes below are ticked accordingly; remaining unchecked items are still open.
+
 ---
 
 ## 1) `infra_plans/actors_reasoning_model.md`
@@ -107,7 +109,7 @@ Add a short **anti-hacking** note: the controller must not win by over-retrievin
 - [ ] Write/update triggers
 - [ ] Contradiction and revision rules
 - [ ] Confidence fields and decay
-- [ ] Entity profile schema
+- [x] Entity profile schema — `agentic_memory_design.md` → "Entity-centric indexing" section; backing implementation in `grounding_pipeline_execution_plan.md` Phase 2
 - [ ] Compression/eviction policy
 - [ ] Semantic refresh policy
 
@@ -151,12 +153,12 @@ Per benchmark, which submodules are supervised, stressed, or evaluation-only, e.
 
 ### Checklist (what to add)
 
-- [ ] Grounded window schema
-- [ ] Grounding confidence and uncertainty fields
-- [ ] Entity resolution/re-identification policy
-- [ ] Benchmark-to-capability mapping
-- [ ] Adapter definitions per benchmark
-- [ ] Grounding error taxonomy
+- [x] Grounded window schema — `video_benchmarks_grounding.md` §2.6 (normative wire format with typed dataclasses + invariants)
+- [x] Grounding confidence and uncertainty fields — `video_benchmarks_grounding.md` §2.6 (`confidence`, `provenance`, `supporting_evidence`, `contradicting_evidence`, `identity_status`, `low_confidence_reason` metadata)
+- [x] Entity resolution/re-identification policy — `video_benchmarks_grounding.md` §2.7 (three-stage resolver) + `grounding_pipeline_execution_plan.md` Phase 2
+- [x] Benchmark-to-capability mapping — `video_benchmarks_grounding.md` §6.1 (S / G / E / — matrix across 17 capabilities × 6 benchmarks)
+- [x] Adapter definitions per benchmark — `grounding_pipeline_execution_plan.md` Phase 5 (six adapters behind `BaseAdapter`) ; design in `video_benchmarks_grounding.md` §5
+- [x] Grounding error taxonomy — `video_benchmarks_grounding.md` §11 (E1–E8 with detection signal + repair action)
 
 ---
 
@@ -307,15 +309,16 @@ This should reduce ambiguity currently spread across other docs.
 
 ## Highest-priority edit order
 
-Suggested fastest path:
+Suggested fastest path (updated — grounding layer done, reasoning + skills layer still pending):
 
-1. Verify / expand `atomic_skills_hop_refactor_execution_plan.md`
-2. Expand `agentic_memory_design.md`
+1. ~~Verify / expand `atomic_skills_hop_refactor_execution_plan.md`~~ *(exists; already referenced by the grounding execution plan for the infrastructure-primitive contract)*
+2. Expand `agentic_memory_design.md` — entity-centric indexing added; **still open:** write/update triggers, contradiction rules, confidence decay, compression/eviction, semantic refresh policy
 3. Add canonical runtime schemas to `actors_reasoning_model.md`
 4. Rewrite the front half of `skill_synthetics_agents.md` around reasoning traces
-5. Add entity-resolution and benchmark-capability mapping to `video_benchmarks_grounding.md`
+5. ~~Add entity-resolution and benchmark-capability mapping to `video_benchmarks_grounding.md`~~ *(done: §2.7 + §6.1 + §11 wire-format / error taxonomy)*
 6. Add formal SkillRecord schema to `skill_extraction_bank.md`
 7. Add `evaluation_ablation_plan.md`
+8. Execute `grounding_pipeline_execution_plan.md` Phase 0 → Phase 6 (replaces `out/claude_grounding/` with `out/grounding_v1/`)
 
 ---
 
@@ -336,3 +339,5 @@ Those are fixable by **tightening the plans** rather than changing direction.
 ## Optional next step
 
 Turn this into a **copy-paste TODO list** in Cursor with one block per file and **exact section titles** to add — this file is the source list; section titles above can be copied verbatim into each target doc.
+
+For the grounding layer specifically, see [`grounding_pipeline_execution_plan.md`](grounding_pipeline_execution_plan.md) — it is already the Cursor-ready checklist for §3 of this file and for the entity-indexing addition to §2.

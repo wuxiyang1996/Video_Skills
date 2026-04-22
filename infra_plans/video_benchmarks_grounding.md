@@ -10,6 +10,7 @@
 > - [Actors / Reasoning Model](actors_reasoning_model.md) — reasoning core, 8B controller, orchestrator
 > - [Skill Extraction / Bank](skill_extraction_bank.md) — atomic/composite reasoning skills, hop composition, bank infrastructure
 > - [Skill Synthetics Agents](skill_synthetics_agents.md) — skill crafting, evolution, quality control
+> - [Grounding Pipeline Execution Plan](grounding_pipeline_execution_plan.md) — m3-agent-based implementation plan that realizes the schema and adapters defined here
 
 ---
 
@@ -214,6 +215,141 @@ No social claim should exist without timestamps, clip refs, subtitle refs, or fr
 - Wraps a `MemoryStore` (from `rag/retrieval.py`) for the embedding index when operating in retrieval mode.
 - Accepts either a `TextEmbedder` or `MultimodalEmbedder` at construction time.
 - Entity nodes store face/voice embeddings matched via cosine similarity where applicable (e.g. M3-Bench).
+
+### 2.6 Grounded-window wire format (normative)
+
+The per-window JSON emitted by the grounding pipeline is the normative contract between observer and reasoner. Every field below is mandatory unless explicitly marked optional. Confidence and uncertainty fields are first-class: any consumer (retrieval, verification, controller) may discard or down-weight items below a configurable threshold.
+
+```python
+# Scalars and identifiers
+NodeId        = str          # e.g. "win_ae4d4b6d80", "int_e29a54e2b1", "char_12"
+EntityRef     = str          # "<face_3>" | "<voice_5>" | "character_12" after refresh_equivalences
+EvidenceId    = str          # "frm_81de6284e4" | "sub_000f2" | "vseg_voice7_s3"
+Modality      = Literal["frame", "subtitle", "voice", "clip"]
+Provenance    = Literal["directly_observed", "inferred_from_behavior",
+                        "derived_from_subtitle", "revised_from_prior"]
+
+@dataclass
+class EvidenceRef:
+    ref_id: EvidenceId
+    modality: Modality
+    timestamp: tuple[float, float]   # seconds, inclusive
+    locator: dict                    # {path, frame_index} | {srt_index, text} | {voice_node, seg_index}
+    text: str | None                 # subtitle / ASR text, if applicable
+
+@dataclass
+class EntityAttributes:
+    emotion: str | None
+    gaze: str | None                 # target entity_ref or "forward"/"off-screen"
+    speaking: bool
+    pose: str | None                 # optional: standing/sitting/walking/...
+    role: str | None                 # optional: scene role tag
+    location: str | None             # optional: scene-local place label
+
+@dataclass
+class EntityMention:
+    id: EntityRef                    # window-local if pre-equivalence, character_N after
+    type: Literal["person", "group", "object", "speaker"]
+    attributes: EntityAttributes
+    confidence: float                # 0.0–1.0
+    identity_status: Literal["resolved", "unresolved", "alias", "conflict"]
+
+@dataclass
+class Interaction:
+    src: EntityRef
+    rel: str                         # vocabulary: see §3.5
+    dst: EntityRef
+    confidence: float
+    evidence_refs: list[EvidenceId]
+    metadata: dict                   # free-form
+
+@dataclass
+class Event:
+    type: str                        # e.g. "enters_room", "relationship_shift"
+    agents: list[EntityRef]
+    confidence: float
+    description: str
+    evidence_refs: list[EvidenceId]
+    metadata: dict                   # may contain {"revised_from": <EventId>, "level": 2|3}
+
+@dataclass
+class SocialHypothesis:
+    type: Literal["intention", "belief", "emotion", "alliance", "conflict",
+                  "trust", "suspicion", "goal", "deception_risk"]
+    target: EntityRef                # or pair / group (comma-joined)
+    value: str
+    confidence: float
+    provenance: Provenance
+    supporting_evidence: list[EvidenceId]
+    contradicting_evidence: list[EvidenceId]
+    revised_from: NodeId | None      # previous hypothesis this supersedes
+
+@dataclass
+class SubtitleSpan:
+    ref_id: EvidenceId               # also appears in EvidenceRef
+    time_span: tuple[float, float]
+    text: str
+    speaker: EntityRef | None        # resolved via voice node when possible
+
+@dataclass
+class GroundedWindow:
+    window_id: NodeId
+    time_span: tuple[float, float]
+    scene: str
+    subtitle_mode: Literal["origin", "added", "removed", "none"]
+    entities: list[EntityMention]
+    interactions: list[Interaction]
+    events: list[Event]
+    social_hypotheses: list[SocialHypothesis]
+    subtitle_spans: list[SubtitleSpan]
+    evidence: list[EvidenceRef]      # superset referenced by all *_refs above
+    frame_indices: list[int]
+    confidence: float                # window-level aggregate
+    metadata: dict                   # e.g. {"cut_boundary": True, "level": 1}
+```
+
+**Invariants that pipeline consumers may assume:**
+
+1. Every `EntityRef` appearing in `interactions`, `events`, `social_hypotheses`, or `subtitle_spans.speaker` is either (a) present in `entities`, or (b) resolvable via `SocialVideoGraph.character_mappings` to an `img`/`voice` node.
+2. Every `EvidenceId` in any `*_refs` list appears in `evidence` (closed reference set).
+3. `supporting_evidence` is non-empty for any `social_hypothesis` with `confidence ≥ 0.5`.
+4. `time_span` on every sub-structure lies within the window's `time_span`.
+5. `confidence` fields are calibrated to the range `[0, 1]`; a node with `confidence < 0.2` **must** carry an explanation in `metadata["low_confidence_reason"]`.
+
+Mapping to episodic memory writes (see [Agentic Memory](agentic_memory_design.md)): one `GroundedWindow` materializes as one `episodic` entry carrying links to its `entities`, attached `interactions`/`events`, and pointers into the evidence store. `social_hypothesis` entries flow into **state memory** at query time; they remain indexed in the graph for retrieval but are not copied into episodic.
+
+### 2.7 Entity resolution & re-identification
+
+Entity identity persistence is the load-bearing capability that separates "window-local schema" from a usable grounding graph. The pipeline uses a three-stage resolver, realized by the [Grounding Pipeline Execution Plan](grounding_pipeline_execution_plan.md) Phase 2.
+
+**Stage A — per-clip clustering.**
+
+- **Faces:** InsightFace `buffalo_l` (RetinaFace + ArcFace) extracts face embeddings per sampled frame; within-clip DBSCAN (`eps=0.5`, `min_samples=2`) groups detections into face tracks. Tracks below a quality / detection-score threshold are dropped (see m3-agent `processing_config.json`: `face_detection_score_threshold`, `face_quality_score_threshold`).
+- **Voices:** Speaker diarization segments the clip (Gemini-1.5-pro by default; Whisper diarizer as fallback); ERes2NetV2 produces per-segment embeddings; segments below `min_duration_for_audio` are dropped.
+
+**Stage B — cross-clip matching into graph nodes.**
+
+- For each new face cluster, search the graph for existing `img` nodes via cosine similarity; merge when similarity ≥ `img_matching_threshold` (default 0.3), otherwise create a new `img` node. Same for `voice` nodes with `audio_matching_threshold` (default 0.6).
+- Each `img`/`voice` node stores up to `max_img_embeddings` / `max_audio_embeddings` embeddings; overflow is reservoir-sampled (m3-agent `update_node`).
+- The graph records **per-clip appearance evidence** on each entity node (`metadata.contents`: base64 face crops, ASR text, start/end times).
+
+**Stage C — cross-modal equivalence (face ↔ voice → character).**
+
+- Stage-1 caption prompt (`prompt_generate_memory_with_ids_sft`) is required to emit explicit equivalence assertions whenever a face is observed to be the speaker of a voice, e.g. `"equivalence: <face_3> = <voice_5>"`.
+- After the full video is processed, `SocialVideoGraph.refresh_equivalences()` runs union-find over all equivalence assertions attached to `img`/`voice` nodes, producing `character_mappings: {character_N: [face_i, voice_j, ...]}` and the reverse map.
+- Downstream consumers use `character_N` (video-global) rather than per-clip `<face_N>`.
+
+**Failure handling.**
+
+| Failure mode | Detection signal | Repair |
+|---|---|---|
+| Identity drift (same person, new `img` node) | Two `img` nodes with cosine similarity ≥ `img_matching_threshold` but not merged because they were created in the same clip | Post-processing merge pass at end of video |
+| Voice attribution conflict | Stage-1 emits two equivalence assertions `<voice_5> = <face_3>` and `<voice_5> = <face_7>` | `fix_collisions(mode="eq_only")` keeps the assertion with the highest edge weight |
+| Occlusion / missing face | Person clearly speaks (voice node active) but no face embedding for the clip | Graph records only `voice_N`; entity_ref falls back to the voice tag until a future clip adds face evidence |
+| Alias mismatch | Subtitle text names a character that has no resolved identity (`"Alice said"`) | Store as candidate alias on the voice node's metadata; resolved when equivalence is later asserted |
+| Confidence decay for stale identities | Character unseen for more than N clips | Its hypotheses in state memory are confidence-discounted (see [Agentic Memory](agentic_memory_design.md) revision policy) |
+
+**M3-Bench name round-trip.** `SocialVideoGraph.translate(text)` and `back_translate(text)` are thin wrappers over `character_mappings` and `reverse_character_mappings`; the M3-Bench adapter calls `back_translate` on the question before retrieval and `translate` on the answer before returning it. See [Grounding Pipeline Execution Plan §2.3, Phase 2].
 
 ---
 
@@ -492,6 +628,43 @@ Returns at minimum:
 | CG-Bench | retrieval | clue/evidence grounding | optional | no | low | yes |
 | M3-Bench | retrieval | entity-aware grounding | yes | high | medium | yes |
 
+### 6.1 Benchmark-to-capability mapping
+
+Each benchmark stresses a different subset of the grounding, memory, retrieval, and reasoning capabilities. This table is the source of truth for "which subsystem must work for this benchmark to move" and drives the ablation design in [`evaluation_ablation_plan.md`](plan_docs_implementation_checklist.md#7-new-file-infra_plansevaluation_ablation_planmd) (pending).
+
+Columns:
+
+- **Stressed (S):** the capability is load-bearing for accuracy on this benchmark; degrading it should visibly drop the score.
+- **Supervised (G):** the benchmark provides gold labels that can directly train or evaluate this capability.
+- **Evaluation-only (E):** the capability is exercised but not directly graded.
+- **—:** not exercised.
+
+| Capability | Video-Holmes | SIV-Bench | VRBench | LongVideoBench | CG-Bench | M3-Bench |
+|---|---|---|---|---|---|---|
+| Adaptive sampling (§3.1) | S | S | S | S | S | S |
+| Subtitle / ASR ingestion (§3.1) | E | **S** (mode ablation) | E | **S** | E | **S** |
+| Face detection + cross-clip track (§2.7) | E | S | E | E | E | **S** + G (answers cite names) |
+| Voice diarization + embedding (§2.7) | — | S | E | E | — | **S** |
+| Equivalence (face ↔ voice → character) (§2.7) | — | E | E | E | — | **S** + G |
+| Entity-level episodic memory (§3.3 / §3.4) | S | S | S | S | S | **S** |
+| Interaction grounding (§2.2) | S | **S** + G | S | E | E | E |
+| Event grounding (§2.2) | **S** + G (multi-hop clues) | S | **S** + G (narrative steps) | E | **S** + G (clue spans) | E |
+| Social-hypothesis grounding (§2.2) | S | **S** + G (belief/intention) | E | — | — | E |
+| Level-3 relationship memory (§4) | — | E | S | E | — | **S** |
+| Level-4 semantic distillation (§4) | — | — | S | **S** | E | **S** |
+| Retrieval recall@k (§7.4) | — | — | **S** + G | **S** + G | **S** + G | **S** + G |
+| Evidence-chain retrieval (§7.4) | E | E | **S** + G | E | **S** + G (clue spans) | S |
+| Entity-centric retrieval (§2.5) | — | E | — | — | — | **S** |
+| Name round-trip (`translate` / `back_translate`) (§2.7) | — | — | — | — | — | **S** + G |
+| Perspective / ToM reasoning | E | **S** (ToM questions) | E | — | — | E |
+| Reasoning-trace supervision (§7.1) | **S** + G (`<redacted_thinking>`) | E | **S** + G (timestamped steps) | — | E | E |
+
+How to read the table during development:
+
+- An **S** cell that fails evaluation implicates the corresponding subsystem directly.
+- A **G** cell tells you where direct supervision / fine-tuning signal exists; prioritize these cells for atomic-skill training (see [`skill_extraction_bank.md`](skill_extraction_bank.md)).
+- Absence of **S** marks (all `E`/`—`) in a capability column means no benchmark currently stresses that capability; either add one or de-prioritize the capability.
+
 ---
 
 ## 7. Evaluation Plan
@@ -644,3 +817,27 @@ That definition is what makes the same pipeline usable for short context-rich cl
 | **Phase 5** | `adapters.py` (Tier 2) | Phase 3–4 | **High** |
 | **Phase 6** | `skills.py` | Phase 1–5 | Lower — skill bank integration |
 | **Phase 7** | `__init__.py`, integration tests | All above | Final |
+
+The **operational** phasing (perception stack vendoring, adaptive sampler, two-stage extraction, consolidation, adapters, validation) is tracked in [`grounding_pipeline_execution_plan.md`](grounding_pipeline_execution_plan.md) and complements this design-level order.
+
+---
+
+## 11. Grounding error taxonomy
+
+Six canonical failure modes observed on the current `Video_Skills/out/claude_grounding/*.json` baseline, each with a detection signal and a repair action. Pipeline runs must emit per-failure counters into `out/<run_id>/grounding_errors.jsonl` so the `evaluation_ablation_plan.md` (pending) and reflection loop ([Skill Synthetics Agents](skill_synthetics_agents.md)) can diagnose regressions.
+
+| # | Error class | Symptom in output | Detection signal | Repair |
+|---|---|---|---|---|
+| **E1 — Identity drift** | Same person receives different `entity_id` across windows (current Claude baseline: `p1` is a different person in each scene) | Post-hoc cosine similarity between `img`/`voice` nodes exceeds `img_matching_threshold` yet no edge exists; or `character_mappings` has >> expected cluster count | End-of-video re-clustering pass; raise thresholds; add equivalence assertion if stage-1 missed it |
+| **E2 — Missing entity** | A clearly visible / audible person produces no `img` or `voice` node | Frames with face detections below quality/detection thresholds but above a relaxed floor; voice segments shorter than `min_duration_for_audio` | Lower per-benchmark thresholds; relax `max_faces_per_character`; run secondary face detector |
+| **E3 — Wrong speaker attribution** | `subtitle_span.speaker` points at a face that isn't speaking; or equivalence assertion maps `<voice_N>` to the wrong `<face_M>` | Mouth-movement keyframe disagrees with active voice segment; two conflicting equivalence assertions | `fix_collisions(mode="eq_only")`; require lip-movement confirmation before writing equivalence |
+| **E4 — Subtitle / frame misalignment** | Subtitle text references event not visible in the sampled frames for that time range | SRT timestamp lies outside any sampled frame's `time_span`; ASR text entities have no matching entity in the window | Add subtitle-aligned keyframes to sampler; widen window boundary to include adjacent cut |
+| **E5 — Hypothesis without evidence** | `social_hypothesis` node has empty `supporting_evidence` despite `confidence ≥ 0.5` (current Claude baseline: many hypotheses reference only `"frame_0"` which isn't in the evidence list) | Wire-format invariant #3 (see §2.6) violated; or `supporting_evidence` ids not present in `window.evidence` | Reject the hypothesis at stage-2 parse; log to `pipeline_errors.jsonl`; require the stage-2 prompt to re-emit with evidence |
+| **E6 — Semantic over-compression** | Distilled semantic node subsumes contradictory episodic claims (e.g. alliance + conflict between same pair) without a `relationship_shift` event | Level-4 summary cosine-similar (≥ `semantic_drop_threshold`) to two semantic nodes with disjoint supporting entity sets | Split the summary; emit a `relationship_shift` event (§4); re-run distillation on the split clusters |
+
+Two additional classes are tracked but not yet auto-detected:
+
+- **E7 — Perspective collapse**: different characters' beliefs merged into one "world view" (blocks ToM benchmarks). Requires per-character perspective threads (see [Actors / Reasoning Model](actors_reasoning_model.md)).
+- **E8 — Retrieval shortcut**: adapter returns an answer without any `evidence_refs` in the returned trace. Detected by verifier in the reasoning loop, not by the grounding layer itself.
+
+Each error class is a first-class metric in the Phase 6 exit criteria of [`grounding_pipeline_execution_plan.md`](grounding_pipeline_execution_plan.md); a pipeline run is considered regression-free only when E1–E6 counts are ≤ baseline.

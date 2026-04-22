@@ -7,73 +7,182 @@
 >
 > **Evolution unit:** updates apply to **atomic skill chains**, **reasoning hops**, and **composite skills** — not only coarse monolithic skills. See [Skill Extraction / Bank](skill_extraction_bank.md) for atomic families and hop composition.
 >
+> **Phase scope.** The synthesis pipeline described here is the **target design**. Phase 1 only exercises trace collection and (optionally) human-supervised promotion — see §0.1–0.3 below.
+>
 > **Related plans:**
 > - [Atomic skills & hop refactor — execution checklist](atomic_skills_hop_refactor_execution_plan.md)
 > - [Agentic Memory](agentic_memory_design.md) — three memory stores + evidence layer
 > - [Video Benchmarks & Grounding](video_benchmarks_grounding.md) — benchmarks, memory graph, adapters
 > - [Actors / Reasoning Model](actors_reasoning_model.md) — 8B controller, reasoning core, orchestrator
 > - [Skill Extraction / Bank](skill_extraction_bank.md) — atomic/composite skills and bank infrastructure
+> - [MVP Build Order](mvp_build_order.md) — phased implementation plan
 
 ---
 
-## 1. Skill Crafter Pipeline
+## 0. Design Principle: Stable Memory, Evolving Reasoning
 
-After a memory graph is built (see [Actors plan §3](actors_reasoning_model.md)),
-the 8B model analyzes the graph to discover reusable reasoning skills. This
-follows the same three-stage pipeline as the COS-PLAY video skill pipeline but
-is driven entirely by the small model over the memory graph (indexed as `SocialVideoGraph`; backed by episodic / semantic / state stores per [Agentic Memory](agentic_memory_design.md)).
+This file describes the **adaptive layer** of the system. It must be read with two cross-plan rules in mind:
 
-### Pipeline
+- Memory construction and maintenance are **fixed** in v1 ([Agentic Memory §0](agentic_memory_design.md#0-design-principle-stable-memory-evolving-reasoning)). Synthesis never edits memory procedures.
+- The evolving bank holds **reasoning skills only** ([Skill Extraction / Bank §0](skill_extraction_bank.md#0-design-principle-stable-memory-evolving-reasoning)). Synthesis writes only to the Reasoning Skill Bank, never to the Memory Procedure Registry.
+
+---
+
+## 0.1 Role of Skill Synthesis in the MVP
+
+- **Full automatic skill synthesis is not the first milestone.**
+- The first milestone is **robust reasoning trace collection and failure localization** by the harness ([Atomic Skills & Hop Plan — Harness](atomic_skills_hop_refactor_execution_plan.md#harness-runtime-specification)) plus a curated starter bank ([Skill Bank §0.2](skill_extraction_bank.md#02-phase-1-bank-policy)).
+- **Synthesis is introduced only after** traces, retrieval, verifier, and hop execution are stable. The MVP success criterion ([MVP Build Order](mvp_build_order.md)) is defined entirely on a curated bank — it does not require this section to be implemented at v1 ship time.
+
+The pipeline described later in this document (recurring-chain mining, verifiability gates, promotion thresholds, versioning, rollback) is the **target design** for phase 2 / phase 3. In phase 1 only the trace ingestion side is exercised; the actions side is restricted as below.
+
+## 0.2 Phase-1 Conservative Synthesis Policy
+
+In phase 1, synthesis is intentionally minimal:
+
+- Allow only **limited / manual or semi-automatic** promotion of repeated successful reasoning traces. A human reviewer signs off on the first composites; the synthesizer surfaces candidates but does not auto-activate them.
+- **Do not** enable aggressive `patch` / `split` / `retire` loops in the first implementation phase. These operations exist in the spec for design completeness but are gated off behind a feature flag in v1.
+- **Do not** let noisy traces freely rewrite the bank. Promotion thresholds (§ Promotion Thresholds) are minimums; in v1 they are doubled (`N_repeat = 10`, `τ_success = 0.8`, `transfer ≥ 3 distinct task families`) before activation.
+- All bank writes go through the versioning + shadow path (§ Bank Versioning and Rollback). v1 does not bypass this for any operation.
+
+## 0.3 Preconditions for Later Self-Evolution
+
+Automatic synthesis is unsafe without the following invariants. Phase 2 / phase 3 may not enable broader synthesis until these are demonstrably in place:
+
+| Precondition | What it means concretely |
+|---|---|
+| **Stable runtime schemas** | The canonical objects in [Actors §2A](actors_reasoning_model.md#2a-canonical-runtime-data-contracts) are versioned and unchanged across the synthesis window |
+| **Reliable retrieval** | The retriever ([Actors §2B](actors_reasoning_model.md#2b-retriever-as-a-first-class-subsystem)) meets target recall on the eval set; broaden ladder behavior is monotone and reproducible |
+| **Reliable verifier** | The verifier ([Actors §2C](actors_reasoning_model.md#2c-verifier-as-a-first-class-subsystem)) check catalog is stable; per-check pass rates are calibrated and not gameable by the controller |
+| **Clean step / hop traces** | `AtomicStepResult` and `HopRecord` are populated for every run; no silent enrichment; failure modes use the standard codes |
+| **Trustworthy failure localization** | The harness's *Failure Localization Protocol* assigns exactly one bucket per failure with high inter-rater agreement on a held-out audit sample |
+
+If any of these regress, synthesis activations are paused until the invariant is restored. This is the safety counterpart to "memory is the stable substrate, reasoning is the adaptive layer."
+
+---
+
+## 1. Primary Synthesis Unit: Successful Reasoning Traces
+
+The skill bank is grown **trace-first**, not tag-first. The main object the synthesizer consumes is a **successful reasoning trajectory** — a `ReasoningTrace` (or `HopRecord` slice) whose final and per-hop verifications passed, captured by the harness ([Atomic Skills & Hop Plan — Harness](atomic_skills_hop_refactor_execution_plan.md#harness-runtime-specification)).
+
+| Statement | Implication |
+|---|---|
+| Successful **hop traces** are the main synthesis unit. | The synthesizer indexes recurring atomic chains within `HopRecord.steps`, not segment intention tags. |
+| Reusable skills come from **verified reasoning traces**. | Every promoted skill is traceable back to ≥ `N_repeat` `HopRecord`s with `passed=True`. |
+| Grounded segments and intention tags are **support metadata**, not the ontology. | They influence retrieval filtering and trigger conditions, but they cannot be promoted into bank skills on their own. |
+
+### Synthesis pipeline (trace-first)
 
 ```
-SocialVideoGraph
+ReasoningTrace stream  (from harness on_hop_success / on_promotion_candidate hooks)
   │
-  ├─ 1. Temporal segmentation
-  │     • Boundary detection via predicate delta between consecutive
-  │       episodic nodes (reuses COS-PLAY's ScoredBoundary scoring)
-  │     • Intention tagging: Qwen3-VL-8B classifies each segment
-  │       with a [TAG] from the video intention taxonomy:
-  │       OBSERVE | INTERACT | NAVIGATE | COMMUNICATE | MANIPULATE |
-  │       INVESTIGATE | REACT | WAIT | APPROACH | RETREAT | DELIVER | RECEIVE
+  ├─ 1. Trace ingestion
+  │     • Filter to HopRecords with hop_verification.passed=True
+  │     • Normalize each step's (skill_id, output_type) pair into a chain signature
   │
-  ├─ 2. Contract extraction  (Qwen3-VL-8B)
-  │     • For each segment: compute eff_add / eff_del from predicate
-  │       changes across the segment boundary
-  │     • Aggregate across similar segments (same intention + high
-  │       predicate overlap) to build robust contracts
+  ├─ 2. Recurring chain mining
+  │     • Group hops by chain signature; require ≥ N_repeat occurrences across distinct
+  │       traces (and ≥ 2 distinct task families — see Promotion Thresholds)
+  │     • Per group, compute mean and variance of hop_verification.score
   │
-  └─ 3. Protocol generation  (Qwen3-VL-8B)
-        • For each skill cluster, synthesize a step-by-step Protocol
-        • Prompt: "You are creating a reusable reasoning skill from
-          these video segments. Write a protocol that a reasoning agent
-          can follow to analyze similar scenes in new videos."
-        • Output: preconditions, steps[], success_criteria, abort_criteria
+  ├─ 3. Composite candidate construction
+  │     • For each qualifying group, build a SkillRecord with
+  │       type="composite", child_links = chain, version.created_by="promoted"
+  │     • Inherit verification rules per Composite Skill Formation Rules
+  │       (see skill_extraction_bank.md §6)
+  │
+  └─ 4. Verifiability + non-leakiness gate (§ below)
+        • Reject candidates that fail verifiability or leakage checks
+        • Surviving candidates enter the bank as version.status="shadow"
+          and are activated after a shadow evaluation pass
 ```
+
+The COS-PLAY-style temporal segmentation + intention tagging + contract extraction pipeline is **retained as auxiliary input**, but its role is now to enrich `trigger_conditions` (e.g. attach an `intention_tag` trigger) and to help the retriever index segments — not to define skills.
 
 ### Output
 
-- `skill_bank.jsonl` — COS-PLAY-compatible `Skill` objects
-- Each skill carries: `skill_id`, `name`, `strategic_description`, `tags`,
-  `protocol`, `contract`, `sub_episodes` (evidence pointers), `n_instances`
+- `skill_bank.jsonl` — `SkillRecord` entries (see [Skill Bank §6](skill_extraction_bank.md#6-skill-schema)).
+- Each record carries `skill_id`, `name`, `type`, `family`, `child_links`, `verification_rule`, `usage_stats`, `version`, plus the COS-PLAY-compatible `protocol_steps` view for legacy code paths.
 
 ---
 
-## 2. Skill Quality Control (8B as Judge)
+## 2. Role of Segment Tags as Side Metadata
 
-The 8B model evaluates crafted skills on six dimensions (reusing
-`skill_agents/skill_evaluation/`):
+Segment intention tags from the COS-PLAY taxonomy (`OBSERVE | INTERACT | NAVIGATE | COMMUNICATE | MANIPULATE | INVESTIGATE | REACT | WAIT | APPROACH | RETREAT | DELIVER | RECEIVE`) are **demoted** from primary ontology to side metadata:
+
+- They are stored on grounded segments / episodic records, not on skills directly.
+- They may appear in a skill's `trigger_conditions` as `TriggerSpec(kind="predicate", value={"intention_tag": "OBSERVE"})`.
+- They are used by the synthesizer's clustering step to seed candidate groupings, but a tag-only cluster is **never** sufficient for promotion.
+- They are **not** indexed as searchable skill identities; the bank cannot be browsed as a tag taxonomy.
+
+This keeps the bank centered on reasoning operators rather than on a perception ontology.
+
+### Verifiability and Non-Leakiness Checks
+
+Every synthesis candidate must pass the following gates before becoming a `shadow` bank entry:
+
+| Check | Rule |
+|---|---|
+| **Verifiable output** | The candidate must have a non-empty `verification_rule` whose checks reference real keys in `output_schema`; tag-classifier "skills" with no claim output are rejected |
+| **Evidence-grounded** | Every example trace cited by the candidate must have non-empty `EvidenceBundle.refs`; candidates whose only support is the answer label are rejected |
+| **No benchmark-specific shortcut** | The candidate's `trigger_conditions` and `protocol_steps` must not pattern-match a single benchmark's question template (detected by an n-gram overlap > τ_template against held-out template fixtures) |
+| **No hidden label leakage** | The candidate's `input_schema` must not include the gold answer or any field that is a 1:1 function of the gold answer; static check by the synthesizer |
+| **No question-style overfit** | If the candidate's trigger conditions only fire on questions from one benchmark, it is rejected; it must fire on at least 2 distinct task families |
+
+A rejection is a first-class event — logged with a reason and the offending field — so the synthesizer's decisions are auditable.
+
+### Skill Quality Control (8B as Judge)
+
+After verifiability and non-leakiness gates pass, the 8B judge scores the candidate on six dimensions (reusing `skill_agents/skill_evaluation/`). These dimensions remain useful, now applied **on top of** the trace-first pipeline rather than as the primary filter:
 
 | Dimension | 8B Model Check |
 |-----------|----------------|
-| **Coherence** | "Does this skill's protocol make logical sense for its intention tag?" |
-| **Discriminability** | "Is this skill distinct from existing skills in the bank?" |
+| **Coherence** | "Does this skill's `protocol_steps` make logical sense for its `family` and child chain?" |
+| **Discriminability** | "Is this skill distinct from existing skills in the bank (compared by `child_links` and `trigger_conditions`)?" |
 | **Composability** | "Can this skill chain with other skills in a reasoning plan?" |
-| **Generalization** | "Would this skill apply to videos beyond the source?" |
-| **Utility** | "Would following this protocol help answer a question?" |
-| **Granularity** | "Is this skill at the right level of abstraction?" |
+| **Generalization** | "Would this skill apply to videos beyond the source traces?" |
+| **Utility** | "Would invoking this skill on a fresh trace help close a hop's `success_predicate`?" |
+| **Granularity** | "Is this skill at the right level of abstraction (atomic vs composite of length 2-5)?" |
 
-Skills scoring below threshold on any dimension are sent back for
-refinement or merged with higher-quality neighbors.
+Below-threshold candidates are returned to the synthesizer for revision; persistent failures are dropped, not merged blindly.
+
+### Trace Localization Procedure
+
+When a hop or final answer fails, the synthesizer must localize the failure before proposing any bank update. The procedure mirrors the harness's *Failure Localization Protocol* ([Atomic Skills & Hop Plan](atomic_skills_hop_refactor_execution_plan.md#failure-localization-protocol)) and assigns exactly one bucket per failure:
+
+| Bucket | Where in trace | Bank-side action |
+|---|---|---|
+| **Wrong atomic step** | Step's `verification_failed` with non-empty evidence | `patch` the offending atomic's `verification_rule` or `protocol_steps`; consider `split` if multiple variants emerge |
+| **Missing retrieval** | `failure_mode="empty_evidence"` after broaden | No bank patch; route fix to retriever config; only patch the atomic if it failed to declare a needed `retrieval_hint` |
+| **Unsupported final answer** | All hops `passed=True` but `verify_final` failed `claim_evidence_alignment` | Add a cross-hop verification atomic (e.g. `check_evidence_sufficiency` over the full trace); patch the answer-composer policy |
+| **Perspective mismatch** | `perspective_consistency` check failed | Patch involved skills' `verification_rule` to require `check_perspective_anchor`; promote a perspective-bound composite if pattern recurs |
+| **Bad evidence selection** | Cited evidence has low `confidence` or contradicting refs ignored | Patch the responsible retrieval-style atomic to consult `EvidenceBundle.contradictions`; log to retriever for fusion-rule review |
+
+### Promotion Thresholds
+
+A candidate atomic chain is promoted to a composite skill only when **all** of the following thresholds are met:
+
+| Threshold | Default | Meaning |
+|---|---|---|
+| **Repetition** | `N_repeat = 5` | Distinct hop occurrences with the same chain signature and `passed=True` |
+| **Success rate** | `τ_success = 0.7` | Fraction of occurrences with `hop_verification.passed=True` |
+| **Score stability** | mean ≥ `τ_stable = 0.7`, variance < `σ_stable = 0.15` | Verification scores are high and consistent |
+| **Transfer** | ≥ 2 distinct task families | Demonstrates cross-task reuse, not benchmark overfit |
+| **Evidence verifiability** | 100% of cited example traces have non-empty `EvidenceBundle.refs` | No promotion based on label-only success |
+
+Promotion produces a new `SkillRecord` with `version.created_by="promoted"` and `version.status="shadow"`; activation requires a successful shadow pass (success rate ≥ `τ_success` over `N_shadow = 30` invocations).
+
+### Bank Versioning and Rollback
+
+Bank evolution is **always versioned**; nothing in the bank is ever silently overwritten.
+
+- Every bank operation (`patch`, `split`, `promote`, `merge`, `retire`) writes a **new version** of the affected `SkillRecord`(s) with `parent_version_id` pointing at the previous version.
+- Previous **stable versions are retained** with `status="archived"`; archived versions are read-only and queryable for rollback and audit.
+- A promoted composite that regresses (success rate < `τ_stable - 0.15` over ≥ 20 invocations, or 3 consecutive shadow failures after re-activation) is **rolled back**: the latest version is set to `status="retired"`, and the most recent `status="archived"` version of the same `skill_id` family is reactivated.
+- Rollback is recorded as its own version (`created_by="rolled_back"`) so the history is fully reconstructible.
+- Bank snapshots are taken every `K_snapshot = 100` operations; a snapshot is a manifest of `(skill_id, version_id)` pairs that defines the "state of the bank" for a given evaluation run.
+
+This versioning is what makes the synthesis story safe: **successful reasoning trajectories → localized atomic patterns → promoted reusable skills**, with full ability to undo when a promotion proves wrong.
 
 ---
 

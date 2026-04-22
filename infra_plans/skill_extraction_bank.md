@@ -8,6 +8,38 @@
 > - [Video Benchmarks & Grounding](video_benchmarks_grounding.md) — benchmarks, memory graph, adapters
 > - [Actors / Reasoning Model](actors_reasoning_model.md) — 8B controller, hops, orchestration
 > - [Skill Synthetics Agents](skill_synthetics_agents.md) — synthesis, evolution, reflection
+> - [MVP Build Order](mvp_build_order.md) — phased implementation plan
+
+---
+
+## 0. Design Principle: Stable Memory, Evolving Reasoning
+
+This file defines the **evolving reasoning** half of the cross-plan principle ([Actors §0](actors_reasoning_model.md#0-design-principle-stable-memory-evolving-reasoning)). The bank evolves; memory does not.
+
+### 0.1 Bank Scope in Phase 1
+
+- The evolving bank stores **reasoning skills only**, not infrastructure primitives.
+- **Observation, tracking, storage, memory write / update, and retrieval** are **runtime procedures** (or, for memory, **fixed memory procedures** in the [Memory Procedure Registry](agentic_memory_design.md#02-memory-management-skills-vs-reasoning-skills)). They are **not** entries in this bank.
+- The primary bank contents are **atomic and composite reasoning operators** that consume memory + evidence and emit verifiable claims.
+
+### 0.2 Phase-1 Bank Policy
+
+- Start with a **curated starter set** of atomic reasoning skills (see §4.8 / §4.9).
+- **Do not allow unconstrained free growth** of the bank in v1. New atomics are added only via human-authored release, not via online synthesis.
+- Composite skills may be added **conservatively** in phase 2 from repeated successful atomic chains, gated by the synthesizer's promotion thresholds.
+- Promotion is **limited and high-threshold** in the MVP phase. The defaults in §6 (`N_repeat`, `τ_stable`, `σ_stable`, transfer requirement) are minimums, not aspirations.
+- **Bank evolution is not a v1 milestone.** It is sequenced after retrieval, verifier, and harness are stable ([MVP Build Order](mvp_build_order.md)).
+
+### 0.3 Separate Registries
+
+The system maintains **two distinct registries**. They share neither schema nor lifecycle, and they are not collapsed into one undifferentiated "skills" store:
+
+| Registry | Contents | Lifecycle |
+|---|---|---|
+| **Memory Procedure Registry** ([Agentic Memory §0.2](agentic_memory_design.md#02-memory-management-skills-vs-reasoning-skills)) | Fixed memory-management procedures: `open_episode_thread`, `append_grounded_event`, `update_entity_profile`, `refresh_state_memory`, `compress_episode_cluster`, `attach_evidence_ref`, `resolve_entity_alias`, `revise_belief_state`, `mark_memory_conflict`, … | Stable; manually versioned between releases; never modified by trace-driven synthesis |
+| **Reasoning Skill Bank** (this document) | Atomic and composite reasoning operators: `identify_question_target`, `retrieve_relevant_episode`, `order_two_events`, `infer_observation_access`, `update_belief_state`, `check_evidence_sufficiency`, `decide_answer_or_abstain`, … | Curated in v1; conservative promotion in phase 2; broader synthesis in phase 3, all under versioned, gated synthesis rules |
+
+A reasoning skill **never writes memory directly**: when it needs to mutate state, it requests a Memory Procedure Registry entry via the harness. This boundary is what lets reasoning skills evolve without destabilizing the substrate.
 
 ---
 
@@ -148,6 +180,34 @@ For a practical first version, implement **12** atomics:
 
 **Second pass:** add `check_alternative_hypothesis`, `locate_counterevidence`, `classify_failure_type`, `localize_failed_step`.
 
+### 4.9 Canonical Starter Atomic Skill Inventory
+
+The starter inventory below is the **shipping v1 bank**: a small but representative atomic set, grouped by reasoning purpose, that covers all benchmark families targeted by [Video Benchmarks](video_benchmarks_grounding.md). Every entry must conform to the `SkillRecord` schema (§6).
+
+| Category | Skill | `output_type` | One-line role |
+|---|---|---|---|
+| **Entity grounding support** | `ground_entity_reference` | `entity_ref` | Resolve a question's entity mention to a `character_id` |
+| | `check_co_presence` | `claim` | Decide whether two entities share a time / space window |
+| | `check_visibility` | `claim` | Decide whether entity X could have observed event E |
+| **Temporal linking** | `order_two_events` | `ordering` | Establish before/after between two grounded events |
+| | `align_cause_before_effect` | `claim` | Verify that a candidate cause precedes its effect |
+| | `check_state_change` | `claim` | Detect whether a state predicate flipped over a span |
+| **Causal linking** | `propose_candidate_causes` | `set[claim]` | Enumerate plausible causes for an observed effect |
+| | `check_causal_support` | `claim` | Score evidence supporting one cause→effect link |
+| **Belief update** | `infer_observation_access` | `claim` | Decide whether agent had perceptual access to event |
+| | `update_belief_state` | `belief` | Apply an evidence-justified update to an agent's belief |
+| **Perspective check** | `check_perspective_anchor` | `meta` | Confirm the question is bound to a specific viewpoint and tag it |
+| | `compare_beliefs_between_agents` | `claim` | Check whether two agents hold matching/diverging beliefs |
+| **Contradiction check** | `detect_belief_conflict` | `claim` | Surface contradictions between belief states or evidence |
+| | `locate_counterevidence` | `evidence_set` | Retrieve refuting evidence for a candidate claim |
+| **Evidence sufficiency** | `check_evidence_sufficiency` | `claim` | Decide whether the cited bundle covers the claim |
+| | `locate_supporting_evidence` | `evidence_set` | Retrieve refs that support a candidate claim |
+| **Alternative hypothesis check** | `check_alternative_hypothesis` | `claim` | Compare the chosen claim against the strongest alternative |
+| **Answer vs abstain decision** | `calibrate_answer_confidence` | `meta` | Aggregate per-hop confidences into an answer-level score |
+| | `decide_answer_or_abstain` | `decision` | Emit final answer or `AbstainDecision` based on thresholds |
+
+This inventory is small enough to be hand-curated in v1 and rich enough that the synthesizer can build composites from successful chains over it. New atomics are added only after a sustained pattern emerges in failure logs.
+
 ---
 
 ## 5. Composite skill examples and worked hops
@@ -211,39 +271,102 @@ Earlier **coarse** social operators can be expressed as composites, e.g.:
 
 ## 6. Skill schema
 
-Skills conform to a **layered** schema (COS-PLAY-compatible fields can map into `protocol_steps`, `tags`, and contracts). Important fields for **evolvability**:
+### Formal SkillRecord Schema
+
+`SkillRecord` is the **canonical, serializable, versioned** record for every entry in the bank. It is the unit the harness ([Atomic Skills & Hop Plan — Harness](atomic_skills_hop_refactor_execution_plan.md#harness-runtime-specification)) loads at startup, the synthesizer ([Skill Synthetics](skill_synthetics_agents.md)) writes back to, and the retriever's RAG layer indexes.
 
 ```python
-Skill(
-    skill_id: str,
-    level: Literal["atomic", "composite"],
-    family: str,
-    trigger_conditions: list[str],
-    inputs: list[str],
-    output_type: str,
-    protocol_steps: list[str],
-    child_skills: list[str] | None,   # composite only
-    required_primitives: list[str],    # e.g. search_memory, not "skills"
-    verification_rule: list[str],
-    failure_modes: list[str],
-    repair_strategies: list[str],
-    reuse_stats: dict,
-    examples: list[dict],
-)
+@dataclass
+class SkillRecord:
+    skill_id: str                       # globally unique, stable across versions
+    name: str                           # human-readable, snake_case
+    type: Literal["atomic", "composite"]
+    family: str                         # one of §4.x families
+    trigger_conditions: list[TriggerSpec]    # see Trigger and Verification Formats
+    input_schema: dict                  # name -> {type, required, source_hint}
+    output_schema: dict                 # name -> {type, required}
+    output_type: str                    # claim | span | ordering | belief | presence | abstain | meta
+    verification_rule: list[VerificationCheckSpec]
+    failure_modes: list[str]            # standard codes + skill-specific codes
+    required_memory_fields: list[str]   # e.g. "state.social.belief", "episodic.events"
+    retrieval_hints: list[RetrievalQuery]    # default queries when no upstream evidence
+    required_primitives: list[str]      # e.g. "search_memory" (infra, not bank skills)
+    protocol_steps: list[str]           # textual / pseudo-code steps, COS-PLAY-compatible
+    child_links: list[str]              # ordered child skill_ids (composite only; empty for atomic)
+    parent_links: list[str]             # composites this atomic/composite is part of
+    usage_stats: SkillUsage             # invocations, success_rate, avg_confidence, transfer_rate
+    version: SkillVersion               # see Bank Versioning in skill_synthetics_agents.md
+    examples: list[dict]                # illustrative HopRecord excerpts
+    meta: dict                          # free-form, non-canonical
 ```
 
-**Field roles:**
+`SkillUsage` carries `n_invocations`, `n_success`, `n_failure_by_mode: dict[str,int]`, `avg_confidence`, `transfer_rate` (success rate on tasks outside the skill's training family), and `last_updated`.
+
+`SkillVersion` carries `version_id`, `parent_version_id`, `created_at`, `created_by` (`crafted | promoted | merged | split | patched`), `status` (`active | shadow | retired`).
+
+**Required fields for every skill:** `skill_id`, `name`, `type`, `family`, `trigger_conditions`, `input_schema`, `output_schema`, `verification_rule`, `failure_modes`, `required_memory_fields`, `usage_stats`, `version`. All others are optional with sensible defaults.
+
+**Field roles (summary):**
 
 | Field | Role |
 |-------|------|
-| `level` | Atomic vs composite |
+| `type` | Atomic vs composite |
 | `output_type` | Structured output expectation (claim, span, ordering, belief snapshot, abstain, …) |
-| `child_skills` | Ordered atomic (or nested composite) IDs for expansion |
+| `child_links` | Ordered atomic (or nested composite) IDs for expansion |
+| `parent_links` | Reverse pointer for impact analysis when patching/retiring |
 | `required_primitives` | Infrastructure / retrieval calls the skill assumes |
-| `verification_rule` | How to check the step locally |
-| `failure_modes` / `repair_strategies` | For reflection and bank maintenance |
+| `verification_rule` | How to check the step locally (see *Trigger and Verification Formats*) |
+| `failure_modes` | For reflection and bank maintenance |
+| `version` | Enables rollback, shadow deployment, and audit |
 
-Optional compatibility shim: map `protocol_steps` ↔ COS-PLAY `Protocol.steps`, and keep `contract` / `SkillEffectsContract` for existing code paths (`skill_agents/stage3_mvp/schemas.py`).
+Optional compatibility shim: map `protocol_steps` ↔ COS-PLAY `Protocol.steps`, and keep `contract` / `SkillEffectsContract` for existing code paths (`skill_agents/stage3_mvp/schemas.py`). The previous `Skill(...)` shape is preserved as a backwards-compatible projection of `SkillRecord`.
+
+### Trigger and Verification Formats
+
+`TriggerSpec` and `VerificationCheckSpec` are formal so that the controller's selection layer and the verifier can both read them without skill-specific glue.
+
+```python
+@dataclass
+class TriggerSpec:
+    kind: Literal["question_type", "entity_present", "time_anchor",
+                  "perspective_required", "predicate", "embedding_match"]
+    value: str | dict                   # e.g. "TCI" for question_type, or {"k":3,"sim":0.6}
+    weight: float = 1.0                 # contributes to skill selection score
+```
+
+A trigger fires when its `kind`-specific predicate evaluates true against the current `QuestionAnalysis` and `ReasoningTrace`. The selection layer aggregates trigger weights with embedding similarity (see §9.3).
+
+```python
+@dataclass
+class VerificationCheckSpec:
+    name: str                           # one of Actors §2C.1 catalog or skill-specific
+    inputs: list[str]                   # AtomicStepResult.output keys consumed
+    predicate: str                      # symbolic / textual rule
+    threshold: float | None
+    on_fail: Literal["retry", "broaden", "switch_skill", "abstain", "continue"]
+```
+
+Every atomic skill must declare at least one check whose `name` belongs to the verifier catalog ([Actors §2C.1](actors_reasoning_model.md#2c1-check-catalog)) and whose `inputs` reference real keys in `output_schema`. The harness rejects skills that violate this at load time.
+
+### Composite Skill Formation Rules
+
+Composites are not authored by hand; they are **promoted** from observed atomic chains by the synthesizer. The bank enforces:
+
+| Rule | Threshold (default) | Notes |
+|---|---|---|
+| **Minimum repetition** | An atomic chain must appear ≥ `N_repeat = 5` times across distinct hops | Counts only chains where the trailing step's `verification.passed=True` |
+| **Verification stability** | Mean `hop_verification.score` ≥ `τ_stable = 0.7` over the repetitions | Variance must also be < `σ_stable = 0.15` |
+| **Transfer threshold** | Chain succeeded on ≥ 2 distinct task families (§7 mapping) | Prevents promotion of benchmark-specific shortcuts |
+| **Verification rule inheritance** | Promoted composite inherits the union of its children's `verification_rule`s, plus a top-level check on the final child's output | Required before the composite can be activated |
+| **Rollback rule** | If a promoted composite's success rate drops below `τ_stable - 0.15` for ≥ 20 invocations, it is rolled back to `status="shadow"` and its children are re-exposed for selection | Rollback is a versioned operation (see [Skill Synthetics — Bank Versioning](skill_synthetics_agents.md#bank-versioning-and-rollback)) |
+
+Promotion always produces a new `SkillRecord` with `version.created_by="promoted"`; the children retain `parent_links` pointing to the new composite.
+
+### Reasoning Skills vs Scene/Action Tags
+
+Scene tags, action tags, and intention tags (e.g. `OBSERVE | INTERACT | NAVIGATE | ...` from the COS-PLAY video intention taxonomy) are **auxiliary metadata** attached to grounded segments by the perception pipeline. They are useful for retrieval filtering and for clustering during synthesis, but they are **not** the primary skill ontology.
+
+The primary content of the bank is **reasoning skills** as defined above: atomic operators that consume memory + evidence and emit verifiable claims, plus composites built from them. A reasoning skill may *use* a scene or intention tag as one of its `trigger_conditions` (e.g. an `OBSERVE`-tagged segment is a stronger trigger for `infer_observation_access`), but a tag alone is never a skill, and the bank must not be browsable as a tag taxonomy. Any synthesis pipeline that produces "skills" that are merely tag classifiers is rejected by the synthesizer's verifiability check ([Skill Synthetics — Verifiability and Non-Leakiness Checks](skill_synthetics_agents.md#verifiability-and-non-leakiness-checks)).
 
 ---
 
