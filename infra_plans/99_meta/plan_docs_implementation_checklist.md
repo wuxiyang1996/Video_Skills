@@ -2,11 +2,11 @@
 
 This is an implementation checklist organized by file. Gaps are phrased as concrete edits rather than abstract criticism. Focus: what to add directly to the plan documents.
 
-> **Status update:** The grounding-related items (§2 entity schema, §3 entire checklist) are addressed by the new [`grounding_pipeline_execution_plan.md`](grounding_pipeline_execution_plan.md) plus additions to [`video_benchmarks_grounding.md`](video_benchmarks_grounding.md) §2.6 / §2.7 / §6.1 / §11 and the "Entity-centric indexing" section in [`agentic_memory_design.md`](agentic_memory_design.md). Checkboxes below are ticked accordingly; remaining unchecked items are still open.
+> **Status update:** The grounding-related items (§2 entity schema, §3 entire checklist) are addressed by the new [`grounding_pipeline_execution_plan.md`](../01_grounding/grounding_pipeline_execution_plan.md) plus additions to [`video_benchmarks_grounding.md`](../01_grounding/video_benchmarks_grounding.md) §2.6 / §2.7 / §6.1 / §11 and the "Entity-centric indexing" section in [`agentic_memory_design.md`](../02_memory/agentic_memory_design.md). Checkboxes below are ticked accordingly; remaining unchecked items are still open.
 
 ---
 
-## 1) `infra_plans/actors_reasoning_model.md`
+## 1) `infra_plans/03_controller/actors_reasoning_model.md`
 
 **Role today:** Strong on the 8B controller, two-phase operation, hop execution, and direct vs retrieval modes.
 
@@ -66,7 +66,7 @@ Add a short **anti-hacking** note: the controller must not win by over-retrievin
 
 ---
 
-## 2) `infra_plans/agentic_memory_design.md`
+## 2) `infra_plans/02_memory/agentic_memory_design.md`
 
 **Role today:** Right top-level split (episodic, semantic, state) and “skills operate over memory.”
 
@@ -115,7 +115,7 @@ Add a short **anti-hacking** note: the controller must not win by over-retrievin
 
 ---
 
-## 3) `infra_plans/video_benchmarks_grounding.md`
+## 3) `infra_plans/01_grounding/video_benchmarks_grounding.md`
 
 **Role today:** Shared grounding schema idea, tiers, grounding on vs persistence conditional.
 
@@ -162,7 +162,7 @@ Per benchmark, which submodules are supervised, stressed, or evaluation-only, e.
 
 ---
 
-## 4) `infra_plans/skill_extraction_bank.md`
+## 4) `infra_plans/05_skills/skill_extraction_bank.md`
 
 **Role today:** Solid stance — skills as reasoning operators; atomic vs composite.
 
@@ -214,7 +214,7 @@ The bank’s primary content is **reasoning skills**. Scene/action/intention pat
 
 ---
 
-## 5) `infra_plans/skill_synthetics_agents.md`
+## 5) `infra_plans/05_skills/skill_synthetics_agents.md`
 
 **Role today:** Quality control, failure taxonomy, failure-to-update mapping, evolution loop — keep.
 
@@ -255,7 +255,7 @@ On failure, distinguish:
 
 ---
 
-## 6) `infra_plans/atomic_skills_hop_refactor_execution_plan.md`
+## 6) `infra_plans/04_harness/atomic_skills_hop_refactor_execution_plan.md`
 
 **Status:** This file **exists** in `infra_plans/`; several other docs reference it. Treat it as the **operational bridge** between controller and skill bank — **verify it is complete** and expand if it is thin or outdated.
 
@@ -274,7 +274,7 @@ This should reduce ambiguity currently spread across other docs.
 
 ---
 
-## 7) New file: `infra_plans/evaluation_ablation_plan.md`
+## 7) New file: `infra_plans/07_evaluation/evaluation_ablation_plan.md`
 
 **Purpose:** Benchmark and synthesis docs name tasks and failures; this doc **proves each subsystem matters** (paper-ready ablations).
 
@@ -340,4 +340,4 @@ Those are fixable by **tightening the plans** rather than changing direction.
 
 Turn this into a **copy-paste TODO list** in Cursor with one block per file and **exact section titles** to add — this file is the source list; section titles above can be copied verbatim into each target doc.
 
-For the grounding layer specifically, see [`grounding_pipeline_execution_plan.md`](grounding_pipeline_execution_plan.md) — it is already the Cursor-ready checklist for §3 of this file and for the entity-indexing addition to §2.
+For the grounding layer specifically, see [`grounding_pipeline_execution_plan.md`](../01_grounding/grounding_pipeline_execution_plan.md) — it is already the Cursor-ready checklist for §3 of this file and for the entity-indexing addition to §2.

@@ -5,12 +5,12 @@
 > "actor" that drives all video understanding tasks.
 >
 > **Related plans:**
-> - [Atomic skills & hop refactor — execution checklist](atomic_skills_hop_refactor_execution_plan.md)
-> - [Agentic Memory](agentic_memory_design.md) — three memory stores + evidence layer
-> - [Video Benchmarks & Grounding](video_benchmarks_grounding.md) — benchmarks, memory graph, adapters
-> - [Skill Extraction / Bank](skill_extraction_bank.md) — atomic/composite skills, hops, bank infrastructure
-> - [Skill Synthetics Agents](skill_synthetics_agents.md) — skill crafting, evolution, reflection
-> - [MVP Build Order](mvp_build_order.md) — phased implementation plan
+> - [Atomic skills & hop refactor — execution checklist](../04_harness/atomic_skills_hop_refactor_execution_plan.md)
+> - [Agentic Memory](../02_memory/agentic_memory_design.md) — three memory stores + evidence layer
+> - [Video Benchmarks & Grounding](../01_grounding/video_benchmarks_grounding.md) — benchmarks, memory graph, adapters
+> - [Skill Extraction / Bank](../05_skills/skill_extraction_bank.md) — atomic/composite skills, hops, bank infrastructure
+> - [Skill Synthetics Agents](../05_skills/skill_synthetics_agents.md) — skill crafting, evolution, reflection
+> - [MVP Build Order](../00_overview/mvp_build_order.md) — phased implementation plan
 
 ---
 
@@ -112,7 +112,7 @@ Phase 1 does **NOT** rely on:
 - dynamic memory-policy learning (memory rules are fixed)
 - full automated patch / split / retire loops over the bank
 
-Those capabilities are explicitly deferred to later phases ([MVP Build Order](mvp_build_order.md)).
+Those capabilities are explicitly deferred to later phases ([MVP Build Order](../00_overview/mvp_build_order.md)).
 
 ---
 
@@ -131,7 +131,7 @@ selects from a curated bank of reasoning skills. Frozen large VLMs serve only
 as perception / grounding tools called on demand. In phase 1 the bank is
 curated and the memory policy is fixed; later phases introduce conservative
 reasoning-skill evolution (see [§0.2](#02-mvp-controller-objective) and
-[MVP Build Order](mvp_build_order.md)).
+[MVP Build Order](../00_overview/mvp_build_order.md)).
 
 | Problem | How the small model solves it |
 |---------|-------------------------------|
@@ -213,7 +213,7 @@ fine-tuning a 72B model.
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-The offline artifact is the **`SocialVideoGraph`** index ([Video Benchmarks & Grounding](video_benchmarks_grounding.md)), backed logically by **episodic / semantic / state** stores ([Agentic Memory](agentic_memory_design.md)). Existing code may still use the name `SocialVideoGraph` as an alias.
+The offline artifact is the **`SocialVideoGraph`** index ([Video Benchmarks & Grounding](../01_grounding/video_benchmarks_grounding.md)), backed logically by **episodic / semantic / state** stores ([Agentic Memory](../02_memory/agentic_memory_design.md)). Existing code may still use the name `SocialVideoGraph` as an alias.
 
 ### 2.3 What the 8B Controller Does at Each Stage
 
@@ -242,7 +242,7 @@ The offline artifact is the **`SocialVideoGraph`** index ([Video Benchmarks & Gr
 
 ### 2.5 Skill execution granularity
 
-The controller does **not** execute only monolithic skills. It plans and executes reasoning as a sequence of **hops**, where each hop is a short composition of **atomic skills** (see [Skill Extraction / Bank](skill_extraction_bank.md)). **Composite skills** may be invoked as macros but must remain **expandable** into an explicit atomic trace for diagnosis, localization, and bank updates ([Skill Synthetics Agents §4](skill_synthetics_agents.md)).
+The controller does **not** execute only monolithic skills. It plans and executes reasoning as a sequence of **hops**, where each hop is a short composition of **atomic skills** (see [Skill Extraction / Bank](../05_skills/skill_extraction_bank.md)). **Composite skills** may be invoked as macros but must remain **expandable** into an explicit atomic trace for diagnosis, localization, and bank updates ([Skill Synthetics Agents §4](../05_skills/skill_synthetics_agents.md)).
 
 One reasoning hop may involve a few atomic skills rather than a single monolithic reasoning skill. Atomic skills are the minimal reusable reasoning operators, while composite skills are stable, reusable short chains of atomic skills that can still be expanded for diagnosis and revision.
 
@@ -256,7 +256,7 @@ The controller operates over: **atomic skills**, **composite skills**, **hop tra
 4. Execute step-by-step over memory, perspective threads, and evidence.  
 5. **Verify** intermediate outputs (local checks aligned with each atomic’s `verification_rule`).  
 6. Either: continue to the **next hop**, **retrieve more evidence** (via `search_memory` and related primitives), **answer**, or **abstain**.  
-7. On failure, emit a **trace** for reflection and skill-bank update ([Skill Synthetics Agents](skill_synthetics_agents.md)).
+7. On failure, emit a **trace** for reflection and skill-bank update ([Skill Synthetics Agents](../05_skills/skill_synthetics_agents.md)).
 
 Surface protocol to the frozen reasoner may still use `[Think]` / `[Search]` / `[Answer]`; the controller’s **authoritative log** for learning is the **atomic trace** per hop.
 
@@ -282,7 +282,7 @@ The schemas below are normative for the v1 runtime. Per-module enrichments are a
 
 ### 2A.1 GroundedWindow
 
-A grounded slice of video / dialogue / state delivered by the perception + grounding pipeline ([Grounding Pipeline](grounding_pipeline_execution_plan.md)). It is the primary consumable for memory writers and atomic grounding skills.
+A grounded slice of video / dialogue / state delivered by the perception + grounding pipeline ([Grounding Pipeline](../01_grounding/grounding_pipeline_execution_plan.md)). It is the primary consumable for memory writers and atomic grounding skills.
 
 ```python
 @dataclass
@@ -577,7 +577,7 @@ The controller must not be able to win the reward by exploiting any of the follo
 1. **Over-retrieving.** Retrieval calls beyond `budget.retrieval` (default 6 per question for long-video, 2 for short-video) incur `p_extra_retrieval` and are **capped** at 2× budget by the harness.
 2. **Abstaining too often.** `r_abstain_correct` is **two-sided**: incorrect abstention on answerable questions is penalized symmetrically with incorrect answering on unanswerable ones. A rolling abstention rate above 1.5× the dataset prior incurs an additional batch-level penalty.
 3. **Producing too many low-value hops.** Hops whose `VerificationResult.score` does not exceed the previous hop's by `δ_hop` (default 0.05) count as "no-progress" and are penalized at 0.5× a normal hop cost; a stretch of 3 consecutive no-progress hops triggers automatic abstention.
-4. **Benchmark shortcut exploitation.** Final answers that match the gold without any cited evidence (`final_evidence.refs == []`) are scored as 0 on `r_answer` regardless of literal match. Bank skills found to be benchmark-specific (e.g., trigger pattern matches a single dataset's question template) are flagged for retirement by the synthesizer ([Skill Synthetics](skill_synthetics_agents.md)).
+4. **Benchmark shortcut exploitation.** Final answers that match the gold without any cited evidence (`final_evidence.refs == []`) are scored as 0 on `r_answer` regardless of literal match. Bank skills found to be benchmark-specific (e.g., trigger pattern matches a single dataset's question template) are flagged for retirement by the synthesizer ([Skill Synthetics](../05_skills/skill_synthetics_agents.md)).
 5. **Verifier collusion.** The verifier and controller share no parameters; the verifier's checks are deterministic post-hoc tests over canonical objects, not learned during the same GRPO run.
 6. **Trace padding.** `cost.atomic_steps` and `cost.tokens` enter the efficiency penalty linearly; padding the trace with cheap atomics still costs.
 
@@ -660,7 +660,7 @@ class ReasoningResult:
 
 ### 4.0 Agentic memory model (three stores + evidence)
 
-The controller’s **persistent semantics** follow [Agentic Memory](agentic_memory_design.md):
+The controller’s **persistent semantics** follow [Agentic Memory](../02_memory/agentic_memory_design.md):
 
 1. **Episodic memory** — grounded timeline: clips, timestamps, characters, dialogue/actions, evidence links.  
 2. **Semantic memory** — distilled long-horizon abstractions (traits, stable relationships, patterns).  
@@ -969,7 +969,7 @@ decisions.
 | Reasoner (72B) | No | Frozen answer generator (called only when controller decides) |
 | Embedders | No | Frozen retrieval index |
 | Memory Procedures | No (fixed in v1) | Stable infrastructure; revised manually between releases |
-| Skill Bank | Curated in v1; conservative promotion in phase 2; synthesis in phase 3 | Evolution is gated by the synthesizer with high thresholds (see [Skill Synthetics](skill_synthetics_agents.md)) |
+| Skill Bank | Curated in v1; conservative promotion in phase 2; synthesis in phase 3 | Evolution is gated by the synthesizer with high thresholds (see [Skill Synthetics](../05_skills/skill_synthetics_agents.md)) |
 
 ### 10.2 LoRA Adapters
 

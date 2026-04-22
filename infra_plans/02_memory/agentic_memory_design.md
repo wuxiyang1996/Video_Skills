@@ -6,11 +6,11 @@
 >
 > **Related plans:**
 >
-> - [Actors / Reasoning Model](actors_reasoning_model.md) — controller, perspective threads, orchestration
-> - [Skill Extraction / Bank](skill_extraction_bank.md) — reasoning skill bank (atomic / composite) over memory outputs
-> - [Video Benchmarks & Social Grounding](video_benchmarks_grounding.md) — grounding pipeline, `SocialVideoGraph`, adapters
-> - [Grounding Pipeline Execution Plan](grounding_pipeline_execution_plan.md) — perception + entity stack implementation backing the entity-centric index below
-> - [MVP Build Order](mvp_build_order.md) — phased implementation plan
+> - [Actors / Reasoning Model](../03_controller/actors_reasoning_model.md) — controller, perspective threads, orchestration
+> - [Skill Extraction / Bank](../05_skills/skill_extraction_bank.md) — reasoning skill bank (atomic / composite) over memory outputs
+> - [Video Benchmarks & Social Grounding](../01_grounding/video_benchmarks_grounding.md) — grounding pipeline, `SocialVideoGraph`, adapters
+> - [Grounding Pipeline Execution Plan](../01_grounding/grounding_pipeline_execution_plan.md) — perception + entity stack implementation backing the entity-centric index below
+> - [MVP Build Order](../00_overview/mvp_build_order.md) — phased implementation plan
 
 ---
 
@@ -20,7 +20,7 @@ This file defines the **stable substrate** half of that principle.
 
 - Memory construction and maintenance are handled by **fixed procedures** and **fixed memory-management skills**.
 - These fixed procedures guarantee stable storage, revision, compression, and evidence attachment.
-- The evolving skill bank ([Skill Extraction / Bank](skill_extraction_bank.md)) is reserved for **reasoning skills**; memory procedures are **not** entries in that bank in v1.
+- The evolving skill bank ([Skill Extraction / Bank](../05_skills/skill_extraction_bank.md)) is reserved for **reasoning skills**; memory procedures are **not** entries in that bank in v1.
 - **Memory is the stable substrate; reasoning is the adaptive layer.**
 - In phase 1 the memory policy is fixed; it is **not** auto-evolved by reflection or synthesis.
 
@@ -41,7 +41,7 @@ This is what makes the controller learnable in v1: it learns to plan and route o
 
 ## 0.2 Memory-Management Skills vs Reasoning Skills
 
-The system maintains a clean separation between two registries (see also [Skill Extraction / Bank §0](skill_extraction_bank.md#0-bank-scope-in-phase-1)). They are not collapsed into one undifferentiated "skills" store.
+The system maintains a clean separation between two registries (see also [Skill Extraction / Bank §0](../05_skills/skill_extraction_bank.md#0-bank-scope-in-phase-1)). They are not collapsed into one undifferentiated "skills" store.
 
 ### Fixed memory-management procedures (this document)
 
@@ -69,7 +69,7 @@ Properties of memory-management procedures:
 
 ### Evolving reasoning skills (the bank)
 
-Reasoning skills live in the **Reasoning Skill Bank** ([Skill Extraction / Bank](skill_extraction_bank.md)). Examples:
+Reasoning skills live in the **Reasoning Skill Bank** ([Skill Extraction / Bank](../05_skills/skill_extraction_bank.md)). Examples:
 
 - `identify_question_target`
 - `retrieve_relevant_episode`
@@ -85,7 +85,7 @@ Properties of reasoning skills:
 
 - **trace-derived** (curated in phase 1; conservatively promoted in phase 2; synthesized in phase 3)
 - **reusable reasoning operators** over memory + evidence outputs
-- **bank-managed** and eligible for promotion / split / patch / retire under the synthesizer's gates ([Skill Synthetics](skill_synthetics_agents.md))
+- **bank-managed** and eligible for promotion / split / patch / retire under the synthesizer's gates ([Skill Synthetics](../05_skills/skill_synthetics_agents.md))
 
 Boundary rule: a reasoning skill **never writes memory directly**; it requests a memory-management procedure via the harness, which then invokes the appropriate fixed procedure. This keeps the write path auditable and prevents bank churn from corrupting the substrate.
 
@@ -93,7 +93,7 @@ Boundary rule: a reasoning skill **never writes memory directly**; it requests a
 
 ## Reasoning skills vs memory functions
 
-**Reasoning skills** operate **over** memory outputs; they do **not** replace memory functions. Episodic, semantic, and state memory remain the **storage and retrieval substrates**. Atomic and composite skills **consume** retrieved memory entries, evidence attachments, and perspective-thread state to produce **verifiable intermediate reasoning outputs** ([Skill Extraction / Bank](skill_extraction_bank.md)). Keeping this boundary explicit avoids drifting toward duplicate “skill-shaped” memory modules or a fourth top-level store.
+**Reasoning skills** operate **over** memory outputs; they do **not** replace memory functions. Episodic, semantic, and state memory remain the **storage and retrieval substrates**. Atomic and composite skills **consume** retrieved memory entries, evidence attachments, and perspective-thread state to produce **verifiable intermediate reasoning outputs** ([Skill Extraction / Bank](../05_skills/skill_extraction_bank.md)). Keeping this boundary explicit avoids drifting toward duplicate “skill-shaped” memory modules or a fourth top-level store.
 
 ---
 
@@ -183,7 +183,7 @@ Entity identity is the **primary index** across all three memory stores. Episodi
 
 ### Entity profile schema
 
-Every persistent character in a video is represented by a single `EntityProfile` that aggregates face / voice / subtitle aliases and is the anchor for all memory reads and writes. The profile is materialized by [`SocialVideoGraph.refresh_equivalences`](video_benchmarks_grounding.md#27-entity-resolution--re-identification) after grounding completes.
+Every persistent character in a video is represented by a single `EntityProfile` that aggregates face / voice / subtitle aliases and is the anchor for all memory reads and writes. The profile is materialized by [`SocialVideoGraph.refresh_equivalences`](../01_grounding/video_benchmarks_grounding.md#27-entity-resolution--re-identification) after grounding completes.
 
 ```python
 @dataclass
@@ -230,16 +230,16 @@ State memory is partitioned **per character** to preserve perspective:
 When a new observation arrives, the writer decides which `character_id`'s local state to update based on:
 
 - who was looking at / listening to the evidence (gaze / speaking flags in `EntityAttributes`),
-- whether the evidence is marked `inferred_from_behavior` vs `directly_observed` (see provenance enum in [§2.6 wire format](video_benchmarks_grounding.md#26-grounded-window-wire-format-normative)).
+- whether the evidence is marked `inferred_from_behavior` vs `directly_observed` (see provenance enum in [§2.6 wire format](../01_grounding/video_benchmarks_grounding.md#26-grounded-window-wire-format-normative)).
 
-This is what lets benchmarks like SIV-Bench and MA-EgoQA evaluate ToM questions without the pipeline collapsing everyone's beliefs into one worldview (error class E7 in [grounding error taxonomy](video_benchmarks_grounding.md#11-grounding-error-taxonomy)).
+This is what lets benchmarks like SIV-Bench and MA-EgoQA evaluate ToM questions without the pipeline collapsing everyone's beliefs into one worldview (error class E7 in [grounding error taxonomy](../01_grounding/video_benchmarks_grounding.md#11-grounding-error-taxonomy)).
 
 ### Episodic / semantic / state writes pivoting on entities
 
 All three stores index by entity:
 
 - **Episodic** — each episodic record lists participating `character_id`s (plus `<face_N>`/`<voice_N>` raw references for traceability); `graph.get_timeline(character_id)` returns them in order.
-- **Semantic** — Level-3 and Level-4 distillations (see [grounding pipeline §4](video_benchmarks_grounding.md#4-hierarchical-memory-for-long-videos)) are written **per character** or **per character-pair**, not globally.
+- **Semantic** — Level-3 and Level-4 distillations (see [grounding pipeline §4](../01_grounding/video_benchmarks_grounding.md#4-hierarchical-memory-for-long-videos)) are written **per character** or **per character-pair**, not globally.
 - **State** — keyed by `character_id` as described above; retrieval for ToM questions walks `EntityProfile.character_id → state entries`.
 
 Retrieval APIs on the graph that honor this indexing:
@@ -266,7 +266,7 @@ Retrieval APIs on the graph that honor this indexing:
 
 ## Memory lifecycle policies
 
-The three stores plus the evidence layer are not write-once buffers. They are governed by explicit **write**, **revision**, **compression**, and **refresh** policies so that an 8B controller can rely on stable invariants instead of ad hoc heuristics. All policies operate over the canonical objects defined in [Actors §2A](actors_reasoning_model.md#2a-canonical-runtime-data-contracts) — `GroundedWindow`, `EvidenceBundle`, `AtomicStepResult`.
+The three stores plus the evidence layer are not write-once buffers. They are governed by explicit **write**, **revision**, **compression**, and **refresh** policies so that an 8B controller can rely on stable invariants instead of ad hoc heuristics. All policies operate over the canonical objects defined in [Actors §2A](../03_controller/actors_reasoning_model.md#2a-canonical-runtime-data-contracts) — `GroundedWindow`, `EvidenceBundle`, `AtomicStepResult`.
 
 > **Phase-1 stance.** The triggers, thresholds, decay constants, and refresh modes below are **fixed** for v1. They are tuned manually between releases. They are **not** auto-evolved by the synthesizer or learned by the controller. The lifecycle implementation table at the end of this section is the **normative contract** that the fixed memory-management procedures (§0.2) must implement.
 
@@ -328,7 +328,7 @@ Long videos generate more episodic records than the 8B controller can usefully r
 Invariants:
 
 - **Compressed summaries retain pointers to raw evidence.** A compressed episode's `source_ids` field always lists its source event ids; if the underlying events have been archived, the pointer resolves to the archive shard.
-- **Eviction is reversible.** Archived material can be re-loaded on demand by the retriever's broaden ladder ([Actors §2B.3](actors_reasoning_model.md#2b3-broaden-ladder)).
+- **Eviction is reversible.** Archived material can be re-loaded on demand by the retriever's broaden ladder ([Actors §2B.3](../03_controller/actors_reasoning_model.md#2b3-broaden-ladder)).
 - **EntityProfiles are never evicted.** Even for entities not seen recently, the profile stays in the index (with confidence-discounted state).
 
 ### Semantic Refresh Policy
@@ -344,7 +344,7 @@ Semantic memory is the place that most easily drifts; this policy makes refresh 
 
 Refresh modes:
 
-- **Versioned update (default).** Each refresh writes a new `version` of the summary; previous versions are kept (read-only) and pointed to from the latest one. This is what enables rollback ([Skill Synthetics — Bank Versioning and Rollback](skill_synthetics_agents.md#bank-versioning-and-rollback)).
+- **Versioned update (default).** Each refresh writes a new `version` of the summary; previous versions are kept (read-only) and pointed to from the latest one. This is what enables rollback ([Skill Synthetics — Bank Versioning and Rollback](../05_skills/skill_synthetics_agents.md#bank-versioning-and-rollback)).
 - **Overwrite.** Allowed only for typo-level corrections (no semantic change); requires `overwrite=True` flag and is logged.
 
 A "stale summary" is detected by any of: (a) source episodic nodes archived/removed, (b) drift trigger above, (c) explicit verifier flag. Stale summaries do not block retrieval; they are returned with a `meta.stale=True` marker so the verifier can downweight them.

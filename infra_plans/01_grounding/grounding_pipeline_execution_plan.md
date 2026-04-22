@@ -5,10 +5,10 @@
 > **Related plans (apply together):**
 >
 > - [Video Benchmarks & Social Grounding](video_benchmarks_grounding.md) — canonical schema, adapters, per-benchmark cheat sheet
-> - [Agentic Memory](agentic_memory_design.md) — three stores + evidence + entity-centric indexing
-> - [Actors / Reasoning Model](actors_reasoning_model.md) — controller consumes the grounded context built here
-> - [Atomic skills / hop refactor](atomic_skills_hop_refactor_execution_plan.md) — infrastructure primitives (`observe_segment`, `detect_entities`, `build_episodic`, …) are implemented by this pipeline
-> - [Plan docs checklist](plan_docs_implementation_checklist.md) §3 — this doc closes "Grounded window schema", "Entity resolution", "Benchmark-to-capability mapping", "Adapter definitions", "Grounding error taxonomy"
+> - [Agentic Memory](../02_memory/agentic_memory_design.md) — three stores + evidence + entity-centric indexing
+> - [Actors / Reasoning Model](../03_controller/actors_reasoning_model.md) — controller consumes the grounded context built here
+> - [Atomic skills / hop refactor](../04_harness/atomic_skills_hop_refactor_execution_plan.md) — infrastructure primitives (`observe_segment`, `detect_entities`, `build_episodic`, …) are implemented by this pipeline
+> - [Plan docs checklist](../99_meta/plan_docs_implementation_checklist.md) §3 — this doc closes "Grounded window schema", "Entity resolution", "Benchmark-to-capability mapping", "Adapter definitions", "Grounding error taxonomy"
 
 ---
 
@@ -329,7 +329,7 @@ All new node types reuse m3-agent's bidirectional weighted edges (`add_edge`, `u
 
 ## 7. Cross-reference checklist
 
-This plan, when executed, closes the following items in [`plan_docs_implementation_checklist.md`](plan_docs_implementation_checklist.md):
+This plan, when executed, closes the following items in [`plan_docs_implementation_checklist.md`](../99_meta/plan_docs_implementation_checklist.md):
 
 - §3 (`video_benchmarks_grounding.md`)
   - [x] Grounded window schema (see §2.6 of the grounding plan — wire format)
@@ -341,7 +341,7 @@ This plan, when executed, closes the following items in [`plan_docs_implementati
 - §2 (`agentic_memory_design.md`)
   - [x] Entity profile schema (see "Entity-centric indexing" subsection)
 
-Infrastructure primitives expected by [`atomic_skills_hop_refactor_execution_plan.md`](atomic_skills_hop_refactor_execution_plan.md) are realized here:
+Infrastructure primitives expected by [`atomic_skills_hop_refactor_execution_plan.md`](../04_harness/atomic_skills_hop_refactor_execution_plan.md) are realized here:
 
 | Primitive | Realized by |
 |---|---|

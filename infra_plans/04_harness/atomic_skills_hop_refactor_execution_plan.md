@@ -3,21 +3,21 @@
 > **Purpose:** Cursor-ready checklist and file-by-file edit plan (English) for refactoring `infra_plans` so reasoning skills stay **reusable inference operators**, coarse skills split into **atomic** + **composite** forms, **one hop** is a short verifiable chain of atomics, and **infrastructure** (observation, tracking, memory build, retrieval) is not stored as bank skills.
 >
 > **Related plans (apply together):**
-> - [Skill Extraction & Skill Bank](skill_extraction_bank.md) — canonical bank design
-> - [Skill Synthetics Agents](skill_synthetics_agents.md) — evolution & reflection
-> - [Actors / Reasoning Model](actors_reasoning_model.md) — controller & hop execution
-> - [Agentic Memory](agentic_memory_design.md) — three stores + evidence
-> - [MVP Build Order](mvp_build_order.md) — phased implementation plan
+> - [Skill Extraction & Skill Bank](../05_skills/skill_extraction_bank.md) — canonical bank design
+> - [Skill Synthetics Agents](../05_skills/skill_synthetics_agents.md) — evolution & reflection
+> - [Actors / Reasoning Model](../03_controller/actors_reasoning_model.md) — controller & hop execution
+> - [Agentic Memory](../02_memory/agentic_memory_design.md) — three stores + evidence
+> - [MVP Build Order](../00_overview/mvp_build_order.md) — phased implementation plan
 
 ---
 
 ## 0. Design Principle: Stable Memory, Evolving Reasoning
 
-This file is the **execution-runtime spec** for the principle stated in [Actors §0](actors_reasoning_model.md#0-design-principle-stable-memory-evolving-reasoning):
+This file is the **execution-runtime spec** for the principle stated in [Actors §0](../03_controller/actors_reasoning_model.md#0-design-principle-stable-memory-evolving-reasoning):
 
-- The harness executes hops over **fixed memory procedures** ([Agentic Memory §0.2](agentic_memory_design.md#02-memory-management-skills-vs-reasoning-skills)) and **frozen 72B grounding tools**.
+- The harness executes hops over **fixed memory procedures** ([Agentic Memory §0.2](../02_memory/agentic_memory_design.md#02-memory-management-skills-vs-reasoning-skills)) and **frozen 72B grounding tools**.
 - The harness **does not** evolve memory policies and **does not** edit the bank. It executes, verifies, and logs.
-- The reasoning skills it expands and runs come from the **curated reasoning bank** ([Skill Extraction / Bank](skill_extraction_bank.md)). In phase 1 that bank does not grow during runtime.
+- The reasoning skills it expands and runs come from the **curated reasoning bank** ([Skill Extraction / Bank](../05_skills/skill_extraction_bank.md)). In phase 1 that bank does not grow during runtime.
 
 ---
 
@@ -150,7 +150,7 @@ They belong to observation, memory, and retrieval infrastructure.
 
 The remainder of this document specifies the **Harness** module — the runtime that executes hops over atomic skills, talks to the retriever and verifier, and emits the canonical `ReasoningTrace`. It is implementation-ready: an engineer should be able to build the `Harness` class directly from the sections below.
 
-The harness consumes the canonical objects defined in [Actors §2A](actors_reasoning_model.md#2a-canonical-runtime-data-contracts): `HopGoal`, `AtomicStepResult`, `EvidenceBundle`, `VerificationResult`, `ReasoningTrace`. It does not invent new wire formats.
+The harness consumes the canonical objects defined in [Actors §2A](../03_controller/actors_reasoning_model.md#2a-canonical-runtime-data-contracts): `HopGoal`, `AtomicStepResult`, `EvidenceBundle`, `VerificationResult`, `ReasoningTrace`. It does not invent new wire formats.
 
 ### Definition of a Hop
 
@@ -168,7 +168,7 @@ A hop owns: one `HopGoal`, an ordered list of `AtomicStepResult`s, a `hop_verifi
 | Atomic steps per hop | 3 (typical) | `max_atomic_steps_per_hop = 6` | Hops longer than 4 steps should be candidates for splitting |
 | Hops per question | 2–4 (typical) | `max_hops = 6` | Above 6 → automatic abstain |
 | Verifier retries per step | 1 | 2 | Each retry counts as an atomic step against the cap |
-| Broaden escalations per hop | 1 | 2 | Each broaden invokes the retriever ladder ([Actors §2B.3](actors_reasoning_model.md#2b3-broaden-ladder)) |
+| Broaden escalations per hop | 1 | 2 | Each broaden invokes the retriever ladder ([Actors §2B.3](../03_controller/actors_reasoning_model.md#2b3-broaden-ladder)) |
 
 Termination triggers:
 
@@ -178,7 +178,7 @@ Termination triggers:
 
 ### Atomic-Step Input/Output Contract
 
-Every atomic skill must declare the following five attributes (see [Skill Bank — Formal SkillRecord Schema](skill_extraction_bank.md#formal-skillrecord-schema)):
+Every atomic skill must declare the following five attributes (see [Skill Bank — Formal SkillRecord Schema](../05_skills/skill_extraction_bank.md#formal-skillrecord-schema)):
 
 | Field | Required | Description |
 |---|---|---|
@@ -234,7 +234,7 @@ Expansion rules:
 2. **Each child runs its own `verification_rule`.** A composite is *not* allowed to suppress child-level verification.
 3. **Composite success.** A composite is judged successful when (a) every child step's verifier returned `passed=True`, **and** (b) the composite's own top-level check (declared in its own `verification_rule`) passes against the final child's output.
 4. **Composite failure.** Failure of any child step propagates as a failure of the composite. The synthesizer's failure-localization step (below) identifies which child caused the failure.
-5. **Re-expansion on bank update.** If the bank revises the composite's `child_skills` (see [Skill Synthetics — Promotion Thresholds](skill_synthetics_agents.md#promotion-thresholds)), already-running hops finish under the old expansion; new hops use the new expansion.
+5. **Re-expansion on bank update.** If the bank revises the composite's `child_skills` (see [Skill Synthetics — Promotion Thresholds](../05_skills/skill_synthetics_agents.md#promotion-thresholds)), already-running hops finish under the old expansion; new hops use the new expansion.
 
 ### Trace Logging Format
 
@@ -271,7 +271,7 @@ When a hop's `outcome ∈ {blocked, abstain}` or the final answer is wrong, the 
 | **Perspective mismatch** | Any `perspective_consistency` check failed; or final answer used global state where the question was perspective-bound |
 | **Premature answer** | Trace skipped a required atomic family (e.g. answered a temporal question without an `order_two_events` step), or `confidence > 0.8` while `hop_verification.score < abstain_threshold` |
 
-The detected bucket determines which side updates apply (see *Reflection Update Hooks* below and the failure-to-update mapping in [Skill Synthetics §6](skill_synthetics_agents.md#6-failure--update-mapping)).
+The detected bucket determines which side updates apply (see *Reflection Update Hooks* below and the failure-to-update mapping in [Skill Synthetics §6](../05_skills/skill_synthetics_agents.md#6-failure--update-mapping)).
 
 ### MVP Failure Handling
 
@@ -285,11 +285,11 @@ In the MVP phase the harness does **not** attempt autonomous repair. It detects 
 | **Perspective mismatch** (`perspective_consistency` failed) | Force a re-run with the perspective anchor bound, or route to `switch_skill` if no perspective-aware atomic exists | Auto-add a new perspective skill to the bank |
 | **Premature answer** (required atomic family skipped, or `confidence > 0.8` while `hop_verification.score < abstain_threshold`) | Block answer emission; require the missing atomic family or trigger `decide_answer_or_abstain` | Auto-patch the controller's policy from a single example |
 
-Phase-1 scope discipline: the harness is intentionally narrow. It is **focused on execution, logging, and verification**. It does not implement full autonomous evolution; the [synthesizer](skill_synthetics_agents.md) consumes the traces it emits and decides what (if anything) to change about the bank, under the v1 conservative-promotion policy.
+Phase-1 scope discipline: the harness is intentionally narrow. It is **focused on execution, logging, and verification**. It does not implement full autonomous evolution; the [synthesizer](../05_skills/skill_synthetics_agents.md) consumes the traces it emits and decides what (if anything) to change about the bank, under the v1 conservative-promotion policy.
 
 ### Reflection Update Hooks
 
-The harness exposes hooks that the [Skill Synthesizer / Crafter](skill_synthetics_agents.md) consumes. Hooks fire on hop completion (success and failure) and on final verification.
+The harness exposes hooks that the [Skill Synthesizer / Crafter](../05_skills/skill_synthetics_agents.md) consumes. Hooks fire on hop completion (success and failure) and on final verification.
 
 | Hook | Trigger | Trace slice exported | Suggested actions for the synthesizer |
 |---|---|---|---|
@@ -297,9 +297,9 @@ The harness exposes hooks that the [Skill Synthesizer / Crafter](skill_synthetic
 | `on_hop_failure` | `outcome ∈ {blocked, abstain}` or any step `failure_mode != None` | The `HopRecord`, the failed steps, and the immediate upstream/downstream context | `patch` (revise verification rule), `split` (carve narrower variants), or `retire` (consistently failing) |
 | `on_composite_failure` | Composite expansion failed at a specific child | `HopRecord` + identified failing child id + the child's `inputs` | `split` the composite, or `patch` the child step's `verification_rule` |
 | `on_final_failure` | `verify_final.passed=False` despite all hops passing | Full `ReasoningTrace` (no truncation) | Tighten cross-hop consistency checks; introduce a verification atomic between the last hop and answer |
-| `on_promotion_candidate` | A previously-unseen atomic chain succeeded `≥ N_promote` times across distinct hops | The recurring chain + per-occurrence `HopRecord`s | `promote` to composite (subject to promotion thresholds in [Skill Synthetics](skill_synthetics_agents.md#promotion-thresholds)) |
+| `on_promotion_candidate` | A previously-unseen atomic chain succeeded `≥ N_promote` times across distinct hops | The recurring chain + per-occurrence `HopRecord`s | `promote` to composite (subject to promotion thresholds in [Skill Synthetics](../05_skills/skill_synthetics_agents.md#promotion-thresholds)) |
 
-Hooks are pure read-side: they emit events; the synthesizer decides what to write back to the bank, and bank writes go through the versioning policy ([Skill Synthetics — Bank Versioning and Rollback](skill_synthetics_agents.md#bank-versioning-and-rollback)).
+Hooks are pure read-side: they emit events; the synthesizer decides what to write back to the bank, and bank writes go through the versioning policy ([Skill Synthetics — Bank Versioning and Rollback](../05_skills/skill_synthetics_agents.md#bank-versioning-and-rollback)).
 
 ### Harness module sketch
 

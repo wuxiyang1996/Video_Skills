@@ -2,23 +2,24 @@
 
 > Goal: Define the **staged SFT → GRPO training plan** for the system. Concretely: **train the 8B controller as the main adaptive module**, keep the 72B/32B observers and reasoner frozen, keep the harness and memory procedures fixed, and stage reflection/synthesis training behind a stable runtime substrate.
 >
-> This file is the training-side counterpart to [MVP Build Order](mvp_build_order.md): the build order tells you what to **build**; this file tells you what to **train**, in what order, with what data, against what reward.
+> This file is the training-side counterpart to [MVP Build Order](../00_overview/mvp_build_order.md): the build order tells you what to **build**; this file tells you what to **train**, in what order, with what data, against what reward.
 >
 > **Related plans:**
-> - [MVP Build Order](mvp_build_order.md) — phase 1 / 2 / 3 sequencing the substrate this plan trains over
-> - [Actors / Reasoning Model](actors_reasoning_model.md) — 8B controller, role split, runtime contracts, training signal table
-> - [Agentic Memory](agentic_memory_design.md) — fixed memory procedures (not trained)
-> - [Atomic Skills & Hop Refactor](atomic_skills_hop_refactor_execution_plan.md) — harness runtime (not trained)
-> - [Skill Extraction / Bank](skill_extraction_bank.md) — reasoning skill bank (curated v1; promoted later)
-> - [Skill Synthetics Agents](skill_synthetics_agents.md) — synthesis pipeline (later phases)
-> - [Evaluation & Ablation Plan](evaluation_ablation_plan.md) — how each training stage is measured
-> - [System Overview and Open Work](system_overview_and_open_work.md) — integrative view this plan slots into
+> - [MVP Build Order](../00_overview/mvp_build_order.md) — phase 1 / 2 / 3 sequencing the substrate this plan trains over
+> - [Actors / Reasoning Model](../03_controller/actors_reasoning_model.md) — 8B controller, role split, runtime contracts, training signal table
+> - [Agentic Memory](../02_memory/agentic_memory_design.md) — fixed memory procedures (not trained)
+> - [Atomic Skills & Hop Refactor](../04_harness/atomic_skills_hop_refactor_execution_plan.md) — harness runtime (not trained)
+> - [Skill Extraction / Bank](../05_skills/skill_extraction_bank.md) — reasoning skill bank (curated v1; promoted later)
+> - [Skill Synthetics Agents](../05_skills/skill_synthetics_agents.md) — synthesis pipeline (later phases)
+> - [Evaluation & Ablation Plan](../07_evaluation/evaluation_ablation_plan.md) — how each training stage is measured
+> - [System Overview](../00_overview/system_overview.md) — integrative view this plan slots into
+> - [Runtime Contracts](../00_overview/runtime_contracts.md) — canonical typed objects this plan trains over
 
 ---
 
 ## 0. Headline recommendation
 
-Use **one 8B base model with staged LoRAs**. Do not train many separately tuned full models, and do not GRPO-train the 72B/32B models in this project version. The current actor plan ([Actors §0.1 — Role Split](actors_reasoning_model.md#01-role-split-72b-vs-8b-vs-harness)) already puts almost all adaptive behavior on the 8B side: question decomposition, hop planning, skill selection, memory retrieval, evidence sufficiency, verification, abstention, and (later) reflection / skill-bank updates.
+Use **one 8B base model with staged LoRAs**. Do not train many separately tuned full models, and do not GRPO-train the 72B/32B models in this project version. The current actor plan ([Actors §0.1 — Role Split](../03_controller/actors_reasoning_model.md#01-role-split-72b-vs-8b-vs-harness)) already puts almost all adaptive behavior on the 8B side: question decomposition, hop planning, skill selection, memory retrieval, evidence sufficiency, verification, abstention, and (later) reflection / skill-bank updates.
 
 In one sentence:
 
@@ -40,7 +41,7 @@ In one sentence:
 - decide answer vs abstain
 - emit structured hop traces and intermediate claims
 
-These are exactly the controller responsibilities and outputs already specified in [Actors §2.3 / §2.6 / §2.7](actors_reasoning_model.md#23-what-the-8b-controller-does-at-each-stage) and the four phase-1 training behaviors in [Actors §0.3](actors_reasoning_model.md#03-first-phase-training-focus).
+These are exactly the controller responsibilities and outputs already specified in [Actors §2.3 / §2.6 / §2.7](../03_controller/actors_reasoning_model.md#23-what-the-8b-controller-does-at-each-stage) and the four phase-1 training behaviors in [Actors §0.3](../03_controller/actors_reasoning_model.md#03-first-phase-training-focus).
 
 ### 1.2 Optional later trainable LoRAs
 
@@ -50,34 +51,34 @@ Use separate LoRAs only if a single controller LoRA becomes unstable or under-fi
 |---|---|---|
 | **LoRA-A: Planning / Skill Routing** | Hop goal generation, skill selection, retrieval planning, evidence collection | Default Phase-1 LoRA; may be the only LoRA trained |
 | **LoRA-B: Verification / Abstention** | Evidence sufficiency, contradiction checking, perspective correctness, answer-vs-abstain | Add only if planning + verification entangle in one LoRA and hurt either behavior |
-| **LoRA-C: Reflection / Skill Evolution** | Failure classification, atomic-step localization, patch/split/retire/promote suggestions, synthesis-worthiness scoring | Add **only after** Stages 1–3 are stable and the [preconditions for self-evolution](skill_synthetics_agents.md#03-preconditions-for-later-self-evolution) are met |
+| **LoRA-C: Reflection / Skill Evolution** | Failure classification, atomic-step localization, patch/split/retire/promote suggestions, synthesis-worthiness scoring | Add **only after** Stages 1–3 are stable and the [preconditions for self-evolution](../05_skills/skill_synthetics_agents.md#03-preconditions-for-later-self-evolution) are met |
 
 ### 1.3 Do NOT train
 
 | Component | Why not |
 |---|---|
-| **72B / 32B observers and reasoner** | The plan treats them as **frozen** large-VLM tools for social extraction, spatial extraction, and evidence-to-answer generation ([Actors §0.1](actors_reasoning_model.md#01-role-split-72b-vs-8b-vs-harness)). |
-| **Harness** | Runtime / execution layer that expands composites into atomics, calls memory + 72B primitives, logs traces. This is an **execution interface** problem, not a parameter-learning problem ([Atomic Skills & Hop Refactor — Harness](atomic_skills_hop_refactor_execution_plan.md#harness-runtime-specification)). |
-| **Memory procedures** | Phase-1 direction is **stable memory, evolving reasoning** ([Agentic Memory §0.1](agentic_memory_design.md#01-fixed-memory-procedures-in-phase-1)). Memory is the substrate; it is not a learned policy in v1. |
-| **Skill bank as a free-form model** | The bank is a **structured registry** of reasoning skills with conservative promotion later from repeated successful traces ([Skill Extraction / Bank §0.2](skill_extraction_bank.md#02-phase-1-bank-policy)). Not a separately trained free-form model in Phase 1. |
+| **72B / 32B observers and reasoner** | The plan treats them as **frozen** large-VLM tools for social extraction, spatial extraction, and evidence-to-answer generation ([Actors §0.1](../03_controller/actors_reasoning_model.md#01-role-split-72b-vs-8b-vs-harness)). |
+| **Harness** | Runtime / execution layer that expands composites into atomics, calls memory + 72B primitives, logs traces. This is an **execution interface** problem, not a parameter-learning problem ([Atomic Skills & Hop Refactor — Harness](../04_harness/atomic_skills_hop_refactor_execution_plan.md#harness-runtime-specification)). |
+| **Memory procedures** | Phase-1 direction is **stable memory, evolving reasoning** ([Agentic Memory §0.1](../02_memory/agentic_memory_design.md#01-fixed-memory-procedures-in-phase-1)). Memory is the substrate; it is not a learned policy in v1. |
+| **Skill bank as a free-form model** | The bank is a **structured registry** of reasoning skills with conservative promotion later from repeated successful traces ([Skill Extraction / Bank §0.2](../05_skills/skill_extraction_bank.md#02-phase-1-bank-policy)). Not a separately trained free-form model in Phase 1. |
 
 ---
 
 ## 2. Recommended SFT → GRPO plan
 
-The training stages mirror the build order in [MVP Build Order](mvp_build_order.md). RL never starts before the substrate it depends on is in place.
+The training stages mirror the build order in [MVP Build Order](../00_overview/mvp_build_order.md). RL never starts before the substrate it depends on is in place.
 
 ### 2.1 Stage 0 — Build the fixed substrate first (no training)
 
 Before any RL, finish the minimum runtime substrate:
 
-- canonical runtime schemas ([Actors §2A](actors_reasoning_model.md#2a-canonical-runtime-data-contracts))
-- grounding outputs ([Grounding Pipeline](grounding_pipeline_execution_plan.md))
-- fixed memory lifecycle and procedures ([Agentic Memory §0.2 / Lifecycle table](agentic_memory_design.md#lifecycle-implementation-table))
-- retriever / verifier baseline ([Actors §2B / §2C](actors_reasoning_model.md#2b-retriever-as-a-first-class-subsystem))
-- harness logging ([Harness runtime spec](atomic_skills_hop_refactor_execution_plan.md#harness-runtime-specification))
+- canonical runtime schemas ([Actors §2A](../03_controller/actors_reasoning_model.md#2a-canonical-runtime-data-contracts))
+- grounding outputs ([Grounding Pipeline](../01_grounding/grounding_pipeline_execution_plan.md))
+- fixed memory lifecycle and procedures ([Agentic Memory §0.2 / Lifecycle table](../02_memory/agentic_memory_design.md#lifecycle-implementation-table))
+- retriever / verifier baseline ([Actors §2B / §2C](../03_controller/actors_reasoning_model.md#2b-retriever-as-a-first-class-subsystem))
+- harness logging ([Harness runtime spec](../04_harness/atomic_skills_hop_refactor_execution_plan.md#harness-runtime-specification))
 
-The middle-layer glue called out in [System Overview — Group A](system_overview_and_open_work.md#group-a--middle-layer-glue-that-must-be-nailed-down-before-implementation) and the [Plan Docs Implementation Checklist](plan_docs_implementation_checklist.md) is **higher priority** than aggressive evolution. RL training without these pieces produces non-reproducible traces and unlearnable rewards.
+The middle-layer glue called out in [System Overview — Group A](../00_overview/system_overview.md#group-a--middle-layer-glue-that-must-be-nailed-down-before-implementation) and the [Plan Docs Implementation Checklist](../99_meta/plan_docs_implementation_checklist.md) is **higher priority** than aggressive evolution. RL training without these pieces produces non-reproducible traces and unlearnable rewards.
 
 ### 2.2 Stage 1 — SFT the 8B controller
 
@@ -93,9 +94,9 @@ Train the controller to produce, in canonical format:
 - evidence chains (`EvidenceBundle` references it cites)
 - intermediate claims per hop
 - `AbstainDecision` / final answer
-- the full `ReasoningTrace` shape ([Actors §2A.7](actors_reasoning_model.md#2a7-reasoningtrace))
+- the full `ReasoningTrace` shape ([Actors §2A.7](../03_controller/actors_reasoning_model.md#2a7-reasoningtrace))
 
-These are the controller outputs already enumerated in [Actors §2.7](actors_reasoning_model.md#27-controller-outputs-during-reasoning).
+These are the controller outputs already enumerated in [Actors §2.7](../03_controller/actors_reasoning_model.md#27-controller-outputs-during-reasoning).
 
 #### SFT data sources
 
@@ -142,7 +143,7 @@ Optimize:
 
 #### Reward design (planning / routing)
 
-Use a weighted reward consistent with [Actors §2E.1](actors_reasoning_model.md#2e1-reward--supervision-table):
+Use a weighted reward consistent with [Actors §2E.1](../03_controller/actors_reasoning_model.md#2e1-reward--supervision-table):
 
 | Term | Source | Sign | Purpose |
 |---|---|---|---|
@@ -157,7 +158,7 @@ This matches the controller's actual responsibilities and the checklist's call f
 
 #### Anti-hacking constraints (planning / routing)
 
-Carry over the hard caps and shaping penalties in [Actors §2E.2](actors_reasoning_model.md#2e2-anti-hacking-constraints):
+Carry over the hard caps and shaping penalties in [Actors §2E.2](../03_controller/actors_reasoning_model.md#2e2-anti-hacking-constraints):
 
 - **over-retrieving** — `p_extra_retrieval`, hard cap at 2× budget
 - **repeated empty searches** — count against `cost.retrieval_calls` even when empty
@@ -189,11 +190,11 @@ Keeping them as separate GRPO stages (and optionally separate LoRAs) usually mak
 | `r_false_answer_penalty` | confident answer with `claim_evidence_alignment` failed | − (heavy) | Heavily penalize unsupported confident answers |
 | `r_false_abstain_penalty` | abstention on questions with sufficient evidence | − | Penalize abstaining when evidence supports an answer |
 
-This directly supports the controller outputs in [Actors §2.7](actors_reasoning_model.md#27-controller-outputs-during-reasoning): per-hop verification result, confidence, and abstain decision.
+This directly supports the controller outputs in [Actors §2.7](../03_controller/actors_reasoning_model.md#27-controller-outputs-during-reasoning): per-hop verification result, confidence, and abstain decision.
 
 ### 2.5 Stage 4 — Conservative composite promotion (not full RL bank evolution)
 
-Only after Stages 1–3 are stable should composite promotion begin. This is a **non-RL** step: the synthesizer surfaces candidates, the bank versions them, and a human reviewer signs off in v1 ([Skill Synthetics §0.2](skill_synthetics_agents.md#02-phase-1-conservative-synthesis-policy)).
+Only after Stages 1–3 are stable should composite promotion begin. This is a **non-RL** step: the synthesizer surfaces candidates, the bank versions them, and a human reviewer signs off in v1 ([Skill Synthetics §0.2](../05_skills/skill_synthetics_agents.md#02-phase-1-conservative-synthesis-policy)).
 
 #### Do NOT do
 
@@ -203,7 +204,7 @@ Only after Stages 1–3 are stable should composite promotion begin. This is a *
 
 #### Do instead
 
-Use simple, auditable promotion rules consistent with [Skill Extraction / Bank — Composite Skill Formation Rules](skill_extraction_bank.md#composite-skill-formation-rules):
+Use simple, auditable promotion rules consistent with [Skill Extraction / Bank — Composite Skill Formation Rules](../05_skills/skill_extraction_bank.md#composite-skill-formation-rules):
 
 - chain appears frequently (`N_repeat ≥ 10` in v1)
 - chain verifies reliably (`τ_success ≥ 0.8`, `mean ≥ τ_stable`, `variance < σ_stable`)
@@ -212,7 +213,7 @@ Use simple, auditable promotion rules consistent with [Skill Extraction / Bank �
 
 ### 2.6 Stage 5 — Optional GRPO for reflection / synthesis
 
-Only do this after the [preconditions for self-evolution](skill_synthetics_agents.md#03-preconditions-for-later-self-evolution) are met:
+Only do this after the [preconditions for self-evolution](../05_skills/skill_synthetics_agents.md#03-preconditions-for-later-self-evolution) are met:
 
 - runtime schemas are stable
 - hop traces are clean
@@ -221,9 +222,9 @@ Only do this after the [preconditions for self-evolution](skill_synthetics_agent
 
 If you reach this stage, train an `8B_Controller_ReflectionSynthesis` LoRA to:
 
-- classify failure type ([Skill Synthetics §5](skill_synthetics_agents.md#5-failure-taxonomy))
-- localize the failing atomic step ([Harness — Failure Localization Protocol](atomic_skills_hop_refactor_execution_plan.md#failure-localization-protocol))
-- suggest patch / split / retire / promote actions ([Skill Synthetics §4.3](skill_synthetics_agents.md#43-update-rules))
+- classify failure type ([Skill Synthetics §5](../05_skills/skill_synthetics_agents.md#5-failure-taxonomy))
+- localize the failing atomic step ([Harness — Failure Localization Protocol](../04_harness/atomic_skills_hop_refactor_execution_plan.md#failure-localization-protocol))
+- suggest patch / split / retire / promote actions ([Skill Synthetics §4.3](../05_skills/skill_synthetics_agents.md#43-update-rules))
 - score whether a trace is synthesis-worthy
 
 This is **Phase 3 work**, not MVP.
@@ -234,12 +235,12 @@ This is **Phase 3 work**, not MVP.
 
 | Stage | Training step | Trainable target | Frozen | Gating prerequisite |
 |---|---|---|---|---|
-| 0 | (no training) Build substrate | — | 72B/32B, harness, memory, retriever, verifier, bank | [MVP Build Order — Phase 1 items 1–6](mvp_build_order.md#phase-1-stable-substrate) |
+| 0 | (no training) Build substrate | — | 72B/32B, harness, memory, retriever, verifier, bank | [MVP Build Order — Phase 1 items 1–6](../00_overview/mvp_build_order.md#phase-1-stable-substrate) |
 | 1 | **SFT-1** | `8B_Controller_Main` LoRA on hop planning, skill routing, retrieval decisions, evidence-chain generation, answer/abstain format | All else | Stage 0 complete; canonical traces flow end-to-end |
 | 2 | **GRPO-1** | Same LoRA (or `8B_Controller_PlanningRouting` if split) — planning/routing rewards | All else | SFT-1 outputs are well-formed and pass verifier on a held-out fraction |
 | 3 | **SFT-2 / GRPO-2** | `8B_Controller_VerificationAbstain` LoRA *if* needed | All else | GRPO-1 plateaus on planning but verification regresses or under-fits |
 | 4 | **Composite promotion** (non-RL) | Bank entries via synthesizer + human sign-off | All else | GRPO-1 (and GRPO-2 if used) stable; trace quality high |
-| 5 | **GRPO-3 (later only)** | `8B_Controller_ReflectionSynthesis` LoRA | All else | [Synthesis preconditions](skill_synthetics_agents.md#03-preconditions-for-later-self-evolution) met |
+| 5 | **GRPO-3 (later only)** | `8B_Controller_ReflectionSynthesis` LoRA | All else | [Synthesis preconditions](../05_skills/skill_synthetics_agents.md#03-preconditions-for-later-self-evolution) met |
 
 This is the highest-probability route given that 72B/32B remain frozen inference tools and memory stays fixed.
 
@@ -278,7 +279,7 @@ Turn this into a **copy-paste Cursor plan** for the SFT → GRPO training design
 
 - per-stage data manifests (which traces go into SFT-1, GRPO-1, …)
 - per-stage reward configuration files (mapping `r_*` terms to weights and gates)
-- per-stage eval harness slices ([Evaluation & Ablation Plan](evaluation_ablation_plan.md)) so each stage's success criterion is automatically checkable
+- per-stage eval harness slices ([Evaluation & Ablation Plan](../07_evaluation/evaluation_ablation_plan.md)) so each stage's success criterion is automatically checkable
 - a `training_schedule.yaml` listing LoRAs, gating prerequisites, and abort criteria
 
 This gives the implementation team a runnable training calendar, not just a strategy.

@@ -4,9 +4,9 @@
 >
 > **Related plans:**
 >
-> - [Actors / Reasoning Model](actors_reasoning_model.md) — 8B controller, orchestration, frozen tools, when-to-call rules
-> - [Video Benchmarks & Grounding](video_benchmarks_grounding.md) — shared reasoning protocol, benchmarks, adapters
-> - [Agentic Memory](agentic_memory_design.md) — memory stores and evidence layer the controller reads/writes
+> - [Actors / Reasoning Model](../03_controller/actors_reasoning_model.md) — 8B controller, orchestration, frozen tools, when-to-call rules
+> - [Video Benchmarks & Grounding](../01_grounding/video_benchmarks_grounding.md) — shared reasoning protocol, benchmarks, adapters
+> - [Agentic Memory](../02_memory/agentic_memory_design.md) — memory stores and evidence layer the controller reads/writes
 
 ---
 
@@ -23,10 +23,10 @@ So: search for exact strings `MCP` or `harness` will miss the ideas; use the equ
 
 | External / informal term | What to read for the same idea in `infra_plans` |
 |--------------------------|--------------------------------------------------|
-| **Tool interface** | Frozen tools the 8B controller invokes: Observer-A, Observer-B, Reasoner, embedding models; plus explicit **when-to-call** rules per stage ([Actors / Reasoning Model](actors_reasoning_model.md)). |
-| **Controller / orchestrator loop** | The **trainable 8B controller**: memory updates, retrieval plans, skill selection, prompt composition, evidence sufficiency, reflection — the central runtime that decides *what* runs *when* ([Actors / Reasoning Model](actors_reasoning_model.md)). |
-| **Evaluation runner** | Benchmark tiers, **direct vs retrieval** regimes, and adapters in [Video Benchmarks & Grounding](video_benchmarks_grounding.md); episodic scoring and trace expectations vary by benchmark but share a common reasoning style. |
-| **Shared execution API** | The documented multi-step protocol (**`[Think]` → `[Search]` → `[Think]` → `[Answer]`**), **`reason(...)`**, and direct vs retrieval modes — a reusable “outer loop” shape across benchmarks ([Video Benchmarks & Grounding](video_benchmarks_grounding.md)). |
+| **Tool interface** | Frozen tools the 8B controller invokes: Observer-A, Observer-B, Reasoner, embedding models; plus explicit **when-to-call** rules per stage ([Actors / Reasoning Model](../03_controller/actors_reasoning_model.md)). |
+| **Controller / orchestrator loop** | The **trainable 8B controller**: memory updates, retrieval plans, skill selection, prompt composition, evidence sufficiency, reflection — the central runtime that decides *what* runs *when* ([Actors / Reasoning Model](../03_controller/actors_reasoning_model.md)). |
+| **Evaluation runner** | Benchmark tiers, **direct vs retrieval** regimes, and adapters in [Video Benchmarks & Grounding](../01_grounding/video_benchmarks_grounding.md); episodic scoring and trace expectations vary by benchmark but share a common reasoning style. |
+| **Shared execution API** | The documented multi-step protocol (**`[Think]` → `[Search]` → `[Think]` → `[Answer]`**), **`reason(...)`**, and direct vs retrieval modes — a reusable “outer loop” shape across benchmarks ([Video Benchmarks & Grounding](../01_grounding/video_benchmarks_grounding.md)). |
 
 ---
 

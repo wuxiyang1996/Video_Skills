@@ -3,23 +3,23 @@
 > Goal: Define the **skill bank infrastructure** — how **reasoning** skills are represented, stored, composed, and evolved. Skills are **reusable inference operators** over memory outputs and perspective threads, not generic retrieval routines or offline pipeline steps.
 >
 > **Related plans:**
-> - [Atomic skills & hop refactor — execution checklist](atomic_skills_hop_refactor_execution_plan.md) — layer split, constraints, minimal atomic set
-> - [Agentic Memory](agentic_memory_design.md) — episodic / semantic / state stores + evidence layer
-> - [Video Benchmarks & Grounding](video_benchmarks_grounding.md) — benchmarks, memory graph, adapters
-> - [Actors / Reasoning Model](actors_reasoning_model.md) — 8B controller, hops, orchestration
+> - [Atomic skills & hop refactor — execution checklist](../04_harness/atomic_skills_hop_refactor_execution_plan.md) — layer split, constraints, minimal atomic set
+> - [Agentic Memory](../02_memory/agentic_memory_design.md) — episodic / semantic / state stores + evidence layer
+> - [Video Benchmarks & Grounding](../01_grounding/video_benchmarks_grounding.md) — benchmarks, memory graph, adapters
+> - [Actors / Reasoning Model](../03_controller/actors_reasoning_model.md) — 8B controller, hops, orchestration
 > - [Skill Synthetics Agents](skill_synthetics_agents.md) — synthesis, evolution, reflection
-> - [MVP Build Order](mvp_build_order.md) — phased implementation plan
+> - [MVP Build Order](../00_overview/mvp_build_order.md) — phased implementation plan
 
 ---
 
 ## 0. Design Principle: Stable Memory, Evolving Reasoning
 
-This file defines the **evolving reasoning** half of the cross-plan principle ([Actors §0](actors_reasoning_model.md#0-design-principle-stable-memory-evolving-reasoning)). The bank evolves; memory does not.
+This file defines the **evolving reasoning** half of the cross-plan principle ([Actors §0](../03_controller/actors_reasoning_model.md#0-design-principle-stable-memory-evolving-reasoning)). The bank evolves; memory does not.
 
 ### 0.1 Bank Scope in Phase 1
 
 - The evolving bank stores **reasoning skills only**, not infrastructure primitives.
-- **Observation, tracking, storage, memory write / update, and retrieval** are **runtime procedures** (or, for memory, **fixed memory procedures** in the [Memory Procedure Registry](agentic_memory_design.md#02-memory-management-skills-vs-reasoning-skills)). They are **not** entries in this bank.
+- **Observation, tracking, storage, memory write / update, and retrieval** are **runtime procedures** (or, for memory, **fixed memory procedures** in the [Memory Procedure Registry](../02_memory/agentic_memory_design.md#02-memory-management-skills-vs-reasoning-skills)). They are **not** entries in this bank.
 - The primary bank contents are **atomic and composite reasoning operators** that consume memory + evidence and emit verifiable claims.
 
 ### 0.2 Phase-1 Bank Policy
@@ -28,7 +28,7 @@ This file defines the **evolving reasoning** half of the cross-plan principle ([
 - **Do not allow unconstrained free growth** of the bank in v1. New atomics are added only via human-authored release, not via online synthesis.
 - Composite skills may be added **conservatively** in phase 2 from repeated successful atomic chains, gated by the synthesizer's promotion thresholds.
 - Promotion is **limited and high-threshold** in the MVP phase. The defaults in §6 (`N_repeat`, `τ_stable`, `σ_stable`, transfer requirement) are minimums, not aspirations.
-- **Bank evolution is not a v1 milestone.** It is sequenced after retrieval, verifier, and harness are stable ([MVP Build Order](mvp_build_order.md)).
+- **Bank evolution is not a v1 milestone.** It is sequenced after retrieval, verifier, and harness are stable ([MVP Build Order](../00_overview/mvp_build_order.md)).
 
 ### 0.3 Separate Registries
 
@@ -36,7 +36,7 @@ The system maintains **two distinct registries**. They share neither schema nor 
 
 | Registry | Contents | Lifecycle |
 |---|---|---|
-| **Memory Procedure Registry** ([Agentic Memory §0.2](agentic_memory_design.md#02-memory-management-skills-vs-reasoning-skills)) | Fixed memory-management procedures: `open_episode_thread`, `append_grounded_event`, `update_entity_profile`, `refresh_state_memory`, `compress_episode_cluster`, `attach_evidence_ref`, `resolve_entity_alias`, `revise_belief_state`, `mark_memory_conflict`, … | Stable; manually versioned between releases; never modified by trace-driven synthesis |
+| **Memory Procedure Registry** ([Agentic Memory §0.2](../02_memory/agentic_memory_design.md#02-memory-management-skills-vs-reasoning-skills)) | Fixed memory-management procedures: `open_episode_thread`, `append_grounded_event`, `update_entity_profile`, `refresh_state_memory`, `compress_episode_cluster`, `attach_evidence_ref`, `resolve_entity_alias`, `revise_belief_state`, `mark_memory_conflict`, … | Stable; manually versioned between releases; never modified by trace-driven synthesis |
 | **Reasoning Skill Bank** (this document) | Atomic and composite reasoning operators: `identify_question_target`, `retrieve_relevant_episode`, `order_two_events`, `infer_observation_access`, `update_belief_state`, `check_evidence_sufficiency`, `decide_answer_or_abstain`, … | Curated in v1; conservative promotion in phase 2; broader synthesis in phase 3, all under versioned, gated synthesis rules |
 
 A reasoning skill **never writes memory directly**: when it needs to mutate state, it requests a Memory Procedure Registry entry via the harness. This boundary is what lets reasoning skills evolve without destabilizing the substrate.
@@ -182,7 +182,7 @@ For a practical first version, implement **12** atomics:
 
 ### 4.9 Canonical Starter Atomic Skill Inventory
 
-The starter inventory below is the **shipping v1 bank**: a small but representative atomic set, grouped by reasoning purpose, that covers all benchmark families targeted by [Video Benchmarks](video_benchmarks_grounding.md). Every entry must conform to the `SkillRecord` schema (§6).
+The starter inventory below is the **shipping v1 bank**: a small but representative atomic set, grouped by reasoning purpose, that covers all benchmark families targeted by [Video Benchmarks](../01_grounding/video_benchmarks_grounding.md). Every entry must conform to the `SkillRecord` schema (§6).
 
 | Category | Skill | `output_type` | One-line role |
 |---|---|---|---|
@@ -273,7 +273,7 @@ Earlier **coarse** social operators can be expressed as composites, e.g.:
 
 ### Formal SkillRecord Schema
 
-`SkillRecord` is the **canonical, serializable, versioned** record for every entry in the bank. It is the unit the harness ([Atomic Skills & Hop Plan — Harness](atomic_skills_hop_refactor_execution_plan.md#harness-runtime-specification)) loads at startup, the synthesizer ([Skill Synthetics](skill_synthetics_agents.md)) writes back to, and the retriever's RAG layer indexes.
+`SkillRecord` is the **canonical, serializable, versioned** record for every entry in the bank. It is the unit the harness ([Atomic Skills & Hop Plan — Harness](../04_harness/atomic_skills_hop_refactor_execution_plan.md#harness-runtime-specification)) loads at startup, the synthesizer ([Skill Synthetics](skill_synthetics_agents.md)) writes back to, and the retriever's RAG layer indexes.
 
 ```python
 @dataclass
@@ -346,7 +346,7 @@ class VerificationCheckSpec:
     on_fail: Literal["retry", "broaden", "switch_skill", "abstain", "continue"]
 ```
 
-Every atomic skill must declare at least one check whose `name` belongs to the verifier catalog ([Actors §2C.1](actors_reasoning_model.md#2c1-check-catalog)) and whose `inputs` reference real keys in `output_schema`. The harness rejects skills that violate this at load time.
+Every atomic skill must declare at least one check whose `name` belongs to the verifier catalog ([Actors §2C.1](../03_controller/actors_reasoning_model.md#2c1-check-catalog)) and whose `inputs` reference real keys in `output_schema`. The harness rejects skills that violate this at load time.
 
 ### Composite Skill Formation Rules
 

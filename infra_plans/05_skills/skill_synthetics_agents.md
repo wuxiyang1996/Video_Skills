@@ -10,12 +10,12 @@
 > **Phase scope.** The synthesis pipeline described here is the **target design**. Phase 1 only exercises trace collection and (optionally) human-supervised promotion — see §0.1–0.3 below.
 >
 > **Related plans:**
-> - [Atomic skills & hop refactor — execution checklist](atomic_skills_hop_refactor_execution_plan.md)
-> - [Agentic Memory](agentic_memory_design.md) — three memory stores + evidence layer
-> - [Video Benchmarks & Grounding](video_benchmarks_grounding.md) — benchmarks, memory graph, adapters
-> - [Actors / Reasoning Model](actors_reasoning_model.md) — 8B controller, reasoning core, orchestrator
+> - [Atomic skills & hop refactor — execution checklist](../04_harness/atomic_skills_hop_refactor_execution_plan.md)
+> - [Agentic Memory](../02_memory/agentic_memory_design.md) — three memory stores + evidence layer
+> - [Video Benchmarks & Grounding](../01_grounding/video_benchmarks_grounding.md) — benchmarks, memory graph, adapters
+> - [Actors / Reasoning Model](../03_controller/actors_reasoning_model.md) — 8B controller, reasoning core, orchestrator
 > - [Skill Extraction / Bank](skill_extraction_bank.md) — atomic/composite skills and bank infrastructure
-> - [MVP Build Order](mvp_build_order.md) — phased implementation plan
+> - [MVP Build Order](../00_overview/mvp_build_order.md) — phased implementation plan
 
 ---
 
@@ -23,7 +23,7 @@
 
 This file describes the **adaptive layer** of the system. It must be read with two cross-plan rules in mind:
 
-- Memory construction and maintenance are **fixed** in v1 ([Agentic Memory §0](agentic_memory_design.md#0-design-principle-stable-memory-evolving-reasoning)). Synthesis never edits memory procedures.
+- Memory construction and maintenance are **fixed** in v1 ([Agentic Memory §0](../02_memory/agentic_memory_design.md#0-design-principle-stable-memory-evolving-reasoning)). Synthesis never edits memory procedures.
 - The evolving bank holds **reasoning skills only** ([Skill Extraction / Bank §0](skill_extraction_bank.md#0-design-principle-stable-memory-evolving-reasoning)). Synthesis writes only to the Reasoning Skill Bank, never to the Memory Procedure Registry.
 
 ---
@@ -31,8 +31,8 @@ This file describes the **adaptive layer** of the system. It must be read with t
 ## 0.1 Role of Skill Synthesis in the MVP
 
 - **Full automatic skill synthesis is not the first milestone.**
-- The first milestone is **robust reasoning trace collection and failure localization** by the harness ([Atomic Skills & Hop Plan — Harness](atomic_skills_hop_refactor_execution_plan.md#harness-runtime-specification)) plus a curated starter bank ([Skill Bank §0.2](skill_extraction_bank.md#02-phase-1-bank-policy)).
-- **Synthesis is introduced only after** traces, retrieval, verifier, and hop execution are stable. The MVP success criterion ([MVP Build Order](mvp_build_order.md)) is defined entirely on a curated bank — it does not require this section to be implemented at v1 ship time.
+- The first milestone is **robust reasoning trace collection and failure localization** by the harness ([Atomic Skills & Hop Plan — Harness](../04_harness/atomic_skills_hop_refactor_execution_plan.md#harness-runtime-specification)) plus a curated starter bank ([Skill Bank §0.2](skill_extraction_bank.md#02-phase-1-bank-policy)).
+- **Synthesis is introduced only after** traces, retrieval, verifier, and hop execution are stable. The MVP success criterion ([MVP Build Order](../00_overview/mvp_build_order.md)) is defined entirely on a curated bank — it does not require this section to be implemented at v1 ship time.
 
 The pipeline described later in this document (recurring-chain mining, verifiability gates, promotion thresholds, versioning, rollback) is the **target design** for phase 2 / phase 3. In phase 1 only the trace ingestion side is exercised; the actions side is restricted as below.
 
@@ -51,9 +51,9 @@ Automatic synthesis is unsafe without the following invariants. Phase 2 / phase 
 
 | Precondition | What it means concretely |
 |---|---|
-| **Stable runtime schemas** | The canonical objects in [Actors §2A](actors_reasoning_model.md#2a-canonical-runtime-data-contracts) are versioned and unchanged across the synthesis window |
-| **Reliable retrieval** | The retriever ([Actors §2B](actors_reasoning_model.md#2b-retriever-as-a-first-class-subsystem)) meets target recall on the eval set; broaden ladder behavior is monotone and reproducible |
-| **Reliable verifier** | The verifier ([Actors §2C](actors_reasoning_model.md#2c-verifier-as-a-first-class-subsystem)) check catalog is stable; per-check pass rates are calibrated and not gameable by the controller |
+| **Stable runtime schemas** | The canonical objects in [Actors §2A](../03_controller/actors_reasoning_model.md#2a-canonical-runtime-data-contracts) are versioned and unchanged across the synthesis window |
+| **Reliable retrieval** | The retriever ([Actors §2B](../03_controller/actors_reasoning_model.md#2b-retriever-as-a-first-class-subsystem)) meets target recall on the eval set; broaden ladder behavior is monotone and reproducible |
+| **Reliable verifier** | The verifier ([Actors §2C](../03_controller/actors_reasoning_model.md#2c-verifier-as-a-first-class-subsystem)) check catalog is stable; per-check pass rates are calibrated and not gameable by the controller |
 | **Clean step / hop traces** | `AtomicStepResult` and `HopRecord` are populated for every run; no silent enrichment; failure modes use the standard codes |
 | **Trustworthy failure localization** | The harness's *Failure Localization Protocol* assigns exactly one bucket per failure with high inter-rater agreement on a held-out audit sample |
 
@@ -63,7 +63,7 @@ If any of these regress, synthesis activations are paused until the invariant is
 
 ## 1. Primary Synthesis Unit: Successful Reasoning Traces
 
-The skill bank is grown **trace-first**, not tag-first. The main object the synthesizer consumes is a **successful reasoning trajectory** — a `ReasoningTrace` (or `HopRecord` slice) whose final and per-hop verifications passed, captured by the harness ([Atomic Skills & Hop Plan — Harness](atomic_skills_hop_refactor_execution_plan.md#harness-runtime-specification)).
+The skill bank is grown **trace-first**, not tag-first. The main object the synthesizer consumes is a **successful reasoning trajectory** — a `ReasoningTrace` (or `HopRecord` slice) whose final and per-hop verifications passed, captured by the harness ([Atomic Skills & Hop Plan — Harness](../04_harness/atomic_skills_hop_refactor_execution_plan.md#harness-runtime-specification)).
 
 | Statement | Implication |
 |---|---|
@@ -148,7 +148,7 @@ Below-threshold candidates are returned to the synthesizer for revision; persist
 
 ### Trace Localization Procedure
 
-When a hop or final answer fails, the synthesizer must localize the failure before proposing any bank update. The procedure mirrors the harness's *Failure Localization Protocol* ([Atomic Skills & Hop Plan](atomic_skills_hop_refactor_execution_plan.md#failure-localization-protocol)) and assigns exactly one bucket per failure:
+When a hop or final answer fails, the synthesizer must localize the failure before proposing any bank update. The procedure mirrors the harness's *Failure Localization Protocol* ([Atomic Skills & Hop Plan](../04_harness/atomic_skills_hop_refactor_execution_plan.md#failure-localization-protocol)) and assigns exactly one bucket per failure:
 
 | Bucket | Where in trace | Bank-side action |
 |---|---|---|

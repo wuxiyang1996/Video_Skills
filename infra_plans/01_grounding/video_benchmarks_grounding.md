@@ -6,10 +6,10 @@
 >
 > **Related plans:**
 >
-> - [Agentic Memory](agentic_memory_design.md) — three memory stores (episodic, semantic, state) + evidence layer
-> - [Actors / Reasoning Model](actors_reasoning_model.md) — reasoning core, 8B controller, orchestrator
-> - [Skill Extraction / Bank](skill_extraction_bank.md) — atomic/composite reasoning skills, hop composition, bank infrastructure
-> - [Skill Synthetics Agents](skill_synthetics_agents.md) — skill crafting, evolution, quality control
+> - [Agentic Memory](../02_memory/agentic_memory_design.md) — three memory stores (episodic, semantic, state) + evidence layer
+> - [Actors / Reasoning Model](../03_controller/actors_reasoning_model.md) — reasoning core, 8B controller, orchestrator
+> - [Skill Extraction / Bank](../05_skills/skill_extraction_bank.md) — atomic/composite reasoning skills, hop composition, bank infrastructure
+> - [Skill Synthetics Agents](../05_skills/skill_synthetics_agents.md) — skill crafting, evolution, quality control
 > - [Grounding Pipeline Execution Plan](grounding_pipeline_execution_plan.md) — m3-agent-based implementation plan that realizes the schema and adapters defined here
 
 ---
@@ -118,7 +118,7 @@ Only long-video benchmarks require persistent indexing and retrieval.
 
 ## 2. SocialVideoGraph — Unified Visual Grounding Data Model
 
-**Persistence model (canonical):** the controller uses **three memory stores** — episodic, semantic, and state (social + spatial subfields) — plus an **evidence attachment layer** for visual/audio/subtitle refs. See [Agentic Memory](agentic_memory_design.md).  
+**Persistence model (canonical):** the controller uses **three memory stores** — episodic, semantic, and state (social + spatial subfields) — plus an **evidence attachment layer** for visual/audio/subtitle refs. See [Agentic Memory](../02_memory/agentic_memory_design.md).  
 This section describes the **grounding graph / index schema** (`SocialVideoGraph`): structural node kinds for retrieval and APIs, **not** five independent top-level “memory products.” In particular, **visual evidence is not a separate store**; it attaches to episodic and state records.
 
 The graph combines:
@@ -316,7 +316,7 @@ class GroundedWindow:
 4. `time_span` on every sub-structure lies within the window's `time_span`.
 5. `confidence` fields are calibrated to the range `[0, 1]`; a node with `confidence < 0.2` **must** carry an explanation in `metadata["low_confidence_reason"]`.
 
-Mapping to episodic memory writes (see [Agentic Memory](agentic_memory_design.md)): one `GroundedWindow` materializes as one `episodic` entry carrying links to its `entities`, attached `interactions`/`events`, and pointers into the evidence store. `social_hypothesis` entries flow into **state memory** at query time; they remain indexed in the graph for retrieval but are not copied into episodic.
+Mapping to episodic memory writes (see [Agentic Memory](../02_memory/agentic_memory_design.md)): one `GroundedWindow` materializes as one `episodic` entry carrying links to its `entities`, attached `interactions`/`events`, and pointers into the evidence store. `social_hypothesis` entries flow into **state memory** at query time; they remain indexed in the graph for retrieval but are not copied into episodic.
 
 ### 2.7 Entity resolution & re-identification
 
@@ -347,7 +347,7 @@ Entity identity persistence is the load-bearing capability that separates "windo
 | Voice attribution conflict | Stage-1 emits two equivalence assertions `<voice_5> = <face_3>` and `<voice_5> = <face_7>` | `fix_collisions(mode="eq_only")` keeps the assertion with the highest edge weight |
 | Occlusion / missing face | Person clearly speaks (voice node active) but no face embedding for the clip | Graph records only `voice_N`; entity_ref falls back to the voice tag until a future clip adds face evidence |
 | Alias mismatch | Subtitle text names a character that has no resolved identity (`"Alice said"`) | Store as candidate alias on the voice node's metadata; resolved when equivalence is later asserted |
-| Confidence decay for stale identities | Character unseen for more than N clips | Its hypotheses in state memory are confidence-discounted (see [Agentic Memory](agentic_memory_design.md) revision policy) |
+| Confidence decay for stale identities | Character unseen for more than N clips | Its hypotheses in state memory are confidence-discounted (see [Agentic Memory](../02_memory/agentic_memory_design.md) revision policy) |
 
 **M3-Bench name round-trip.** `SocialVideoGraph.translate(text)` and `back_translate(text)` are thin wrappers over `character_mappings` and `reverse_character_mappings`; the M3-Bench adapter calls `back_translate` on the question before retrieval and `translate` on the answer before returning it. See [Grounding Pipeline Execution Plan §2.3, Phase 2].
 
@@ -630,7 +630,7 @@ Returns at minimum:
 
 ### 6.1 Benchmark-to-capability mapping
 
-Each benchmark stresses a different subset of the grounding, memory, retrieval, and reasoning capabilities. This table is the source of truth for "which subsystem must work for this benchmark to move" and drives the ablation design in [`evaluation_ablation_plan.md`](plan_docs_implementation_checklist.md#7-new-file-infra_plansevaluation_ablation_planmd) (pending).
+Each benchmark stresses a different subset of the grounding, memory, retrieval, and reasoning capabilities. This table is the source of truth for "which subsystem must work for this benchmark to move" and drives the ablation design in [`evaluation_ablation_plan.md`](../99_meta/plan_docs_implementation_checklist.md#7-new-file-infra_plansevaluation_ablation_planmd) (pending).
 
 Columns:
 
@@ -662,7 +662,7 @@ Columns:
 How to read the table during development:
 
 - An **S** cell that fails evaluation implicates the corresponding subsystem directly.
-- A **G** cell tells you where direct supervision / fine-tuning signal exists; prioritize these cells for atomic-skill training (see [`skill_extraction_bank.md`](skill_extraction_bank.md)).
+- A **G** cell tells you where direct supervision / fine-tuning signal exists; prioritize these cells for atomic-skill training (see [`skill_extraction_bank.md`](../05_skills/skill_extraction_bank.md)).
 - Absence of **S** marks (all `E`/`—`) in a capability column means no benchmark currently stresses that capability; either add one or de-prioritize the capability.
 
 ---
@@ -824,7 +824,7 @@ The **operational** phasing (perception stack vendoring, adaptive sampler, two-s
 
 ## 11. Grounding error taxonomy
 
-Six canonical failure modes observed on the current `Video_Skills/out/claude_grounding/*.json` baseline, each with a detection signal and a repair action. Pipeline runs must emit per-failure counters into `out/<run_id>/grounding_errors.jsonl` so the `evaluation_ablation_plan.md` (pending) and reflection loop ([Skill Synthetics Agents](skill_synthetics_agents.md)) can diagnose regressions.
+Six canonical failure modes observed on the current `Video_Skills/out/claude_grounding/*.json` baseline, each with a detection signal and a repair action. Pipeline runs must emit per-failure counters into `out/<run_id>/grounding_errors.jsonl` so the `evaluation_ablation_plan.md` (pending) and reflection loop ([Skill Synthetics Agents](../05_skills/skill_synthetics_agents.md)) can diagnose regressions.
 
 | # | Error class | Symptom in output | Detection signal | Repair |
 |---|---|---|---|---|
@@ -837,7 +837,7 @@ Six canonical failure modes observed on the current `Video_Skills/out/claude_gro
 
 Two additional classes are tracked but not yet auto-detected:
 
-- **E7 — Perspective collapse**: different characters' beliefs merged into one "world view" (blocks ToM benchmarks). Requires per-character perspective threads (see [Actors / Reasoning Model](actors_reasoning_model.md)).
+- **E7 — Perspective collapse**: different characters' beliefs merged into one "world view" (blocks ToM benchmarks). Requires per-character perspective threads (see [Actors / Reasoning Model](../03_controller/actors_reasoning_model.md)).
 - **E8 — Retrieval shortcut**: adapter returns an answer without any `evidence_refs` in the returned trace. Detected by verifier in the reasoning loop, not by the grounding layer itself.
 
 Each error class is a first-class metric in the Phase 6 exit criteria of [`grounding_pipeline_execution_plan.md`](grounding_pipeline_execution_plan.md); a pipeline run is considered regression-free only when E1–E6 counts are ≤ baseline.
