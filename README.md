@@ -43,6 +43,9 @@ The main claim is:
 - **Composed motifs are optional.** Reusable reasoning motifs are assembly or
   repair priors only; they must expand into frozen atomic skill graphs before
   execution.
+- **Composed motifs can be mined.** Offline extraction may promote frequent
+  verified atomic-skill subgraphs into reusable motif templates, but never into
+  new primitive tools.
 
 ## First Target
 
@@ -62,6 +65,9 @@ M3-Bench is intentionally deferred until its memory graph reader is ready.
 - [Problem formulation, Chinese](atomic-skill-decomposition-and-assembly/problem-formulation-zh.html)
 - [Atomic skills v1](atomic-skill-decomposition-and-assembly/atomic-skills-v1.md)
 - [Expert demo rollouts from datasets](atomic-skill-decomposition-and-assembly/expert-demo-rollouts-from-datasets.md)
+- [Unified video skill schema](docs/unified-video-skill-schema.md)
+- [Canonical example JSON schema](schemas/canonical_video_example.schema.json)
+- [Skill graph rollout JSON schema](schemas/skill_graph_rollout.schema.json)
 
 ## Recommended MVP
 

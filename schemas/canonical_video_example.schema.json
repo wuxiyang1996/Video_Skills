@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/wuxiyang1996/Video_Skills/schemas/canonical_video_example.schema.json",
+  "title": "CanonicalVideoExample",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "example_id",
+    "dataset",
+    "split",
+    "task_family",
+    "video",
+    "question",
+    "evidence_candidates",
+    "available_inputs",
+    "hidden_supervision",
+    "raw_source_refs",
+    "trust_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "video-skills-relaunch/v0.1"
+    },
+    "example_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dataset": {
+      "enum": ["video_holmes", "siv_bench", "cg_bench", "vrbench"]
+    },
+    "split": {
+      "type": "string"
+    },
+    "task_family": {
+      "type": "string"
+    },
+    "video": {
+      "$ref": "#/$defs/video_asset"
+    },
+    "question": {
+      "$ref": "#/$defs/question_item"
+    },
+    "evidence_candidates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence_candidate"
+      }
+    },
+    "available_inputs": {
+      "$ref": "#/$defs/available_inputs"
+    },
+    "hidden_supervision": {
+      "$ref": "#/$defs/hidden_supervision"
+    },
+    "raw_source_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/raw_source_ref"
+      }
+    },
+    "trust_policy": {
+      "type": "object",
+      "properties": {
+        "gold_sources": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "strong_sources": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "weak_sources": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "model_labeled_sources": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": true
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "time_span": {
+      "type": "object",
+      "required": ["start_s", "end_s"],
+      "properties": {
+        "start_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "end_s": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "video_asset": {
+      "type": "object",
+      "required": ["video_id", "primary_path"],
+      "properties": {
+        "video_id": {"type": "string"},
+        "primary_path": {"type": "string"},
+        "duration_s": {"type": ["number", "null"], "minimum": 0},
+        "fps": {"type": ["number", "null"], "minimum": 0},
+        "resolution": {
+          "type": ["object", "null"],
+          "properties": {
+            "width": {"type": "integer", "minimum": 1},
+            "height": {"type": "integer", "minimum": 1}
+          },
+          "additionalProperties": false
+        },
+        "language": {"type": ["string", "null"]},
+        "subtitle_tracks": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/text_track"}
+        },
+        "caption_tracks": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/text_track"}
+        },
+        "derived_clips": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/derived_clip"}
+        },
+        "segments": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/video_segment"}
+        }
+      },
+      "additionalProperties": true
+    },
+    "text_track": {
+      "type": "object",
+      "required": ["track_id", "path", "format"],
+      "properties": {
+        "track_id": {"type": "string"},
+        "path": {"type": "string"},
+        "format": {"type": "string"},
+        "language": {"type": ["string", "null"]}
+      },
+      "additionalProperties": true
+    },
+    "derived_clip": {
+      "type": "object",
+      "required": ["clip_id", "path"],
+      "properties": {
+        "clip_id": {"type": "string"},
+        "path": {"type": "string"},
+        "source_span": {"$ref": "#/$defs/time_span"}
+      },
+      "additionalProperties": true
+    },
+    "video_segment": {
+      "type": "object",
+      "required": ["segment_id", "source_type"],
+      "properties": {
+        "segment_id": {"type": "string"},
+        "time_span": {"$ref": "#/$defs/time_span"},
+        "source_type": {"type": "string"},
+        "text": {"type": ["string", "null"]},
+        "provenance": {"type": "object", "additionalProperties": true}
+      },
+      "additionalProperties": true
+    },
+    "question_item": {
+      "type": "object",
+      "required": ["question_id", "question_text", "answer_format"],
+      "properties": {
+        "question_id": {"type": "string"},
+        "question_text": {"type": "string"},
+        "question_type": {"type": ["string", "null"]},
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["label", "text"],
+            "properties": {
+              "label": {"type": "string"},
+              "text": {"type": "string"}
+            },
+            "additionalProperties": true
+          }
+        },
+        "answer": {
+          "type": ["object", "null"],
+          "properties": {
+            "label": {"type": ["string", "null"]},
+            "text": {"type": ["string", "null"]}
+          },
+          "additionalProperties": true
+        },
+        "answer_format": {
+          "enum": ["multiple_choice", "free_text", "yes_no", "span", "unknown"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "evidence_candidate": {
+      "type": "object",
+      "required": ["evidence_id", "source_type", "trust_level", "provenance"],
+      "properties": {
+        "evidence_id": {"type": "string"},
+        "source_type": {
+          "enum": [
+            "video_segment",
+            "frame_window",
+            "subtitle_span",
+            "caption_span",
+            "segment_description",
+            "inference_shot",
+            "key_relationship",
+            "clue_interval",
+            "clue_clip",
+            "reasoning_process_step",
+            "video_summary",
+            "qa_answer",
+            "model_labeled_span"
+          ]
+        },
+        "time_span": {"$ref": "#/$defs/time_span"},
+        "media_ref": {"type": "object", "additionalProperties": true},
+        "text": {"type": ["string", "null"]},
+        "entities": {
+          "type": "array",
+          "items": {"type": "object", "additionalProperties": true}
+        },
+        "claims": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/claim"}
+        },
+        "evidence_role": {"type": ["string", "null"]},
+        "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "trust_level": {
+          "enum": ["gold", "strong", "weak", "model_labeled", "derived"]
+        },
+        "discovery_status": {
+          "enum": [
+            "provided_supervision",
+            "provided_visible_context",
+            "discovered_runtime",
+            "derived_runtime",
+            "hidden_eval_only"
+          ]
+        },
+        "provenance": {"type": "object", "additionalProperties": true}
+      },
+      "additionalProperties": true
+    },
+    "claim": {
+      "type": "object",
+      "required": ["claim_id", "text", "claim_status"],
+      "properties": {
+        "claim_id": {"type": "string"},
+        "text": {"type": "string"},
+        "claim_status": {
+          "enum": ["candidate", "verified", "contradicted", "insufficient"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "raw_source_ref": {
+      "type": "object",
+      "required": ["source_name"],
+      "properties": {
+        "source_name": {"type": "string"},
+        "source_item_id": {"type": ["string", "null"]},
+        "fields_used": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": true
+    },
+    "available_inputs": {
+      "type": "object",
+      "required": ["mode", "visible_to_agent"],
+      "properties": {
+        "mode": {
+          "enum": ["expert_demo", "video_only"]
+        },
+        "visible_to_agent": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "video",
+              "question",
+              "subtitles",
+              "captions",
+              "automatic_clips",
+              "automatic_segments",
+              "dataset_annotations",
+              "ground_truth_clues",
+              "reasoning_process",
+              "official_answer"
+            ]
+          }
+        },
+        "notes": {"type": ["string", "null"]}
+      },
+      "additionalProperties": true
+    },
+    "hidden_supervision": {
+      "type": "object",
+      "required": ["available_for_training", "available_for_inference", "sources"],
+      "properties": {
+        "available_for_training": {"type": "boolean"},
+        "available_for_inference": {"type": "boolean"},
+        "sources": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "official_answer",
+              "clue_intervals",
+              "clue_clips",
+              "reasoning_process",
+              "segment_annotations",
+              "key_relationships",
+              "inference_shots"
+            ]
+          }
+        },
+        "scoring_targets": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}
