@@ -53,6 +53,13 @@ The main claim is:
   the same evidence interface; they differ by `clip_policy` (`whole_video`,
   `fixed_window`, `hierarchical`, or online causal windows). Streaming evidence
   must not cite future spans beyond the current observation time.
+- **Memory and reasoning can share a graph container, not loose semantics.**
+  Evidence/memory nodes and reasoning/skill nodes should live in a typed
+  heterogeneous graph with separate namespaces and explicit cross-layer edges.
+- **Unify conceptually, implement in layers first.** The MVP should keep
+  `EvidenceGraph`, `SkillGraphRollout`, and `CrossLayerLinks` separate, then
+  export them as one heterogeneous graph only after adapters and verifiers are
+  stable.
 
 ## First Target
 

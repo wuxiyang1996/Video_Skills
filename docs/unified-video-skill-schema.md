@@ -264,6 +264,122 @@ In `expert_demo` mode, the index can be seeded or audited with GT clues. In
 signals such as clips, frames, subtitles, ASR, generated captions, face tracks,
 voice tracks, and entity links.
 
+### 3.4 Unified Graph Container, Typed Layers
+
+We can model the memory/evidence graph and the reasoning/skill graph in one
+shared graph container, but they must remain semantically typed. The intended
+structure is a heterogeneous graph with explicit namespaces:
+
+```text
+UnifiedVideoReasoningGraph
+  evidence.*
+    clip
+    frame_window
+    caption
+    subtitle
+    asr
+    object
+    event
+    entity
+  reasoning.*
+    skill_invocation
+    intermediate_claim
+    hypothesis
+    verification_result
+    answer
+  cross_layer.*
+    uses_evidence
+    supported_by
+    refuted_by
+    verified_by
+```
+
+This gives one implementation surface for short, long, and streaming videos:
+short videos may have a small evidence layer; long videos may have a rich
+memory/index layer; streaming videos may have an append-only evidence layer
+bounded by `observation_end_s`. The reasoning layer can stay stable across all
+three.
+
+The important semantic boundary is:
+
+```text
+memory/evidence layer = what is available or retrieved from the video
+reasoning layer       = how skills transform evidence into claims and answers
+```
+
+Recommended flow:
+
+```text
+evidence.caption
+  -> reasoning.skill_invocation(retrieve_event)
+  -> reasoning.intermediate_claim
+  -> reasoning.verification_result
+  -> reasoning.answer
+```
+
+Concerns:
+
+- **Do not treat retrieval as support.** A `retrieval_score` edge only says a
+  clip was found; it does not prove that the clip supports the answer.
+- **Do not let semantic memory become final evidence by itself.** Semantic
+  summaries are useful retrieval priors, but final answers should cite lower
+  level clip/caption/frame evidence unless the task explicitly allows summaries.
+- **Do not collapse namespaces.** `temporal_next` between clips, `data` between
+  skill nodes, and `supported_by` between claim and evidence are different edge
+  semantics and should not share one loose `related_to` type.
+- **Do not make M3-style memory graph the core architecture.** It is one possible
+  evidence-index backend. The core project object is a verifiable skill graph
+  over typed evidence.
+- **Keep first implementation layered.** Implement `EvidenceGraph` and
+  `SkillGraphRollout` as separate layers that can be exported or inspected as a
+  unified heterogeneous graph. This avoids early complexity while preserving the
+  long-term unified representation.
+
+Safe implementation rule:
+
+```text
+Conceptually unified, engineering-layered.
+```
+
+For the first implementation, do not replace the existing canonical structures
+with one large `UnifiedVideoReasoningGraph` object. Keep the runtime objects
+separate and connect them explicitly:
+
+```json
+{
+  "evidence_graph": {
+    "nodes": [],
+    "edges": []
+  },
+  "skill_graph_rollout": {
+    "nodes": [],
+    "edges": []
+  },
+  "cross_layer_links": [
+    {
+      "source": "reasoning.step:001",
+      "target": "evidence.clip:042",
+      "edge_type": "uses_evidence"
+    }
+  ]
+}
+```
+
+This keeps responsibilities clear:
+
+- `EvidenceGraph` handles clips, captions, subtitles, clue intervals, entity
+  links, and retrieval metadata.
+- `SkillGraphRollout` handles skill calls, reasoning steps, intermediate claims,
+  verification nodes, and final answers.
+- `CrossLayerLinks` handles explicit bindings such as `uses_evidence`,
+  `supports_claim`, `refutes_claim`, and `verified_by`.
+
+Long-video datasets such as CG-Bench and VRBench motivate the unified graph view
+because their clue intervals and timestamped reasoning processes naturally bind
+evidence nodes to reasoning nodes. However, the first implementation should
+preserve the three-part layout above, then optionally export or inspect it as one
+heterogeneous graph after adapters, verifiers, and training formats are stable.
+
 ## 4. Video Asset Schema
 
 `VideoAsset` describes the media and all aligned text/clip resources.
