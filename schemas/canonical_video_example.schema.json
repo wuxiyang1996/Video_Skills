@@ -52,6 +52,9 @@
     "hidden_supervision": {
       "$ref": "#/$defs/hidden_supervision"
     },
+    "evidence_index": {
+      "$ref": "#/$defs/evidence_index"
+    },
     "raw_source_refs": {
       "type": "array",
       "items": {
@@ -331,6 +334,87 @@
         "scoring_targets": {
           "type": "array",
           "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": true
+    },
+    "evidence_index": {
+      "type": ["object", "null"],
+      "required": ["index_id", "index_type", "visible_in_modes"],
+      "properties": {
+        "index_id": {"type": "string"},
+        "index_type": {
+          "enum": [
+            "none",
+            "flat_caption_index",
+            "clip_memory_graph",
+            "multimodal_entity_graph",
+            "external"
+          ]
+        },
+        "visible_in_modes": {
+          "type": "array",
+          "items": {
+            "enum": ["expert_demo", "video_only"]
+          }
+        },
+        "clip_policy": {
+          "type": "object",
+          "properties": {
+            "strategy": {
+              "enum": ["whole_video", "fixed_window", "shot_boundary", "scene_boundary", "hierarchical", "adaptive"]
+            },
+            "window_s": {"type": ["number", "null"], "minimum": 0},
+            "overlap_s": {"type": ["number", "null"], "minimum": 0},
+            "coarse_window_s": {"type": ["number", "null"], "minimum": 0},
+            "fine_window_s": {"type": ["number", "null"], "minimum": 0},
+            "online": {"type": "boolean"},
+            "observation_end_s": {"type": ["number", "null"], "minimum": 0}
+          },
+          "additionalProperties": true
+        },
+        "node_types": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "clip",
+              "frame",
+              "episodic_text",
+              "semantic_text",
+              "subtitle",
+              "face",
+              "voice",
+              "entity"
+            ]
+          }
+        },
+        "edge_types": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "temporal_next",
+              "temporal_overlap",
+              "entity_mention",
+              "face_voice_equivalence",
+              "same_entity",
+              "retrieval_score",
+              "supports",
+              "derived_from"
+            ]
+          }
+        },
+        "artifact_refs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["artifact_type", "path"],
+            "properties": {
+              "artifact_type": {"type": "string"},
+              "path": {"type": "string"},
+              "format": {"type": ["string", "null"]}
+            },
+            "additionalProperties": true
+          }
         }
       },
       "additionalProperties": true

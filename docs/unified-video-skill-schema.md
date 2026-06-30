@@ -81,6 +81,11 @@ data/
   skill_ontology/
     atomic_skills.json
     composed_motifs.jsonl
+  evidence_indexes/
+    video_holmes/
+    siv_bench/
+    cg_bench/
+    vrbench/
   schemas/
     canonical_video_example.schema.json
     skill_graph_rollout.schema.json
@@ -164,6 +169,24 @@ or annotation sources.
       "segment_annotations"
     ]
   },
+  "evidence_index": {
+    "index_id": "cg_bench:BVxxxx:m3_style_index:v0",
+    "index_type": "clip_memory_graph",
+    "visible_in_modes": ["video_only", "expert_demo"],
+    "clip_policy": {
+      "strategy": "fixed_window",
+      "window_s": 30,
+      "overlap_s": 0
+    },
+    "node_types": ["clip", "episodic_text", "semantic_text", "face", "voice", "entity"],
+    "edge_types": ["temporal_next", "entity_mention", "face_voice_equivalence", "retrieval_score"],
+    "artifact_refs": [
+      {
+        "artifact_type": "memory_graph",
+        "path": "data/evidence_indexes/cg_bench/BVxxxx.pkl"
+      }
+    ]
+  },
   "raw_source_refs": [
     {
       "source_name": "cgbench.json",
@@ -196,6 +219,7 @@ or annotation sources.
 | `evidence_candidates` | Unified evidence ledger available to the labeler/controller. |
 | `available_inputs` | Inputs visible under the selected mode. |
 | `hidden_supervision` | Ground truth or annotations used only for labeling/evaluation. |
+| `evidence_index` | Optional runtime retrieval/index structure built from the video. |
 | `raw_source_refs` | Provenance back to the original dataset files. |
 | `trust_policy` | Which evidence sources are gold, strong, weak, or model-labeled. |
 
@@ -215,6 +239,30 @@ be hidden when evaluating whether the learned agent can find clues by itself.
 Use `available_inputs` to say what the labeler/controller can see in the current
 run. Use `hidden_supervision` to store ground truth that can score retrieval,
 clue recall, evidence-chain quality, and answer correctness.
+
+### 3.3 Evidence Index vs Evidence Candidate
+
+`evidence_index` is not final answer evidence. It is the searchable structure
+used to discover candidate evidence from the video. `EvidenceCandidate` is the
+unit that a skill node can cite.
+
+This distinction lets us reuse M3-Agent-style organization without turning
+memory retrieval into unverified answer support:
+
+```text
+video
+  -> clips / frames / audio
+  -> evidence_index
+  -> retrieval skill
+  -> EvidenceCandidate
+  -> verifier
+  -> answer_support_chain
+```
+
+In `expert_demo` mode, the index can be seeded or audited with GT clues. In
+`video_only` mode, the index must be built only from visible video-derived
+signals such as clips, frames, subtitles, ASR, generated captions, face tracks,
+voice tracks, and entity links.
 
 ## 4. Video Asset Schema
 
@@ -247,6 +295,76 @@ Use `segments` for dataset-provided segment descriptions, inferred shots,
 timestamped reasoning steps, subtitle windows, or generated captions. Keep the
 original provenance so that verifier gates can distinguish official annotations
 from model-created labels.
+
+### 4.1 Clip Processing Policy
+
+Long, short, and streaming videos should share the same evidence interface. The
+difference is the clip policy used to build `derived_clips`, `segments`, and the
+runtime `evidence_index`.
+
+```text
+video
+  -> clip segmentation
+  -> per-clip captions / ASR / objects / events
+  -> evidence index
+  -> skill graph retrieves relevant clips
+  -> verifier checks that cited evidence supports the answer
+```
+
+Recommended policies:
+
+| Setting | Clip policy | Purpose |
+|---------|-------------|---------|
+| Short video | `whole_video` plus small `fixed_window` clips, usually 2-5s with light overlap. | Preserve global context while giving skills precise local evidence. |
+| Long video | `hierarchical`: coarse 30-60s windows for retrieval, then 5-10s fine windows inside top candidates. | Avoid full-video reasoning cost while keeping final evidence timestamped. |
+| Streaming video | `fixed_window` or `hierarchical` with `online=true` and `observation_end_s=t`. | Enforce causal access: only clips in `[0, t]` are visible, future clips are hidden. |
+
+Default clip sizes should be shared where possible. For both short-video and
+streaming-video MVPs, start with `window_s=4` and `overlap_s=1`. The difference
+is not the clip size, but the visibility rule: short-video examples may retrieve
+from all clips, while streaming examples may retrieve only clips whose
+`time_span.end_s <= observation_end_s`. If very low-latency streaming perception
+is required, reduce the streaming window to 2s with 0.5-1s overlap; otherwise
+keep the shared 4s/1s default for simpler ablations.
+
+Example `clip_policy` values:
+
+```json
+{
+  "strategy": "whole_video",
+  "window_s": 4,
+  "overlap_s": 1,
+  "online": false,
+  "observation_end_s": null
+}
+```
+
+```json
+{
+  "strategy": "hierarchical",
+  "coarse_window_s": 45,
+  "fine_window_s": 8,
+  "overlap_s": 2,
+  "online": false,
+  "observation_end_s": null
+}
+```
+
+```json
+{
+  "strategy": "fixed_window",
+  "window_s": 5,
+  "overlap_s": 1,
+  "online": true,
+  "observation_end_s": 32.0
+}
+```
+
+The core invariant is that final answers cite `EvidenceCandidate` records, not
+the raw index. For streaming or partial-video QA, every cited evidence span must
+satisfy `time_span.end_s <= observation_end_s`. This lets streaming datasets
+share the same schema without making the main project depend on streaming as
+the default setting.
 
 ## 5. Evidence Candidate Schema
 
@@ -344,6 +462,42 @@ hidden_eval_only
 For the final video-only setting, answer evidence should come from
 `discovered_runtime`, `derived_runtime`, or `provided_visible_context`, not from
 `provided_supervision` or `hidden_eval_only`.
+
+### 5.4 Mapping M3-Style Memory Nodes to Evidence
+
+M3-Agent organizes long videos as a multimodal memory graph:
+
+```text
+clip_id
+  -> episodic text nodes
+  -> semantic text nodes
+  -> face nodes
+  -> voice nodes
+  -> face/voice/entity equivalence edges
+```
+
+For our system, these should map into evidence as follows:
+
+| M3-style object | Our schema target | Notes |
+|-----------------|-------------------|-------|
+| 30s clip | `VideoAsset.derived_clips` and `EvidenceCandidate.source_type=video_segment` | Keep `clip_id`, start/end time, and path. |
+| Episodic memory | `EvidenceCandidate.source_type=caption_span` | Good for observable events, actions, dialogue, scene facts. |
+| Semantic memory | `EvidenceCandidate.source_type=model_labeled_span` | Useful as retrieval prior, but lower trust unless verified by raw clip/caption. |
+| Face node | `entities[].modality=face` | Supports entity tracking and identity resolution. |
+| Voice node | `entities[].modality=voice` | Supports speaker/dialogue grounding. |
+| Equivalence line | `entity_link` or `face_voice_equivalence` edge in `evidence_index` | Should not be final answer evidence by itself. |
+| Retrieval score | `provenance.retrieval_score` | Useful for ranking, not sufficient for verification. |
+
+The important improvement is to keep both levels:
+
+```text
+episodic evidence = what happened in a clip
+semantic evidence = what the system inferred across clips
+```
+
+When semantic evidence supports an answer, the verifier should ask for at least
+one lower-level episodic/clip citation unless the task explicitly allows
+summary-level evidence.
 
 ## 6. Atomic Skill Specification
 
@@ -577,10 +731,18 @@ def to_canonical_examples(raw_root: str, split: str) -> Iterable[CanonicalVideoE
 
 def seed_evidence_candidates(example: CanonicalVideoExample) -> list[EvidenceCandidate]:
     ...
+
+def build_evidence_index(example: CanonicalVideoExample, mode: str) -> EvidenceIndex:
+    ...
 ```
 
 Model labelers then consume only `CanonicalVideoExample`, not raw benchmark
 formats.
+
+For short datasets, `build_evidence_index` can be lightweight: whole-video clip,
+subtitles, captions, and detected entities. For long datasets, use a richer
+clip-level index similar to M3-Agent: fixed-window clips, episodic memories,
+semantic memories, face/voice nodes, and retrieval scores.
 
 ### 9.1 Video-Holmes
 
@@ -758,15 +920,18 @@ setting where clue intervals and reasoning chains are hidden labels.
 1. Implement JSON schema dataclasses for `CanonicalVideoExample`,
    `EvidenceCandidate`, `AtomicSkillSpec`, `CompositeMotif`, and
    `SkillGraphRollout`.
-2. Write adapters for CG-Bench and Video-Holmes first, because they have the
+2. Implement a minimal `EvidenceIndex` interface inspired by M3-Agent:
+   fixed-window clips, episodic/semantic text nodes, entity links, and retrieval
+   traces.
+3. Write adapters for CG-Bench and Video-Holmes first, because they have the
    clearest evidence anchors.
-3. Add VRBench, preserving timestamped reasoning steps as ordered evidence.
-4. Add SIV-Bench with explicit weak/model-labeled evidence status.
-5. Build the expert labeler prompt over the canonical schema only.
-6. Run acceptance gates before any rollout enters training.
-7. Train the controller on frozen atomic skill ids, with motifs used only as
+4. Add VRBench, preserving timestamped reasoning steps as ordered evidence.
+5. Add SIV-Bench with explicit weak/model-labeled evidence status.
+6. Build the expert labeler prompt over the canonical schema only.
+7. Run acceptance gates before any rollout enters training.
+8. Train the controller on frozen atomic skill ids, with motifs used only as
    optional priors.
-8. Add a `video_only` evaluation loader that hides GT clues/reasoning processes
+9. Add a `video_only` evaluation loader that hides GT clues/reasoning processes
    and scores discovered evidence against them.
 
 ## 14. Composed Motif Extraction
@@ -981,3 +1146,46 @@ The expected claim should be modest:
 > Composed motifs are reusable verified subgraph priors mined from successful
 > traces. They improve planning efficiency and local repair, while final
 > execution remains grounded in atomic skills and current-video evidence.
+
+## 15. Reference: What to Borrow From M3-Agent
+
+M3-Agent is useful for the ultimate video-only goal because it shows a practical
+way to organize long-video evidence before answering:
+
+```text
+video
+  -> 30s clips
+  -> face detection + speaker diarization
+  -> episodic memory per clip
+  -> semantic memory per clip/entity
+  -> multimodal graph
+  -> iterative search/answer control loop
+```
+
+We should borrow:
+
+- fixed-window clip indexing as a simple first segmentation policy;
+- separate episodic and semantic text memories;
+- entity-centric links between face, voice, and text nodes;
+- query-time clip retrieval with scores;
+- iterative search traces as supervision for retrieval skills;
+- `before_clip` style temporal constraints for streaming or partial-video QA.
+
+We should not directly borrow:
+
+- unrestricted long-term memory as answer evidence;
+- semantic memory without lower-level clip support;
+- free-form `[SEARCH]` / `[ANSWER]` control as the final policy interface;
+- persistent facts across videos for benchmark QA.
+
+The right integration is:
+
+```text
+M3-style memory graph = evidence_index
+atomic skills = operations over the evidence_index
+EvidenceCandidate = cited, verifiable evidence extracted from the index
+SkillGraphRollout = reasoning chain over extracted evidence
+```
+
+This gives us the best of both designs: M3-style organization for clue discovery,
+and our typed skill graph for verifiable reasoning.

@@ -46,6 +46,13 @@ The main claim is:
 - **Composed motifs can be mined.** Offline extraction may promote frequent
   verified atomic-skill subgraphs into reusable motif templates, but never into
   new primitive tools.
+- **Evidence indexes are retrieval substrates.** M3-style clip memory graphs can
+  help the agent discover clues, but final answers must cite verifiable
+  `EvidenceCandidate` records extracted from the index.
+- **Clip processing is policy-driven.** Short, long, and streaming videos share
+  the same evidence interface; they differ by `clip_policy` (`whole_video`,
+  `fixed_window`, `hierarchical`, or online causal windows). Streaming evidence
+  must not cite future spans beyond the current observation time.
 
 ## First Target
 
