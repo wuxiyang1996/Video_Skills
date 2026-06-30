@@ -266,8 +266,25 @@ voice tracks, and entity links.
 
 ### 3.4 Unified Graph Container, Typed Layers
 
-We can model the memory/evidence graph and the reasoning/skill graph in one
-shared graph container, but they must remain semantically typed. The intended
+The graph used for video memory and clue organization is not the same object as
+the graph composed by the agent for reasoning. The first graph is produced by
+perception, indexing, retrieval, and dataset adapters. It stores what has been
+seen or inferred from the current video. The second graph is produced by agent
+control. It stores the skill chain or skill graph used to perform multi-hop
+reasoning over the perceived clues.
+
+The intended relationship is:
+
+```text
+video
+  -> perception / indexing
+  -> EvidenceGraph or clue-memory graph
+  -> agent composes SkillGraphRollout
+  -> verifier checks evidence bindings and answer support
+```
+
+We can model these layers in one shared graph container for inspection,
+debugging, or export, but they must remain semantically typed. The intended
 structure is a heterogeneous graph with explicit namespaces:
 
 ```text
@@ -303,22 +320,25 @@ three.
 The important semantic boundary is:
 
 ```text
-memory/evidence layer = what is available or retrieved from the video
-reasoning layer       = how skills transform evidence into claims and answers
+memory/evidence layer = perceived clue and memory organization
+reasoning/skill layer = agent-composed skill program over that graph
 ```
 
 Recommended flow:
 
 ```text
-evidence.caption
+evidence.caption / evidence.event / evidence.entity
   -> reasoning.skill_invocation(retrieve_event)
-  -> reasoning.intermediate_claim
-  -> reasoning.verification_result
+  -> reasoning.skill_invocation(compose_evidence_chain)
+  -> reasoning.skill_invocation(verify_evidence_supports_claim)
   -> reasoning.answer
 ```
 
 Concerns:
 
+- **Do not collapse the clue-memory graph and the skill graph.** The former
+  organizes perceived video content; the latter records the agent's executable
+  reasoning actions over that content.
 - **Do not treat retrieval as support.** A `retrieval_score` edge only says a
   clip was found; it does not prove that the clip supports the answer.
 - **Do not let semantic memory become final evidence by itself.** Semantic

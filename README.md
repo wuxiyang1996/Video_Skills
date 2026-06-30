@@ -27,10 +27,26 @@ The main claim is:
 > A compact controller should learn to assemble reusable, evidence-grounded
 > video-reasoning programs rather than imitate full teacher reasoning strings.
 
+Equivalently:
+
+```text
+perception / indexing builds a clue-memory graph from video
+agent control composes a skill chain or skill graph over that graph
+verification checks that the composed reasoning cites valid evidence
+```
+
+The clue-memory graph organizes what has been perceived: clips, captions,
+subtitles, entities, events, clue candidates, episodic memories, and semantic
+memories. The skill graph is different: it is the agent's executable
+multi-hop reasoning program over the clue-memory graph.
+
 ## Design Principles
 
 - **Atomic skills are primitives.** They are small typed operators with explicit
   inputs, outputs, evidence pointers, verifiers, and failure codes.
+- **Graphs have layered roles.** The evidence/memory graph stores perceived
+  video clues and retrieval structure; the skill graph stores the agent's
+  composed reasoning actions over that graph.
 - **The atomic basis is frozen before controller training.** Demonstrations can
   induce the candidate ontology, but the controller does not create new atomic
   skills online.

@@ -10,13 +10,26 @@ Build expert demonstration rollouts for Trace-to-Skill Fitting from the local da
 /fs/gamma-projects/vlm-robot/datasets
 ```
 
-The target output is not free-form chain-of-thought. The target output is an executable, typed skill graph:
+The target output is not free-form chain-of-thought. The target output is an
+executable, typed skill graph composed by the agent over a perceived
+clue-memory graph:
 
 ```text
-question + video/caption/evidence
+video
+  -> clips / captions / subtitles / entities / events / clue candidates
+  -> clue-memory graph
+
+question + clue-memory graph
+  -> agent-composed skill chain / skill graph
   -> skill_id + typed_args + evidence_refs + dependency_edges
   -> answer
 ```
+
+The clue-memory graph organizes what perception and dataset adapters have made
+available. The skill graph records how the agent performs multi-hop reasoning
+over that graph. Atomic skills are the executable operations in the skill graph;
+composed skills are reusable templates that must expand into atomic skill
+invocations before execution.
 
 ## Dataset Supervision Audit
 
