@@ -143,7 +143,19 @@ python experiments/smoke_test_atomic_skills.py
 `build_seed_clue_memory_graph()`, which chain graph-construction atomic skills
 over dataset annotations.
 
-### 4.3 Expert Demo with LLM Labeling (API key required)
+### 4.5 Dataset Clip Wrapper (no API key by default)
+
+```bash
+python dataset_clip_wrapper/smoke_test.py
+
+python -m dataset_clip_wrapper.cli \
+  --dataset video_holmes --regime short --limit 5 \
+  --output dataset_clip_wrapper/output/video_holmes_short.jsonl
+```
+
+See [dataset_clip_wrapper/README.md](../dataset_clip_wrapper/README.md).
+
+### 4.6 Expert Demo with LLM Labeling (API key required)
 
 Reads `OPENROUTER_API_KEY` from `/fs/gamma-projects/vlm-robot/keys.py` or from
 the environment. Default model: `openai/gpt-5-mini`.
@@ -172,8 +184,8 @@ runs a local verifier on cross-layer bindings.
 
 | Item | Notes |
 |------|-------|
-| Dataset adapters for CG-Bench / VRBench / SIV-Bench | Video-Holmes loader exists in expert demo script only |
-| Canonical JSONL export (`data/canonical_examples/`) | Schema defined, exporters not built |
+| Dataset adapters for CG-Bench / VRBench / SIV-Bench | Implemented in `dataset_clip_wrapper/` |
+| Canonical JSONL export (`data/canonical_examples/`) | Use `dataset_clip_wrapper/cli.py` |
 | True `hierarchical` coarse→fine segmentation | Documented; code uses flat sliding windows |
 | `shot_boundary` / `scene_boundary` / `adaptive` strategies | Schema enum only |
 | Port of legacy `Video_Skills` segmenter | Exists in sibling repo, not wired to relaunch |
