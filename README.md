@@ -99,28 +99,33 @@ M3-Bench is intentionally deferred until its memory graph reader is ready.
 - [Canonical example JSON schema](schemas/canonical_video_example.schema.json)
 - [Skill graph rollout JSON schema](schemas/skill_graph_rollout.schema.json)
 
-## Recommended MVP
+## Recommended First Experiment
 
-Start with a compact controller-visible basis rather than exposing the full
-candidate ontology:
+Start with expert-demo reasoning assembly over prebuilt evidence-memory graphs.
+The first controller-visible basis should come from Reasoning Graph Assembly
+Skills rather than graph-construction skills:
 
 ```text
 parse_question_target
 propose_evidence_roles
-retrieve_event
-retrieve_temporal_neighborhood
-resolve_entity_reference
+retrieve_by_event
+retrieve_by_entity
+retrieve_by_time
+retrieve_by_relation
 localize_clue
-extract_dialogue_claim
-mark_evidence_role
+extract_claim
+assign_evidence_role
 compose_evidence_chain
-order_events
-verify_evidence_supports_claim
-repair_by_requery
+infer_temporal_relation
+infer_social_contradiction
+verify_claim_support
+commit_answer
 ```
 
-The 24-skill vocabulary is a candidate ontology for fitting and ablation, not
-the default online action space.
+The graph-construction skill set remains part of the full atomic vocabulary, but
+it should act as an offline graph-builder/audit interface for the first
+`expert_demo` experiments. Later `video_only` experiments can activate selected
+graph-construction skills as tool-mediated actions.
 
 ## Evaluation Questions
 

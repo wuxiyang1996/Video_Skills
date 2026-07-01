@@ -1,19 +1,28 @@
-# Atomic Skills v1: 24-Skill Target With MVP-12 Subset
+# Atomic Skills v1: Two Atomic Skill Sets
 
 Last updated: 2026-06-30
 
 ## Honest Recommendation
 
-The version most likely to work first is **MVP-12**, not the full 24.
+The version most likely to work first is **expert-demo reasoning assembly over a
+prebuilt evidence graph**, not end-to-end video perception plus reasoning.
 
-The 24-skill version is the right **target vocabulary** for the paper: it is expressive enough to cover Video-Holmes-style social contradiction, CG-Bench-style clue grounding, and M3-Bench-style memory operations. But training or evaluating all 24 at once will likely make the first experiment noisy.
+The atomic skill vocabulary should be organized as two sets:
 
-Use this split:
+```text
+Evidence Graph Construction Skills
+  video / captions / annotations / tool outputs
+    -> EvidenceMemoryGraph / clue-memory graph
 
-- **MVP-12**: the smallest runnable set for trace-to-skill fitting, evidence chains, verification, and one local repair path.
-- **Target-24**: the complete v1 skill vocabulary to describe the method and expand experiments after the MVP works.
+Reasoning Graph Assembly Skills
+  question + EvidenceMemoryGraph
+    -> SkillGraphRollout / skill reasoning graph
+    -> verified answer
+```
 
-The core principle is: every skill must be typed, executable, verifiable, reusable, and locally repairable.
+The core principle is: every skill must be typed, executable, verifiable,
+reusable, locally repairable, and small enough to compose into larger motifs.
+Coverage matters more than forcing the total count to stay at 24.
 
 ## Refinement Boundary From Prior Repo History
 
@@ -80,7 +89,7 @@ Only these structural updates are allowed:
 
 | Operation | Automatic trigger | Structural source | Safety gate |
 |---|---|---|---|
-| `activate_candidate_skill` | MVP skill repeatedly fails on a typed bottleneck that a dormant Target-24 skill covers | existing Target-24 ontology only | candidate passes replay on held-out traces |
+| `activate_candidate_skill` | Active skill repeatedly fails on a typed bottleneck that a dormant candidate skill covers | existing atomic skill sets only | candidate passes replay on held-out traces |
 | `deactivate_skill` | low use, low verifier pass, or negative downstream gain across enough rollouts | existing active set | no required role uniquely depends on it |
 | `merge_alias_skills` | two skills have high mutual confusion and indistinguishable verifier outcomes | predeclared alias group only | merged schema is already defined |
 | `split_by_router` | one skill has two separable failure clusters with different argument schemas | predeclared child skills only | both children improve replay pass rate |
@@ -109,7 +118,7 @@ for iteration k:
 
 ### Controller-visible cap
 
-Even if Target-24 exists, the controller should see at most `K=8..12` actions at a time. The router can expose a different subset by task family:
+Even if the full atomic skill sets are larger, the controller should see at most `K=8..12` actions at a time. The router can expose a different subset by task family:
 
 ```text
 Video-Holmes: social contradiction / intention subset
@@ -143,111 +152,116 @@ merge/split skills directly
 override replay gate
 ```
 
-## Families
+## Atomicity and Coverage Criteria
 
-| Family | Purpose |
+Atomic skills should be the smallest reusable units that can compose into larger
+skills, motifs, and expert rollouts. A candidate belongs in the atomic set only
+if it satisfies all of these conditions:
+
+- **Minimal.** It should not naturally split into two common operations with
+  separate inputs, outputs, and failure modes.
+- **Composable.** It should be useful inside multiple composed skills, not tied
+  to one benchmark template such as "solve alibi contradiction".
+- **Graph-grounded.** It either writes typed evidence/memory nodes and edges, or
+  reads them through explicit `evidence_refs`.
+- **Typed.** Its inputs, outputs, graph read/write scope, and failure codes are
+  stable enough to validate.
+- **Verifier-visible.** A local, tool-based, or model-assisted verifier can check
+  whether the operation succeeded.
+- **High coverage.** The full set should cover most composed reasoning motifs we
+  expect in Video-Holmes, CG-Bench, VRBench, SIV-Bench, and later M3-Bench.
+
+The count is therefore secondary. It is better to keep a slightly larger set of
+clean atomic units than to merge unrelated operations only to hit a round number.
+Later confusion statistics can merge skills that are empirically indistinguishable.
+
+## Atomic Skill Bundles
+
+The two sets share a typed operator contract, but they have different assembly
+targets, verifier families, and controller visibility.
+
+```text
+Evidence Graph Construction Skills
+  assembly target: EvidenceMemoryGraph
+  expert_demo role: fixed/offline graph builder and audit trace
+  video_only role: tool-mediated or controller-visible perception actions
+
+Reasoning Graph Assembly Skills
+  assembly target: SkillGraphRollout
+  expert_demo role: primary controller-visible action set
+  video_only role: same reasoning layer over discovered evidence
+```
+
+### Evidence Graph Construction Skills
+
+These skills decompose perception, captions, annotations, and tool outputs into
+minimal graph-construction operations.
+
+| # | Skill | Purpose | Inputs | Outputs | Verifier focus |
+|---:|---|---|---|---|---|
+| 1 | `segment_video_or_select_clip` | Create clip/window nodes under a whole-video, fixed-window, hierarchical, or streaming policy. | `video_id`, `clip_policy`, `observation_end_s?` | `clip_nodes`, `time_spans` | windows are valid and respect visibility constraints |
+| 2 | `extract_observation` | Extract observable facts from a clip, caption, ASR span, or annotation. | `clip_or_text_ref`, `modality`, `observation_query?` | `observation_nodes`, `evidence_refs` | observation is grounded to source span |
+| 3 | `extract_dialogue_span` | Extract speaker, utterance, and timestamp from subtitle/ASR/dialogue annotation. | `subtitle_or_asr_ref`, `speaker_hint?` | `dialogue_span_node`, `speaker_mention`, `evidence_ref` | dialogue span has source and timestamp |
+| 4 | `detect_entity_mention` | Detect person, object, place, and speaker mentions. | `observation_ref`, `entity_type?` | `mention_nodes`, `surface_forms`, `time_spans` | mention is supported by text/visual/audio evidence |
+| 5 | `resolve_entity_coreference` | Link mentions across clips or modalities to the same entity. | `mention_nodes`, `context_edges?` | `entity_node`, `same_entity_edges`, `confidence` | linked mentions are compatible and not contradictory |
+| 6 | `create_event_node` | Convert observations or dialogue spans into timestamped event nodes. | `observation_refs`, `event_description`, `time_span` | `event_node`, `event_type`, `evidence_refs` | event is grounded and not a duplicate |
+| 7 | `create_state_node` | Represent an entity/object state such as location, possession, emotion, visibility, or relation. | `entity_ref`, `state_predicate`, `evidence_refs`, `time_span?` | `state_node`, `state_value`, `confidence` | state is grounded and temporally scoped |
+| 8 | `link_graph_relation` | Add graph edges such as `temporal_next`, `entity_mention`, `derived_from`, `causal_hint`, or `same_entity`. | `source_node`, `target_node`, `edge_type`, `evidence_refs?` | `memory_edge`, `confidence` | edge type is allowed and endpoints exist |
+| 9 | `assign_provenance_trust` | Attach source, trust level, visibility mode, and hidden-supervision status. | `node_or_edge_ref`, `source_ref`, `mode`, `trust_policy` | `provenance`, `trust_level`, `discovery_status` | provenance and visibility are consistent |
+
+### Reasoning Graph Assembly Skills
+
+These skills decompose expert reasoning traces into minimal operations that can
+be assembled into composed reasoning motifs.
+
+| # | Skill | Purpose | Inputs | Outputs | Verifier focus |
+|---:|---|---|---|---|---|
+| 1 | `parse_question_target` | Extract target entities, events, time constraints, answer format, and question focus. | `question_text`, `options?` | `target_entities`, `target_events`, `constraints`, `answer_format` | required targets are present |
+| 2 | `propose_evidence_roles` | Propose reusable evidence roles needed to answer the question. | `question_text`, `parsed_target`, `task_family?` | `evidence_roles`, `role_constraints`, `expected_chain_shape` | roles are typed and relevant |
+| 3 | `retrieve_by_event` | Retrieve event/evidence nodes matching an event description. | `event_description`, `time_range?`, `entity_filter?` | `event_nodes`, `evidence_refs`, `retrieval_scores` | retrieved nodes match event intent |
+| 4 | `retrieve_by_entity` | Retrieve an entity timeline, history, or related evidence. | `entity_id`, `time_range?`, `predicate_filter?` | `entity_timeline`, `evidence_refs` | evidence refers to the same entity |
+| 5 | `retrieve_by_time` | Retrieve evidence around an anchor event or time window. | `anchor_event_or_time`, `window_before`, `window_after` | `neighbor_events`, `evidence_refs` | timestamps overlap requested window |
+| 6 | `retrieve_by_relation` | Query graph paths or relation edges such as `same_entity`, `temporal_next`, or `causal_hint`. | `source_node`, `relation_type`, `hop_limit?` | `related_nodes`, `path_edges`, `evidence_refs` | relation path is valid |
+| 7 | `localize_clue` | Select the most relevant clue span/node for a requested role. | `candidate_evidence`, `role_constraint`, `question_context` | `clue_refs`, `clue_spans`, `confidence` | clue supports the requested role |
+| 8 | `extract_claim` | Extract a claim from dialogue, annotation, or evidence text. | `evidence_ref`, `speaker_hint?`, `claim_query?` | `claim_id`, `claim_text`, `speaker?`, `evidence_ref` | claim is anchored to evidence |
+| 9 | `assign_evidence_role` | Bind evidence to a role such as `stated_claim`, `contradicting_event`, or `motive_cue`. | `evidence_ref`, `role_schema`, `question_context` | `role_labeled_evidence`, `role_confidence` | role assignment matches content |
+| 10 | `compose_evidence_chain` | Assemble role-labeled evidence into an answer-support chain. | `role_labeled_evidence`, `dependency_template` | `evidence_chain`, `chain_edges`, `missing_roles` | chain covers required roles |
+| 11 | `detect_missing_role` | Identify missing evidence roles and generate query hints. | `evidence_chain`, `required_roles` | `missing_roles`, `suggested_queries` | missing roles are truly absent |
+| 12 | `search_counterevidence` | Find evidence that contradicts or weakens a claim. | `claim`, `supporting_evidence`, `search_scope` | `counterevidence_refs`, `counter_claims` | counterevidence is relevant |
+| 13 | `infer_temporal_relation` | Infer before/after/overlap/order among events. | `event_refs`, `evidence_refs` | `temporal_relation`, `supporting_evidence` | timestamps support relation |
+| 14 | `infer_state_change` | Infer before/after state change for an entity or object. | `entity_or_object`, `state_predicate`, `before_after_refs` | `state_change_claim`, `before_state`, `after_state` | states are grounded and ordered |
+| 15 | `infer_causal_relation` | Infer cause-effect support between events or states. | `candidate_cause`, `candidate_effect`, `evidence_chain` | `causal_claim`, `supporting_roles` | cause precedes effect and evidence links them |
+| 16 | `infer_intention_or_motive` | Infer agent intention, goal, or motive from actions and context. | `agent`, `actions`, `context_evidence` | `intention_claim`, `alternatives`, `supporting_roles` | intention is evidence-supported |
+| 17 | `infer_social_contradiction` | Infer conflict between statement/alibi/promise and later action/evidence. | `claim_or_alibi`, `evidence_chain`, `counterevidence?` | `contradiction_claim`, `supporting_evidence` | claim and evidence cannot both hold |
+| 18 | `verify_claim_support` | Verify that an evidence chain supports a claim. | `claim`, `evidence_chain`, `support_policy` | `verification_score`, `passed`, `failure_code`, `messages` | evidence entails or supports claim |
+| 19 | `commit_answer` | Map a verified claim to final answer text or MCQ option and record support. | `verified_claim`, `options?`, `answer_format`, `support_chain` | `final_answer`, `answer_support_chain`, `confidence` | final answer follows from verified claim |
+
+## Composed Skill Coverage
+
+Composed skills are reusable motifs assembled from these atomic units. They are
+not new primitive actions.
+
+| Composed motif | Example expansion |
 |---|---|
-| `question_programming` | Turn a question into evidence roles and a skill plan. |
-| `memory_retrieval` | Query evidence-bearing memory nodes over entities, events, and time. |
-| `video_grounding` | Convert raw video/audio/clips into typed evidence. |
-| `evidence_organization` | Turn retrieved evidence into role-labeled reasoning chains. |
-| `reasoning` | Perform temporal, causal, social, and state reasoning over evidence. |
-| `verification_repair` | Check claims and locally repair failed evidence acquisition. |
+| `resolve_alibi_contradiction` | `parse_question_target` -> `propose_evidence_roles` -> `retrieve_by_entity` -> `extract_claim` -> `retrieve_by_time` -> `assign_evidence_role` -> `compose_evidence_chain` -> `infer_temporal_relation` -> `infer_social_contradiction` -> `verify_claim_support` -> `commit_answer` |
+| `explain_state_change` | `parse_question_target` -> `propose_evidence_roles` -> `retrieve_by_entity` -> `retrieve_by_time` -> `assign_evidence_role` -> `compose_evidence_chain` -> `infer_state_change` -> `infer_causal_relation` -> `verify_claim_support` -> `commit_answer` |
+| `find_long_video_clue` | `parse_question_target` -> `propose_evidence_roles` -> `retrieve_by_event` -> `retrieve_by_time` -> `retrieve_by_relation` -> `localize_clue` -> `assign_evidence_role` -> `compose_evidence_chain` -> `verify_claim_support` -> `commit_answer` |
+| `infer_motive_from_context` | `parse_question_target` -> `retrieve_by_entity` -> `retrieve_by_event` -> `compose_evidence_chain` -> `infer_intention_or_motive` -> `verify_claim_support` -> `commit_answer` |
 
-## MVP-12
+## Expert-Demo Activation
 
-These are the 12 I would implement first for a working prototype:
-
-1. `parse_question_target`
-2. `propose_evidence_roles`
-3. `retrieve_event`
-4. `retrieve_temporal_neighborhood`
-5. `resolve_entity_reference`
-6. `localize_clue`
-7. `extract_dialogue_claim`
-8. `mark_evidence_role`
-9. `compose_evidence_chain`
-10. `order_events`
-11. `verify_evidence_supports_claim`
-12. `repair_by_requery`
-
-This subset is enough to support the central loop:
-
-```text
-question
-  -> evidence roles
-  -> memory/video retrieval
-  -> clue/dialogue grounding
-  -> role labeling
-  -> evidence-chain composition
-  -> temporal reasoning
-  -> verify
-  -> local repair
-```
-
-## Target-24 Skill Table
-
-| # | Skill | Family | MVP-12 | Inputs | Outputs | Verifier | Failure codes |
-|---:|---|---|---|---|---|---|---|
-| 1 | `parse_question_target` | `question_programming` | yes | `question_text` | `target_entities`, `target_events`, `question_focus`, `constraints` | entity and constraint parse is non-empty when required | `missing_target`, `ambiguous_target` |
-| 2 | `propose_evidence_roles` | `question_programming` | yes | `question_text`, `parsed_target` | `evidence_roles`, `role_constraints` | roles are typed and relevant to the parsed target | `missing_role`, `overbroad_roles` |
-| 3 | `retrieve_event` | `memory_retrieval` | yes | `event_description`, `time_range`, `entity_filter` | `event_nodes`, `evidence_refs` | returned nodes have timestamps and evidence pointers | `empty_evidence`, `timestamp_missing` |
-| 4 | `retrieve_entity_history` | `memory_retrieval` | no | `entity_id`, `time_range`, `predicate_filter` | `entity_timeline`, `evidence_refs` | timeline entries refer to same resolved entity | `entity_unresolved`, `empty_history` |
-| 5 | `retrieve_temporal_neighborhood` | `memory_retrieval` | yes | `anchor_event`, `window_before`, `window_after` | `neighbor_events`, `evidence_refs` | neighbors overlap requested temporal window | `anchor_missing`, `empty_neighborhood` |
-| 6 | `query_temporal_chain` | `memory_retrieval` | no | `start_event`, `end_event`, `constraints` | `ordered_event_chain`, `gaps` | chain order is timestamp-consistent | `start_missing`, `end_missing`, `chain_gap` |
-| 7 | `resolve_entity_reference` | `memory_retrieval` | yes | `mention`, `context`, `candidate_entities` | `entity_id`, `alias_edges`, `confidence` | resolved id exists and evidence supports alias | `unresolved_entity`, `ambiguous_entity` |
-| 8 | `localize_event` | `video_grounding` | no | `video_id`, `event_description`, `search_range` | `time_spans`, `clip_refs` | clip evidence visually/textually supports event | `event_not_found`, `low_confidence` |
-| 9 | `localize_clue` | `video_grounding` | yes | `video_id`, `clue_description`, `search_range` | `clue_spans`, `evidence_refs` | clue span supports one requested evidence role | `clue_not_found`, `role_mismatch` |
-| 10 | `extract_visual_evidence` | `video_grounding` | no | `clip_ref`, `visual_query` | `visual_observations`, `evidence_refs` | observation is grounded to frames or clip span | `no_visual_support`, `tool_failure` |
-| 11 | `extract_dialogue_claim` | `video_grounding` | yes | `subtitle_or_audio_ref`, `speaker_hint` | `speaker`, `claim_text`, `time_span`, `evidence_ref` | claim is anchored to speech/subtitle evidence | `speaker_unknown`, `claim_not_found` |
-| 12 | `track_entity` | `video_grounding` | no | `entity_id_or_mention`, `time_range` | `track_spans`, `locations`, `evidence_refs` | track is temporally continuous enough for task | `track_lost`, `entity_not_visible` |
-| 13 | `detect_contact_or_interaction` | `video_grounding` | no | `entity_a`, `entity_b_or_object`, `time_range` | `interaction_event`, `time_span`, `evidence_refs` | entities co-occur and interaction cue exists | `not_visible`, `no_interaction` |
-| 14 | `mark_evidence_role` | `evidence_organization` | yes | `evidence_ref`, `role_schema`, `question_context` | `role_labeled_evidence` | role assignment matches evidence content | `role_unsupported`, `duplicate_role` |
-| 15 | `compose_evidence_chain` | `evidence_organization` | yes | `role_labeled_evidence`, `dependency_template` | `evidence_chain`, `missing_roles` | chain satisfies required role/dependency coverage | `missing_role`, `invalid_dependency` |
-| 16 | `find_missing_evidence_role` | `evidence_organization` | no | `evidence_chain`, `required_roles` | `missing_roles`, `suggested_queries` | missing roles are not already filled | `no_missing_role`, `bad_query_hint` |
-| 17 | `locate_counterevidence` | `evidence_organization` | no | `claim`, `supporting_evidence`, `search_scope` | `counterevidence_refs`, `counter_claims` | counterevidence contradicts or weakens claim | `no_counterevidence`, `false_counterevidence` |
-| 18 | `order_events` | `reasoning` | yes | `event_a`, `event_b` | `temporal_relation`, `supporting_evidence` | timestamps support relation | `missing_timestamp`, `overlap_uncertain` |
-| 19 | `check_state_change` | `reasoning` | no | `entity_or_object`, `state_predicate`, `before_after_refs` | `changed`, `before_state`, `after_state` | before/after states are grounded and ordered | `missing_before`, `missing_after`, `no_change` |
-| 20 | `infer_causal_support` | `reasoning` | no | `candidate_cause`, `candidate_effect`, `evidence_chain` | `causal_support`, `causal_rationale` | cause precedes effect and evidence links them | `temporal_violation`, `weak_causal_link` |
-| 21 | `infer_intention_or_motive` | `reasoning` | no | `agent`, `actions`, `context_evidence` | `intention_claim`, `supporting_roles` | intention is supported by action/context evidence | `insufficient_social_cue`, `alternative_motive` |
-| 22 | `infer_social_contradiction` | `reasoning` | yes | `claim_or_alibi`, `evidence_chain`, `counterevidence` | `contradiction_claim`, `supporting_evidence` | claim and evidence cannot both hold | `missing_claim`, `missing_contradiction_link` |
-| 23 | `verify_evidence_supports_claim` | `verification_repair` | yes | `claim`, `evidence_chain` | `verification_score`, `passed`, `failure_code` | evidence entails or strongly supports claim | `unsupported_claim`, `insufficient_evidence`, `contradicted` |
-| 24 | `repair_by_requery` | `verification_repair` | yes | `failed_role_or_step`, `failure_code`, `query_hints` | `new_query`, `replacement_evidence` | replacement evidence fixes the failed role/step | `repair_failed`, `no_new_evidence` |
-
-## Active Target-24
-
-```text
-parse_question_target
-propose_evidence_roles
-retrieve_event
-retrieve_entity_history
-retrieve_temporal_neighborhood
-query_temporal_chain
-resolve_entity_reference
-localize_event
-localize_clue
-extract_visual_evidence
-extract_dialogue_claim
-track_entity
-detect_contact_or_interaction
-mark_evidence_role
-compose_evidence_chain
-find_missing_evidence_role
-locate_counterevidence
-order_events
-check_state_change
-infer_causal_support
-infer_intention_or_motive
-infer_social_contradiction
-verify_evidence_supports_claim
-repair_by_requery
-```
+For the first expert-demo experiments, graph-construction skills define the
+offline graph builder and audit trace. The controller-visible action set should
+come from the Reasoning Graph Assembly Skills. Later `video_only` experiments
+can activate some graph-construction skills as tool-mediated actions.
 
 ## Implementation Staging
 
-### Stage A: MVP-12
+### Stage A: Expert-Demo Reasoning Assembly
 
-Goal: produce valid skill traces for a small Video-Holmes subset and prove the method is not just free-text CoT.
+Goal: produce valid reasoning skill traces over prebuilt evidence-memory graphs
+for a small Video-Holmes and CG-Bench subset. This proves the method is not just
+free-text CoT before we tackle raw-video graph construction.
 
 Required datasets:
 
@@ -260,11 +274,13 @@ Required metrics:
 - evidence role coverage
 - evidence-chain support
 - verifier pass rate
+- answer commit validity
 - repair success after missing evidence
 
-### Stage B: Active Target-24
+### Stage B: Broader Reasoning Coverage
 
-Goal: expand the same action space to memory-heavy and long-video tasks.
+Goal: expand Reasoning Graph Assembly Skills to memory-heavy and long-video
+tasks while keeping graph construction mostly offline.
 
 Add:
 
@@ -279,6 +295,18 @@ Required new metrics:
 - cross-hop evidence reuse
 - tool/retrieval cost
 - local repair improvement over no-repair baseline
+
+### Stage C: Video-Only Graph Construction
+
+Goal: activate selected Evidence Graph Construction Skills as tool-mediated
+actions once expert-demo reasoning assembly is stable.
+
+Add:
+
+- raw or semi-raw clip observations
+- automatic captions/ASR
+- entity linking across clips
+- graph edge construction without hidden clue intervals
 
 ## Baselines To Keep Honest
 

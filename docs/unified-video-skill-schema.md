@@ -328,9 +328,9 @@ Recommended flow:
 
 ```text
 evidence.caption / evidence.event / evidence.entity
-  -> reasoning.skill_invocation(retrieve_event)
+  -> reasoning.skill_invocation(retrieve_by_event)
   -> reasoning.skill_invocation(compose_evidence_chain)
-  -> reasoning.skill_invocation(verify_evidence_supports_claim)
+  -> reasoning.skill_invocation(verify_claim_support)
   -> reasoning.answer
 ```
 
@@ -642,14 +642,15 @@ training and then frozen.
 
 ```json
 {
-  "skill_id": "retrieve_temporal_neighborhood",
-  "display_name": "Retrieve Temporal Neighborhood",
+  "skill_id": "retrieve_by_time",
+  "display_name": "Retrieve By Time",
   "family": "retrieval",
   "controller_visible": true,
   "input_schema": {
     "query": "string",
-    "anchor_evidence_id": "string|null",
-    "window_s": "number",
+    "anchor_event_or_time": "string",
+    "window_before": "number",
+    "window_after": "number",
     "source_filter": "array<string>"
   },
   "output_schema": {
@@ -684,10 +685,11 @@ Every invocation must produce:
 ```json
 {
   "node_id": "n3",
-  "skill_id": "retrieve_temporal_neighborhood",
+  "skill_id": "retrieve_by_time",
   "args": {
-    "anchor_evidence_id": "ev:q000123:clue_interval:0",
-    "window_s": 30
+    "anchor_event_or_time": "ev:q000123:clue_interval:0",
+    "window_before": 30,
+    "window_after": 30
   },
   "inputs_from": ["n2"],
   "outputs": {
@@ -735,11 +737,12 @@ must always expand into atomic skill nodes before execution and verification.
   "expands_to": [
     {"node": "parse_question_target"},
     {"node": "propose_evidence_roles"},
-    {"node": "extract_dialogue_claim"},
-    {"node": "retrieve_event"},
-    {"node": "retrieve_temporal_neighborhood"},
+    {"node": "extract_claim"},
+    {"node": "retrieve_by_event"},
+    {"node": "retrieve_by_time"},
     {"node": "compose_evidence_chain"},
-    {"node": "verify_evidence_supports_claim"}
+    {"node": "verify_claim_support"},
+    {"node": "commit_answer"}
   ],
   "argument_templates": {
     "person": "{{question.target_entity}}",
@@ -748,7 +751,7 @@ must always expand into atomic skill nodes before execution and verification.
   "repair_templates": [
     {
       "failure_code": "MISSING_LINKING_ACTION",
-      "insert_skill": "retrieve_temporal_neighborhood",
+      "insert_skill": "retrieve_by_time",
       "search_direction": "earlier"
     }
   ],
@@ -1213,10 +1216,11 @@ main transfer story.
     "nodes": [
       {"slot": "q", "skill_id": "parse_question_target"},
       {"slot": "roles", "skill_id": "propose_evidence_roles"},
-      {"slot": "claim", "skill_id": "extract_dialogue_claim"},
-      {"slot": "event", "skill_id": "retrieve_event"},
+      {"slot": "claim", "skill_id": "extract_claim"},
+      {"slot": "event", "skill_id": "retrieve_by_event"},
       {"slot": "chain", "skill_id": "compose_evidence_chain"},
-      {"slot": "verify", "skill_id": "verify_evidence_supports_claim"}
+      {"slot": "verify", "skill_id": "verify_claim_support"},
+      {"slot": "answer", "skill_id": "commit_answer"}
     ],
     "edges": [
       {"src": "q", "dst": "roles", "edge_type": "data"},
@@ -1224,7 +1228,8 @@ main transfer story.
       {"src": "roles", "dst": "event", "edge_type": "evidence"},
       {"src": "claim", "dst": "chain", "edge_type": "claim_support"},
       {"src": "event", "dst": "chain", "edge_type": "claim_refute"},
-      {"src": "chain", "dst": "verify", "edge_type": "control"}
+      {"src": "chain", "dst": "verify", "edge_type": "control"},
+      {"src": "verify", "dst": "answer", "edge_type": "control"}
     ]
   },
   "argument_template": {
@@ -1235,7 +1240,7 @@ main transfer story.
   "repair_template": [
     {
       "failure_code": "MISSING_LINKING_ACTION",
-      "insert_skill": "retrieve_temporal_neighborhood",
+      "insert_skill": "retrieve_by_time",
       "position": "before:compose_evidence_chain"
     }
   ],

@@ -59,7 +59,7 @@ invocations before execution.
 2. **CG-Bench**
    - Strongest for evidence grounding.
    - `clue_intervals` and clue clips make verifier labels easy.
-   - Good for `localize_clue`, `mark_evidence_role`, `verify_evidence_supports_claim`.
+   - Good for `localize_clue`, `assign_evidence_role`, `verify_claim_support`.
 
 3. **VRBench**
    - Strongest for long-video multi-step reasoning.
@@ -78,31 +78,36 @@ invocations before execution.
 
 ## Atomic Skills for Demo Rollouts
 
-Use the compact controller-visible subset first:
+For the first `expert_demo` pass, use the Reasoning Graph Assembly skill set as
+the controller-visible vocabulary. Evidence Graph Construction skills are used
+offline by the graph builder and audit trace.
 
 ```text
 parse_question_target
 propose_evidence_roles
-retrieve_event
-retrieve_temporal_neighborhood
-resolve_entity_reference
+retrieve_by_event
+retrieve_by_entity
+retrieve_by_time
+retrieve_by_relation
 localize_clue
-extract_dialogue_claim
-mark_evidence_role
+extract_claim
+assign_evidence_role
 compose_evidence_chain
-order_events
+infer_temporal_relation
 infer_social_contradiction
-verify_evidence_supports_claim
-repair_by_requery
-answer_from_evidence
+verify_claim_support
+commit_answer
 ```
 
-For datasets without social contradiction, swap `infer_social_contradiction` for:
+For task-specific controller windows, expose additional reasoning atoms as
+needed:
 
 ```text
-infer_causal_support
+detect_missing_role
+search_counterevidence
+infer_state_change
+infer_causal_relation
 infer_intention_or_motive
-check_state_change
 ```
 
 ## Rollout Record Schema
@@ -221,12 +226,12 @@ Best skill chains:
 parse_question_target
 propose_evidence_roles
 localize_clue
-extract_dialogue_claim
-mark_evidence_role
+extract_claim
+assign_evidence_role
 compose_evidence_chain
-infer_social_contradiction / infer_intention_or_motive / infer_causal_support
-verify_evidence_supports_claim
-answer_from_evidence
+infer_social_contradiction / infer_intention_or_motive / infer_causal_relation
+verify_claim_support
+commit_answer
 ```
 
 ### CG-Bench
@@ -256,10 +261,10 @@ Best skill chains:
 parse_question_target
 propose_evidence_roles
 localize_clue
-mark_evidence_role
+assign_evidence_role
 compose_evidence_chain
-verify_evidence_supports_claim
-answer_from_evidence
+verify_claim_support
+commit_answer
 ```
 
 ### VRBench
@@ -276,7 +281,7 @@ Recipe:
 1. For each `mcq.qa*`, parse `reasoning_process`.
 2. Extract timestamp ranges from each reasoning step.
 3. Convert each step to an evidence waypoint.
-4. Fit timestamped waypoints to `retrieve_temporal_neighborhood`, `order_events`, `compose_evidence_chain`.
+4. Fit timestamped waypoints to `retrieve_by_time`, `infer_temporal_relation`, `compose_evidence_chain`.
 5. Use `answer` / `original_answer` as final anchor.
 
 Best skill chains:
@@ -284,13 +289,13 @@ Best skill chains:
 ```text
 parse_question_target
 propose_evidence_roles
-retrieve_event
-retrieve_temporal_neighborhood
-order_events
+retrieve_by_event
+retrieve_by_time
+infer_temporal_relation
 compose_evidence_chain
-infer_causal_support / check_state_change / infer_intention_or_motive
-verify_evidence_supports_claim
-answer_from_evidence
+infer_causal_relation / infer_state_change / infer_intention_or_motive
+verify_claim_support
+commit_answer
 ```
 
 ### SIV-Bench
@@ -318,12 +323,12 @@ Best skill chains:
 ```text
 parse_question_target
 propose_evidence_roles
-extract_dialogue_claim
-mark_evidence_role
+extract_claim
+assign_evidence_role
 compose_evidence_chain
 infer_intention_or_motive / infer_social_contradiction
-verify_evidence_supports_claim
-answer_from_evidence
+verify_claim_support
+commit_answer
 ```
 
 ### M3-Bench
@@ -347,15 +352,14 @@ Recipe:
 Best skill chains:
 
 ```text
-resolve_entity_reference
-retrieve_event
-retrieve_entity_history
-retrieve_temporal_neighborhood
+retrieve_by_entity
+retrieve_by_event
+retrieve_by_time
 query_temporal_chain
-order_events
+infer_temporal_relation
 compose_evidence_chain
-verify_evidence_supports_claim
-answer_from_evidence
+verify_claim_support
+commit_answer
 ```
 
 ## Labeling Prompt Skeleton
