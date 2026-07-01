@@ -247,6 +247,57 @@ not new primitive actions.
 | `explain_state_change` | `parse_question_target` -> `propose_evidence_roles` -> `retrieve_by_entity` -> `retrieve_by_time` -> `assign_evidence_role` -> `compose_evidence_chain` -> `infer_state_change` -> `infer_causal_relation` -> `verify_claim_support` -> `commit_answer` |
 | `find_long_video_clue` | `parse_question_target` -> `propose_evidence_roles` -> `retrieve_by_event` -> `retrieve_by_time` -> `retrieve_by_relation` -> `localize_clue` -> `assign_evidence_role` -> `compose_evidence_chain` -> `verify_claim_support` -> `commit_answer` |
 | `infer_motive_from_context` | `parse_question_target` -> `retrieve_by_entity` -> `retrieve_by_event` -> `compose_evidence_chain` -> `infer_intention_or_motive` -> `verify_claim_support` -> `commit_answer` |
+| `resolve_visual_repetition_implication` | `parse_question_target` -> `propose_evidence_roles` -> `retrieve_by_event` -> `retrieve_by_entity` -> `retrieve_by_time` -> `localize_clue` -> `assign_evidence_role` -> `compose_evidence_chain` -> `infer_temporal_relation` -> `verify_claim_support` -> `commit_answer` |
+| `match_before_after_spatial_anchor` | `retrieve_by_event` -> `retrieve_by_entity` -> `retrieve_by_time` -> `localize_clue` -> `assign_evidence_role` |
+| `infer_loop_or_return_from_repeated_clue` | `compose_evidence_chain` -> `infer_temporal_relation` -> `verify_claim_support` -> `commit_answer` |
+
+### Motifs Observed From Early Video-Holmes Generation
+
+The first real Video-Holmes expert-demo generation
+(`video_holmes:train:oZ4pa_5R0nY:q1`) produced a useful composed-skill pattern:
+
+```text
+Question pattern:
+  a later shot/object is almost identical to an earlier shot/object
+  -> infer what the repetition implies
+
+Evidence roles:
+  spatial_anchor_before
+  spatial_anchor_after
+  temporal_order
+  supernatural_or_loop_explanans
+
+Observed atomic expansion:
+  parse_question_target
+  -> propose_evidence_roles
+  -> retrieve_by_event
+  -> retrieve_by_entity
+  -> retrieve_by_time
+  -> localize_clue
+  -> extract_claim
+  -> assign_evidence_role
+  -> compose_evidence_chain
+  -> infer_temporal_relation
+  -> verify_claim_support
+  -> commit_answer
+```
+
+This suggests a high-level motif,
+`resolve_visual_repetition_implication`, with two reusable sub-motifs:
+
+```text
+match_before_after_spatial_anchor:
+  find the earlier spatial/object anchor and the later repeated anchor
+
+infer_loop_or_return_from_repeated_clue:
+  combine repeated clue + temporal order + loop/supernatural annotation
+  to support a return / loop / original-position claim
+```
+
+These are **candidate composed motifs only**. They should not become new atomic
+skills. A motif is promoted only after batch evidence shows that the same
+verified subgraph recurs across examples with stable evidence roles, verifier
+passes, and answer-support behavior.
 
 ## Expert-Demo Activation
 

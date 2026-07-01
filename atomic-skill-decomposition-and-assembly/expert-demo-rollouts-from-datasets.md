@@ -436,6 +436,71 @@ Dataset-specific gates:
 - VRBench: every reasoning-process step should become a timestamped evidence node.
 - SIV-Bench: model-labeled spans are `weak_supervision`; keep lower weight.
 
+## Mining Composed Motifs From Accepted Rollouts
+
+Accepted expert-demo rollouts can be mined for reusable composed motifs, but the
+motifs remain templates that expand into atomic skills. They must not become new
+primitive actions.
+
+Early Video-Holmes generation already shows one candidate family:
+
+```text
+video_holmes:train:oZ4pa_5R0nY:q1
+
+Question pattern:
+  a later iron fence shot is almost identical to an earlier fence shot
+
+Ground truth:
+  F / the man walked back to his original position
+
+Candidate high-level motif:
+  resolve_visual_repetition_implication
+
+Observed expansion:
+  parse_question_target
+  -> propose_evidence_roles
+  -> retrieve_by_event
+  -> retrieve_by_entity
+  -> retrieve_by_time
+  -> localize_clue
+  -> extract_claim
+  -> assign_evidence_role
+  -> compose_evidence_chain
+  -> infer_temporal_relation
+  -> verify_claim_support
+  -> commit_answer
+```
+
+The evidence roles in this example were:
+
+```text
+spatial_anchor_before
+spatial_anchor_after
+temporal_order
+supernatural_or_loop_explanans
+```
+
+Two reusable sub-motifs are likely:
+
+```text
+match_before_after_spatial_anchor:
+  retrieve_by_event
+  -> retrieve_by_entity
+  -> retrieve_by_time
+  -> localize_clue
+  -> assign_evidence_role
+
+infer_loop_or_return_from_repeated_clue:
+  compose_evidence_chain
+  -> infer_temporal_relation
+  -> verify_claim_support
+  -> commit_answer
+```
+
+Promotion rule: only promote a candidate motif after batch statistics show high
+subgraph frequency, stable role schemas, verifier pass rate, and answer-support
+validity across held-out examples.
+
 ## Training Split Recommendation
 
 Start small:
