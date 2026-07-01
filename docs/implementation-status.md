@@ -245,6 +245,7 @@ Documented in `problem-formulation-zh.html` and preserved here for implementatio
 
 ## 8. Related Documents
 
+- [MDP formulation](mdp-formulation.md)
 - [Clip processing policy](clip-processing-policy.md)
 - [Unified video skill schema](unified-video-skill-schema.md)
 - [Atomic skills v1](../atomic-skill-decomposition-and-assembly/atomic-skills-v1.md)
