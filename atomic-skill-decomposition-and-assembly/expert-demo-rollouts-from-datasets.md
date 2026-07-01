@@ -2,6 +2,12 @@
 
 Last updated: 2026-06-30
 
+See also:
+
+- [Clip processing policy](../docs/clip-processing-policy.md) — short / long / streaming `clip_policy` per regime and benchmark
+- [Implementation status](../docs/implementation-status.md) — runnable scripts, staging, and current gaps
+- [Unified video skill schema](../docs/unified-video-skill-schema.md) — canonical data contract
+
 ## Goal
 
 Build expert demonstration rollouts for Trace-to-Skill Fitting from the local datasets in:

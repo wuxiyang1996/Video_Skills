@@ -96,6 +96,8 @@ M3-Bench is intentionally deferred until its memory graph reader is ready.
 - [Atomic skills v1](atomic-skill-decomposition-and-assembly/atomic-skills-v1.md)
 - [Expert demo rollouts from datasets](atomic-skill-decomposition-and-assembly/expert-demo-rollouts-from-datasets.md)
 - [Unified video skill schema](docs/unified-video-skill-schema.md)
+- [Clip processing policy](docs/clip-processing-policy.md) — short / long / streaming segmentation
+- [Implementation status](docs/implementation-status.md) — runnable code, datasets, gaps
 - [Canonical example JSON schema](schemas/canonical_video_example.schema.json)
 - [Skill graph rollout JSON schema](schemas/skill_graph_rollout.schema.json)
 
@@ -140,5 +142,18 @@ The key experiments should answer:
 
 ## Status
 
-This branch is a clean relaunch surface. The current contents are design docs
-and project scaffolding for the next implementation pass.
+Current branch state:
+
+- **Design docs**: unified schema, clip policy, dataset rollout recipes, problem formulation
+- **Atomic skills**: 28 executable Python functions (9 graph construction + 19 reasoning assembly) in `atomic_skills/`
+- **Experiments**: smoke test, toy two-layer graph labeling, Video-Holmes expert-demo pipeline in `experiments/`
+- **Not yet built**: full dataset adapters, canonical JSONL export, raw VLM perception, true hierarchical coarse→fine segmentation, controller training
+
+Local datasets live under `/fs/gamma-projects/vlm-robot/datasets`. See
+[implementation status](docs/implementation-status.md) for commands and gaps.
+
+Quick smoke test:
+
+```bash
+python experiments/smoke_test_atomic_skills.py
+```

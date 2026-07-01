@@ -502,6 +502,24 @@ satisfy `time_span.end_s <= observation_end_s`. This lets streaming datasets
 share the same schema without making the main project depend on streaming as
 the default setting.
 
+For the full reference — benchmark presets, legacy `Video_Skills` mapping,
+M3 borrowing, atomic-skill entry point, implementation gaps, and streaming QA
+field mapping — see [clip-processing-policy.md](clip-processing-policy.md).
+
+### 4.2 Benchmark Clip Presets
+
+| Dataset | Regime | Recommended policy |
+|---------|--------|-------------------|
+| Video-Holmes | Short | `whole_video` + `fixed_window(4s, 1s)` |
+| SIV-Bench | Very short | `whole_video` + subtitle-aligned spans |
+| CG-Bench | Long | `hierarchical(45s coarse, 8s fine)` |
+| VRBench | Long | `hierarchical(45s coarse, 8s fine)` |
+| M3-Bench | Long + memory | `fixed_window(30s)` or imported M3 graph clips |
+
+In `expert_demo` mode, dataset annotations and clue intervals may seed the
+evidence index directly. In `video_only` mode, the same `clip_policy` builds
+the index from automatic segmentation and perception only.
+
 ## 5. Evidence Candidate Schema
 
 `EvidenceCandidate` is the common unit consumed and produced by skill nodes.

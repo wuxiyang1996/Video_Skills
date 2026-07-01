@@ -255,6 +255,13 @@ offline graph builder and audit trace. The controller-visible action set should
 come from the Reasoning Graph Assembly Skills. Later `video_only` experiments
 can activate some graph-construction skills as tool-mediated actions.
 
+`segment_video_or_select_clip` is the graph-construction entry point for clip
+segmentation. Short, long, and streaming videos share the same skill interface
+but use different `clip_policy` values. See
+[clip-processing-policy.md](../docs/clip-processing-policy.md) for regime
+defaults, benchmark presets, streaming visibility rules, and implementation
+status.
+
 ## Implementation Staging
 
 ### Stage A: Expert-Demo Reasoning Assembly
