@@ -102,12 +102,25 @@ class QwenClipSchemaProducer:
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{data}"}}
                 )
 
-        payload = self.client.chat_json(
-            [
-                {"role": "system", "content": "You are a grounded video perception annotator."},
-                {"role": "user", "content": user_content},
-            ]
-        )
+        try:
+            payload = self.client.chat_json(
+                [
+                    {"role": "system", "content": "You are a grounded video perception annotator."},
+                    {"role": "user", "content": user_content},
+                ]
+            )
+        except Exception as exc:
+            payload = {
+                "clip_id": clip_id,
+                "time_span": clip.to_dict(),
+                "granularity": clip.granularity,
+                "scene_description": "clip schema generation failed",
+                "observable_facts": [],
+                "dialogue_spans": [],
+                "entity_mentions": [],
+                "events": [],
+                "model_error": str(exc),
+            }
         payload.setdefault("clip_id", clip_id)
         payload.setdefault("time_span", clip.to_dict())
         payload.setdefault("granularity", clip.granularity)

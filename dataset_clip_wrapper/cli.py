@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 from .pipeline import iter_canonical_examples
-from .schemas import BackboneConfig, ClipPolicyConfig, RuntimeMode, VideoRegime, WrapperConfig
+from .schemas import BackboneConfig, ClipPolicyConfig, ClipRetrievalConfig, RuntimeMode, VideoRegime, WrapperConfig
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,6 +40,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--coarse-window-s", type=float, default=None)
     parser.add_argument("--fine-window-s", type=float, default=None)
     parser.add_argument("--observation-end-s", type=float, default=None, help="Streaming visibility cutoff")
+    parser.add_argument(
+        "--index-fine-expansion",
+        default=None,
+        choices=["none", "all", "retrieval_gated"],
+        help="Long-video index: coarse only, all fine, or retrieve-gated fine",
+    )
+    parser.add_argument("--retrieval-topk", type=int, default=None)
+    parser.add_argument("--retrieval-mode", default=None, choices=["lexical", "sequential"])
+    parser.add_argument("--no-retrieval", action="store_true", help="Disable coarse retrieval gate")
 
     parser.add_argument(
         "--backbone",
@@ -83,6 +92,16 @@ def main(argv: list[str] | None = None) -> int:
         clip_policy.fine_window_s = args.fine_window_s
     if args.observation_end_s is not None:
         clip_policy.observation_end_s = args.observation_end_s
+    if args.index_fine_expansion:
+        clip_policy.index_fine_expansion = args.index_fine_expansion  # type: ignore[assignment]
+
+    retrieval = ClipRetrievalConfig()
+    if args.no_retrieval:
+        retrieval.enabled = False
+    if args.retrieval_topk is not None:
+        retrieval.topk = args.retrieval_topk
+    if args.retrieval_mode:
+        retrieval.mode = args.retrieval_mode  # type: ignore[assignment]
 
     config = WrapperConfig(
         dataset_root=args.dataset_root,
@@ -90,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
         regime=dataset_regime,
         mode=RuntimeMode(args.mode),
         clip_policy=clip_policy,
+        retrieval=retrieval,
         backbone=BackboneConfig(
             name=args.backbone,
             model=args.backbone_model,

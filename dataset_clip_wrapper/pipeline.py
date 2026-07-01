@@ -8,9 +8,10 @@ from typing import Any, Iterator
 from .adapters.base import RawDatasetItem
 from .adapters import get_adapter
 from .backbone import PerceptionBackbone, build_backbone
-from .clip_policy import segment_video
+from .clip_policy import FineExpansion, segment_video
 from .schemas import (
     BackboneConfig,
+    ClipPolicyConfig,
     RuntimeMode,
     WrapperConfig,
     make_canonical_shell,
@@ -21,6 +22,14 @@ from .video_probe import probe_duration_s
 
 def _clip_id(video_id: str, index: int, granularity: str) -> str:
     return f"clip:{video_id}:{granularity}:{index:04d}"
+
+
+def _index_fine_expansion(policy: ClipPolicyConfig) -> FineExpansion:
+    if policy.strategy != "hierarchical":
+        return "all"
+    if policy.index_fine_expansion == "all":
+        return "all"
+    return "none"
 
 
 def _omit_none_values(payload: dict[str, Any]) -> dict[str, Any]:
@@ -40,7 +49,12 @@ def build_canonical_example(
         duration_s = 120.0 if item.dataset in {"cg_bench", "vrbench"} else 60.0
 
     clip_policy = config.resolved_clip_policy(duration_s)
-    spans = segment_video(duration_s, clip_policy, regime=config.regime)
+    spans = segment_video(
+        duration_s,
+        clip_policy,
+        regime=config.regime,
+        fine_expansion=_index_fine_expansion(clip_policy),
+    )
 
     primary_path = str(item.video_path) if item.video_path else ""
     derived_clips: list[dict[str, Any]] = []
@@ -221,8 +235,10 @@ def build_canonical_example(
     example["metadata"].update(item.metadata or {})
     example["metadata"]["video_regime"] = config.regime.value
     example["metadata"]["clip_count"] = len(derived_clips)
+    example["metadata"]["index_clip_count"] = len(derived_clips)
     example["metadata"]["coarse_clip_count"] = sum(1 for c in derived_clips if c.get("granularity") == "coarse")
     example["metadata"]["fine_clip_count"] = sum(1 for c in derived_clips if c.get("granularity") == "fine")
+    example["metadata"]["index_fine_expansion"] = clip_policy.index_fine_expansion
     example["metadata"]["hidden_segment_count"] = len(hidden_segments)
     example["evidence_index"]["nodes"] = index_nodes
     example["evidence_index"]["edges"] = index_edges

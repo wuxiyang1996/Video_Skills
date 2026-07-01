@@ -147,13 +147,30 @@ over dataset annotations.
 
 ```bash
 python dataset_clip_wrapper/smoke_test.py
+python dataset_clip_wrapper/smoke_test_retrieval.py
 
 python -m dataset_clip_wrapper.cli \
   --dataset video_holmes --regime short --limit 5 \
   --output dataset_clip_wrapper/output/video_holmes_short.jsonl
+
+# Long video: coarse index only (~98 clips on CG-Bench vs legacy ~574)
+python -m dataset_clip_wrapper.cli \
+  --dataset cg_bench --regime long --limit 1
+
+# LLM pipeline with M3-style retrieve-gated fine expansion
+python -m dataset_clip_wrapper.run_llm_pipeline \
+  --dataset cg_bench --regime long --limit 1 \
+  --retrieval-topk 2 --clip-schema-max-clips 10
 ```
 
-See [dataset_clip_wrapper/README.md](../dataset_clip_wrapper/README.md).
+Long-video defaults (`ClipPolicyConfig.for_regime(LONG)`):
+
+- `coarse_window_s=30`, `fine_window_s=8`, `index_fine_expansion=retrieval_gated`
+- `ClipRetrievalConfig.topk=2`, lexical scoring over question + visible segments
+- Index layer stores coarse clips only; fine windows expand inside retrieved parents for perception / LLM pipeline
+
+See [dataset_clip_wrapper/README.md](../dataset_clip_wrapper/README.md) and
+[clip processing policy](clip-processing-policy.md).
 
 ### 4.6 Expert Demo with LLM Labeling (API key required)
 
@@ -186,7 +203,7 @@ runs a local verifier on cross-layer bindings.
 |------|-------|
 | Dataset adapters for CG-Bench / VRBench / SIV-Bench | Implemented in `dataset_clip_wrapper/` |
 | Canonical JSONL export (`data/canonical_examples/`) | Use `dataset_clip_wrapper/cli.py` |
-| True `hierarchical` coarse→fine segmentation | Documented; code uses flat sliding windows |
+| Embedding-based coarse retrieval (M3-style) | Lexical gate in `clip_retrieval.py`; embedding API not wired |
 | `shot_boundary` / `scene_boundary` / `adaptive` strategies | Schema enum only |
 | Port of legacy `Video_Skills` segmenter | Exists in sibling repo, not wired to relaunch |
 | Raw VLM caption / ASR / object perception | Stage C |

@@ -6,6 +6,7 @@ from .skill_graph_bridge import canonical_example_to_skill_graph
 from .schemas import (
     BackboneConfig,
     ClipPolicyConfig,
+    ClipRetrievalConfig,
     ClipSchemaConfig,
     GraphComposerConfig,
     RuntimeMode,
@@ -16,6 +17,7 @@ from .schemas import (
 __all__ = [
     "BackboneConfig",
     "ClipPolicyConfig",
+    "ClipRetrievalConfig",
     "ClipSchemaConfig",
     "GraphComposerConfig",
     "RuntimeMode",

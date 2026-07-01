@@ -50,12 +50,16 @@ class OpenRouterClient:
         api_key: str,
         api_base: str = DEFAULT_API_BASE,
         temperature: float = 0.0,
+        max_tokens: int | None = None,
+        reasoning: dict[str, Any] | None = None,
         timeout_s: int = 180,
     ):
         self.model = model
         self.api_key = api_key
         self.api_base = api_base
         self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.reasoning = reasoning
         self.timeout_s = timeout_s
 
     def chat(self, messages: list[dict[str, Any]], *, response_format: dict[str, Any] | None = None) -> str:
@@ -64,6 +68,10 @@ class OpenRouterClient:
             "temperature": self.temperature,
             "messages": messages,
         }
+        if self.max_tokens is not None:
+            payload["max_tokens"] = self.max_tokens
+        if self.reasoning is not None:
+            payload["reasoning"] = self.reasoning
         if response_format is not None:
             payload["response_format"] = response_format
         response = requests.post(
@@ -76,7 +84,15 @@ class OpenRouterClient:
             timeout=self.timeout_s,
         )
         response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"].strip()
+        message = response.json()["choices"][0]["message"]
+        content = message.get("content")
+        if content is None:
+            raise ValueError(
+                "OpenRouter response did not include assistant content; "
+                f"finish_reason={response.json()['choices'][0].get('finish_reason')}, "
+                f"reasoning_preview={repr(message.get('reasoning'))[:300]}"
+            )
+        return content.strip()
 
     def chat_json(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
-        return parse_json_response(self.chat(messages))
+        return parse_json_response(self.chat(messages, response_format={"type": "json_object"}))

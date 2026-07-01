@@ -148,7 +148,7 @@ Current branch state:
 - **Design docs**: unified schema, clip policy, dataset rollout recipes, problem formulation
 - **Atomic skills**: 28 executable Python functions (9 graph construction + 19 reasoning assembly) in `atomic_skills/`
 - **Experiments**: smoke test, toy two-layer graph labeling, Video-Holmes expert-demo pipeline in `experiments/`
-- **Not yet built**: full dataset adapters, canonical JSONL export, raw VLM perception, true hierarchical coarse→fine segmentation, controller training
+- **Not yet built**: raw VLM perception, embedding-based coarse retrieval (lexical gate implemented), controller training
 
 Local datasets live under `/fs/gamma-projects/vlm-robot/datasets`. See
 [implementation status](docs/implementation-status.md) for commands and gaps.

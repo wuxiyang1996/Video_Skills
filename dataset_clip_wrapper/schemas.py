@@ -24,6 +24,24 @@ DatasetName = Literal["video_holmes", "cg_bench", "vrbench", "siv_bench"]
 
 
 @dataclass
+class ClipRetrievalConfig:
+    """Coarse-clip retrieval gate (M3-style top-k before fine expansion)."""
+
+    enabled: bool = True
+    topk: int = 2
+    threshold: float = 0.0
+    mode: Literal["lexical", "sequential"] = "lexical"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "topk": self.topk,
+            "threshold": self.threshold,
+            "mode": self.mode,
+        }
+
+
+@dataclass
 class ClipPolicyConfig:
     """Clip segmentation hyperparameters."""
 
@@ -32,6 +50,7 @@ class ClipPolicyConfig:
     overlap_s: float = 1.0
     coarse_window_s: float = 45.0
     fine_window_s: float = 8.0
+    index_fine_expansion: Literal["none", "all", "retrieval_gated"] = "retrieval_gated"
     online: bool = False
     observation_end_s: float | None = None
     duration_s: float | None = None
@@ -47,6 +66,7 @@ class ClipPolicyConfig:
             payload["coarse_window_s"] = self.coarse_window_s
         if self.fine_window_s is not None:
             payload["fine_window_s"] = self.fine_window_s
+        payload["index_fine_expansion"] = self.index_fine_expansion
         if self.observation_end_s is not None:
             payload["observation_end_s"] = self.observation_end_s
         if self.duration_s is not None:
@@ -73,9 +93,10 @@ class ClipPolicyConfig:
         if regime == VideoRegime.LONG:
             return cls(
                 strategy="hierarchical",
-                coarse_window_s=45.0,
+                coarse_window_s=30.0,
                 fine_window_s=8.0,
                 overlap_s=2.0,
+                index_fine_expansion="retrieval_gated",
                 online=False,
                 observation_end_s=observation_end_s,
                 duration_s=duration_s,
@@ -137,6 +158,8 @@ class ClipSchemaConfig:
     temperature: float = 0.0
     request_frames: int = 4
     max_clips: int | None = None
+    max_tokens: int | None = 1200
+    reasoning_effort: str | None = "none"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -147,6 +170,8 @@ class ClipSchemaConfig:
             "temperature": self.temperature,
             "request_frames": self.request_frames,
             "max_clips": self.max_clips,
+            "max_tokens": self.max_tokens,
+            "reasoning_effort": self.reasoning_effort,
         }
 
 
@@ -160,6 +185,8 @@ class GraphComposerConfig:
     keys_py_path: str | None = None
     temperature: float = 0.0
     use_llm_planner: bool = True
+    max_tokens: int | None = 1800
+    reasoning_effort: str | None = "minimal"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -169,6 +196,8 @@ class GraphComposerConfig:
             "keys_py_path": self.keys_py_path,
             "temperature": self.temperature,
             "use_llm_planner": self.use_llm_planner,
+            "max_tokens": self.max_tokens,
+            "reasoning_effort": self.reasoning_effort,
         }
 
 
@@ -191,6 +220,7 @@ class WrapperConfig:
     regime: VideoRegime = VideoRegime.SHORT
     mode: RuntimeMode = RuntimeMode.EXPERT_DEMO
     clip_policy: ClipPolicyConfig | None = None
+    retrieval: ClipRetrievalConfig = field(default_factory=ClipRetrievalConfig)
     backbone: BackboneConfig = field(default_factory=BackboneConfig)
     clip_schema: ClipSchemaConfig = field(default_factory=ClipSchemaConfig)
     graph_composer: GraphComposerConfig = field(default_factory=GraphComposerConfig)

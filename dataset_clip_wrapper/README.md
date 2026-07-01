@@ -29,11 +29,21 @@ dataset adapter
 | Regime | Default policy |
 |--------|----------------|
 | `short` | `whole_video` + 4s windows |
-| `long` | `hierarchical` 45s coarse + 8s fine |
+| `long` | `hierarchical` 30s coarse index + retrieve-gated 8s fine |
 | `streaming` | `fixed_window` with `online=true` and `observation_end_s` |
 
 Override with CLI flags: `--clip-strategy`, `--window-s`, `--overlap-s`,
-`--coarse-window-s`, `--fine-window-s`, `--observation-end-s`.
+`--coarse-window-s`, `--fine-window-s`, `--observation-end-s`,
+`--index-fine-expansion`, `--retrieval-topk`, `--retrieval-mode`, `--no-retrieval`.
+
+Long-video flow (M3-style):
+
+```text
+coarse index (30s windows, all clips in evidence_index)
+  -> lexical retrieve top-k coarse clips (question + visible segments)
+  -> fine windows (8s) only inside retrieved coarse parents
+  -> Qwen clip-schema + graph compose on perception clips only
+```
 
 ### Backbone
 
@@ -61,7 +71,9 @@ Construction atomic skills, producing a clue-memory / perception graph.
 
 ```text
 segment clips (short / long / streaming)
-  -> Qwen clip-schema producer
+  -> [long] retrieve top-k coarse clips
+  -> [long] expand fine windows inside candidates only
+  -> Qwen clip-schema producer (perception clips)
   -> gpt-oss-120B graph composer over atomic graph-crafting skills
   -> canonical example with evidence_index graph
 ```

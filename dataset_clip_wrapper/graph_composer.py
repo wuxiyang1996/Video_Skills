@@ -191,16 +191,26 @@ class GraphComposer:
         observation_end_s: float | None = None,
     ) -> dict[str, Any]:
         if self.config.use_llm_planner:
-            plan_payload = self.plan_skill_graph(
-                example_id=example_id,
-                video_id=video_id,
-                clip_policy=clip_policy,
-                clip_schemas=clip_schemas,
-                segments=segments,
-                question=question,
-                mode=mode,
-            )
-            skill_plan = plan_payload.get("skill_plan") or []
+            try:
+                plan_payload = self.plan_skill_graph(
+                    example_id=example_id,
+                    video_id=video_id,
+                    clip_policy=clip_policy,
+                    clip_schemas=clip_schemas,
+                    segments=segments,
+                    question=question,
+                    mode=mode,
+                )
+                skill_plan = plan_payload.get("skill_plan") or []
+            except Exception as exc:
+                plan_payload = {
+                    "skill_plan": [],
+                    "notes": "planner failed; deterministic fallback used",
+                    "planner_error": str(exc),
+                    "model": self.config.model,
+                    "composer": "gpt_oss_graph_composer",
+                }
+                skill_plan = []
         else:
             plan_payload = {"skill_plan": [], "notes": "deterministic fallback"}
             skill_plan = []

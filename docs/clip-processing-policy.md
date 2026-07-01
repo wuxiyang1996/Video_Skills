@@ -35,8 +35,9 @@ the atomic skill `segment_video_or_select_clip`.
 | `strategy` | enum | `whole_video`, `fixed_window`, `hierarchical`, `shot_boundary`, `scene_boundary`, `adaptive` |
 | `window_s` | number | Sliding window length in seconds |
 | `overlap_s` | number | Overlap between adjacent windows; must be `< window_s` |
-| `coarse_window_s` | number | Coarse retrieval window for `hierarchical` |
+| `coarse_window_s` | number | Coarse retrieval window for `hierarchical` (default **30s**, M3-aligned) |
 | `fine_window_s` | number | Fine evidence window inside coarse candidates |
+| `index_fine_expansion` | enum | `retrieval_gated` (default long), `none` (coarse index only), `all` (legacy full expand) |
 | `online` | boolean | When true, enforce causal visibility (streaming) |
 | `observation_end_s` | number | Latest observable time `t`; clips with `end_s > t` are hidden |
 
@@ -86,7 +87,7 @@ Example:
 ```json
 {
   "strategy": "hierarchical",
-  "coarse_window_s": 45,
+  "coarse_window_s": 30,
   "fine_window_s": 8,
   "overlap_s": 2,
   "online": false,
@@ -153,8 +154,8 @@ Recommended `clip_policy` and index mode per local dataset under
 |---------|---------------|---------------------------|------------|-------|
 | Video-Holmes | Short | `whole_video` + `fixed_window(4s, 1s overlap)` | Lightweight | Strong segment/inference annotations often seed graph offline |
 | SIV-Bench | Very short | `whole_video` + subtitle-aligned spans | Lightweight | Weak evidence; model-labeled spans |
-| CG-Bench | Medium/long | `hierarchical(45s coarse, 8s fine)` | Rich retrieval | Gold `clue_intervals` and clue clips in expert_demo |
-| VRBench | Long | `hierarchical(45s coarse, 8s fine)` | Rich retrieval | Timestamped `reasoning_process` steps |
+| CG-Bench | Medium/long | `hierarchical(30s coarse, retrieve-gated 8s fine)` | Rich retrieval | Coarse index in `evidence_index`; fine only after `retrieve_coarse_clips` top-k |
+| VRBench | Long | `hierarchical(30s coarse, retrieve-gated 8s fine)` | Rich retrieval | Same M3-style gate; timestamped `reasoning_process` in expert_demo |
 | M3-Bench | Long + memory graph | `fixed_window(30s)` or M3 graph clips | Rich M3-style | Deferred until memory graph reader exists |
 
 ### Legacy `Video_Skills` mapping
@@ -238,7 +239,7 @@ retrieval/segmentation is a leakage failure.
 | `whole_video` | Documented | Implemented in `atomic_skills/evidence_graph_construction/skills.py` |
 | `fixed_window` | Documented | Implemented |
 | `online` + `observation_end_s` | Documented | Implemented (causal clip filtering) |
-| `hierarchical` coarse→fine | Documented | Partial: currently uses same sliding-window logic as `fixed_window`; true two-stage retrieval not yet implemented |
+| `hierarchical` coarse→fine | Documented | **Implemented**: coarse index + `retrieve_coarse_clips` top-k + fine inside selected parents (`clip_retrieval.py`, `llm_pipeline.py`) |
 | `shot_boundary` / `scene_boundary` / `adaptive` | Schema enum only | Not implemented in relaunch code |
 | Legacy `long_hierarchical` segmenter | Mapped above | Exists in `Video_Skills/visual_grounding/segmenter.py`, not ported |
 | Raw VLM caption / ASR perception | Planned Stage C | Not implemented |

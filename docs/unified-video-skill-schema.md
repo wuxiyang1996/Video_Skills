@@ -478,9 +478,10 @@ Example `clip_policy` values:
 ```json
 {
   "strategy": "hierarchical",
-  "coarse_window_s": 45,
+  "coarse_window_s": 30,
   "fine_window_s": 8,
   "overlap_s": 2,
+  "index_fine_expansion": "retrieval_gated",
   "online": false,
   "observation_end_s": null
 }
@@ -512,8 +513,8 @@ field mapping — see [clip-processing-policy.md](clip-processing-policy.md).
 |---------|--------|-------------------|
 | Video-Holmes | Short | `whole_video` + `fixed_window(4s, 1s)` |
 | SIV-Bench | Very short | `whole_video` + subtitle-aligned spans |
-| CG-Bench | Long | `hierarchical(45s coarse, 8s fine)` |
-| VRBench | Long | `hierarchical(45s coarse, 8s fine)` |
+| CG-Bench | Long | `hierarchical(30s coarse, retrieve-gated 8s fine)` |
+| VRBench | Long | `hierarchical(30s coarse, retrieve-gated 8s fine)` |
 | M3-Bench | Long + memory | `fixed_window(30s)` or imported M3 graph clips |
 
 In `expert_demo` mode, dataset annotations and clue intervals may seed the
@@ -1341,10 +1342,16 @@ The right integration is:
 
 ```text
 M3-style memory graph = evidence_index
+  -> coarse 30s clip index + retrieve top-k
+  -> fine windows inside candidates only (dataset_clip_wrapper/clip_retrieval.py)
 atomic skills = operations over the evidence_index
 EvidenceCandidate = cited, verifiable evidence extracted from the index
 SkillGraphRollout = reasoning chain over extracted evidence
 ```
+
+**Status (2026-06-30):** coarse index + lexical `retrieve_coarse_clips` top-k gate +
+retrieve-gated fine expansion are implemented in `dataset_clip_wrapper/`. Embedding
+retrieval and face/voice entity nodes remain future work.
 
 This gives us the best of both designs: M3-style organization for clue discovery,
 and our typed skill graph for verifiable reasoning.

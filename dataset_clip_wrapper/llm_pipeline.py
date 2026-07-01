@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Iterator
 
 from .adapters.base import RawDatasetItem
 from .adapters import get_adapter
-from .clip_policy import segment_video
+from .clip_policy import segment_coarse_index, segment_perception_clips, segment_video
+from .clip_retrieval import retrieve_coarse_clips
 from .clip_schema import QwenClipSchemaProducer
 from .graph_composer import GraphComposer
 from .openrouter_client import OpenRouterClient, load_openrouter_api_key
-from .pipeline import build_canonical_example
+from .pipeline import _clip_id, build_canonical_example
+from .schemas import ClipPolicyConfig, ClipSpan, WrapperConfig
 
 
 def _subtitle_context_for_clip(segments: list[dict[str, Any]], clip_span: dict[str, float]) -> str:
@@ -31,11 +32,78 @@ def _subtitle_context_for_clip(segments: list[dict[str, Any]], clip_span: dict[s
     return " | ".join(texts)
 
 
+def _derived_clips_for_spans(
+    *,
+    video_id: str,
+    primary_path: str,
+    spans: list[ClipSpan],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "clip_id": _clip_id(video_id, span.clip_index, span.granularity),
+            "path": primary_path,
+            "source_span": span.to_dict(),
+            "granularity": span.granularity,
+            "parent_index": span.parent_index,
+        }
+        for span in spans
+    ]
+
+
+def _resolve_perception_spans(
+    *,
+    duration_s: float,
+    clip_policy: ClipPolicyConfig,
+    regime,
+    retrieval_config,
+    question_text: str,
+    visible_segments: list[dict[str, Any]],
+) -> tuple[list[ClipSpan], dict[str, Any]]:
+    """Select fine perception clips; long video uses retrieve-gated coarse → fine."""
+    meta: dict[str, Any] = {}
+
+    if clip_policy.strategy == "hierarchical" and clip_policy.index_fine_expansion == "retrieval_gated":
+        coarse = segment_coarse_index(duration_s, clip_policy, regime=regime)
+        meta["coarse_index_count"] = len(coarse)
+
+        if retrieval_config.enabled:
+            retrieval = retrieve_coarse_clips(
+                coarse_spans=coarse,
+                query_text=question_text,
+                segments=visible_segments,
+                topk=retrieval_config.topk,
+                threshold=retrieval_config.threshold,
+                observation_end_s=clip_policy.observation_end_s,
+                mode=retrieval_config.mode,
+            )
+            selected = retrieval["selected_coarse_indices"]
+            meta["retrieval"] = retrieval
+        else:
+            selected = list(range(min(retrieval_config.topk, len(coarse))))
+            meta["retrieval"] = {"enabled": False, "selected_coarse_indices": selected}
+
+        perception = segment_perception_clips(
+            duration_s,
+            clip_policy,
+            regime=regime,
+            selected_coarse_indices=selected,
+        )
+        fine_spans = [span for span in perception if span.granularity == "fine"]
+        meta["perception_clip_count"] = len(fine_spans)
+        return fine_spans, meta
+
+    spans = segment_video(duration_s, clip_policy, regime=regime, fine_expansion="all")
+    fine_spans = [span for span in spans if span.granularity == "fine"]
+    perception = fine_spans if fine_spans else spans
+    meta["perception_clip_count"] = len(perception)
+    return perception, meta
+
+
 def _produce_clip_schemas(
     *,
     item: RawDatasetItem,
     config: WrapperConfig,
-    spans,
+    spans: list[ClipSpan],
     derived_clips: list[dict[str, Any]],
     visible_segments: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -46,6 +114,10 @@ def _produce_clip_schemas(
         api_key=api_key,
         api_base=config.clip_schema.api_base,
         temperature=config.clip_schema.temperature,
+        max_tokens=config.clip_schema.max_tokens,
+        reasoning={"effort": config.clip_schema.reasoning_effort, "exclude": True}
+        if config.clip_schema.reasoning_effort
+        else None,
     )
     producer = QwenClipSchemaProducer(config.clip_schema, client)
     question_context = item.question.get("question_text")
@@ -82,17 +154,32 @@ def build_llm_enriched_example(
 
     duration_s = float(example["video"].get("duration_s") or 0.0)
     clip_policy = config.resolved_clip_policy(duration_s)
-    spans = segment_video(duration_s, clip_policy, regime=config.regime)
-    derived_clips = example["video"]["derived_clips"]
     visible_segments = example["video"]["segments"]
+    question_text = item.question.get("question_text") or ""
+
+    perception_spans, perception_meta = _resolve_perception_spans(
+        duration_s=duration_s,
+        clip_policy=clip_policy,
+        regime=config.regime,
+        retrieval_config=config.retrieval,
+        question_text=question_text,
+        visible_segments=visible_segments,
+    )
+    primary_path = str(item.video_path) if item.video_path else ""
+    perception_derived = _derived_clips_for_spans(
+        video_id=item.video_id,
+        primary_path=primary_path,
+        spans=perception_spans,
+    )
+    example["metadata"]["perception"] = perception_meta
 
     clip_schemas: list[dict[str, Any]] = []
     if config.run_clip_schema:
         clip_schemas = _produce_clip_schemas(
             item=item,
             config=config,
-            spans=spans,
-            derived_clips=derived_clips,
+            spans=perception_spans,
+            derived_clips=perception_derived,
             visible_segments=visible_segments,
         )
         example["metadata"]["clip_schemas"] = clip_schemas
@@ -106,6 +193,10 @@ def build_llm_enriched_example(
             api_key=api_key,
             api_base=config.graph_composer.api_base,
             temperature=config.graph_composer.temperature,
+            max_tokens=config.graph_composer.max_tokens,
+            reasoning={"effort": config.graph_composer.reasoning_effort, "exclude": True}
+            if config.graph_composer.reasoning_effort
+            else None,
         )
         composer = GraphComposer(config.graph_composer, client)
         composed = composer.compose_from_clip_schemas(
@@ -123,6 +214,7 @@ def build_llm_enriched_example(
         example["evidence_index"]["nodes"] = graph.get("nodes", [])
         example["evidence_index"]["edges"] = graph.get("edges", [])
         example["evidence_index"]["graph_composer"] = config.graph_composer.to_dict()
+        example["evidence_index"]["retrieval"] = config.retrieval.to_dict()
         example["metadata"]["graph_compose"] = {
             "composer_model": composed.get("composer_model"),
             "execution_trace": composed.get("execution_trace"),
@@ -150,6 +242,7 @@ def build_llm_enriched_example(
     example["metadata"]["llm_pipeline"] = {
         "clip_schema": config.clip_schema.to_dict() if config.run_clip_schema else None,
         "graph_composer": config.graph_composer.to_dict() if config.run_graph_compose else None,
+        "retrieval": config.retrieval.to_dict(),
     }
     return example
 

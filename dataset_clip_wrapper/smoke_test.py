@@ -120,8 +120,11 @@ def main() -> int:
                 "mode": "expert_demo",
                 "example_id": example["example_id"],
                 "clip_count": len(example["video"]["derived_clips"]),
+                "coarse_clip_count": example["metadata"].get("coarse_clip_count"),
+                "fine_clip_count": example["metadata"].get("fine_clip_count"),
                 "evidence_count": len(example["evidence_candidates"]),
                 "strategy": example["evidence_index"]["clip_policy"]["strategy"],
+                "index_fine_expansion": example["metadata"].get("index_fine_expansion"),
                 "passed": not errors,
                 "errors": errors,
             }

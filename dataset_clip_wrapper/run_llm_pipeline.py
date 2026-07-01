@@ -11,6 +11,7 @@ from .llm_pipeline import iter_llm_enriched_examples
 from .schemas import (
     BackboneConfig,
     ClipPolicyConfig,
+    ClipRetrievalConfig,
     ClipSchemaConfig,
     GraphComposerConfig,
     RuntimeMode,
@@ -35,13 +36,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--clip-schema-model", default="qwen/qwen3.5-9b")
     parser.add_argument("--clip-schema-max-clips", type=int, default=3)
     parser.add_argument("--clip-schema-frames", type=int, default=4)
+    parser.add_argument("--clip-schema-max-tokens", type=int, default=1200)
+    parser.add_argument("--clip-schema-reasoning-effort", default="none")
     parser.add_argument("--skip-clip-schema", action="store_true")
 
     parser.add_argument("--graph-model", default="openai/gpt-oss-120b")
+    parser.add_argument("--graph-max-tokens", type=int, default=1800)
+    parser.add_argument("--graph-reasoning-effort", default="minimal")
     parser.add_argument("--graph-deterministic", action="store_true", help="Skip gpt-oss planner; apply atomic skills directly")
     parser.add_argument("--skip-graph-compose", action="store_true")
 
     parser.add_argument("--observation-end-s", type=float, default=None)
+    parser.add_argument("--retrieval-topk", type=int, default=2)
+    parser.add_argument("--retrieval-mode", default="lexical", choices=["lexical", "sequential"])
+    parser.add_argument("--no-retrieval", action="store_true")
+    parser.add_argument(
+        "--index-fine-expansion",
+        default=None,
+        choices=["none", "all", "retrieval_gated"],
+    )
     return parser
 
 
@@ -58,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
     clip_policy = ClipPolicyConfig.dataset_default(args.dataset, dataset_regime)
     if args.observation_end_s is not None:
         clip_policy.observation_end_s = args.observation_end_s
+    if args.index_fine_expansion:
+        clip_policy.index_fine_expansion = args.index_fine_expansion  # type: ignore[assignment]
 
     config = WrapperConfig(
         dataset_root=args.dataset_root,
@@ -65,17 +80,26 @@ def main(argv: list[str] | None = None) -> int:
         regime=dataset_regime,
         mode=RuntimeMode(args.mode),
         clip_policy=clip_policy,
+        retrieval=ClipRetrievalConfig(
+            enabled=not args.no_retrieval,
+            topk=args.retrieval_topk,
+            mode=args.retrieval_mode,  # type: ignore[arg-type]
+        ),
         backbone=BackboneConfig(keys_py_path=args.keys_py),
         clip_schema=ClipSchemaConfig(
             model=args.clip_schema_model,
             keys_py_path=args.keys_py,
             max_clips=args.clip_schema_max_clips,
             request_frames=args.clip_schema_frames,
+            max_tokens=args.clip_schema_max_tokens,
+            reasoning_effort=args.clip_schema_reasoning_effort,
         ),
         graph_composer=GraphComposerConfig(
             model=args.graph_model,
             keys_py_path=args.keys_py,
             use_llm_planner=not args.graph_deterministic,
+            max_tokens=args.graph_max_tokens,
+            reasoning_effort=args.graph_reasoning_effort,
         ),
         split=args.split,
         limit=args.limit,
