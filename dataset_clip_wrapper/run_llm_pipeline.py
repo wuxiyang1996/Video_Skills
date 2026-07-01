@@ -15,6 +15,7 @@ from .schemas import (
     ClipSchemaConfig,
     GraphComposerConfig,
     RuntimeMode,
+    SkillExecutionConfig,
     VideoRegime,
     WrapperConfig,
 )
@@ -46,6 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--graph-reasoning-effort", default="minimal")
     parser.add_argument("--graph-deterministic", action="store_true", help="Skip gpt-oss planner; apply atomic skills directly")
     parser.add_argument("--skip-graph-compose", action="store_true")
+
+    parser.add_argument("--skill-model", default="qwen/qwen3.5-9b", help="Model for skill-level reasoning/perception execution (student model)")
+    parser.add_argument("--run-l2-planner", action="store_true", help="Enable L2 LLM reasoning planner with skill execution")
+    parser.add_argument("--disable-llm-skills", action="store_true", help="Disable LLM-backed skill execution (use rule only)")
+    parser.add_argument("--disable-vlm-skills", action="store_true", help="Disable VLM-backed perception skills")
 
     parser.add_argument("--observation-end-s", type=float, default=None)
     parser.add_argument("--retrieval-topk", type=int, default=2)
@@ -103,10 +109,16 @@ def main(argv: list[str] | None = None) -> int:
             max_tokens=args.graph_max_tokens,
             reasoning_effort=args.graph_reasoning_effort,
         ),
+        skill_execution=SkillExecutionConfig(
+            skill_model=args.skill_model,
+            enable_llm_skills=not args.disable_llm_skills,
+            enable_vlm_skills=not args.disable_vlm_skills,
+        ),
         split=args.split,
         limit=args.limit,
         run_clip_schema=not args.skip_clip_schema,
         run_graph_compose=not args.skip_graph_compose,
+        run_l2_llm_planner=args.run_l2_planner,
     )
 
     output_path = Path(args.output)

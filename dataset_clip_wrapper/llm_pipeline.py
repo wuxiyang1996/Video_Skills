@@ -164,6 +164,53 @@ def _produce_clip_schemas(
     return schemas
 
 
+def _build_skill_executor(api_key: str, config: WrapperConfig):
+    """Create a SkillExecutor for LLM/VLM-backed skill dispatch.
+
+    Model allocation (teacher-student architecture):
+    - Teacher mode (expert_demo): gpt-oss-120b generates expert trajectories
+      via GraphComposerConfig.model for L1/L2 planning. Skill execution uses
+      Qwen3.5-9B (cheaper, faster, target student model).
+    - Student mode (inference after distillation): Qwen3.5-9B does everything.
+      The planner model would also be switched to qwen3.5-9b.
+
+    Currently both modes use qwen3.5-9b for skill execution, since even in
+    teacher mode the planner (gpt-oss) only generates the plan — execution
+    is done by the same model that will be deployed.
+    """
+    from atomic_skills.skill_backends import SkillBackendConfig, SkillBackendMode
+    from atomic_skills.skill_model_client import SkillModelClient
+    from atomic_skills.skill_executor import SkillExecutor
+
+    skill_cfg = config.skill_execution
+
+    llm_client = None
+    vlm_client = None
+
+    if skill_cfg.enable_llm_skills:
+        llm_client = SkillModelClient(
+            model=skill_cfg.skill_model,
+            api_key=api_key,
+            api_base=skill_cfg.skill_api_base,
+            max_tokens=skill_cfg.skill_max_tokens_llm,
+            temperature=skill_cfg.skill_temperature,
+            timeout_s=skill_cfg.skill_timeout_s,
+        )
+
+    if skill_cfg.enable_vlm_skills:
+        vlm_client = SkillModelClient(
+            model=skill_cfg.skill_model,
+            api_key=api_key,
+            api_base=skill_cfg.skill_api_base,
+            max_tokens=skill_cfg.skill_max_tokens_vlm,
+            temperature=skill_cfg.skill_temperature,
+            timeout_s=skill_cfg.skill_timeout_s,
+        )
+
+    backend_config = SkillBackendConfig(default_mode=SkillBackendMode.LLM)
+    return SkillExecutor(llm_client=llm_client, vlm_client=vlm_client, config=backend_config)
+
+
 def build_llm_enriched_example(
     item: RawDatasetItem,
     *,
@@ -278,7 +325,8 @@ def build_llm_enriched_example(
                 max_tokens=1800,
                 reasoning={"effort": "minimal", "exclude": True},
             )
-            reasoning_rollout = build_llm_reasoning_rollout(example, clue_graph, client=l2_client)
+            skill_exec = _build_skill_executor(api_key, config) if config.run_l2_llm_planner else None
+            reasoning_rollout = build_llm_reasoning_rollout(example, clue_graph, client=l2_client, skill_executor=skill_exec)
         else:
             reasoning_rollout = build_reasoning_rollout(example, clue_graph, rollout_source="llm_pipeline")
         example["metadata"]["reasoning_rollout"] = reasoning_rollout

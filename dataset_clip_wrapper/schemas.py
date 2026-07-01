@@ -179,7 +179,11 @@ class ClipSchemaConfig:
 
 @dataclass
 class GraphComposerConfig:
-    """Graph composer hyperparameters (gpt-oss-120B via OpenRouter)."""
+    """Graph composer hyperparameters.
+
+    In teacher mode (expert demo generation): uses gpt-oss-120b for high-quality plans.
+    In student mode (inference): uses qwen3.5-9b for all planning + execution.
+    """
 
     model: str = "openai/gpt-oss-120b"
     api_base: str = "https://openrouter.ai/api/v1/chat/completions"
@@ -200,6 +204,41 @@ class GraphComposerConfig:
             "use_llm_planner": self.use_llm_planner,
             "max_tokens": self.max_tokens,
             "reasoning_effort": self.reasoning_effort,
+        }
+
+
+@dataclass
+class SkillExecutionConfig:
+    """Model allocation for atomic skill execution.
+
+    Architecture:
+    - teacher mode (expert_demo): gpt-oss-120b generates expert trajectories as
+      supervision signal. Skill execution can also use gpt-oss for highest quality.
+    - student mode (inference): Qwen3.5-9B handles everything — planning, reasoning,
+      and perception. Single-model deployment after distillation.
+
+    The planner model (GraphComposerConfig.model) controls L1/L2 plan generation.
+    This config controls the model used for actual skill-level execution.
+    """
+
+    skill_model: str = "qwen/qwen3.5-9b"
+    skill_api_base: str = "https://openrouter.ai/api/v1/chat/completions"
+    skill_max_tokens_llm: int = 512
+    skill_max_tokens_vlm: int = 1024
+    skill_temperature: float = 0.0
+    skill_timeout_s: int = 120
+    enable_llm_skills: bool = True
+    enable_vlm_skills: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "skill_model": self.skill_model,
+            "skill_api_base": self.skill_api_base,
+            "skill_max_tokens_llm": self.skill_max_tokens_llm,
+            "skill_max_tokens_vlm": self.skill_max_tokens_vlm,
+            "skill_temperature": self.skill_temperature,
+            "enable_llm_skills": self.enable_llm_skills,
+            "enable_vlm_skills": self.enable_vlm_skills,
         }
 
 
@@ -226,6 +265,7 @@ class WrapperConfig:
     backbone: BackboneConfig = field(default_factory=BackboneConfig)
     clip_schema: ClipSchemaConfig = field(default_factory=ClipSchemaConfig)
     graph_composer: GraphComposerConfig = field(default_factory=GraphComposerConfig)
+    skill_execution: SkillExecutionConfig = field(default_factory=SkillExecutionConfig)
     split: str = "train"
     limit: int | None = None
     run_backbone: bool = False

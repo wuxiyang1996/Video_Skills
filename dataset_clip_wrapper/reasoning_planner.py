@@ -221,8 +221,13 @@ def execute_reasoning_plan(
     reasoning_plan: list[dict[str, Any]],
     clue_memory_graph: dict[str, Any],
     question: dict[str, Any],
+    skill_executor: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Execute a reasoning skill plan over the clue graph, returning trace + step_outputs."""
+    """Execute a reasoning skill plan over the clue graph, returning trace + step_outputs.
+
+    If skill_executor is provided (a SkillExecutor instance), skills configured
+    for LLM/VLM mode will be dispatched via API calls; otherwise pure rule-based.
+    """
     from copy import deepcopy
 
     graph = {
@@ -258,6 +263,42 @@ def execute_reasoning_plan(
             continue
 
         resolved_args = resolve_plan_value(raw_args, bindings, step_outputs)
+
+        # --- LLM/VLM dispatch via SkillExecutor ---
+        if skill_executor is not None:
+            from atomic_skills.skill_backends import SkillBackendMode
+            mode = skill_executor.config.mode_for(skill_id)
+            if mode in (SkillBackendMode.LLM, SkillBackendMode.VLM):
+                has_client = (
+                    (mode == SkillBackendMode.LLM and skill_executor.llm_client)
+                    or (mode == SkillBackendMode.VLM and skill_executor.vlm_client)
+                )
+                if has_client:
+                    try:
+                        result = skill_executor.execute(skill_id, args=resolved_args, graph=graph)
+                        trace.append({
+                            "step_id": step_id,
+                            "skill_id": skill_id,
+                            "ok": result.ok,
+                            "failure_code": result.failure_code,
+                            "evidence_refs": result.evidence_refs,
+                            "confidence": result.confidence,
+                            "backend": mode.value,
+                        })
+                        if step_id:
+                            step_outputs[step_id] = {**result.outputs, "evidence_refs": result.evidence_refs}
+                        continue
+                    except Exception as exc:
+                        trace.append({
+                            "step_id": step_id,
+                            "skill_id": skill_id,
+                            "ok": False,
+                            "failure_code": f"{mode.value}_backend_error",
+                            "messages": [str(exc)],
+                            "backend": mode.value,
+                        })
+                        continue
+
         executor = REASONING_SKILL_EXECUTORS[skill_id]
 
         try:
@@ -451,8 +492,14 @@ def build_llm_reasoning_rollout(
     clue_memory_graph: dict[str, Any],
     *,
     client: OpenRouterClient,
+    skill_executor: Any | None = None,
 ) -> dict[str, Any]:
-    """Full L2: plan with gpt-oss then execute reasoning skills. Falls back to deterministic."""
+    """Full L2: plan with gpt-oss then execute reasoning skills. Falls back to deterministic.
+
+    Args:
+        skill_executor: Optional SkillExecutor for LLM-backed skill dispatch.
+            If provided, skills configured for LLM mode will call the model API.
+    """
     from .reasoning_rollout import build_reasoning_rollout
 
     question = example.get("question") or {}
@@ -479,17 +526,34 @@ def build_llm_reasoning_rollout(
         reasoning_plan=reasoning_plan,
         clue_memory_graph=clue_memory_graph,
         question=question,
+        skill_executor=skill_executor,
     )
 
     failed_steps = [t for t in trace if t.get("ok") is False]
     ok_steps = [t for t in trace if t.get("ok")]
     crash_steps = [t for t in failed_steps if t.get("failure_code") in ("unknown_skill_id", "invalid_skill_args")]
 
+    # --- Fault localization + repair attempt ---
+    repair_result = None
+    if failed_steps and not crash_steps:
+        from .fault_repair import attempt_repair
+        repair_result = attempt_repair(
+            trace, step_outputs, reasoning_plan, clue_memory_graph, question,
+            skill_executor=skill_executor,
+            max_repair_attempts=1,
+        )
+        if repair_result.get("attempted") and repair_result.get("repaired_count", 0) > 0:
+            trace = trace + repair_result["repair_trace"]
+            ok_steps = [t for t in trace if t.get("ok")]
+            failed_steps = [t for t in trace if t.get("ok") is False]
+
     if crash_steps or (not ok_steps and len(failed_steps) > 3):
         rollout = build_reasoning_rollout(example, clue_memory_graph, rollout_source="deterministic_fallback_from_llm")
         rollout["metadata"]["llm_plan"] = plan_response
         rollout["metadata"]["llm_trace"] = trace
         rollout["metadata"]["fallback_reason"] = "too_many_failures"
+        if repair_result:
+            rollout["metadata"]["repair"] = repair_result
         return rollout
 
     rollout = make_reasoning_rollout_shell(example, clue_memory_graph, rollout_source="gpt_oss_reasoning_planner")
@@ -544,4 +608,6 @@ def build_llm_reasoning_rollout(
         "llm_trace_ok": len(ok_steps),
         "llm_trace_fail": len(failed_steps),
     }
+    if repair_result:
+        rollout["metadata"]["repair"] = repair_result
     return rollout
