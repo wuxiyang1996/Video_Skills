@@ -48,14 +48,17 @@ def main() -> int:
             )
             example = next(iter_canonical_examples(config))
             clue = example["metadata"]["clue_memory_graph"]
-            shell = example["metadata"]["reasoning_rollout_shell"]
-            errors = _schema_errors(CLUE_SCHEMA, clue) + _schema_errors(ROLL_SCHEMA, shell)
-            if shell.get("clue_memory_ref", {}).get("graph_id") != clue.get("graph_id"):
-                errors.append("reasoning shell clue_memory_ref mismatch")
+            rollout = example["metadata"]["reasoning_rollout"]
+            errors = _schema_errors(CLUE_SCHEMA, clue) + _schema_errors(ROLL_SCHEMA, rollout)
+            if rollout.get("clue_memory_ref", {}).get("graph_id") != clue.get("graph_id"):
+                errors.append("reasoning rollout clue_memory_ref mismatch")
             if clue.get("layer") != "clue_memory":
                 errors.append("clue graph missing layer=clue_memory")
-            if shell.get("layer") != "reasoning":
-                errors.append("rollout shell missing layer=reasoning")
+            if rollout.get("layer") != "reasoning":
+                errors.append("rollout missing layer=reasoning")
+            skill_count = rollout.get("metadata", {}).get("executed_skill_count", 0)
+            if skill_count < 19:
+                errors.append(f"reasoning rollout executed {skill_count}/19 skills")
             if mode == RuntimeMode.VIDEO_ONLY:
                 leaked = [n.get("source_type") for n in clue.get("nodes", []) if n.get("source_type") in {
                     "segment_description", "inference_shot", "clue_interval", "reasoning_process_step"

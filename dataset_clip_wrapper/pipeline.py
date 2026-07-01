@@ -9,7 +9,8 @@ from .adapters.base import RawDatasetItem
 from .adapters import get_adapter
 from .backbone import PerceptionBackbone, build_backbone
 from .clip_policy import FineExpansion, segment_video
-from .clue_memory import extract_clue_memory_graph, make_reasoning_rollout_shell
+from .clue_memory import extract_clue_memory_graph
+from .reasoning_rollout import build_reasoning_rollout
 from .schemas import (
     BackboneConfig,
     ClipPolicyConfig,
@@ -249,7 +250,9 @@ def build_canonical_example(
     example["evidence_index"]["retrieval"] = config.retrieval.to_dict()
     clue_graph = extract_clue_memory_graph(example, mode=config.mode)
     example["metadata"]["clue_memory_graph"] = clue_graph
-    example["metadata"]["reasoning_rollout_shell"] = make_reasoning_rollout_shell(example, clue_graph)
+    reasoning_rollout = build_reasoning_rollout(example, clue_graph)
+    example["metadata"]["reasoning_rollout"] = reasoning_rollout
+    example["metadata"]["reasoning_rollout_shell"] = reasoning_rollout
     return example
 
 

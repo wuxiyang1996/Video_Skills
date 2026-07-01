@@ -12,8 +12,10 @@ from .clip_retrieval import retrieve_coarse_clips
 from .clip_schema import QwenClipSchemaProducer
 from .graph_composer import GraphComposer
 from .openrouter_client import OpenRouterClient, load_openrouter_api_key
+from .clue_memory import extract_clue_memory_graph
 from .pipeline import _clip_id, build_canonical_example
-from .schemas import ClipPolicyConfig, ClipSpan, WrapperConfig
+from .reasoning_rollout import build_reasoning_rollout
+from .schemas import ClipPolicyConfig, ClipSpan, RuntimeMode, WrapperConfig
 
 
 def _subtitle_context_for_clip(segments: list[dict[str, Any]], clip_span: dict[str, float]) -> str:
@@ -58,9 +60,11 @@ def _resolve_perception_spans(
     retrieval_config,
     question_text: str,
     visible_segments: list[dict[str, Any]],
+    mode: RuntimeMode,
 ) -> tuple[list[ClipSpan], dict[str, Any]]:
     """Select fine perception clips; long video uses retrieve-gated coarse → fine."""
     meta: dict[str, Any] = {}
+    retrieval_query = question_text if mode == RuntimeMode.EXPERT_DEMO else ""
 
     if clip_policy.strategy == "hierarchical" and clip_policy.index_fine_expansion == "retrieval_gated":
         coarse = segment_coarse_index(duration_s, clip_policy, regime=regime)
@@ -69,12 +73,12 @@ def _resolve_perception_spans(
         if retrieval_config.enabled:
             retrieval = retrieve_coarse_clips(
                 coarse_spans=coarse,
-                query_text=question_text,
+                query_text=retrieval_query,
                 segments=visible_segments,
                 topk=retrieval_config.topk,
                 threshold=retrieval_config.threshold,
                 observation_end_s=clip_policy.observation_end_s,
-                mode=retrieval_config.mode,
+                mode=retrieval_config.mode if retrieval_query else "sequential",
             )
             selected = retrieval["selected_coarse_indices"]
             meta["retrieval"] = retrieval
@@ -120,7 +124,7 @@ def _produce_clip_schemas(
         else None,
     )
     producer = QwenClipSchemaProducer(config.clip_schema, client)
-    question_context = item.question.get("question_text")
+    question_context = item.question.get("question_text") if config.mode == RuntimeMode.EXPERT_DEMO else None
     schemas: list[dict[str, Any]] = []
     budget = config.clip_schema.max_clips
     for i, (clip, derived) in enumerate(zip(spans, derived_clips)):
@@ -164,6 +168,7 @@ def build_llm_enriched_example(
         retrieval_config=config.retrieval,
         question_text=question_text,
         visible_segments=visible_segments,
+        mode=config.mode,
     )
     primary_path = str(item.video_path) if item.video_path else ""
     perception_derived = _derived_clips_for_spans(
@@ -205,7 +210,6 @@ def build_llm_enriched_example(
             clip_policy=clip_policy.to_dict(),
             clip_schemas=clip_schemas,
             segments=visible_segments,
-            question=item.question,
             mode=config.mode,
             duration_s=duration_s,
             observation_end_s=clip_policy.observation_end_s,
@@ -238,6 +242,12 @@ def build_llm_enriched_example(
                     "discovery_status": "discovered_runtime",
                 }
             )
+
+        clue_graph = extract_clue_memory_graph(example, mode=config.mode)
+        example["metadata"]["clue_memory_graph"] = clue_graph
+        reasoning_rollout = build_reasoning_rollout(example, clue_graph, rollout_source="llm_pipeline")
+        example["metadata"]["reasoning_rollout"] = reasoning_rollout
+        example["metadata"]["reasoning_rollout_shell"] = reasoning_rollout
 
     example["metadata"]["llm_pipeline"] = {
         "clip_schema": config.clip_schema.to_dict() if config.run_clip_schema else None,

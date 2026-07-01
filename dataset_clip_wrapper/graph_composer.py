@@ -81,7 +81,6 @@ class GraphComposer:
         clip_policy: dict[str, Any],
         clip_schemas: list[dict[str, Any]],
         segments: list[dict[str, Any]],
-        question: dict[str, Any],
         mode: RuntimeMode,
     ) -> dict[str, Any]:
         payload = {
@@ -89,8 +88,8 @@ class GraphComposer:
             "example_id": example_id,
             "video_id": video_id,
             "mode": mode.value,
+            "layer": "clue_memory",
             "clip_policy": clip_policy,
-            "question": question,
             "clip_schemas": clip_schemas,
             "segments": segments,
             "allowed_skill_ids": sorted(self.allowed_skill_ids),
@@ -185,7 +184,6 @@ class GraphComposer:
         clip_policy: dict[str, Any],
         clip_schemas: list[dict[str, Any]],
         segments: list[dict[str, Any]],
-        question: dict[str, Any],
         mode: RuntimeMode,
         duration_s: float,
         observation_end_s: float | None = None,
@@ -198,7 +196,6 @@ class GraphComposer:
                     clip_policy=clip_policy,
                     clip_schemas=clip_schemas,
                     segments=segments,
-                    question=question,
                     mode=mode,
                 )
                 skill_plan = plan_payload.get("skill_plan") or []

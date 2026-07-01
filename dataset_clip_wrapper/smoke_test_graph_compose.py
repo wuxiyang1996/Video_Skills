@@ -59,7 +59,6 @@ def main() -> int:
         clip_policy=example["evidence_index"]["clip_policy"],
         clip_schemas=fake_schemas,
         segments=example["video"]["segments"],
-        question=raw.question,
         mode=config.mode,
         duration_s=float(example["video"]["duration_s"]),
         observation_end_s=example["evidence_index"]["clip_policy"].get("observation_end_s"),

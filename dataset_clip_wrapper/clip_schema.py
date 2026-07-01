@@ -91,8 +91,8 @@ class QwenClipSchemaProducer:
                     f"clip_id={clip_id}\n"
                     f"time_span={clip.to_dict()}\n"
                     f"granularity={clip.granularity}\n"
-                    f"subtitle_context={subtitle_context or ''}\n"
-                    f"question_context={question_context or ''}"
+                    f"subtitle_context={subtitle_context or ''}"
+                    + (f"\nquestion_context={question_context}" if question_context else "")
                 ),
             }
         ]

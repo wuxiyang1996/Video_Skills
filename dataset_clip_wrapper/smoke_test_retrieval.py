@@ -59,7 +59,18 @@ def main() -> int:
         retrieval_config=ClipRetrievalConfig(topk=2),
         question_text=cg["question"].get("question_text", ""),
         visible_segments=cg["video"]["segments"],
+        mode=RuntimeMode.EXPERT_DEMO,
     )
+
+    stream_config = WrapperConfig(
+        dataset_root="/fs/gamma-projects/vlm-robot/datasets",
+        dataset="cg_bench",
+        regime=VideoRegime.STREAMING,
+        mode=RuntimeMode.VIDEO_ONLY,
+        split="train",
+        limit=1,
+    )
+    stream = next(iter_canonical_examples(stream_config))
 
     report = {
         "synthetic_2741s": {
@@ -77,8 +88,19 @@ def main() -> int:
             "retrieved_coarse": perception_meta.get("retrieval", {}).get("selected_coarse_indices"),
             "passed": cg["metadata"]["fine_clip_count"] == 0 and cg["metadata"]["coarse_clip_count"] > 0,
         },
+        "cg_bench_streaming": {
+            "clip_count": stream["metadata"]["clip_count"],
+            "coarse_clip_count": stream["metadata"]["coarse_clip_count"],
+            "fine_clip_count": stream["metadata"]["fine_clip_count"],
+            "strategy": stream["evidence_index"]["clip_policy"]["strategy"],
+            "passed": stream["metadata"]["fine_clip_count"] == 0 and stream["metadata"]["coarse_clip_count"] > 0 and stream["metadata"]["clip_count"] < 200,
+        },
     }
-    report["all_passed"] = report["synthetic_2741s"]["passed"] and report["cg_bench_sample"]["passed"]
+    report["all_passed"] = (
+        report["synthetic_2741s"]["passed"]
+        and report["cg_bench_sample"]["passed"]
+        and report["cg_bench_streaming"]["passed"]
+    )
     print(json.dumps(report, indent=2))
     return 0 if report["all_passed"] else 2
 

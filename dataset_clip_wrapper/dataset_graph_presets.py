@@ -41,12 +41,12 @@ DATASET_LAYER1_PROFILE: dict[DatasetName, dict[str, str]] = {
     "cg_bench": {
         "short": "hierarchical if video <10 min else same as long",
         "long": "hierarchical 30s coarse index + retrieval_gated 8s fine perception",
-        "streaming": "fixed_window or hierarchical online; clue_intervals define eval window in expert_demo",
+        "streaming": "hierarchical 30s coarse online index only (no 4s fine); observation_end_s enforced",
     },
     "vrbench": {
         "short": "hierarchical for clips <10 min",
         "long": "hierarchical 30s coarse + retrieval_gated fine; reasoning_process timestamps as expert seeds",
-        "streaming": "fixed_window online; reasoning steps after observation_end_s hidden",
+        "streaming": "hierarchical 30s coarse online index only; reasoning steps after observation_end_s hidden",
     },
 }
 
@@ -57,6 +57,7 @@ def default_regime_for_dataset(dataset: DatasetName) -> VideoRegime:
 
 def clip_policy_for(dataset: DatasetName, regime: VideoRegime, *, duration_s: float | None = None) -> ClipPolicyConfig:
     """Return regime-aware clip policy defaults for a dataset."""
+    observation_end_s = duration_s if regime == VideoRegime.STREAMING and duration_s else None
     if regime == VideoRegime.SHORT:
         if dataset == "siv_bench":
             return ClipPolicyConfig.for_regime(
@@ -67,7 +68,15 @@ def clip_policy_for(dataset: DatasetName, regime: VideoRegime, *, duration_s: fl
         return ClipPolicyConfig.for_regime(VideoRegime.SHORT, duration_s=duration_s)
 
     if regime == VideoRegime.STREAMING:
-        policy = ClipPolicyConfig.for_regime(VideoRegime.STREAMING, duration_s=duration_s)
+        # Long-form datasets: coarse 30s online index (M3-style), not 4s fine windows.
+        if dataset in {"cg_bench", "vrbench"}:
+            policy = ClipPolicyConfig.for_regime(VideoRegime.LONG, duration_s=duration_s, observation_end_s=observation_end_s)
+            policy.online = True
+            policy.index_fine_expansion = "none"
+            if duration_s is not None and policy.observation_end_s is None:
+                policy.observation_end_s = duration_s
+            return policy
+        policy = ClipPolicyConfig.for_regime(VideoRegime.STREAMING, duration_s=duration_s, observation_end_s=observation_end_s)
         if duration_s is not None and policy.observation_end_s is None:
             policy.observation_end_s = duration_s
         return policy

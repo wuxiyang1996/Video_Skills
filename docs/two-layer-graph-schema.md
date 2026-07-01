@@ -80,7 +80,7 @@ Layer 2 must cite Layer 1 `node_id` / `evidence_id` for every committed claim.
 |--------|-------------|------------------|
 | **short** | `whole_video` + 4s fine | Full index; retrieval disabled |
 | **long** | `hierarchical` 30s coarse + `retrieval_gated` 8s fine | Index = coarse only; perception on top-k parents |
-| **streaming** | `fixed_window` + `online=true` | Only nodes with `time_span.end_s <= observation_end_s` |
+| **streaming** | short: `fixed_window` 4s + `online=true`; CG/VR: **30s coarse only** + `online=true` | Only nodes with `time_span.end_s <= observation_end_s` |
 
 ### Build phases (`perception.build_phase`)
 
@@ -150,6 +150,8 @@ Streaming is **schema-compatible for all datasets** even when benchmarks are off
 
 For CG-Bench / VRBench, `observation_end_s` can later be tied to question-specific timestamps; MVP uses full observed prefix `[0, duration_s]`.
 
+**CG-Bench / VRBench streaming** uses a **30s coarse online index only** (`index_fine_expansion=none`), avoiding ~900+ 4s fine windows while preserving M3-style long-video indexing.
+
 ---
 
 ## Per-dataset hidden supervision (Layer 1 only in expert_demo)
@@ -180,6 +182,7 @@ They are **stripped** from `extract_clue_memory_graph(..., mode=video_only)`.
 
 ```bash
 python dataset_clip_wrapper/smoke_test_two_layer_schema.py
+python dataset_clip_wrapper/smoke_test_reasoning_rollout.py
 ```
 
 Checks:

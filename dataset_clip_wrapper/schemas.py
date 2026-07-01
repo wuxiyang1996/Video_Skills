@@ -231,7 +231,9 @@ class WrapperConfig:
     run_graph_compose: bool = False
 
     def resolved_clip_policy(self, duration_s: float | None = None) -> ClipPolicyConfig:
-        policy = self.clip_policy or ClipPolicyConfig.dataset_default(self.dataset, self.regime)
+        from .dataset_graph_presets import clip_policy_for
+
+        policy = self.clip_policy or clip_policy_for(self.dataset, self.regime, duration_s=duration_s)
         if duration_s is not None:
             policy.duration_s = duration_s
         if self.regime == VideoRegime.STREAMING and policy.observation_end_s is None and duration_s:
