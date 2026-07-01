@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate layer-2 reasoning rollout executes all 19 reasoning assembly skills."""
+"""Validate layer-2 deterministic reasoning rollout executes the 19 core skills."""
 
 from __future__ import annotations
 
@@ -11,12 +11,29 @@ PKG_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = PKG_ROOT.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from atomic_skills import export_skill_ontology
 from dataset_clip_wrapper.pipeline import iter_canonical_examples
 from dataset_clip_wrapper.schemas import RuntimeMode, VideoRegime, WrapperConfig
 
 EXPECTED_SKILLS = {
-    item["skill_id"] for item in export_skill_ontology()["reasoning_graph_assembly"]
+    "parse_question_target",
+    "propose_evidence_roles",
+    "retrieve_by_event",
+    "retrieve_by_entity",
+    "retrieve_by_time",
+    "retrieve_by_relation",
+    "localize_clue",
+    "extract_claim",
+    "assign_evidence_role",
+    "compose_evidence_chain",
+    "detect_missing_role",
+    "search_counterevidence",
+    "infer_temporal_relation",
+    "infer_state_change",
+    "infer_causal_relation",
+    "infer_intention_or_motive",
+    "infer_social_contradiction",
+    "verify_claim_support",
+    "commit_answer",
 }
 
 

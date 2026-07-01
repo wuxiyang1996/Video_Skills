@@ -21,6 +21,12 @@ def _node_map(graph: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {node.get("node_id"): node for node in graph.get("nodes", []) if node.get("node_id")}
 
 
+def _coerce_hypothesis(hypothesis: dict[str, Any] | list[Any] | str) -> dict[str, Any] | str:
+    if isinstance(hypothesis, list):
+        return next((item for item in hypothesis if isinstance(item, dict)), hypothesis[0] if hypothesis else "")
+    return hypothesis
+
+
 def parse_question_target(question_text: str, options: list[dict[str, Any]] | None = None) -> Any:
     entities = re.findall(r"\b[A-Z][A-Za-z0-9_-]{1,}\b", question_text)
     time_words = [word for word in ("before", "after", "later", "earlier", "when", "while") if word in question_text.lower()]
@@ -240,6 +246,237 @@ def assign_evidence_role(
         {"role_labeled_evidence": labeled, "role_confidence": confidence},
         [evidence_ref],
         confidence=confidence,
+    )
+
+
+def generate_answer_hypotheses(
+    question_text: str,
+    *,
+    options: list[dict[str, Any]] | None = None,
+    parsed_target: dict[str, Any] | None = None,
+) -> Any:
+    """Turn answer options into explicit candidate claims for option-level reasoning."""
+    hypotheses = []
+    for idx, option in enumerate(options or []):
+        label = str(option.get("label") or option.get("id") or chr(ord("A") + idx))
+        text = str(option.get("text") or option.get("answer") or label)
+        hypotheses.append(
+            {
+                "hypothesis_id": stable_id("hypothesis", question_text, label, text),
+                "option_label": label,
+                "claim_text": text,
+                "question_focus": (parsed_target or {}).get("question_focus"),
+                "source": "answer_option",
+            }
+        )
+    if not hypotheses:
+        hypotheses.append(
+            {
+                "hypothesis_id": stable_id("hypothesis", question_text),
+                "option_label": None,
+                "claim_text": question_text,
+                "question_focus": (parsed_target or {}).get("question_focus"),
+                "source": "question_claim",
+            }
+        )
+    return make_result(
+        "generate_answer_hypotheses",
+        {"hypotheses": hypotheses},
+        confidence=1.0,
+    )
+
+
+def retrieve_evidence_for_hypothesis(
+    evidence_graph: dict[str, Any],
+    *,
+    hypothesis: dict[str, Any] | list[Any] | str,
+    max_refs: int = 6,
+) -> Any:
+    """Retrieve L1 evidence for one candidate hypothesis."""
+    hypothesis = _coerce_hypothesis(hypothesis)
+    claim_text = hypothesis if isinstance(hypothesis, str) else hypothesis.get("claim_text") or hypothesis.get("text") or ""
+    scored = []
+    for node in evidence_graph.get("nodes", []):
+        text = node.get("text") or node.get("event_description") or node.get("state_value") or ""
+        score = lexical_score(claim_text, text)
+        if score > 0:
+            scored.append((score, node))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    selected = [node for _, node in scored[:max_refs]]
+    refs = [node["node_id"] for node in selected if node.get("node_id")]
+    return make_result(
+        "retrieve_evidence_for_hypothesis",
+        {
+            "support_refs": refs,
+            "weak_refs": [],
+            "missing_refs": [] if refs else [claim_text],
+            "retrieval_scores": {node["node_id"]: score for score, node in scored[:max_refs] if node.get("node_id")},
+        },
+        refs,
+        ok=bool(refs),
+        failure_code=None if refs else "no_hypothesis_evidence",
+        confidence=scored[0][0] if scored else 0.0,
+    )
+
+
+def score_hypothesis_support(
+    hypothesis: dict[str, Any] | list[Any] | str,
+    *,
+    support_evidence: list[str] | dict[str, Any],
+    counterevidence: list[str] | None = None,
+) -> Any:
+    """Assign a comparable score to one hypothesis from support and contradiction evidence."""
+    hypothesis = _coerce_hypothesis(hypothesis)
+    support_refs = support_evidence.get("support_refs", []) if isinstance(support_evidence, dict) else support_evidence
+    support_refs = support_refs or []
+    counter_refs = counterevidence or []
+    claim_text = hypothesis if isinstance(hypothesis, str) else hypothesis.get("claim_text") or hypothesis.get("text") or ""
+    support_score = min(1.0, 0.25 * len(support_refs))
+    contradiction_score = min(1.0, 0.35 * len(counter_refs))
+    score = max(0.0, support_score - contradiction_score)
+    scored = {
+        "hypothesis": hypothesis,
+        "claim_text": claim_text,
+        "option_label": None if isinstance(hypothesis, str) else hypothesis.get("option_label"),
+        "support_refs": support_refs,
+        "counterevidence_refs": counter_refs,
+        "support_score": support_score,
+        "contradiction_score": contradiction_score,
+        "overall_score": score,
+        "missing_reason": None if support_refs else "missing_support_evidence",
+    }
+    return make_result(
+        "score_hypothesis_support",
+        {"scored_hypothesis": scored},
+        support_refs + counter_refs,
+        ok=bool(support_refs),
+        failure_code=None if support_refs else "missing_support_evidence",
+        confidence=score,
+    )
+
+
+def compare_hypotheses(
+    scored_hypotheses: list[dict[str, Any]],
+    *,
+    decision_policy: dict[str, Any] | None = None,
+) -> Any:
+    """Compare option-level hypotheses and choose the strongest supported candidate."""
+    candidates = [item for item in scored_hypotheses if isinstance(item, dict)]
+    if not candidates:
+        return make_result("compare_hypotheses", ok=False, failure_code="no_hypotheses")
+    margin = float((decision_policy or {}).get("min_margin", 0.0))
+    ranked = sorted(candidates, key=lambda item: item.get("overall_score", item.get("support_score", 0.0)), reverse=True)
+    best = ranked[0]
+    second_score = ranked[1].get("overall_score", ranked[1].get("support_score", 0.0)) if len(ranked) > 1 else 0.0
+    best_score = best.get("overall_score", best.get("support_score", 0.0))
+    refs = list(dict.fromkeys(ref for item in ranked for ref in item.get("support_refs", []) + item.get("counterevidence_refs", [])))
+    eliminated = [
+        {
+            "option_label": item.get("option_label"),
+            "claim_text": item.get("claim_text"),
+            "reason": "lower_support_or_more_counterevidence",
+            "overall_score": item.get("overall_score", 0.0),
+        }
+        for item in ranked[1:]
+    ]
+    return make_result(
+        "compare_hypotheses",
+        {
+            "best_hypothesis": best,
+            "eliminated_hypotheses": eliminated,
+            "decision_reason": "highest_support_margin",
+            "score_margin": best_score - second_score,
+        },
+        refs,
+        ok=best_score > 0 and (best_score - second_score) >= margin,
+        failure_code=None if best_score > 0 and (best_score - second_score) >= margin else "ambiguous_hypotheses",
+        confidence=max(0.0, min(1.0, best_score)),
+    )
+
+
+def bridge_evidence_hops(
+    evidence_graph: dict[str, Any],
+    *,
+    source_evidence: list[str] | str,
+    target_hypothesis: dict[str, Any] | list[Any] | str,
+    allowed_hop_types: list[str] | None = None,
+    max_hops: int = 2,
+) -> Any:
+    """Build a small multi-hop chain from evidence refs toward a target hypothesis."""
+    target_hypothesis = _coerce_hypothesis(target_hypothesis)
+    sources = [source_evidence] if isinstance(source_evidence, str) else list(source_evidence or [])
+    allowed = set(allowed_hop_types or [])
+    claim_text = target_hypothesis if isinstance(target_hypothesis, str) else target_hypothesis.get("claim_text") or ""
+    nodes = _node_map(evidence_graph)
+    frontier = set(sources)
+    seen = set(sources)
+    chain_edges = []
+    for _ in range(max(1, max_hops)):
+        next_frontier = set()
+        for edge in evidence_graph.get("edges", []):
+            if allowed and edge.get("edge_type") not in allowed:
+                continue
+            if edge.get("src") in frontier and edge.get("dst") not in seen:
+                next_frontier.add(edge["dst"])
+                chain_edges.append(edge)
+            elif edge.get("dst") in frontier and edge.get("src") not in seen:
+                next_frontier.add(edge["src"])
+                chain_edges.append(edge)
+        seen.update(next_frontier)
+        frontier = next_frontier
+    lexical_bridges = [
+        node["node_id"]
+        for node in evidence_graph.get("nodes", [])
+        if node.get("node_id") not in seen
+        and lexical_score(claim_text, node.get("text") or node.get("event_description") or "") > 0
+    ][:3]
+    chain_refs = list(dict.fromkeys([*sources, *seen, *lexical_bridges]))
+    chain_refs = [ref for ref in chain_refs if ref in nodes]
+    return make_result(
+        "bridge_evidence_hops",
+        {"multi_hop_chain": {"evidence_refs": chain_refs, "path_edges": chain_edges, "target_claim": claim_text}},
+        chain_refs,
+        ok=len(chain_refs) >= 2,
+        failure_code=None if len(chain_refs) >= 2 else "no_bridge_path",
+        confidence=min(1.0, len(chain_refs) / 4),
+    )
+
+
+def verify_temporal_social_consistency(
+    evidence_chain: dict[str, Any],
+    *,
+    hypothesis: dict[str, Any] | list[Any] | str,
+    evidence_graph: dict[str, Any] | None = None,
+) -> Any:
+    """Check generic temporal ordering and social-plausibility signals without motif rules."""
+    hypothesis = _coerce_hypothesis(hypothesis)
+    refs = evidence_chain.get("evidence_refs", []) or []
+    nodes = [_node_map(evidence_graph or {}).get(ref) for ref in refs]
+    nodes = [node for node in nodes if node]
+    spans = [normalize_time_span(node.get("time_span")) for node in nodes]
+    spans = [span for span in spans if span]
+    spans = sorted(spans, key=lambda span: span["start_s"])
+    temporal_ok = all(span["start_s"] <= span["end_s"] for span in spans) if spans else bool(refs)
+    claim_text = hypothesis if isinstance(hypothesis, str) else hypothesis.get("claim_text") or hypothesis.get("text") or ""
+    social_terms = {"person", "man", "woman", "boy", "girl", "friend", "talk", "look", "give", "take", "help", "angry"}
+    evidence_text = _evidence_text(evidence_graph or {}, refs)
+    social_plausibility_ok = bool(set(re.findall(r"[A-Za-z]+", f"{claim_text} {evidence_text}".lower())) & social_terms) or bool(refs)
+    conflicts = []
+    if not temporal_ok:
+        conflicts.append("temporal_order_uncertain")
+    if not social_plausibility_ok:
+        conflicts.append("social_context_uncertain")
+    return make_result(
+        "verify_temporal_social_consistency",
+        {
+            "temporal_ok": temporal_ok,
+            "social_plausibility_ok": social_plausibility_ok,
+            "conflicts": conflicts,
+        },
+        refs,
+        ok=not conflicts,
+        failure_code=None if not conflicts else "consistency_conflict",
+        confidence=1.0 if not conflicts else 0.4,
     )
 
 

@@ -394,6 +394,17 @@ This keeps responsibilities clear:
 - `CrossLayerLinks` handles explicit bindings such as `uses_evidence`,
   `supports_claim`, `refutes_claim`, and `verified_by`.
 
+Do not introduce a separate runtime `VerifierGraph`. Verification is split into:
+
+- **Atomic verification skills** inside `SkillGraphRollout`, such as
+  `verify_claim_support`, `verify_temporal_social_consistency`,
+  `score_hypothesis_support`, and `compare_hypotheses`. These are controller
+  actions because they affect claim status, option selection, and repair.
+- **Runtime verifier invariants** outside the action space, such as schema
+  validity, evidence reference existence, hidden-supervision leakage checks,
+  streaming visibility checks, and the rule that retrieval score is not final
+  answer support. These produce acceptance metadata and reward signals.
+
 Long-video datasets such as CG-Bench and VRBench motivate the unified graph view
 because their clue intervals and timestamped reasoning processes naturally bind
 evidence nodes to reasoning nodes. However, the first implementation should

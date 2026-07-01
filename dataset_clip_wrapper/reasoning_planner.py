@@ -15,10 +15,13 @@ from atomic_skills import export_skill_ontology  # noqa: E402
 from atomic_skills.common import stable_id  # noqa: E402
 from atomic_skills.reasoning_graph_assembly import (  # noqa: E402
     assign_evidence_role,
+    bridge_evidence_hops,
     commit_answer,
+    compare_hypotheses,
     compose_evidence_chain,
     detect_missing_role,
     extract_claim,
+    generate_answer_hypotheses,
     infer_causal_relation,
     infer_intention_or_motive,
     infer_social_contradiction,
@@ -28,11 +31,14 @@ from atomic_skills.reasoning_graph_assembly import (  # noqa: E402
     parse_question_target,
     propose_evidence_roles,
     retrieve_by_entity,
+    retrieve_evidence_for_hypothesis,
     retrieve_by_event,
     retrieve_by_relation,
     retrieve_by_time,
     search_counterevidence,
+    score_hypothesis_support,
     verify_claim_support,
+    verify_temporal_social_consistency,
 )
 
 from .clue_memory import make_reasoning_rollout_shell
@@ -50,6 +56,12 @@ REASONING_SKILL_EXECUTORS = {
     "localize_clue": localize_clue,
     "extract_claim": extract_claim,
     "assign_evidence_role": assign_evidence_role,
+    "generate_answer_hypotheses": generate_answer_hypotheses,
+    "retrieve_evidence_for_hypothesis": retrieve_evidence_for_hypothesis,
+    "score_hypothesis_support": score_hypothesis_support,
+    "compare_hypotheses": compare_hypotheses,
+    "bridge_evidence_hops": bridge_evidence_hops,
+    "verify_temporal_social_consistency": verify_temporal_social_consistency,
     "compose_evidence_chain": compose_evidence_chain,
     "detect_missing_role": detect_missing_role,
     "search_counterevidence": search_counterevidence,
@@ -95,13 +107,20 @@ Return JSON only:
 
 Skill execution rules:
 1. Always start with parse_question_target and propose_evidence_roles.
-2. Use retrieve_by_event / retrieve_by_entity / retrieve_by_time to find relevant L1 evidence.
-3. Use localize_clue and extract_claim to ground claims in evidence.
-4. Use assign_evidence_role + compose_evidence_chain to build the support structure.
-5. Use infer_* skills for temporal, causal, state-change, or social reasoning as needed.
-6. Always end with verify_claim_support then commit_answer.
-7. Keep plans between 8-15 steps. Do not over-plan.
-8. Do not output chain-of-thought.
+2. For multiple-choice or complex social questions, prefer the option-level path:
+   generate_answer_hypotheses -> retrieve_evidence_for_hypothesis ->
+   score_hypothesis_support -> compare_hypotheses.
+3. Use bridge_evidence_hops when the answer requires linking source evidence to
+   an option through object/location/action/state evidence.
+4. Use verify_temporal_social_consistency before final verification when social
+   or temporal plausibility matters.
+5. Use retrieve_by_event / retrieve_by_entity / retrieve_by_time to find relevant L1 evidence.
+6. Use localize_clue and extract_claim to ground claims in evidence.
+7. Use assign_evidence_role + compose_evidence_chain to build the support structure.
+8. Use infer_* skills for temporal, causal, state-change, or social reasoning as needed.
+9. Always end with verify_claim_support then commit_answer.
+10. Keep plans between 8-18 steps. Do not over-plan.
+11. Do not output chain-of-thought.
 """
 
 
@@ -224,6 +243,11 @@ def execute_reasoning_plan(
     trace: list[dict[str, Any]] = []
     step_outputs: dict[str, Any] = {}
 
+    def _one_hypothesis(value: Any) -> Any:
+        if isinstance(value, list):
+            return next((item for item in value if isinstance(item, dict)), value[0] if value else {"claim_text": question_text})
+        return value or {"claim_text": question_text}
+
     for step in reasoning_plan:
         step_id = step.get("step_id")
         skill_id = step.get("skill_id")
@@ -297,6 +321,56 @@ def execute_reasoning_plan(
                     parsed_target,
                     task_family=resolved_args.get("task_family") or "",
                 )
+            elif skill_id == "generate_answer_hypotheses":
+                parsed_target = resolved_args.get("parsed_target")
+                if not isinstance(parsed_target, dict):
+                    parsed_target = {}
+                result = executor(
+                    resolved_args.get("question_text") or question_text,
+                    options=resolved_args.get("options") or options or None,
+                    parsed_target=parsed_target,
+                )
+            elif skill_id == "retrieve_evidence_for_hypothesis":
+                result = executor(
+                    graph,
+                    hypothesis=_one_hypothesis(resolved_args.get("hypothesis")),
+                    max_refs=int(resolved_args.get("max_refs") or 6),
+                )
+            elif skill_id == "score_hypothesis_support":
+                counter = resolved_args.get("counterevidence") or []
+                if isinstance(counter, dict):
+                    counter = counter.get("counterevidence_refs") or counter.get("evidence_refs") or []
+                result = executor(
+                    _one_hypothesis(resolved_args.get("hypothesis")),
+                    support_evidence=resolved_args.get("support_evidence") or [],
+                    counterevidence=counter,
+                )
+            elif skill_id == "compare_hypotheses":
+                scored = resolved_args.get("scored_hypotheses") or []
+                if isinstance(scored, dict):
+                    scored = [scored]
+                scored = [item for item in scored if isinstance(item, dict)]
+                result = executor(
+                    scored,
+                    decision_policy=resolved_args.get("decision_policy") if isinstance(resolved_args.get("decision_policy"), dict) else None,
+                )
+            elif skill_id == "bridge_evidence_hops":
+                source = resolved_args.get("source_evidence") or []
+                if isinstance(source, dict):
+                    source = source.get("evidence_refs") or source.get("support_refs") or []
+                result = executor(
+                    graph,
+                    source_evidence=source,
+                    target_hypothesis=_one_hypothesis(resolved_args.get("target_hypothesis")),
+                    allowed_hop_types=resolved_args.get("allowed_hop_types") if isinstance(resolved_args.get("allowed_hop_types"), list) else None,
+                    max_hops=int(resolved_args.get("max_hops") or 2),
+                )
+            elif skill_id == "verify_temporal_social_consistency":
+                result = executor(
+                    resolved_args.get("evidence_chain") or {"evidence_refs": []},
+                    hypothesis=_one_hypothesis(resolved_args.get("hypothesis")),
+                    evidence_graph=graph,
+                )
             elif skill_id == "compose_evidence_chain":
                 labeled = resolved_args.get("role_labeled_evidence") or []
                 labeled = [item for item in labeled if isinstance(item, dict)]
@@ -348,7 +422,7 @@ def execute_reasoning_plan(
                 )
             else:
                 result = executor(**resolved_args)
-        except (TypeError, KeyError) as exc:
+        except (TypeError, KeyError, AttributeError, ValueError) as exc:
             trace.append({
                 "step_id": step_id,
                 "skill_id": skill_id,
@@ -465,7 +539,7 @@ def build_llm_reasoning_rollout(
     rollout["metadata"] = {
         "executed_skill_ids": list(dict.fromkeys(executed_skills)),
         "executed_skill_count": len(set(executed_skills)),
-        "expected_reasoning_skill_count": 19,
+        "expected_reasoning_skill_count": len(REASONING_SKILL_IDS),
         "llm_plan": plan_response,
         "llm_trace_ok": len(ok_steps),
         "llm_trace_fail": len(failed_steps),

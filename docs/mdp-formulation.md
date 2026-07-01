@@ -128,8 +128,8 @@ retrieve_by_time
 This distinction matters because the skill id defines the operator, while the
 arguments define the actual graph read/write operation.
 
-The first controller-visible action set should be the 19 Reasoning Graph
-Assembly skills:
+The first controller-visible action set should include the 19 core Reasoning
+Graph Assembly skills:
 
 ```text
 parse_question_target
@@ -152,6 +152,35 @@ infer_social_contradiction
 verify_claim_support
 commit_answer
 ```
+
+For multi-hop and complex social MCQ, the current expert-demo action set also
+includes 6 option-level extensions:
+
+```text
+generate_answer_hypotheses
+retrieve_evidence_for_hypothesis
+score_hypothesis_support
+compare_hypotheses
+bridge_evidence_hops
+verify_temporal_social_consistency
+```
+
+These are deliberately generic atomic skills. They support hypothesis
+competition, option-specific evidence retrieval, multi-hop evidence bridging,
+and consistency checking without introducing a hand-coded social motif library.
+
+Some verification operations are intentionally atomic actions. They update the
+reasoning state and can influence later action selection:
+
+```text
+verify_claim_support
+verify_temporal_social_consistency
+score_hypothesis_support
+compare_hypotheses
+```
+
+These should stay inside `G_reasoning_t` as `SkillInvocationNode`s or associated
+verification results. They do not require a third graph layer.
 
 In later `video_only` experiments, selected Evidence Graph Construction skills
 can also become tool-mediated actions:
@@ -186,6 +215,20 @@ Typical transition effects include:
 - write verifier outputs, failure codes, and confidence;
 - in Stage C, append new clip, observation, dialogue, event, entity, state, or
   provenance nodes to `G_evidence_t`.
+
+There are two kinds of verification:
+
+1. **Atomic verification skills** are actions selected by the controller, such
+   as checking claim support or comparing scored hypotheses. Their outputs are
+   part of `G_reasoning_t`.
+2. **Runtime verifier invariants** are hard acceptance gates applied by the
+   environment after or between actions. They are not actions. Examples include
+   JSON schema validity, evidence-ref existence, hidden-supervision leakage,
+   streaming visibility (`time_span.end_s <= observation_end_s`), and the rule
+   that retrieval scores alone do not prove answer support.
+
+The state may store runtime verifier results in `verifier_state_t`, but this is
+state metadata, not a separate verifier graph.
 
 Action masks should be derived from skill preconditions. For example,
 `commit_answer` should be unavailable until there is a verified claim or a
@@ -230,7 +273,8 @@ state:
   question + fixed clue-memory graph + partial SkillGraphRollout
 
 actions:
-  19 Reasoning Graph Assembly skills
+  19 core Reasoning Graph Assembly skills
+  + 6 option-level multi-hop/social extensions
 
 goal:
   produce a verified answer support chain
@@ -249,7 +293,8 @@ state:
 
 actions:
   selected Evidence Graph Construction skills
-  + 19 Reasoning Graph Assembly skills
+  + 19 core Reasoning Graph Assembly skills
+  + 6 option-level multi-hop/social extensions
 
 goal:
   discover evidence from visible video/tool outputs and answer without hidden

@@ -2,10 +2,13 @@
 
 from .skills import (
     assign_evidence_role,
+    bridge_evidence_hops,
     commit_answer,
+    compare_hypotheses,
     compose_evidence_chain,
     detect_missing_role,
     extract_claim,
+    generate_answer_hypotheses,
     infer_causal_relation,
     infer_intention_or_motive,
     infer_social_contradiction,
@@ -16,10 +19,13 @@ from .skills import (
     propose_evidence_roles,
     retrieve_by_entity,
     retrieve_by_event,
+    retrieve_evidence_for_hypothesis,
     retrieve_by_relation,
     retrieve_by_time,
     search_counterevidence,
+    score_hypothesis_support,
     verify_claim_support,
+    verify_temporal_social_consistency,
 )
 
 __all__ = [
@@ -32,6 +38,12 @@ __all__ = [
     "localize_clue",
     "extract_claim",
     "assign_evidence_role",
+    "generate_answer_hypotheses",
+    "retrieve_evidence_for_hypothesis",
+    "score_hypothesis_support",
+    "compare_hypotheses",
+    "bridge_evidence_hops",
+    "verify_temporal_social_consistency",
     "compose_evidence_chain",
     "detect_missing_role",
     "search_counterevidence",

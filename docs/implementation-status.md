@@ -29,14 +29,23 @@ The clue-memory graph and the skill graph are **not** the same object:
 Conceptually unified, engineering-layered: keep runtime objects separate, export
 as one heterogeneous graph only after adapters and verifiers are stable.
 
+Verification does not introduce a third graph layer. Current boundary:
+
+- Planner-visible verification is represented as Layer-2 atomic skills
+  (`verify_claim_support`, `verify_temporal_social_consistency`,
+  `score_hypothesis_support`, `compare_hypotheses`).
+- Runtime verifier invariants remain hard acceptance gates over both layers
+  (schema validity, evidence-ref existence, hidden-supervision leakage,
+  streaming visibility, and retrieval-score-is-not-support).
+
 ### 1.2 Two Atomic Skill Bundles
 
 | Bundle | Count | Role in MVP |
 |--------|-------|-------------|
 | Evidence Graph Construction | 9 | Offline graph builder / audit trace |
-| Reasoning Graph Assembly | 19 | Primary controller-visible action set |
+| Reasoning Graph Assembly | 25 | 19 core actions + 6 option-level multi-hop/social extensions |
 
-Total: **28 executable atomic skills** in `atomic_skills/`.
+Total: **34 executable atomic skills** in `atomic_skills/`.
 
 Evidence Graph Construction skills:
 
@@ -132,13 +141,26 @@ Full dataset recipes, labeling rules, and acceptance gates:
 
 ## 4. Runnable Code
 
-### 4.1 Smoke Test (no API key)
+### 4.1 Smoke Tests (no API key)
 
-Runs all 28 atomic skills on a synthetic social-contradiction example:
+Runs the original 28 core atomic skills on a synthetic social-contradiction
+example:
 
 ```bash
 cd /fs/gamma-projects/vlm-robot/video_skills_relaunched
 python experiments/smoke_test_atomic_skills.py
+```
+
+Validates the 19 core deterministic L2 rollout skills:
+
+```bash
+python dataset_clip_wrapper/smoke_test_reasoning_rollout.py
+```
+
+Validates the 6 option-level multi-hop/social L2 extensions:
+
+```bash
+python dataset_clip_wrapper/smoke_test_multi_hop_reasoning_skills.py
 ```
 
 ### 4.2 Graph Crafting from Video-Holmes (no API key)

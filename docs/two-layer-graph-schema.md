@@ -118,9 +118,40 @@ Layer 2 must cite Layer 1 `node_id` / `evidence_id` for every committed claim.
 
 ### Skill nodes
 
-Use the 19 **Reasoning Graph Assembly** atomic skills (`retrieve_by_*`, `verify_claim_support`, `commit_answer`, …).
+Use the **Reasoning Graph Assembly** atomic skills:
+
+- 19 core skills (`retrieve_by_*`, `infer_*`, `verify_claim_support`, `commit_answer`, …).
+- 6 option-level multi-hop/social extensions:
+  `generate_answer_hypotheses`, `retrieve_evidence_for_hypothesis`,
+  `score_hypothesis_support`, `compare_hypotheses`, `bridge_evidence_hops`,
+  and `verify_temporal_social_consistency`.
 
 Every `claim` must list `supported_by_refs` pointing to Layer-1 node ids.
+
+### Verification boundary
+
+The two-layer graph is sufficient. Do **not** add a third verification graph.
+
+Verification belongs in two places:
+
+1. **Layer-2 atomic verification skills** are planner/controller-visible
+   actions because they affect reasoning state, claim status, option comparison,
+   and final answer selection. Examples:
+   `verify_claim_support`, `verify_temporal_social_consistency`,
+   `score_hypothesis_support`, and `compare_hypotheses`.
+2. **Runtime verifier invariants** are system checks, not planner actions. They
+   run after rollout construction and write `verifier_summary`,
+   `failure_reasons`, or reward signals. Examples: schema validity, evidence ref
+   existence, hidden-supervision leakage, streaming timestamp visibility, and
+   the rule that retrieval score alone is not answer support.
+
+This keeps the architecture simple:
+
+```text
+Layer 1 = evidence state
+Layer 2 = reasoning program + verification trace
+Runtime verifier = hard acceptance gates over both layers
+```
 
 ### Modes
 
@@ -183,6 +214,7 @@ They are **stripped** from `extract_clue_memory_graph(..., mode=video_only)`.
 ```bash
 python dataset_clip_wrapper/smoke_test_two_layer_schema.py
 python dataset_clip_wrapper/smoke_test_reasoning_rollout.py
+python dataset_clip_wrapper/smoke_test_multi_hop_reasoning_skills.py
 ```
 
 Checks:
@@ -191,6 +223,7 @@ Checks:
 - `clue_memory_ref` linkage
 - `video_only` hidden-node leakage
 - streaming `observation_end_s` enforcement
+- Layer-2 atomic verification skills remain inside `SkillGraphRollout`
 
 ---
 
