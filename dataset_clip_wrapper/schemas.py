@@ -151,6 +151,7 @@ class BackboneConfig:
 class ClipSchemaConfig:
     """Multimodal clip-schema producer hyperparameters (Qwen via OpenRouter)."""
 
+    backend: Literal["qwen", "video_tools"] = "qwen"
     model: str = "qwen/qwen3.5-9b"
     api_base: str = "https://openrouter.ai/api/v1/chat/completions"
     api_key_env: str = "OPENROUTER_API_KEY"
@@ -163,6 +164,7 @@ class ClipSchemaConfig:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "backend": self.backend,
             "model": self.model,
             "api_base": self.api_base,
             "api_key_env": self.api_key_env,

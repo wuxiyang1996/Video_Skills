@@ -12,6 +12,7 @@ from .dataset_graph_presets import (
 from .pipeline import build_canonical_example, iter_canonical_examples
 from .llm_pipeline import build_llm_enriched_example, iter_llm_enriched_examples
 from .skill_graph_bridge import canonical_example_to_skill_graph
+from .video_tool_backend import VideoToolConfig, VideoToolPerceptionBackend
 from .schemas import (
     BackboneConfig,
     ClipPolicyConfig,
@@ -31,6 +32,8 @@ __all__ = [
     "GraphComposerConfig",
     "RuntimeMode",
     "VideoRegime",
+    "VideoToolConfig",
+    "VideoToolPerceptionBackend",
     "WrapperConfig",
     "DATASET_DEFAULT_REGIME",
     "DATASET_HIDDEN_SOURCES",

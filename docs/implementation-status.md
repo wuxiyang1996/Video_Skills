@@ -1,6 +1,6 @@
 # Implementation Status
 
-Last updated: 2026-06-30
+Last updated: 2026-07-01
 
 This document tracks what is designed, what is implemented, and how to run the
 current code. It consolidates status from README, atomic skills v1, dataset
@@ -53,8 +53,10 @@ assign_provenance_trust
 ```
 
 These are **lightweight deterministic Python functions**. They operate on text,
-annotations, captions, and clip time spans. They do **not** decode raw video
-frames or call a VLM for perception yet.
+annotations, captions, tool-produced clip schemas, and clip time spans. Raw
+video decoding is available through the optional `video_tools` clip-schema
+backend, but the atomic functions themselves still receive structured evidence
+rather than owning detector / tracker / OCR / ASR implementations.
 
 ### 1.3 Two Runtime Modes
 
@@ -124,7 +126,9 @@ Full dataset recipes, labeling rules, and acceptance gates:
 
 - Activate perception skills as tool-mediated actions
 - Automatic captions/ASR, entity linking, graph edges without hidden clues
-- Requires VLM/ASR pipeline integration
+- First local raw-video tool backend implemented for frame sampling,
+  frame-change signals, and optional OCR
+- Full VLM/ASR/detector/tracker integration remains future work
 
 ## 4. Runnable Code
 
@@ -161,6 +165,11 @@ python -m dataset_clip_wrapper.cli \
 python -m dataset_clip_wrapper.run_llm_pipeline \
   --dataset cg_bench --regime long --limit 1 \
   --retrieval-topk 2 --clip-schema-max-clips 10
+
+# Offline raw-video tool backend, no OpenRouter key required when graph is deterministic
+python -m dataset_clip_wrapper.run_llm_pipeline \
+  --dataset video_holmes --regime short --limit 1 \
+  --clip-schema-backend video_tools --graph-deterministic
 ```
 
 Long-video defaults (`ClipPolicyConfig.for_regime(LONG)`):
@@ -206,7 +215,8 @@ runs a local verifier on cross-layer bindings.
 | Embedding-based coarse retrieval (M3-style) | Lexical gate in `clip_retrieval.py`; embedding API not wired |
 | `shot_boundary` / `scene_boundary` / `adaptive` strategies | Schema enum only |
 | Port of legacy `Video_Skills` segmenter | Exists in sibling repo, not wired to relaunch |
-| Raw VLM caption / ASR / object perception | Stage C |
+| Local raw-video frame tool backend | Implemented as `video_tool_backend.py`; produces same clip-schema fields as Qwen path |
+| Full raw VLM caption / ASR / object tracking stack | Stage C future work |
 | `create_semantic_memory_node` | Discussed in early skill drafts; not in final 9-skill set |
 | M3-Bench memory graph reader | Blocker for M3 rollouts |
 | Controller training / verified RL | Design only |

@@ -34,7 +34,7 @@ CanonicalVideoExample
 
 Offline memorization (Layer 1):
   video -> clip_policy(regime) -> [long] retrieve top-k coarse -> fine perception
-       -> optional Qwen clip-schema -> graph-crafting skills -> clue nodes/edges
+       -> optional clip-schema backend -> graph-crafting skills -> clue nodes/edges
 
 Online QA (Layer 2):
   question + clue_memory_graph -> retrieve -> reasoning skills -> claims -> answer
@@ -87,7 +87,7 @@ Layer 2 must cite Layer 1 `node_id` / `evidence_id` for every committed claim.
 | Phase | Meaning |
 |-------|---------|
 | `index_only` | Clips + dataset-visible text only (default smoke / CLI) |
-| `perception_partial` | Qwen clip-schema on capped clips |
+| `perception_partial` | Qwen or `video_tools` clip-schema on capped clips |
 | `perception_full` | Full perception budget (future / batch) |
 
 ---

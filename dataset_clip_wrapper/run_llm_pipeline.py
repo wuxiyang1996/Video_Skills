@@ -34,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--keys-py", default="/fs/gamma-projects/vlm-robot/keys.py")
 
     parser.add_argument("--clip-schema-model", default="qwen/qwen3.5-9b")
+    parser.add_argument("--clip-schema-backend", default="qwen", choices=["qwen", "video_tools"])
     parser.add_argument("--clip-schema-max-clips", type=int, default=3)
     parser.add_argument("--clip-schema-frames", type=int, default=4)
     parser.add_argument("--clip-schema-max-tokens", type=int, default=1200)
@@ -87,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         backbone=BackboneConfig(keys_py_path=args.keys_py),
         clip_schema=ClipSchemaConfig(
+            backend=args.clip_schema_backend,
             model=args.clip_schema_model,
             keys_py_path=args.keys_py,
             max_clips=args.clip_schema_max_clips,
@@ -120,7 +122,10 @@ def main(argv: list[str] | None = None) -> int:
             {
                 "dataset": args.dataset,
                 "regime": dataset_regime.value,
-                "clip_schema_model": config.clip_schema.model,
+                "clip_schema_model": config.clip_schema.model
+                if config.clip_schema.backend == "qwen"
+                else "local-video-tools",
+                "clip_schema_backend": config.clip_schema.backend,
                 "graph_model": config.graph_composer.model,
                 "run_clip_schema": config.run_clip_schema,
                 "run_graph_compose": config.run_graph_compose,

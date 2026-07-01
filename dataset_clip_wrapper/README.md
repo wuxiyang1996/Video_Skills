@@ -55,7 +55,7 @@ Long-video flow (M3-style):
 coarse index (30s windows, all clips in evidence_index)
   -> lexical retrieve top-k coarse clips (question + visible segments)
   -> fine windows (8s) only inside retrieved coarse parents
-  -> Qwen clip-schema + graph compose on perception clips only
+  -> clip-schema backend + graph compose on perception clips only
 ```
 
 ### Backbone
@@ -75,9 +75,11 @@ Other backbone inputs:
 
 ## LLM Two-Stage Pipeline
 
-Stage 1 uses a multimodal OpenRouter model (default `qwen/qwen3.5-9b`, closest
-available Qwen3.5 ~8B-class VLM on OpenRouter) to turn each segmented clip into
-a structured clip schema.
+Stage 1 turns each segmented clip into a structured clip schema. The default
+backend is a multimodal OpenRouter model (`qwen/qwen3.5-9b`, closest available
+Qwen3.5 ~8B-class VLM on OpenRouter). For offline raw-video smoke tests and
+hard `video_only` cases, `--clip-schema-backend video_tools` uses local video
+tools instead.
 
 Stage 2 uses `openai/gpt-oss-120b` to plan and execute Evidence Graph
 Construction atomic skills, producing a clue-memory / perception graph.
@@ -86,7 +88,7 @@ Construction atomic skills, producing a clue-memory / perception graph.
 segment clips (short / long / streaming)
   -> [long] retrieve top-k coarse clips
   -> [long] expand fine windows inside candidates only
-  -> Qwen clip-schema producer (perception clips)
+  -> clip-schema producer (Qwen or local video_tools)
   -> gpt-oss-120B graph composer over atomic graph-crafting skills
   -> canonical example with evidence_index graph
 ```
@@ -119,16 +121,33 @@ Hyperparameters:
 
 | Flag | Default | Role |
 |------|---------|------|
+| `--clip-schema-backend` | `qwen` | `qwen` for OpenRouter VLM, `video_tools` for local raw-video tools |
 | `--clip-schema-model` | `qwen/qwen3.5-9b` | multimodal clip-schema producer |
-| `--clip-schema-max-clips` | `3` | cap Qwen calls per example |
+| `--clip-schema-max-clips` | `3` | cap clip-schema calls per example |
 | `--graph-model` | `openai/gpt-oss-120b` | graph planner / composer |
 | `--graph-deterministic` | off | apply atomic skills directly from clip schemas |
 | `--keys-py` | workspace `keys.py` | OpenRouter API key source |
+
+Optional local raw-video perception backend:
+
+```bash
+python -m dataset_clip_wrapper.run_llm_pipeline \
+  --dataset video_holmes \
+  --clip-schema-backend video_tools \
+  --graph-deterministic \
+  --limit 1
+```
+
+This backend copies the useful Multi-hop perception-tool pattern into this repo
+without depending on the full Multi-hop agent runtime. It samples frames,
+computes frame-change signals, tries optional OCR when available, and emits the
+same clip-schema fields consumed by the atomic graph composer.
 
 Offline graph-compose smoke test:
 
 ```bash
 python dataset_clip_wrapper/smoke_test_graph_compose.py
+python dataset_clip_wrapper/smoke_test_video_tools.py
 ```
 
 ## CLI

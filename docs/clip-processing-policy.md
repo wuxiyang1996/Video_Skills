@@ -1,6 +1,6 @@
 # Clip Processing Policy
 
-Last updated: 2026-06-30
+Last updated: 2026-07-01
 
 This document is the canonical reference for how short, long, and streaming
 videos are segmented before evidence indexing and skill-graph reasoning. It
@@ -242,7 +242,8 @@ retrieval/segmentation is a leakage failure.
 | `hierarchical` coarse→fine | Documented | **Implemented**: coarse index + `retrieve_coarse_clips` top-k + fine inside selected parents (`clip_retrieval.py`, `llm_pipeline.py`) |
 | `shot_boundary` / `scene_boundary` / `adaptive` | Schema enum only | Not implemented in relaunch code |
 | Legacy `long_hierarchical` segmenter | Mapped above | Exists in `Video_Skills/visual_grounding/segmenter.py`, not ported |
-| Raw VLM caption / ASR perception | Planned Stage C | Not implemented |
+| Local raw-video tool backend | Stage C seed | Implemented as optional `--clip-schema-backend video_tools`: frame sampling, frame-change signals, optional OCR; no detector/tracker/ASR yet |
+| Raw VLM caption / ASR / detector perception | Planned Stage C | Partial: Qwen clip-schema backend and local video tools exist; full ASR/object/tracking stack not implemented |
 
 ## 9. Verifier Invariants
 

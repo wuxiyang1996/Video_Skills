@@ -16,6 +16,7 @@ from .clue_memory import extract_clue_memory_graph
 from .pipeline import _clip_id, build_canonical_example
 from .reasoning_rollout import build_reasoning_rollout
 from .schemas import ClipPolicyConfig, ClipSpan, RuntimeMode, WrapperConfig
+from .video_tool_backend import VideoToolConfig, VideoToolPerceptionBackend
 
 
 def _subtitle_context_for_clip(segments: list[dict[str, Any]], clip_span: dict[str, float]) -> str:
@@ -111,6 +112,26 @@ def _produce_clip_schemas(
     derived_clips: list[dict[str, Any]],
     visible_segments: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    if config.clip_schema.backend == "video_tools":
+        producer = VideoToolPerceptionBackend(
+            VideoToolConfig(request_frames=config.clip_schema.request_frames)
+        )
+        question_context = item.question.get("question_text") if config.mode == RuntimeMode.EXPERT_DEMO else None
+        schemas: list[dict[str, Any]] = []
+        budget = config.clip_schema.max_clips
+        for i, (clip, derived) in enumerate(zip(spans, derived_clips)):
+            if budget is not None and i >= budget:
+                break
+            schema = producer.build_clip_schema(
+                clip_id=derived["clip_id"],
+                clip=clip,
+                video_path=item.video_path,
+                subtitle_context=_subtitle_context_for_clip(visible_segments, clip.to_dict()),
+                question_context=question_context,
+            )
+            schemas.append(schema)
+        return schemas
+
     keys_py = config.clip_schema.keys_py_path or config.backbone.keys_py_path
     api_key = load_openrouter_api_key(keys_py_path=keys_py, env_var=config.clip_schema.api_key_env)
     client = OpenRouterClient(
@@ -188,7 +209,10 @@ def build_llm_enriched_example(
             visible_segments=visible_segments,
         )
         example["metadata"]["clip_schemas"] = clip_schemas
-        example["metadata"]["clip_schema_model"] = config.clip_schema.model
+        example["metadata"]["clip_schema_model"] = (
+            config.clip_schema.model if config.clip_schema.backend == "qwen" else "local-video-tools"
+        )
+        example["metadata"]["clip_schema_backend"] = config.clip_schema.backend
 
     if config.run_graph_compose:
         keys_py = config.graph_composer.keys_py_path or config.backbone.keys_py_path
