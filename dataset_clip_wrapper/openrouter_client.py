@@ -94,5 +94,11 @@ class OpenRouterClient:
             )
         return content.strip()
 
-    def chat_json(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
-        return parse_json_response(self.chat(messages, response_format={"type": "json_object"}))
+    def chat_json(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        response_format: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload_format = response_format or {"type": "json_object"}
+        return parse_json_response(self.chat(messages, response_format=payload_format))
