@@ -269,7 +269,18 @@ def build_llm_enriched_example(
 
         clue_graph = extract_clue_memory_graph(example, mode=config.mode)
         example["metadata"]["clue_memory_graph"] = clue_graph
-        reasoning_rollout = build_reasoning_rollout(example, clue_graph, rollout_source="llm_pipeline")
+
+        if config.run_l2_llm_planner:
+            from .reasoning_planner import build_llm_reasoning_rollout
+            l2_client = OpenRouterClient(
+                model=config.graph_composer.model if config.graph_composer else "openai/gpt-oss-120b",
+                api_key=api_key,
+                max_tokens=1800,
+                reasoning={"effort": "minimal", "exclude": True},
+            )
+            reasoning_rollout = build_llm_reasoning_rollout(example, clue_graph, client=l2_client)
+        else:
+            reasoning_rollout = build_reasoning_rollout(example, clue_graph, rollout_source="llm_pipeline")
         example["metadata"]["reasoning_rollout"] = reasoning_rollout
         example["metadata"]["reasoning_rollout_shell"] = reasoning_rollout
 

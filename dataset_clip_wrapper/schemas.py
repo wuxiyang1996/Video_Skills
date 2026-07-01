@@ -231,6 +231,7 @@ class WrapperConfig:
     run_backbone: bool = False
     run_clip_schema: bool = False
     run_graph_compose: bool = False
+    run_l2_llm_planner: bool = False
 
     def resolved_clip_policy(self, duration_s: float | None = None) -> ClipPolicyConfig:
         from .dataset_graph_presets import clip_policy_for
