@@ -5,6 +5,58 @@ Last updated: 2026-07-01
 This note defines how the two graph layers in `video_skills_relaunched` can be
 viewed as a Markov decision process where atomic skill invocations are actions.
 
+## Implementation Staging
+
+The MDP formulation describes the **target agent system**. Implementation is
+staged so that data collection and model training can proceed incrementally:
+
+### Stage 0: Expert Demo Craft (current)
+
+The current implementation uses gpt-oss as an **open-loop expert planner** that
+generates complete reasoning programs in one shot. This is intentional:
+
+- gpt-oss plans a full skill sequence given (question, L1 evidence graph).
+- The plan is executed sequentially without re-planning between steps.
+- No action masks, budget tracking, or repair loops are applied.
+- Functional failures (e.g. `no_event_match`) are recorded but do not trigger
+  re-planning.
+
+This produces **expert demonstration trajectories** that serve as:
+
+1. Supervised training data for imitation learning (behavioral cloning).
+2. Offline RL dataset (state, action, reward tuples extracted post-hoc).
+3. Validation of the skill ontology and graph schema under real LLM outputs.
+
+The open-loop planner lives in `dataset_clip_wrapper/reasoning_planner.py` (L2)
+and `dataset_clip_wrapper/graph_composer.py` (L1).
+
+### Stage 1: Closed-Loop MDP Controller (future)
+
+The learned controller will follow the full MDP specification below:
+
+- Observe current state `s_t` (including partial graph and verifier feedback).
+- Select one action `a_t = (skill_id, typed_args)` via policy `π(a|s)`.
+- Execute the skill and observe transition `s_{t+1} = T(s_t, a_t)`.
+- Apply action masks from skill preconditions.
+- Support repair: if a skill fails, the controller can retry with different
+  arguments or choose an alternative skill.
+- Budget and termination conditions gate the episode.
+
+The transition from Stage 0 to Stage 1 requires:
+
+- Collecting sufficient expert trajectories across datasets and regimes.
+- Defining the reward function over collected rollouts.
+- Training or fine-tuning a policy model on the offline data.
+- Implementing the closed-loop execution harness with action masks and budget.
+
+```text
+Stage 0 (now):   gpt-oss open-loop planner → expert trajectories
+                                                    ↓
+Stage 1 (next):  trajectories → train policy → closed-loop MDP controller
+```
+
+---
+
 ## Core View
 
 The project has two graph objects with different roles:
