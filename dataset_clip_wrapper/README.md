@@ -22,6 +22,19 @@ dataset adapter
   -> canonical JSON example
 ```
 
+## Two-layer graph export
+
+Each canonical example now includes:
+
+- `metadata.clue_memory_graph` — Layer 1 (`ClueMemoryGraph`, question-blind)
+- `metadata.reasoning_rollout_shell` — Layer 2 shell linked via `clue_memory_ref`
+
+See [two-layer graph schema](../docs/two-layer-graph-schema.md).
+
+```bash
+python dataset_clip_wrapper/smoke_test_two_layer_schema.py
+```
+
 ## Hyperparameters
 
 ### Video regime

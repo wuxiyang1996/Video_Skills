@@ -91,8 +91,37 @@
         "accepted_strong",
         "accepted_weak",
         "accepted_model_labeled",
-        "rejected"
+        "rejected",
+        "pending"
       ]
+    },
+    "layer": {
+      "const": "reasoning"
+    },
+    "video_regime": {
+      "enum": ["short", "long", "streaming"]
+    },
+    "clue_memory_ref": {
+      "type": "object",
+      "required": ["graph_id"],
+      "properties": {
+        "graph_id": {"type": "string"},
+        "index_id": {"type": ["string", "null"]},
+        "observation_end_s": {"type": ["number", "null"], "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "question": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "retrieval_budget": {
+      "type": "object",
+      "properties": {
+        "topk_coarse": {"type": "integer", "minimum": 1},
+        "max_retrieval_steps": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": true
     },
     "failure_reasons": {
       "type": "array",
@@ -128,7 +157,8 @@
         "outputs": {"type": "object", "additionalProperties": true},
         "evidence_refs": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {"type": "string"},
+          "description": "References to layer-1 clue-memory node_id or evidence_id"
         },
         "evidence_visibility": {
           "enum": [

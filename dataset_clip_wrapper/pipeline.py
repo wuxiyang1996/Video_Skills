@@ -9,6 +9,7 @@ from .adapters.base import RawDatasetItem
 from .adapters import get_adapter
 from .backbone import PerceptionBackbone, build_backbone
 from .clip_policy import FineExpansion, segment_video
+from .clue_memory import extract_clue_memory_graph, make_reasoning_rollout_shell
 from .schemas import (
     BackboneConfig,
     ClipPolicyConfig,
@@ -229,11 +230,14 @@ def build_canonical_example(
         clip_policy=clip_policy,
         backbone=config.backbone,
         hidden_sources=item.hidden_supervision_sources,
+        video_regime=config.regime,
+        retrieval=config.retrieval,
     )
     example["evidence_candidates"] = evidence_candidates
     example["raw_source_refs"] = item.raw_source_refs
     example["metadata"].update(item.metadata or {})
     example["metadata"]["video_regime"] = config.regime.value
+    example["metadata"]["retrieval"] = config.retrieval.to_dict()
     example["metadata"]["clip_count"] = len(derived_clips)
     example["metadata"]["index_clip_count"] = len(derived_clips)
     example["metadata"]["coarse_clip_count"] = sum(1 for c in derived_clips if c.get("granularity") == "coarse")
@@ -242,6 +246,10 @@ def build_canonical_example(
     example["metadata"]["hidden_segment_count"] = len(hidden_segments)
     example["evidence_index"]["nodes"] = index_nodes
     example["evidence_index"]["edges"] = index_edges
+    example["evidence_index"]["retrieval"] = config.retrieval.to_dict()
+    clue_graph = extract_clue_memory_graph(example, mode=config.mode)
+    example["metadata"]["clue_memory_graph"] = clue_graph
+    example["metadata"]["reasoning_rollout_shell"] = make_reasoning_rollout_shell(example, clue_graph)
     return example
 
 

@@ -169,8 +169,8 @@ Long-video defaults (`ClipPolicyConfig.for_regime(LONG)`):
 - `ClipRetrievalConfig.topk=2`, lexical scoring over question + visible segments
 - Index layer stores coarse clips only; fine windows expand inside retrieved parents for perception / LLM pipeline
 
-See [dataset_clip_wrapper/README.md](../dataset_clip_wrapper/README.md) and
-[clip processing policy](clip-processing-policy.md).
+See [two-layer graph schema](../docs/two-layer-graph-schema.md) and
+[implementation status](../docs/implementation-status.md).
 
 ### 4.6 Expert Demo with LLM Labeling (API key required)
 

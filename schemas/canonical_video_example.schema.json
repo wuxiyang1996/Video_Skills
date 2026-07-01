@@ -369,10 +369,37 @@
             "overlap_s": {"type": ["number", "null"], "minimum": 0},
             "coarse_window_s": {"type": ["number", "null"], "minimum": 0},
             "fine_window_s": {"type": ["number", "null"], "minimum": 0},
+            "index_fine_expansion": {
+              "enum": ["none", "all", "retrieval_gated"]
+            },
             "online": {"type": "boolean"},
-            "observation_end_s": {"type": ["number", "null"], "minimum": 0}
+            "observation_end_s": {"type": ["number", "null"], "minimum": 0},
+            "video_regime": {
+              "enum": ["short", "long", "streaming"]
+            }
           },
           "additionalProperties": true
+        },
+        "retrieval": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "topk": {"type": "integer", "minimum": 1},
+            "threshold": {"type": "number", "minimum": 0},
+            "mode": {"enum": ["lexical", "sequential", "embedding"]}
+          },
+          "additionalProperties": true
+        },
+        "layer": {
+          "const": "clue_memory"
+        },
+        "nodes": {
+          "type": "array",
+          "items": {"type": "object", "additionalProperties": true}
+        },
+        "edges": {
+          "type": "array",
+          "items": {"type": "object", "additionalProperties": true}
         },
         "node_types": {
           "type": "array",
@@ -382,13 +409,17 @@
               "observation",
               "subtitle_span",
               "caption_span",
+              "dialogue_span",
+              "event",
+              "state",
               "frame",
               "episodic_text",
               "semantic_text",
               "subtitle",
               "face",
               "voice",
-              "entity"
+              "entity",
+              "entity_mention"
             ]
           }
         },

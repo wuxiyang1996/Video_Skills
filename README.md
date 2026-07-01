@@ -151,7 +151,8 @@ Current branch state:
 - **Not yet built**: raw VLM perception, embedding-based coarse retrieval (lexical gate implemented), controller training
 
 Local datasets live under `/fs/gamma-projects/vlm-robot/datasets`. See
-[implementation status](docs/implementation-status.md) for commands and gaps.
+[implementation status](docs/implementation-status.md) and
+[two-layer graph schema](docs/two-layer-graph-schema.md) for commands and layer contracts.
 
 Quick smoke test:
 

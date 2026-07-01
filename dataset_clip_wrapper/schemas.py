@@ -252,6 +252,8 @@ def make_canonical_shell(
     clip_policy: ClipPolicyConfig,
     backbone: BackboneConfig,
     hidden_sources: list[str] | None = None,
+    video_regime: VideoRegime | None = None,
+    retrieval: ClipRetrievalConfig | None = None,
 ) -> dict[str, Any]:
     hidden = hidden_sources or []
     visible = ["video", "question"]
@@ -282,11 +284,13 @@ def make_canonical_shell(
         "evidence_index": {
             "index_id": f"{dataset}:{example_id}:clip_index:v0",
             "index_type": "clip_memory_graph",
+            "layer": "clue_memory",
             "visible_in_modes": ["expert_demo", "video_only"],
-            "clip_policy": clip_policy.to_dict(),
+            "clip_policy": {**clip_policy.to_dict(), "video_regime": (video_regime or VideoRegime.SHORT).value},
+            "retrieval": (retrieval or ClipRetrievalConfig()).to_dict(),
             "backbone": backbone.to_dict(),
-            "node_types": ["clip", "observation", "subtitle_span", "caption_span"],
-            "edge_types": ["temporal_next", "derived_from"],
+            "node_types": ["clip", "observation", "subtitle_span", "caption_span", "dialogue_span", "event", "entity"],
+            "edge_types": ["temporal_next", "derived_from", "entity_mention", "same_entity"],
             "nodes": [],
             "edges": [],
         },
@@ -298,7 +302,8 @@ def make_canonical_shell(
             "model_labeled_sources": [],
         },
         "metadata": {
-            "video_regime": None,
+            "video_regime": (video_regime or VideoRegime.SHORT).value,
+            "retrieval": (retrieval or ClipRetrievalConfig()).to_dict(),
             "wrapper_version": "dataset_clip_wrapper/v0.1",
         },
     }
