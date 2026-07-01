@@ -50,6 +50,62 @@ Other backbone inputs:
 - `--backbone-request-frames`
 - `--run-backbone`
 
+## LLM Two-Stage Pipeline
+
+Stage 1 uses a multimodal OpenRouter model (default `qwen/qwen3.5-9b`, closest
+available Qwen3.5 ~8B-class VLM on OpenRouter) to turn each segmented clip into
+a structured clip schema.
+
+Stage 2 uses `openai/gpt-oss-120b` to plan and execute Evidence Graph
+Construction atomic skills, producing a clue-memory / perception graph.
+
+```text
+segment clips (short / long / streaming)
+  -> Qwen clip-schema producer
+  -> gpt-oss-120B graph composer over atomic graph-crafting skills
+  -> canonical example with evidence_index graph
+```
+
+```bash
+# Full pipeline (requires keys.py or OPENROUTER_API_KEY)
+python -m dataset_clip_wrapper.run_llm_pipeline \
+  --dataset video_holmes \
+  --regime short \
+  --limit 1 \
+  --clip-schema-max-clips 2 \
+  --output dataset_clip_wrapper/output/video_holmes_llm.jsonl
+
+# Long-video CG-Bench
+python -m dataset_clip_wrapper.run_llm_pipeline \
+  --dataset cg_bench \
+  --regime long \
+  --limit 1 \
+  --clip-schema-max-clips 2
+
+# Deterministic graph compose only (no gpt-oss planner call)
+python -m dataset_clip_wrapper.run_llm_pipeline \
+  --dataset video_holmes \
+  --graph-deterministic \
+  --skip-clip-schema \
+  --limit 1
+```
+
+Hyperparameters:
+
+| Flag | Default | Role |
+|------|---------|------|
+| `--clip-schema-model` | `qwen/qwen3.5-9b` | multimodal clip-schema producer |
+| `--clip-schema-max-clips` | `3` | cap Qwen calls per example |
+| `--graph-model` | `openai/gpt-oss-120b` | graph planner / composer |
+| `--graph-deterministic` | off | apply atomic skills directly from clip schemas |
+| `--keys-py` | workspace `keys.py` | OpenRouter API key source |
+
+Offline graph-compose smoke test:
+
+```bash
+python dataset_clip_wrapper/smoke_test_graph_compose.py
+```
+
 ## CLI
 
 ```bash
@@ -119,5 +175,16 @@ Each JSONL row matches `schemas/canonical_video_example.schema.json` with:
 - `video.segments` — dataset annotations and subtitle spans
 - `evidence_candidates` — clips, annotations, optional backbone captions
 - `evidence_index` — clip graph nodes/edges + `clip_policy` + `backbone` metadata
+
+For atomic-skill execution, convert a canonical row into the runtime graph shape:
+
+```python
+from dataset_clip_wrapper import canonical_example_to_skill_graph
+
+graph = canonical_example_to_skill_graph(example)
+```
+
+The bridge preserves clip grounding, source ids, trust/discovery metadata, and
+the `expert_demo` / `video_only` hidden-supervision boundary.
 
 See [clip-processing-policy.md](../docs/clip-processing-policy.md) for regime defaults.

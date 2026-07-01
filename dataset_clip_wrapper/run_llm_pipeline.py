@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""CLI for Qwen clip-schema + gpt-oss graph-composition pipeline."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+from .llm_pipeline import iter_llm_enriched_examples
+from .schemas import (
+    BackboneConfig,
+    ClipPolicyConfig,
+    ClipSchemaConfig,
+    GraphComposerConfig,
+    RuntimeMode,
+    VideoRegime,
+    WrapperConfig,
+)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run Qwen clip-schema + gpt-oss graph-composition over dataset clips."
+    )
+    parser.add_argument("--dataset", required=True, choices=["video_holmes", "cg_bench", "vrbench", "siv_bench"])
+    parser.add_argument("--dataset-root", default="/fs/gamma-projects/vlm-robot/datasets")
+    parser.add_argument("--split", default="train", choices=["train", "test"])
+    parser.add_argument("--regime", default=None, choices=["short", "long", "streaming"])
+    parser.add_argument("--mode", default="expert_demo", choices=["expert_demo", "video_only"])
+    parser.add_argument("--limit", type=int, default=1)
+    parser.add_argument("--output", default="dataset_clip_wrapper/output/llm_pipeline.jsonl")
+    parser.add_argument("--keys-py", default="/fs/gamma-projects/vlm-robot/keys.py")
+
+    parser.add_argument("--clip-schema-model", default="qwen/qwen3.5-9b")
+    parser.add_argument("--clip-schema-max-clips", type=int, default=3)
+    parser.add_argument("--clip-schema-frames", type=int, default=4)
+    parser.add_argument("--skip-clip-schema", action="store_true")
+
+    parser.add_argument("--graph-model", default="openai/gpt-oss-120b")
+    parser.add_argument("--graph-deterministic", action="store_true", help="Skip gpt-oss planner; apply atomic skills directly")
+    parser.add_argument("--skip-graph-compose", action="store_true")
+
+    parser.add_argument("--observation-end-s", type=float, default=None)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    regime = VideoRegime(args.regime) if args.regime else None
+    dataset_regime = regime or {
+        "video_holmes": VideoRegime.SHORT,
+        "siv_bench": VideoRegime.SHORT,
+        "cg_bench": VideoRegime.LONG,
+        "vrbench": VideoRegime.LONG,
+    }[args.dataset]
+
+    clip_policy = ClipPolicyConfig.dataset_default(args.dataset, dataset_regime)
+    if args.observation_end_s is not None:
+        clip_policy.observation_end_s = args.observation_end_s
+
+    config = WrapperConfig(
+        dataset_root=args.dataset_root,
+        dataset=args.dataset,
+        regime=dataset_regime,
+        mode=RuntimeMode(args.mode),
+        clip_policy=clip_policy,
+        backbone=BackboneConfig(keys_py_path=args.keys_py),
+        clip_schema=ClipSchemaConfig(
+            model=args.clip_schema_model,
+            keys_py_path=args.keys_py,
+            max_clips=args.clip_schema_max_clips,
+            request_frames=args.clip_schema_frames,
+        ),
+        graph_composer=GraphComposerConfig(
+            model=args.graph_model,
+            keys_py_path=args.keys_py,
+            use_llm_planner=not args.graph_deterministic,
+        ),
+        split=args.split,
+        limit=args.limit,
+        run_clip_schema=not args.skip_clip_schema,
+        run_graph_compose=not args.skip_graph_compose,
+    )
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    count = 0
+    with output_path.open("w", encoding="utf-8") as handle:
+        for example in iter_llm_enriched_examples(config):
+            handle.write(json.dumps(example, ensure_ascii=False) + "\n")
+            count += 1
+
+    print(
+        json.dumps(
+            {
+                "dataset": args.dataset,
+                "regime": dataset_regime.value,
+                "clip_schema_model": config.clip_schema.model,
+                "graph_model": config.graph_composer.model,
+                "run_clip_schema": config.run_clip_schema,
+                "run_graph_compose": config.run_graph_compose,
+                "written": count,
+                "output": str(output_path),
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

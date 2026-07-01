@@ -127,6 +127,52 @@ class BackboneConfig:
 
 
 @dataclass
+class ClipSchemaConfig:
+    """Multimodal clip-schema producer hyperparameters (Qwen via OpenRouter)."""
+
+    model: str = "qwen/qwen3.5-9b"
+    api_base: str = "https://openrouter.ai/api/v1/chat/completions"
+    api_key_env: str = "OPENROUTER_API_KEY"
+    keys_py_path: str | None = None
+    temperature: float = 0.0
+    request_frames: int = 4
+    max_clips: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "model": self.model,
+            "api_base": self.api_base,
+            "api_key_env": self.api_key_env,
+            "keys_py_path": self.keys_py_path,
+            "temperature": self.temperature,
+            "request_frames": self.request_frames,
+            "max_clips": self.max_clips,
+        }
+
+
+@dataclass
+class GraphComposerConfig:
+    """Graph composer hyperparameters (gpt-oss-120B via OpenRouter)."""
+
+    model: str = "openai/gpt-oss-120b"
+    api_base: str = "https://openrouter.ai/api/v1/chat/completions"
+    api_key_env: str = "OPENROUTER_API_KEY"
+    keys_py_path: str | None = None
+    temperature: float = 0.0
+    use_llm_planner: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "model": self.model,
+            "api_base": self.api_base,
+            "api_key_env": self.api_key_env,
+            "keys_py_path": self.keys_py_path,
+            "temperature": self.temperature,
+            "use_llm_planner": self.use_llm_planner,
+        }
+
+
+@dataclass
 class ClipSpan:
     start_s: float
     end_s: float
@@ -146,9 +192,13 @@ class WrapperConfig:
     mode: RuntimeMode = RuntimeMode.EXPERT_DEMO
     clip_policy: ClipPolicyConfig | None = None
     backbone: BackboneConfig = field(default_factory=BackboneConfig)
+    clip_schema: ClipSchemaConfig = field(default_factory=ClipSchemaConfig)
+    graph_composer: GraphComposerConfig = field(default_factory=GraphComposerConfig)
     split: str = "train"
     limit: int | None = None
     run_backbone: bool = False
+    run_clip_schema: bool = False
+    run_graph_compose: bool = False
 
     def resolved_clip_policy(self, duration_s: float | None = None) -> ClipPolicyConfig:
         policy = self.clip_policy or ClipPolicyConfig.dataset_default(self.dataset, self.regime)
@@ -196,7 +246,7 @@ def make_canonical_shell(
         },
         "hidden_supervision": {
             "available_for_training": True,
-            "available_for_inference": mode == RuntimeMode.VIDEO_ONLY,
+            "available_for_inference": False,
             "sources": hidden,
         },
         "evidence_index": {

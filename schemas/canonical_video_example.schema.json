@@ -14,6 +14,7 @@
     "evidence_candidates",
     "available_inputs",
     "hidden_supervision",
+    "evidence_index",
     "raw_source_refs",
     "trust_policy"
   ],
@@ -378,6 +379,9 @@
           "items": {
             "enum": [
               "clip",
+              "observation",
+              "subtitle_span",
+              "caption_span",
               "frame",
               "episodic_text",
               "semantic_text",

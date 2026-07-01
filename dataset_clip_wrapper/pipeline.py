@@ -23,6 +23,10 @@ def _clip_id(video_id: str, index: int, granularity: str) -> str:
     return f"clip:{video_id}:{granularity}:{index:04d}"
 
 
+def _omit_none_values(payload: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in payload.items() if value is not None}
+
+
 def build_canonical_example(
     item: RawDatasetItem,
     *,
@@ -93,37 +97,45 @@ def build_canonical_example(
             }
         )
 
-    segments = list(item.annotation_segments)
-    for subtitle_path in item.subtitle_paths:
-        if subtitle_path.exists():
-            segments.extend(parse_srt(subtitle_path))
+    visible_segments: list[dict[str, Any]] = []
+    hidden_segments: list[dict[str, Any]] = list(item.annotation_segments)
+    if config.mode == RuntimeMode.EXPERT_DEMO:
+        visible_segments.extend(hidden_segments)
+        for subtitle_path in item.subtitle_paths:
+            if subtitle_path.exists():
+                visible_segments.extend(parse_srt(subtitle_path))
 
     evidence_candidates = list(item.evidence_seeds)
     if config.mode == RuntimeMode.VIDEO_ONLY:
         evidence_candidates = []
+    evidence_candidates = [_omit_none_values(evidence) for evidence in evidence_candidates]
 
     evidence_candidates.extend(clip_evidence)
 
-    for seg in segments:
+    for seg in visible_segments:
         if seg.get("text"):
             evidence_candidates.append(
-                {
-                    "evidence_id": f"ev:seg:{seg['segment_id']}",
-                    "source_type": seg.get("source_type", "segment_description"),
-                    "time_span": seg.get("time_span"),
-                    "text": seg.get("text"),
-                    "trust_level": "gold" if config.mode == RuntimeMode.EXPERT_DEMO else "weak",
-                    "provenance": seg.get("provenance", {}),
-                }
+                _omit_none_values(
+                    {
+                        "evidence_id": f"ev:seg:{seg['segment_id']}",
+                        "source_type": seg.get("source_type", "segment_description"),
+                        "time_span": seg.get("time_span"),
+                        "text": seg.get("text"),
+                        "trust_level": "gold" if config.mode == RuntimeMode.EXPERT_DEMO else "weak",
+                        "provenance": seg.get("provenance", {}),
+                    }
+                )
             )
             index_nodes.append(
-                {
-                    "node_id": seg["segment_id"],
-                    "node_type": "observation",
-                    "text": seg.get("text"),
-                    "time_span": seg.get("time_span"),
-                    "source_type": seg.get("source_type"),
-                }
+                _omit_none_values(
+                    {
+                        "node_id": seg["segment_id"],
+                        "node_type": "observation",
+                        "text": seg.get("text"),
+                        "time_span": seg.get("time_span"),
+                        "source_type": seg.get("source_type"),
+                    }
+                )
             )
 
     if config.run_backbone and item.video_path and item.video_path.exists():
@@ -196,7 +208,7 @@ def build_canonical_example(
             "subtitle_tracks": subtitle_tracks,
             "caption_tracks": [],
             "derived_clips": derived_clips,
-            "segments": segments,
+            "segments": [_omit_none_values(segment) for segment in visible_segments],
         },
         question=item.question,
         mode=config.mode,
@@ -211,6 +223,7 @@ def build_canonical_example(
     example["metadata"]["clip_count"] = len(derived_clips)
     example["metadata"]["coarse_clip_count"] = sum(1 for c in derived_clips if c.get("granularity") == "coarse")
     example["metadata"]["fine_clip_count"] = sum(1 for c in derived_clips if c.get("granularity") == "fine")
+    example["metadata"]["hidden_segment_count"] = len(hidden_segments)
     example["evidence_index"]["nodes"] = index_nodes
     example["evidence_index"]["edges"] = index_edges
     return example
