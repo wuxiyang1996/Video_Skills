@@ -10,8 +10,24 @@ from typing import Any, Iterator
 from .base import DatasetAdapter, RawDatasetItem
 
 
+def _resolve_video_path(bench: Path, row: dict[str, Any]) -> Path | None:
+    video_id = row["video_id"]
+    candidates: list[Path] = []
+    rel_path = row.get("video_path")
+    if rel_path:
+        candidates.append(bench / rel_path)
+        if rel_path.startswith("VRBench/"):
+            candidates.append(bench / rel_path.removeprefix("VRBench/"))
+    candidates.append(bench / "v001_360p" / f"{video_id}.mp4")
+    candidates.append(bench / f"{video_id}.mp4")
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def _parse_reasoning_timestamp(text: str) -> dict[str, float] | None:
-    match = re.search(r"(\d{1,2}:\d{2}(?::\d{2})?)\s*[-~]\s*(\d{1,2}:\d{2}(?::\d{2})?)", text)
+    match = re.search(r"(\d{1,2}:\d{2}(?::\d{2})?)\s*(?:->|-|~)\s*(\d{1,2}:\d{2}(?::\d{2})?)", text)
     if not match:
         match = re.search(r"(\d{1,2}:\d{2}(?::\d{2})?)", text)
         if not match:
@@ -45,6 +61,25 @@ def _parse_reasoning_timestamp(text: str) -> dict[str, float] | None:
     return {"start_s": start_s, "end_s": end_s}
 
 
+def _iter_reasoning_steps(reasoning_process: Any) -> Iterator[str]:
+    if isinstance(reasoning_process, dict):
+        def sort_key(item: tuple[Any, Any]) -> tuple[int, str]:
+            key = str(item[0])
+            return (int(key), key) if key.isdigit() else (10**9, key)
+
+        for _, value in sorted(reasoning_process.items(), key=sort_key):
+            if value:
+                yield str(value)
+        return
+    if isinstance(reasoning_process, list):
+        for value in reasoning_process:
+            if value:
+                yield str(value)
+        return
+    if isinstance(reasoning_process, str) and reasoning_process:
+        yield reasoning_process
+
+
 class VRBenchAdapter(DatasetAdapter):
     name = "vrbench"
 
@@ -56,8 +91,7 @@ class VRBenchAdapter(DatasetAdapter):
             for line in handle:
                 row = json.loads(line)
                 video_id = row["video_id"]
-                rel_path = row.get("video_path") or f"v001_360p/{video_id}.mp4"
-                video_path = bench / rel_path
+                video_path = _resolve_video_path(bench, row)
                 mcq_map: dict[str, Any] = row.get("mcq") or {}
                 for qa_key, qa in mcq_map.items():
                     example_id = f"vrbench:{video_id}:{qa_key}"
@@ -81,7 +115,7 @@ class VRBenchAdapter(DatasetAdapter):
                                 "provenance": {"source_field": "video_summary"},
                             }
                         )
-                    for i, step in enumerate(qa.get("reasoning_process") or [], start=1):
+                    for i, step in enumerate(_iter_reasoning_steps(qa.get("reasoning_process")), start=1):
                         span = _parse_reasoning_timestamp(step)
                         annotation_segments.append(
                             {
@@ -110,7 +144,7 @@ class VRBenchAdapter(DatasetAdapter):
                         split=self.split,
                         task_family="long_video_temporal_chain_qa",
                         video_id=video_id,
-                        video_path=video_path if video_path.exists() else None,
+                        video_path=video_path,
                         duration_s=None,
                         question={
                             "question_id": qa_key,

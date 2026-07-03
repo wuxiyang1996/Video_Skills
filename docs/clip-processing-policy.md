@@ -98,11 +98,46 @@ Example:
 Long-video flow:
 
 ```text
-coarse fixed_window(30-60s)
-  -> retrieve top-k candidate spans
-  -> fine fixed_window(5-10s) inside candidates
+full-video coarse graph
+  -> coarse fixed_window(30-60s)
+  -> baseline video_only: question-blind coarse neighborhoods
+  -> query-time QA: visible question / timestamp anchors retrieve coarse neighborhoods
+  -> fine graph inside selected coarse parents
+  -> fine fixed_window(5-10s)
+  -> fine --refines--> parent coarse
   -> final EvidenceCandidate must cite a concrete timestamp
 ```
+
+For CG-Bench and VRBench, "entire video" means the coarse graph covers the full
+video. Fine-grained graph crafting is intentionally retrieve-gated; full
+fine-window expansion over every 8s span is a stress test, not the default
+video-only path.
+
+### 3.2.1 L1 Quality Fix: Tool / Prompt / Agent Split
+
+Recent L1 query-memory probes showed that a structurally valid graph is not
+automatically a useful reasoning memory. The failing pattern is:
+
+```text
+generic clip caption
+  -> shallow observation nodes
+  -> lexical retrieval misses the question clue
+  -> L2 planner guesses from option text or falls back to weak evidence
+```
+
+The repair is a three-part split:
+
+| Layer | Required refinement |
+|-------|---------------------|
+| Tool set | Object/place cues, time anchors, ASR/subtitle cues, coarse summaries, repeated-object links |
+| Prompt | Graph-ready observations, salient objects, places, cross-clip cues, searchable phrases, uncertainty |
+| Agent setting | Question-blind L1 building separated from query-time memory retrieval and no-gold-answer L2 reasoning |
+
+The default `video_only` L1 pass remains question-blind. QA experiments may
+turn on query-time retrieval because the question is visible input, but hidden
+clue intervals, official reasoning, and official answers remain unavailable.
+Timestamp anchors in the visible question, such as `2:04`, can force expansion
+of the matching coarse window and adjacent context.
 
 Typical datasets: CG-Bench, VRBench, M3-Bench.
 

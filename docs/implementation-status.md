@@ -114,6 +114,39 @@ P2:
   M3-Bench after graph reader
 ```
 
+Split discipline:
+
+- Keep benchmark test splits as evaluation-only. They must not be used for
+  expert-demo generation, SFT, reward tuning, motif mining, verifier calibration,
+  or GRPO sampling.
+- Use the training split for all supervision-producing stages:
+  `expert_demo` rollouts, SFT / behavioral cloning targets, corrupted-rollout
+  repair data, reward-model or verifier calibration, and policy rollouts for
+  verified RL / GRPO.
+- Hold out a validation slice from the training split before any labeling
+  iteration. Use it for early stopping, prompt/schema changes, reward-weight
+  selection, and motif acceptance thresholds.
+- Report final numbers on the untouched test split in `video_only` mode where
+  possible. In `expert_demo` ablations, clearly mark that the run measures
+  trace-fitting quality under supervision rather than final clue discovery.
+
+Recommended P0 split:
+
+```text
+train_for_labeling:
+  Video-Holmes train first 400 QA
+  CG-Bench mini first 400 QA
+  VRBench 80 videos x all QA
+
+validation:
+  Video-Holmes train held-out 100 QA
+  CG-Bench mini held-out 100 QA
+  VRBench held-out 20 videos x all QA
+
+test:
+  official benchmark test/eval split only
+```
+
 Full dataset recipes, labeling rules, and acceptance gates:
 [expert-demo-rollouts-from-datasets.md](../atomic-skill-decomposition-and-assembly/expert-demo-rollouts-from-datasets.md).
 
@@ -125,6 +158,20 @@ Full dataset recipes, labeling rules, and acceptance gates:
 - Fit reasoning skill graphs with teacher/LLM labeler over frozen ontology
 - Datasets: Video-Holmes, CG-Bench mini
 - **Skips raw-video perception**
+
+Alternative graph-building path:
+
+- Build the same clue-memory graph interface from visible video/tool outputs
+  instead of dataset clues.
+- Current version: `--clip-schema-backend video_tools` samples frames, computes
+  frame-change signals, optionally reads OCR, emits clip schemas, and then uses
+  the same graph-composition bridge.
+- Intended next version: add VLM captions, ASR/subtitles, entity linking,
+  temporal event extraction, and provenance/trust assignment while keeping
+  `hidden_supervision` unavailable in `video_only`.
+- This path is the `video_only` perception-first counterpart to Stage A's
+  annotation-seeded graph construction, so both paths should export compatible
+  `evidence_index` / clue-memory graph objects.
 
 ### Stage B — Broader Reasoning Coverage
 
@@ -174,6 +221,8 @@ over dataset annotations.
 ```bash
 python dataset_clip_wrapper/smoke_test.py
 python dataset_clip_wrapper/smoke_test_retrieval.py
+python dataset_clip_wrapper/smoke_test_video_only_takein.py
+python dataset_clip_wrapper/smoke_test_coarse_fine_graph_crafting.py
 
 python -m dataset_clip_wrapper.cli \
   --dataset video_holmes --regime short --limit 5 \
@@ -192,13 +241,66 @@ python -m dataset_clip_wrapper.run_llm_pipeline \
 python -m dataset_clip_wrapper.run_llm_pipeline \
   --dataset video_holmes --regime short --limit 1 \
   --clip-schema-backend video_tools --graph-deterministic
+
+# VRBench video-only coverage probe against hidden timestamp targets
+python dataset_clip_wrapper/evaluate_vrbench_video_only_graph.py \
+  --limit 1 --clip-schema-max-clips 4 --retrieval-topk 4
 ```
+
+`smoke_test_video_only_takein.py` is the all-dataset contract test for
+`video_only`: Video-Holmes, CG-Bench, VRBench, and SIV-Bench must each load a
+real video, produce local `video_tools` clip schemas, craft a clue-memory graph,
+and avoid hidden-supervision leakage.
+
+`smoke_test_coarse_fine_graph_crafting.py` is the hierarchical contract test:
+long-video datasets build a full-video coarse graph first, expand fine graph
+nodes only inside retrieved coarse neighborhoods, and connect fine clips back to
+their parent coarse clips with `refines` links. Short-video datasets validate
+the fine graph directly.
+
+For all-four-dataset "entire video" checks, use this coarse/fine contract rather
+than full fine-grained scanning. The expected behavior is:
+
+```text
+Video-Holmes / SIV-Bench:
+  full short-video fine graph
+
+CG-Bench / VRBench:
+  full-video coarse graph
+  -> baseline video_only: question-blind coarse neighborhoods
+  -> optional query-time retrieval over the visible question / timestamp anchors
+  -> fine graph inside selected neighborhoods
+  -> fine --refines--> coarse links
+```
+
+The runtime pipeline exposes this as `metadata.coarse_fine_graph`, with
+`coarse_graph`, `fine_graph`, and `coarse_to_fine_links` sections. The coarse
+graph now includes `coarse_summary` nodes so query-memory experiments can search
+full-video handles even when fine perception has only been expanded in selected
+neighborhoods. Final answer support should still come from discovered fine
+evidence rather than a coarse retrieval score alone.
 
 Long-video defaults (`ClipPolicyConfig.for_regime(LONG)`):
 
 - `coarse_window_s=30`, `fine_window_s=8`, `index_fine_expansion=retrieval_gated`
-- `ClipRetrievalConfig.topk=2`, lexical scoring over question + visible segments
+- `ClipRetrievalConfig.topk=2`; default `video_only` L1 is question-blind
+  sequential coverage, while `--query-time-retrieval` can use the visible
+  question plus timestamp-anchor expansion
 - Index layer stores coarse clips only; fine windows expand inside retrieved parents for perception / LLM pipeline
+
+L1 query-memory diagnostics:
+
+```bash
+python dataset_clip_wrapper/evaluate_l1_query_memory.py \
+  --topk 5 \
+  --output dataset_clip_wrapper/output/l1_query_memory_eval.json \
+  dataset_clip_wrapper/output/cg_bench_video_only_qwen_gptoss_entire.jsonl
+```
+
+This report checks question-only evidence hits, option scores, selected coarse
+indices, and whether an L2 rollout copied hidden gold answer text. For valid
+`video_only` L2 experiments, `question.answer` is evaluation-only and must not
+be shown to the L2 planner.
 
 See [two-layer graph schema](../docs/two-layer-graph-schema.md) and
 [implementation status](../docs/implementation-status.md).
@@ -238,11 +340,86 @@ runs a local verifier on cross-layer bindings.
 | `shot_boundary` / `scene_boundary` / `adaptive` strategies | Schema enum only |
 | Port of legacy `Video_Skills` segmenter | Exists in sibling repo, not wired to relaunch |
 | Local raw-video frame tool backend | Implemented as `video_tool_backend.py`; produces same clip-schema fields as Qwen path |
+| VRBench video-only graph-quality probe | Implemented as `evaluate_vrbench_video_only_graph.py`; current bottleneck is reaching the right long-video temporal neighborhood |
 | Full raw VLM caption / ASR / object tracking stack | Stage C future work |
 | `create_semantic_memory_node` | Discussed in early skill drafts; not in final 9-skill set |
 | M3-Bench memory graph reader | Blocker for M3 rollouts |
 | Controller training / verified RL | Design only |
 | `--graph-only` batch exporter | Not yet added |
+
+## 5.1 Training Feasibility Assessment
+
+For an ICLR submission, the broad version should remain the north-star claim:
+learn a compact controller that turns raw video/question inputs into
+verifiable, evidence-grounded skill graphs under `video_only` constraints.
+The paper should not present Stage A as the final problem. Stage A is the
+supervision and ablation scaffold that makes the broad claim measurable.
+
+The most plausible first technical success case is narrower: train the
+controller to assemble typed reasoning graphs over a mostly fixed clue-memory
+graph. This should be feasible if the expert rollouts are high precision,
+because the action space is small, the verifier can reject malformed or
+ungrounded traces, and the evaluation can measure process quality rather than
+only final answer text.
+
+The broad `video_only` version is the right ICLR-facing problem but the risky
+part experimentally. There the controller must both discover the right evidence
+and compose a reasoning graph, so failures in captioning, retrieval, temporal
+localization, entity linking, and reasoning all compound. The submission should
+therefore use a staged evidence ladder: show the full `video_only` setting, then
+use Stage A/B ablations to identify whether failures come from evidence
+discovery, graph assembly, verification, or repair.
+
+Suggested paper positioning:
+
+```text
+Main claim:
+  Video reasoning should be learned as verifier-grounded skill-graph control
+  over discovered evidence, not as free-form chain-of-thought imitation.
+
+Primary target:
+  video_only evidence discovery + reasoning graph assembly.
+
+Training scaffold:
+  expert_demo traces from train split provide SFT/offline-RL warm-up only.
+
+Key ablation:
+  prebuilt evidence graph vs video_only evidence discovery.
+```
+
+Expected working path:
+
+```text
+1. expert_demo graph fitting works on Video-Holmes / CG-Bench train
+2. SFT learns skill choice, argument binding, and evidence-role structure
+3. verifier-grounded repair improves evidence F1 and trace validity
+4. GRPO / verified RL improves sampled rollouts after SFT warm-up
+5. video_only improves when evidence discovery is trained/evaluated separately
+6. full broad claim is supported if video_only gains survive held-out test
+```
+
+Expected failure modes:
+
+- Expert rollouts are too teacher-specific, so SFT learns formatting but not
+  reusable assembly.
+- The verifier mostly checks schema, not semantic support, so RL optimizes easy
+  surface signals.
+- Retrieval recall is too low in `video_only`, making the reasoning controller
+  look worse even when its policy is reasonable.
+- Motifs overfit common train patterns and quietly leak dataset-specific
+  shortcuts unless accepted on held-out validation examples.
+
+Minimum credible ICLR package:
+
+- A broad `video_only` evaluation with no hidden clue intervals, answers, or
+  official reasoning visible to the agent.
+- A supervised `expert_demo` warm-up built only from train split examples.
+- A controlled ablation where the same controller receives a prebuilt evidence
+  graph, measuring pure reasoning-graph assembly.
+- Evidence discovery metrics such as clue recall, evidence precision, timestamp
+  error, and hidden-supervision leakage rate.
+- Reasoning graph metrics such as schema validity, evidence-ref validity,
+  claim-support precision, repair success, answer accuracy, and tool cost.
 
 ## 6. Labeling Policy Summary
 

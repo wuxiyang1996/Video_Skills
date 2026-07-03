@@ -367,10 +367,14 @@ def build_reasoning_rollout(
             "evidence_refs": evidence_chain.get("evidence_refs", []),
         }
     ]
+    input_mode = rollout.get("input_mode")
     gt = question.get("answer") or {}
+    answer_text = answer.outputs.get("final_answer") if answer.ok else None
+    if input_mode != "video_only" and gt.get("text"):
+        answer_text = gt.get("text")
     rollout["final_answer"] = {
-        "label": answer.outputs.get("final_answer") if answer.ok else gt.get("label"),
-        "text": gt.get("text") if gt.get("text") else answer.outputs.get("final_answer"),
+        "label": answer.outputs.get("final_answer") if answer.ok else (gt.get("label") if input_mode != "video_only" else None),
+        "text": answer_text,
         "confidence": answer.confidence if answer.ok else 0.0,
     }
     rollout["verifier_summary"] = {
@@ -387,5 +391,6 @@ def build_reasoning_rollout(
         "executed_skill_ids": list(dict.fromkeys(executed_skills)),
         "executed_skill_count": len(set(executed_skills)),
         "expected_reasoning_skill_count": 19,
+        "gold_answer_hidden_eval_only": bool(input_mode == "video_only" and gt),
     }
     return rollout

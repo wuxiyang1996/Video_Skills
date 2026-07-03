@@ -190,7 +190,19 @@ class GraphComposer:
                 )
                 continue
 
-            resolved_args = resolve_plan_value(args, bindings, step_outputs)
+            try:
+                resolved_args = resolve_plan_value(args, bindings, step_outputs)
+            except (KeyError, IndexError, TypeError, ValueError) as exc:
+                trace.append(
+                    {
+                        "step_id": step_id,
+                        "skill_id": skill_id,
+                        "ok": False,
+                        "failure_code": "invalid_step_reference",
+                        "messages": [str(exc)],
+                    }
+                )
+                continue
             try:
                 result = SKILL_EXECUTORS[skill_id](graph, **resolved_args)
             except TypeError as exc:
@@ -370,6 +382,123 @@ class GraphComposer:
                 graph = obs.outputs["graph"]
                 trace.append({"skill_id": "extract_observation", "ok": obs.ok, "source": "observable_fact"})
 
+            for obj in schema.get("salient_objects") or []:
+                if not isinstance(obj, dict):
+                    continue
+                attributes = ", ".join(str(item) for item in obj.get("attributes") or [])
+                phrases = ", ".join(str(item) for item in obj.get("searchable_phrases") or [])
+                text = " ".join(
+                    part
+                    for part in [
+                        str(obj.get("surface_form") or "").strip(),
+                        attributes,
+                        phrases,
+                    ]
+                    if part
+                )
+                if not text:
+                    continue
+                obs = extract_observation(
+                    graph,
+                    clip_or_text_ref=clip_ref,
+                    modality="object_clue",
+                    text=text,
+                    time_span=schema.get("time_span"),
+                )
+                graph = obs.outputs["graph"]
+                trace.append({"skill_id": "extract_observation", "ok": obs.ok, "source": "salient_object"})
+                mention = detect_entity_mention(
+                    graph,
+                    observation_ref=obs.evidence_refs[0],
+                    text=str(obj.get("surface_form") or text),
+                    entity_type="object",
+                )
+                graph = mention.outputs["graph"]
+                trace.append({"skill_id": "detect_entity_mention", "ok": mention.ok, "source": "salient_object"})
+
+            place = schema.get("place") or {}
+            if isinstance(place, dict):
+                phrases = place.get("searchable_phrases") or []
+                text = " ".join(
+                    part
+                    for part in [
+                        str(place.get("description") or "").strip(),
+                        " ".join(str(item) for item in phrases),
+                    ]
+                    if part
+                )
+                if text:
+                    obs = extract_observation(
+                        graph,
+                        clip_or_text_ref=clip_ref,
+                        modality="place_clue",
+                        text=text,
+                        time_span=schema.get("time_span"),
+                    )
+                    graph = obs.outputs["graph"]
+                    trace.append({"skill_id": "extract_observation", "ok": obs.ok, "source": "place"})
+
+            for phrase in schema.get("searchable_phrases") or []:
+                text = str(phrase).strip()
+                if not text:
+                    continue
+                obs = extract_observation(
+                    graph,
+                    clip_or_text_ref=clip_ref,
+                    modality="searchable_phrase",
+                    text=text,
+                    time_span=schema.get("time_span"),
+                )
+                graph = obs.outputs["graph"]
+                trace.append({"skill_id": "extract_observation", "ok": obs.ok, "source": "searchable_phrase"})
+
+            for cue in schema.get("cross_clip_cues") or []:
+                if not isinstance(cue, dict):
+                    continue
+                text = " ".join(
+                    part
+                    for part in [
+                        str(cue.get("cue_type") or "").strip(),
+                        str(cue.get("description") or "").strip(),
+                    ]
+                    if part
+                )
+                if not text:
+                    continue
+                obs = extract_observation(
+                    graph,
+                    clip_or_text_ref=clip_ref,
+                    modality="cross_clip_cue",
+                    text=text,
+                    time_span=schema.get("time_span"),
+                )
+                graph = obs.outputs["graph"]
+                trace.append({"skill_id": "extract_observation", "ok": obs.ok, "source": "cross_clip_cue"})
+
+            for mention_payload in schema.get("entity_mentions") or []:
+                if not isinstance(mention_payload, dict):
+                    continue
+                surface = str(mention_payload.get("surface_form") or "").strip()
+                if not surface:
+                    continue
+                obs = extract_observation(
+                    graph,
+                    clip_or_text_ref=clip_ref,
+                    modality="entity_schema",
+                    text=surface,
+                    time_span=schema.get("time_span"),
+                )
+                graph = obs.outputs["graph"]
+                trace.append({"skill_id": "extract_observation", "ok": obs.ok, "source": "entity_schema"})
+                mention = detect_entity_mention(
+                    graph,
+                    observation_ref=obs.evidence_refs[0],
+                    text=surface,
+                    entity_type=mention_payload.get("entity_type"),
+                )
+                graph = mention.outputs["graph"]
+                trace.append({"skill_id": "detect_entity_mention", "ok": mention.ok, "source": "entity_schema"})
+
             for dialogue in schema.get("dialogue_spans") or []:
                 dia = extract_dialogue_span(
                     graph,
@@ -406,6 +535,29 @@ class GraphComposer:
             )
             graph = rel.outputs["graph"]
             trace.append({"skill_id": "link_graph_relation", "ok": rel.ok})
+
+        mentions_by_surface: dict[str, list[dict[str, Any]]] = {}
+        for node in graph.get("nodes", []):
+            if node.get("node_type") != "entity_mention":
+                continue
+            surface = str(node.get("surface_form") or node.get("text") or "").strip().lower()
+            if len(surface) < 2:
+                continue
+            mentions_by_surface.setdefault(surface, []).append(node)
+        for mentions in mentions_by_surface.values():
+            mentions.sort(key=lambda node: (node.get("time_span") or {}).get("start_s", 0.0))
+            for left, right in zip(mentions, mentions[1:]):
+                if left["node_id"] == right["node_id"]:
+                    continue
+                rel = link_graph_relation(
+                    graph,
+                    source_node=left["node_id"],
+                    target_node=right["node_id"],
+                    edge_type="same_entity",
+                    evidence_refs=[left["node_id"], right["node_id"]],
+                )
+                graph = rel.outputs["graph"]
+                trace.append({"skill_id": "link_graph_relation", "ok": rel.ok, "source": "same_entity_surface"})
 
         trust_policy = {
             "gold_sources": ["segment_description", "inference_shot", "clue_interval", "reasoning_process_step"],

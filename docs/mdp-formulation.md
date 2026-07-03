@@ -55,6 +55,78 @@ Stage 0 (now):   gpt-oss open-loop planner → expert trajectories
 Stage 1 (next):  trajectories → train policy → closed-loop MDP controller
 ```
 
+### Train / Test Boundary
+
+Use one benchmark training split as the source for all learning signals, but
+keep the roles separate:
+
+```text
+train prompts
+  -> expert_demo rollouts
+  -> SFT / behavioral cloning targets
+  -> corrupted traces for repair training
+  -> current-policy sampled rollouts for verifier-grounded RL / GRPO
+
+validation prompts
+  -> prompt/schema iteration
+  -> reward-weight selection
+  -> motif acceptance thresholds
+  -> early stopping
+
+test prompts
+  -> final held-out evaluation only
+```
+
+The same train examples may seed expert rollouts, SFT targets, and later
+policy-sampled RL rollouts. The important constraint is that official test
+examples are never used for expert planning, SFT, reward tuning, motif mining,
+or GRPO sampling.
+
+SFT should use accepted expert trajectories. GRPO-style training should sample
+multiple candidate skill graphs from the current policy on train prompts and
+score them with answer, evidence, verifier, leakage, and cost rewards. It should
+not simply replay the same expert trajectories.
+
+### Offline RL Positioning
+
+Stage 0 can be converted into an offline RL dataset:
+
+```text
+(s_t, a_t, r_t, s_{t+1}, done, metadata)
+```
+
+where `s_t` is the partial two-layer graph state, `a_t` is a typed skill
+invocation, `r_t` comes from answer/evidence/verifier/cost checks, and
+`metadata` records mode, provenance, dataset, and hidden-supervision visibility.
+
+This supports an honest offline-RL framing for the logged expert-demo corpus.
+However, GRPO is not purely fixed-dataset offline RL if the current policy
+generates new rollouts during training. A better description is:
+
+```text
+static-benchmark, verifier-grounded policy optimization over typed skill actions
+```
+
+The dataset and videos are fixed, but rollouts can be newly sampled from the
+current controller and scored by deterministic or model-assisted verifiers.
+
+### Skill and Knowledge Accumulation
+
+The controller does not accumulate new primitive skills during training. The
+atomic skill basis is frozen before controller training.
+
+What may accumulate:
+
+- model parameters that improve skill selection, argument binding, and repair;
+- accepted rollout logs and failure traces;
+- verifier-calibrated rewards and diagnostics;
+- mined composed motifs from frequent verified atomic subgraphs;
+- episode-local evidence graphs built from visible video/tool outputs.
+
+Mined motifs are planning or repair priors, not new black-box actions. Before
+execution, every motif must expand into atomic skill invocations from the frozen
+basis.
+
 ---
 
 ## Core View
@@ -283,7 +355,8 @@ goal:
 This is the strongest first formulation because the evidence graph is already
 available from dataset annotations, captions, subtitles, or deterministic graph
 builders. The controller learns how to assemble reasoning programs over a
-prebuilt graph.
+prebuilt graph. For the paper, this is the controlled reasoning-assembly
+ablation, not the final task.
 
 ### Stage C: Video-Only Graph Construction MDP
 
@@ -301,8 +374,37 @@ goal:
   supervision
 ```
 
-This version is closer to the final video-only objective, but it has a larger
-action space and more expensive transitions.
+This is the broad ICLR-facing objective: the agent must build enough evidence
+state from visible video/tool outputs and then assemble a verified reasoning
+graph without access to hidden clues, official reasoning, or answers. It has a
+larger action space and more expensive transitions than Stage A, so the paper
+should report it together with diagnostic ablations rather than as a single
+opaque number.
+
+Recommended broad-version evaluation ladder:
+
+```text
+E0: expert_demo / prebuilt evidence graph
+    Measures trace-to-skill fitting and reasoning graph assembly.
+
+E1: video_only / frozen evidence discovery
+    Uses automatic clips/captions/retrieval, but freezes the controller.
+    Measures whether the evidence substrate has enough recall.
+
+E2: video_only / trained controller
+    Uses the same automatic evidence substrate, but trains the skill controller.
+    Measures policy learning over imperfect evidence.
+
+E3: video_only / repair or GRPO
+    Adds verifier-grounded repair or policy optimization.
+    Measures whether process feedback improves evidence grounding and answer
+    quality without hidden-supervision leakage.
+```
+
+A convincing broad result does not require every perception component to be
+novel. It requires showing that, under the same video-only evidence interface,
+typed skill-graph control and verifier feedback improve over free-form CoT,
+flat retrieval-augmented QA, and linear tool-chain baselines.
 
 ## MDP, Semi-MDP, or POMDP
 
@@ -325,4 +427,3 @@ partial reasoning graph and, in video-only settings, may also update the
 evidence graph. Skill preconditions induce action masks, and verifier outputs
 provide dense process rewards in addition to final answer reward.
 ```
-

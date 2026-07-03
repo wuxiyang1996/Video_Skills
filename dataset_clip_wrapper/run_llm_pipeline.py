@@ -40,6 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--clip-schema-frames", type=int, default=4)
     parser.add_argument("--clip-schema-max-tokens", type=int, default=1200)
     parser.add_argument("--clip-schema-reasoning-effort", default="none")
+    parser.add_argument("--clip-schema-timeout-s", type=int, default=180)
     parser.add_argument("--skip-clip-schema", action="store_true")
 
     parser.add_argument("--graph-model", default="openai/gpt-oss-120b")
@@ -56,6 +57,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--observation-end-s", type=float, default=None)
     parser.add_argument("--retrieval-topk", type=int, default=2)
     parser.add_argument("--retrieval-mode", default="lexical", choices=["lexical", "sequential"])
+    parser.add_argument(
+        "--query-time-retrieval",
+        action="store_true",
+        help="In video_only, use the visible question to retrieve coarse neighborhoods for fine perception.",
+    )
+    parser.add_argument(
+        "--no-time-anchor-expansion",
+        action="store_true",
+        help="Disable automatic fine expansion around timestamps mentioned in the visible question.",
+    )
     parser.add_argument("--no-retrieval", action="store_true")
     parser.add_argument(
         "--index-fine-expansion",
@@ -91,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
             enabled=not args.no_retrieval,
             topk=args.retrieval_topk,
             mode=args.retrieval_mode,  # type: ignore[arg-type]
+            query_in_video_only=args.query_time_retrieval,
+            expand_time_anchors=not args.no_time_anchor_expansion,
         ),
         backbone=BackboneConfig(keys_py_path=args.keys_py),
         clip_schema=ClipSchemaConfig(
@@ -101,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             request_frames=args.clip_schema_frames,
             max_tokens=args.clip_schema_max_tokens,
             reasoning_effort=args.clip_schema_reasoning_effort,
+            timeout_s=args.clip_schema_timeout_s,
         ),
         graph_composer=GraphComposerConfig(
             model=args.graph_model,

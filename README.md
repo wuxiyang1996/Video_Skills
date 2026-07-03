@@ -126,15 +126,42 @@ verify_claim_support
 commit_answer
 ```
 
-The graph-construction skill set remains part of the full atomic vocabulary, but
-it should act as an offline graph-builder/audit interface for the first
-`expert_demo` experiments. Later `video_only` experiments can activate selected
-graph-construction skills as tool-mediated actions.
+The graph-construction skill set remains part of the full atomic vocabulary.
+There are two graph-building paths:
+
+- `expert_demo`: an offline graph-builder/audit interface seeds the clue-memory
+  graph from dataset annotations, captions, subtitles, and ground-truth clue
+  intervals.
+- `video_only`: a perception-first builder seeds the same clue-memory graph
+  interface from visible video/tool outputs such as automatic clips, VLM
+  captions, ASR/subtitles, OCR, entity mentions, and temporal event signals.
+
+For `video_only`, graph building is staged:
+
+```text
+question-blind L1 video memory
+  -> full coarse coverage / full short-video fine coverage
+  -> query-time memory retrieval from the visible question
+  -> retrieved fine graph expansion
+  -> no-gold-answer L2 reasoning and verifier checks
+```
+
+This split matters because a structurally valid graph can still be a weak
+reasoning memory if clip captions miss objects, places, repeated props, speech,
+or timestamp anchors. The current L1 prompt and deterministic composer therefore
+prefer graph-ready fields such as salient objects, place cues, cross-clip cues,
+searchable phrases, and `same_entity` links over generic captions alone.
+
+Both paths should export compatible `evidence_index` / clue-memory graph
+objects so the same reasoning-graph controller and verifier can run over either
+supervised or discovered evidence.
 
 ## Evaluation Questions
 
 The key experiments should answer:
 
+- In `video_only` mode, can a controller discover evidence from visible
+  video/tool outputs and assemble a verified skill graph without hidden clues?
 - Does typed skill-graph fitting outperform free-form CoT distillation?
 - Does graph structure outperform a linear tool chain?
 - Does verifier-grounded local repair improve evidence F1 and answer accuracy?

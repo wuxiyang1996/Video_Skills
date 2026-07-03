@@ -31,6 +31,8 @@ class ClipRetrievalConfig:
     topk: int = 2
     threshold: float = 0.0
     mode: Literal["lexical", "sequential"] = "lexical"
+    query_in_video_only: bool = False
+    expand_time_anchors: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -38,6 +40,8 @@ class ClipRetrievalConfig:
             "topk": self.topk,
             "threshold": self.threshold,
             "mode": self.mode,
+            "query_in_video_only": self.query_in_video_only,
+            "expand_time_anchors": self.expand_time_anchors,
         }
 
 
@@ -161,6 +165,7 @@ class ClipSchemaConfig:
     max_clips: int | None = None
     max_tokens: int | None = 1200
     reasoning_effort: str | None = "none"
+    timeout_s: int = 180
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -174,6 +179,7 @@ class ClipSchemaConfig:
             "max_clips": self.max_clips,
             "max_tokens": self.max_tokens,
             "reasoning_effort": self.reasoning_effort,
+            "timeout_s": self.timeout_s,
         }
 
 

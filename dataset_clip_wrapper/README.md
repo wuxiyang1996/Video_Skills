@@ -53,10 +53,18 @@ Long-video flow (M3-style):
 
 ```text
 coarse index (30s windows, all clips in evidence_index)
-  -> lexical retrieve top-k coarse clips (question + visible segments)
+  -> baseline video_only: question-blind sequential coarse neighborhoods
+  -> optional query-time retrieval: visible question + time anchors select coarse neighborhoods
   -> fine windows (8s) only inside retrieved coarse parents
   -> clip-schema backend + graph compose on perception clips only
 ```
+
+The default `video_only` L1 builder stays question-blind so the perception graph
+can be audited independently from answer-time retrieval. For QA experiments,
+enable query-time memory with `--query-time-retrieval`; this uses only the
+visible question, never hidden clue intervals or official answers. Timestamp
+mentions such as `2:04` automatically expand the matching coarse window and its
+neighbors unless `--no-time-anchor-expansion` is set.
 
 ### Backbone
 
@@ -81,12 +89,19 @@ Qwen3.5 ~8B-class VLM on OpenRouter). For offline raw-video smoke tests and
 hard `video_only` cases, `--clip-schema-backend video_tools` uses local video
 tools instead.
 
+The clip-schema prompt is clue-oriented, not caption-only. It asks for grounded
+observations, dialogue, entity mentions, salient objects, place descriptions,
+cross-clip cues, searchable phrases, and uncertainty. The deterministic graph
+composer turns those fields into L1 observations / mentions and adds
+`same_entity` links for repeated surface forms, giving L2 memory something
+searchable beyond a generic scene caption.
+
 Stage 2 uses `openai/gpt-oss-120b` to plan and execute Evidence Graph
 Construction atomic skills, producing a clue-memory / perception graph.
 
 ```text
 segment clips (short / long / streaming)
-  -> [long] retrieve top-k coarse clips
+  -> [long] baseline or query-time coarse selection
   -> [long] expand fine windows inside candidates only
   -> clip-schema producer (Qwen or local video_tools)
   -> gpt-oss-120B graph composer over atomic graph-crafting skills
@@ -108,6 +123,15 @@ python -m dataset_clip_wrapper.run_llm_pipeline \
   --regime long \
   --limit 1 \
   --clip-schema-max-clips 2
+
+# Long-video QA/query-memory mode: visible question selects fine neighborhoods
+python -m dataset_clip_wrapper.run_llm_pipeline \
+  --dataset vrbench \
+  --regime long \
+  --mode video_only \
+  --query-time-retrieval \
+  --retrieval-topk 4 \
+  --limit 1
 
 # Deterministic graph compose only (no gpt-oss planner call)
 python -m dataset_clip_wrapper.run_llm_pipeline \
@@ -148,7 +172,66 @@ Offline graph-compose smoke test:
 ```bash
 python dataset_clip_wrapper/smoke_test_graph_compose.py
 python dataset_clip_wrapper/smoke_test_video_tools.py
+python dataset_clip_wrapper/smoke_test_video_only_takein.py
+python dataset_clip_wrapper/smoke_test_coarse_fine_graph_crafting.py
 ```
+
+`smoke_test_video_only_takein.py` covers all four current video datasets
+(`video_holmes`, `cg_bench`, `vrbench`, `siv_bench`). It verifies that each one
+can load a real video in `video_only`, sample frames through `video_tools`,
+produce clip schemas, craft an `evidence_index` / clue-memory graph, and avoid
+hidden-supervision leakage.
+
+`smoke_test_coarse_fine_graph_crafting.py` checks the two-level graph contract.
+For long videos, it builds a full-video coarse graph, retrieves a small set of
+coarse neighborhoods, expands fine clips only inside those neighborhoods, and
+links fine nodes back to parent coarse nodes with `refines` edges. For short
+videos, it validates the fine graph directly.
+
+Use this test when checking whether an entire video can be taken in for all
+four datasets. "Entire video" means full temporal coverage at the appropriate
+level: short datasets build the fine graph over the full video, while long
+datasets build a full-video coarse graph first and then craft a fine graph only
+inside retrieved coarse neighborhoods. Do not interpret the test as full
+fine-grained VLM processing over every 8s window of CG-Bench or VRBench.
+
+The pipeline writes this reference layer to `metadata.coarse_fine_graph`:
+
+- `coarse_graph`: full-video clip references for long videos, with
+  `media_ref.path`, coarse `time_span` handles, and `coarse_summary` nodes.
+- `fine_graph`: full-video fine references for short videos, or retrieved
+  fine-neighborhood references for long videos.
+- `coarse_to_fine_links`: `refines` edges from fine clips back to parent coarse
+  clips.
+
+Use the L1 query-memory diagnostic before trusting an L2 answer:
+
+```bash
+python dataset_clip_wrapper/evaluate_l1_query_memory.py \
+  --topk 5 \
+  --output dataset_clip_wrapper/output/l1_query_memory_eval.json \
+  dataset_clip_wrapper/output/cg_bench_video_only_qwen_gptoss_entire.jsonl
+```
+
+The report surfaces question-only hits, option scores, selected coarse indices,
+and a `l2_uses_gold_text_warning` flag. In valid `video_only` L2 experiments,
+the planner must not see or copy `question.answer`; official answers are
+evaluation-only hidden supervision.
+
+VRBench video-only graph-quality probe:
+
+```bash
+python dataset_clip_wrapper/evaluate_vrbench_video_only_graph.py \
+  --limit 1 \
+  --clip-schema-max-clips 4 \
+  --retrieval-topk 4
+```
+
+This compares video-only discovered clip-schema / clue-memory nodes against
+hidden VRBench `reasoning_process` timestamps for evaluation only. A narrow
+sequential budget is expected to miss later long-video targets; increasing
+`--retrieval-topk` and `--clip-schema-max-clips` checks whether the graph path
+can cover the target once perception reaches the right temporal neighborhood.
 
 ## CLI
 

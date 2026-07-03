@@ -50,8 +50,9 @@ def segment_video_or_select_clip(
     spans: list[dict[str, float]] = []
     if strategy == "whole_video":
         spans = [{"start_s": 0.0, "end_s": max(duration_s, 0.0)}]
-    elif strategy in {"fixed_window", "hierarchical"}:
-        window_s = float(clip_policy.get("window_s", 30.0))
+    elif strategy in {"fixed_window", "hierarchical", "coarse_only"}:
+        window_key = "coarse_window_s" if strategy in {"hierarchical", "coarse_only"} else "window_s"
+        window_s = float(clip_policy.get(window_key, clip_policy.get("window_s", 30.0)))
         overlap_s = float(clip_policy.get("overlap_s", 0.0))
         if window_s <= 0 or overlap_s >= window_s:
             return make_result(
@@ -82,6 +83,7 @@ def segment_video_or_select_clip(
             "node_type": "clip",
             "video_id": video_id,
             "clip_policy": strategy,
+            "granularity": "coarse" if strategy in {"hierarchical", "coarse_only"} else "fine",
             "time_span": span,
             "source_ids": [video_id],
             "provenance": {"created_by": "segment_video_or_select_clip"},

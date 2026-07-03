@@ -26,16 +26,29 @@ Return JSON only with this shape:
   "entity_mentions": [
     {"surface_form": "name or object", "entity_type": "person|object|place|other"}
   ],
+  "salient_objects": [
+    {"surface_form": "object name", "attributes": ["color/material/shape"], "searchable_phrases": ["phrase"]}
+  ],
+  "place": {"description": "place or setting", "searchable_phrases": ["phrase"]},
   "events": [
     {"description": "timestamped event", "time_span": {"start_s": number, "end_s": number}}
-  ]
+  ],
+  "cross_clip_cues": [
+    {"cue_type": "same_object|same_place|reappears|before_after|unknown", "description": "reusable clue phrase"}
+  ],
+  "searchable_phrases": ["short phrases useful for later retrieval"],
+  "uncertainty": "short note about ambiguous or missing evidence"
 }
 
 Rules:
 1. Use only information supported by the clip frames or provided subtitle/context text.
 2. Do not invent characters, objects, or events.
-3. Keep lists short and precise.
-4. If nothing is visible, return empty lists and a cautious scene_description.
+3. Prefer clue-oriented noun phrases over generic captions: objects, colors, place,
+   repeated-looking props, screen text, spoken clues, temporal changes.
+4. Include alternate names for visually salient items when grounded (for example
+   "iron fence", "metal gate", "white vehicle", "same-looking doorway").
+5. Keep lists short and precise.
+6. If nothing is visible, return empty lists and a cautious scene_description.
 """
 
 
@@ -118,12 +131,26 @@ class QwenClipSchemaProducer:
                 "observable_facts": [],
                 "dialogue_spans": [],
                 "entity_mentions": [],
+                "salient_objects": [],
+                "place": {},
                 "events": [],
+                "cross_clip_cues": [],
+                "searchable_phrases": [],
+                "uncertainty": "clip schema generation failed",
                 "model_error": str(exc),
             }
         payload.setdefault("clip_id", clip_id)
         payload.setdefault("time_span", clip.to_dict())
         payload.setdefault("granularity", clip.granularity)
+        payload.setdefault("observable_facts", [])
+        payload.setdefault("dialogue_spans", [])
+        payload.setdefault("entity_mentions", [])
+        payload.setdefault("salient_objects", [])
+        payload.setdefault("place", {})
+        payload.setdefault("events", [])
+        payload.setdefault("cross_clip_cues", [])
+        payload.setdefault("searchable_phrases", [])
+        payload.setdefault("uncertainty", "")
         payload["model"] = self.config.model
         payload["producer"] = "qwen_clip_schema"
         return payload

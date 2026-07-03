@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -53,6 +54,249 @@ def _derived_clips_for_spans(
     ]
 
 
+def _clip_ref_node(*, video_id: str, primary_path: str, span: ClipSpan, level: str) -> dict[str, Any]:
+    return {
+        "node_id": _clip_id(video_id, span.clip_index, span.granularity),
+        "node_type": "clip",
+        "video_id": video_id,
+        "media_ref": {"path": primary_path, "video_id": video_id},
+        "granularity": span.granularity,
+        "level": level,
+        "parent_index": span.parent_index,
+        "time_span": span.to_dict(),
+        "provenance": {"created_by": "dataset_clip_wrapper.coarse_fine_reference"},
+    }
+
+
+def _temporal_edges(nodes: list[dict[str, Any]], *, level: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "edge_id": f"edge:{left['node_id']}->{right['node_id']}:temporal_next",
+            "src": left["node_id"],
+            "dst": right["node_id"],
+            "edge_type": "temporal_next",
+            "level": level,
+        }
+        for left, right in zip(nodes, nodes[1:])
+    ]
+
+
+def _parse_time_anchors_s(text: str) -> list[float]:
+    anchors: list[float] = []
+    for minutes, seconds in re.findall(r"\b(\d{1,2}):(\d{2})\b", text):
+        anchors.append(float(int(minutes) * 60 + int(seconds)))
+    for value in re.findall(r"\b(?:at|around|near|after|before)\s+(\d+(?:\.\d+)?)\s*(?:s|sec|secs|second|seconds)\b", text, re.I):
+        anchors.append(float(value))
+    return list(dict.fromkeys(anchors))
+
+
+def _coarse_indices_for_time_anchors(coarse_spans: list[ClipSpan], anchors_s: list[float]) -> list[int]:
+    selected: list[int] = []
+    for anchor in anchors_s:
+        for index, span in enumerate(coarse_spans):
+            if span.start_s <= anchor <= span.end_s:
+                selected.append(index)
+                if index > 0:
+                    selected.append(index - 1)
+                if index + 1 < len(coarse_spans):
+                    selected.append(index + 1)
+                break
+    return list(dict.fromkeys(selected))
+
+
+def _schema_text(schema: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key in ("scene_description", "uncertainty"):
+        value = schema.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(value.strip())
+    for key in ("observable_facts", "dialogue_spans", "entity_mentions", "events", "salient_objects", "cross_clip_cues"):
+        value = schema.get(key)
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                parts.append(item.strip())
+            elif isinstance(item, dict):
+                for field in ("text", "description", "surface_form", "cue_type"):
+                    field_value = item.get(field)
+                    if isinstance(field_value, str) and field_value.strip():
+                        parts.append(field_value.strip())
+                for field in ("attributes", "searchable_phrases"):
+                    field_value = item.get(field)
+                    if isinstance(field_value, list):
+                        parts.extend(str(part).strip() for part in field_value if str(part).strip())
+    place = schema.get("place")
+    if isinstance(place, dict):
+        for field in ("description", "searchable_phrases"):
+            value = place.get(field)
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+            elif isinstance(value, list):
+                parts.extend(str(part).strip() for part in value if str(part).strip())
+    phrases = schema.get("searchable_phrases")
+    if isinstance(phrases, list):
+        parts.extend(str(part).strip() for part in phrases if str(part).strip())
+    return " ".join(dict.fromkeys(parts))
+
+
+def _spans_overlap(left: dict[str, Any] | None, right: dict[str, Any] | None) -> bool:
+    if not left or not right:
+        return False
+    return not (float(left["end_s"]) < float(right["start_s"]) or float(right["end_s"]) < float(left["start_s"]))
+
+
+def _coarse_to_fine_links(
+    *,
+    video_id: str,
+    coarse_spans: list[ClipSpan],
+    fine_spans: list[ClipSpan],
+) -> list[dict[str, Any]]:
+    links: list[dict[str, Any]] = []
+    for fine in fine_spans:
+        if fine.parent_index is None or fine.parent_index >= len(coarse_spans):
+            continue
+        coarse = coarse_spans[fine.parent_index]
+        fine_id = _clip_id(video_id, fine.clip_index, fine.granularity)
+        coarse_id = _clip_id(video_id, coarse.clip_index, coarse.granularity)
+        links.append(
+            {
+                "edge_id": f"edge:{fine_id}->{coarse_id}:refines",
+                "src": fine_id,
+                "dst": coarse_id,
+                "edge_type": "refines",
+                "coarse_index": fine.parent_index,
+            }
+        )
+    return links
+
+
+def _build_coarse_fine_reference_graph(
+    *,
+    video_id: str,
+    primary_path: str,
+    duration_s: float,
+    clip_policy: ClipPolicyConfig,
+    regime,
+    perception_spans: list[ClipSpan],
+    perception_meta: dict[str, Any],
+    clip_schemas: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Expose the video-reference layer: full coarse coverage + retrieved fine refs."""
+    if clip_policy.strategy == "hierarchical":
+        coarse_spans = segment_coarse_index(duration_s, clip_policy, regime=regime)
+    else:
+        coarse_spans = []
+    fine_spans = [span for span in perception_spans if span.granularity == "fine"]
+    if not fine_spans:
+        fine_spans = perception_spans
+
+    coarse_nodes = [
+        _clip_ref_node(video_id=video_id, primary_path=primary_path, span=span, level="coarse")
+        for span in coarse_spans
+    ]
+    fine_nodes = [
+        _clip_ref_node(video_id=video_id, primary_path=primary_path, span=span, level="fine")
+        for span in fine_spans
+    ]
+    schema_by_clip = {schema.get("clip_id"): schema for schema in clip_schemas}
+    fine_schema_nodes = [
+        {
+            "node_id": f"obs:fine:{node['node_id']}",
+            "node_type": "observation",
+            "level": "fine",
+            "source_ids": [node["node_id"]],
+            "time_span": node.get("time_span"),
+            "text": schema_by_clip[node["node_id"]].get("scene_description"),
+            "producer": schema_by_clip[node["node_id"]].get("producer"),
+            "model": schema_by_clip[node["node_id"]].get("model"),
+            "provenance": {"created_by": "dataset_clip_wrapper.clip_schema"},
+        }
+        for node in fine_nodes
+        if node["node_id"] in schema_by_clip
+    ]
+    fine_schema_edges = [
+        {
+            "edge_id": f"edge:{obs['node_id']}->{obs['source_ids'][0]}:derived_from",
+            "src": obs["node_id"],
+            "dst": obs["source_ids"][0],
+            "edge_type": "derived_from",
+            "level": "fine",
+        }
+        for obs in fine_schema_nodes
+    ]
+    coarse_summary_nodes: list[dict[str, Any]] = []
+    coarse_summary_edges: list[dict[str, Any]] = []
+    for coarse_node in coarse_nodes:
+        overlapping = [
+            schema
+            for schema in clip_schemas
+            if _spans_overlap(schema.get("time_span"), coarse_node.get("time_span"))
+        ]
+        summary_text = " ".join(_schema_text(schema) for schema in overlapping).strip()
+        if not summary_text:
+            span = coarse_node["time_span"]
+            summary_text = (
+                f"Unexpanded coarse clip reference from {span['start_s']:.2f}s to {span['end_s']:.2f}s; "
+                "fine perception is not available until this neighborhood is retrieved."
+            )
+        summary = {
+            "node_id": f"summary:coarse:{coarse_node['node_id']}",
+            "node_type": "coarse_summary",
+            "level": "coarse",
+            "source_ids": [coarse_node["node_id"]],
+            "time_span": coarse_node.get("time_span"),
+            "text": summary_text,
+            "expanded": bool(overlapping),
+            "provenance": {"created_by": "dataset_clip_wrapper.coarse_summary"},
+        }
+        coarse_summary_nodes.append(summary)
+        coarse_summary_edges.append(
+            {
+                "edge_id": f"edge:{summary['node_id']}->{coarse_node['node_id']}:derived_from",
+                "src": summary["node_id"],
+                "dst": coarse_node["node_id"],
+                "edge_type": "derived_from",
+                "level": "coarse",
+            }
+        )
+
+    links = _coarse_to_fine_links(
+        video_id=video_id,
+        coarse_spans=coarse_spans,
+        fine_spans=fine_spans,
+    )
+    retrieval = perception_meta.get("retrieval") or {}
+    return {
+        "schema_version": "video-skills-relaunch/coarse-fine-reference/v0.1",
+        "purpose": "video_clip_reference_layer",
+        "video_id": video_id,
+        "duration_s": duration_s,
+        "strategy": clip_policy.strategy,
+        "coarse_graph": {
+            "coverage": "full_video" if coarse_nodes else "not_applicable_for_short_video",
+            "nodes": coarse_nodes + coarse_summary_nodes,
+            "edges": _temporal_edges(coarse_nodes, level="coarse") + coarse_summary_edges,
+        },
+        "fine_graph": {
+            "coverage": "retrieved_neighborhoods" if coarse_nodes else "full_video",
+            "nodes": fine_nodes + fine_schema_nodes,
+            "edges": _temporal_edges(fine_nodes, level="fine") + fine_schema_edges,
+        },
+        "coarse_to_fine_links": links,
+        "retrieval": retrieval,
+        "selected_coarse_indices": retrieval.get("selected_coarse_indices", []),
+        "counts": {
+            "coarse_nodes": len(coarse_nodes),
+            "coarse_summary_nodes": len(coarse_summary_nodes),
+            "expanded_coarse_summary_nodes": sum(1 for node in coarse_summary_nodes if node["expanded"]),
+            "fine_clip_nodes": len(fine_nodes),
+            "fine_observation_nodes": len(fine_schema_nodes),
+            "coarse_to_fine_links": len(links),
+        },
+    }
+
+
 def _resolve_perception_spans(
     *,
     duration_s: float,
@@ -65,11 +309,13 @@ def _resolve_perception_spans(
 ) -> tuple[list[ClipSpan], dict[str, Any]]:
     """Select fine perception clips; long video uses retrieve-gated coarse → fine."""
     meta: dict[str, Any] = {}
-    retrieval_query = question_text if mode == RuntimeMode.EXPERT_DEMO else ""
+    retrieval_query = question_text if mode == RuntimeMode.EXPERT_DEMO or retrieval_config.query_in_video_only else ""
 
     if clip_policy.strategy == "hierarchical" and clip_policy.index_fine_expansion == "retrieval_gated":
         coarse = segment_coarse_index(duration_s, clip_policy, regime=regime)
         meta["coarse_index_count"] = len(coarse)
+        time_anchors_s = _parse_time_anchors_s(question_text) if retrieval_config.expand_time_anchors else []
+        time_anchor_indices = _coarse_indices_for_time_anchors(coarse, time_anchors_s)
 
         if retrieval_config.enabled:
             retrieval = retrieve_coarse_clips(
@@ -82,10 +328,20 @@ def _resolve_perception_spans(
                 mode=retrieval_config.mode if retrieval_query else "sequential",
             )
             selected = retrieval["selected_coarse_indices"]
+            if time_anchor_indices:
+                selected = list(dict.fromkeys(selected + time_anchor_indices))[: max(retrieval_config.topk, len(time_anchor_indices))]
+                retrieval["selected_coarse_indices"] = selected
+                retrieval["time_anchor_seconds"] = time_anchors_s
+                retrieval["time_anchor_coarse_indices"] = time_anchor_indices
             meta["retrieval"] = retrieval
         else:
             selected = list(range(min(retrieval_config.topk, len(coarse))))
+            if time_anchor_indices:
+                selected = list(dict.fromkeys(selected + time_anchor_indices))
             meta["retrieval"] = {"enabled": False, "selected_coarse_indices": selected}
+            if time_anchor_indices:
+                meta["retrieval"]["time_anchor_seconds"] = time_anchors_s
+                meta["retrieval"]["time_anchor_coarse_indices"] = time_anchor_indices
 
         perception = segment_perception_clips(
             duration_s,
@@ -143,6 +399,7 @@ def _produce_clip_schemas(
         reasoning={"effort": config.clip_schema.reasoning_effort, "exclude": True}
         if config.clip_schema.reasoning_effort
         else None,
+        timeout_s=config.clip_schema.timeout_s,
     )
     producer = QwenClipSchemaProducer(config.clip_schema, client)
     question_context = item.question.get("question_text") if config.mode == RuntimeMode.EXPERT_DEMO else None
@@ -261,19 +518,34 @@ def build_llm_enriched_example(
         )
         example["metadata"]["clip_schema_backend"] = config.clip_schema.backend
 
+    example["metadata"]["coarse_fine_graph"] = _build_coarse_fine_reference_graph(
+        video_id=item.video_id,
+        primary_path=primary_path,
+        duration_s=duration_s,
+        clip_policy=clip_policy,
+        regime=config.regime,
+        perception_spans=perception_spans,
+        perception_meta=perception_meta,
+        clip_schemas=clip_schemas,
+    )
+
     if config.run_graph_compose:
-        keys_py = config.graph_composer.keys_py_path or config.backbone.keys_py_path
-        api_key = load_openrouter_api_key(keys_py_path=keys_py, env_var=config.graph_composer.api_key_env)
-        client = OpenRouterClient(
-            model=config.graph_composer.model,
-            api_key=api_key,
-            api_base=config.graph_composer.api_base,
-            temperature=config.graph_composer.temperature,
-            max_tokens=config.graph_composer.max_tokens,
-            reasoning={"effort": config.graph_composer.reasoning_effort, "exclude": True}
-            if config.graph_composer.reasoning_effort
-            else None,
-        )
+        api_key: str | None = None
+        if config.graph_composer.use_llm_planner or config.run_l2_llm_planner:
+            keys_py = config.graph_composer.keys_py_path or config.backbone.keys_py_path
+            api_key = load_openrouter_api_key(keys_py_path=keys_py, env_var=config.graph_composer.api_key_env)
+            client = OpenRouterClient(
+                model=config.graph_composer.model,
+                api_key=api_key,
+                api_base=config.graph_composer.api_base,
+                temperature=config.graph_composer.temperature,
+                max_tokens=config.graph_composer.max_tokens,
+                reasoning={"effort": config.graph_composer.reasoning_effort, "exclude": True}
+                if config.graph_composer.reasoning_effort
+                else None,
+            )
+        else:
+            client = OpenRouterClient(model="offline", api_key="offline")
         composer = GraphComposer(config.graph_composer, client)
         composed = composer.compose_from_clip_schemas(
             example_id=example["example_id"],
@@ -319,6 +591,9 @@ def build_llm_enriched_example(
 
         if config.run_l2_llm_planner:
             from .reasoning_planner import build_llm_reasoning_rollout
+            if api_key is None:
+                keys_py = config.graph_composer.keys_py_path or config.backbone.keys_py_path
+                api_key = load_openrouter_api_key(keys_py_path=keys_py, env_var=config.graph_composer.api_key_env)
             l2_client = OpenRouterClient(
                 model=config.graph_composer.model if config.graph_composer else "openai/gpt-oss-120b",
                 api_key=api_key,

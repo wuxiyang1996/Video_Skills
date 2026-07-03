@@ -503,6 +503,11 @@ def build_llm_reasoning_rollout(
     from .reasoning_rollout import build_reasoning_rollout
 
     question = example.get("question") or {}
+    input_mode = ((example.get("available_inputs") or {}).get("mode") or "").strip()
+    planner_example = example
+    if input_mode == "video_only" and isinstance(question, dict) and "answer" in question:
+        question = {key: value for key, value in question.items() if key != "answer"}
+        planner_example = {**example, "question": question}
     task_family = example.get("task_family") or ""
 
     try:
@@ -518,7 +523,7 @@ def build_llm_reasoning_rollout(
         reasoning_plan = []
 
     if not reasoning_plan:
-        rollout = build_reasoning_rollout(example, clue_memory_graph, rollout_source="deterministic_fallback_from_llm")
+        rollout = build_reasoning_rollout(planner_example, clue_memory_graph, rollout_source="deterministic_fallback_from_llm")
         rollout["metadata"]["llm_plan"] = plan_response
         return rollout
 
@@ -548,7 +553,7 @@ def build_llm_reasoning_rollout(
             failed_steps = [t for t in trace if t.get("ok") is False]
 
     if crash_steps or (not ok_steps and len(failed_steps) > 3):
-        rollout = build_reasoning_rollout(example, clue_memory_graph, rollout_source="deterministic_fallback_from_llm")
+        rollout = build_reasoning_rollout(planner_example, clue_memory_graph, rollout_source="deterministic_fallback_from_llm")
         rollout["metadata"]["llm_plan"] = plan_response
         rollout["metadata"]["llm_trace"] = trace
         rollout["metadata"]["fallback_reason"] = "too_many_failures"
@@ -556,7 +561,7 @@ def build_llm_reasoning_rollout(
             rollout["metadata"]["repair"] = repair_result
         return rollout
 
-    rollout = make_reasoning_rollout_shell(example, clue_memory_graph, rollout_source="gpt_oss_reasoning_planner")
+    rollout = make_reasoning_rollout_shell(planner_example, clue_memory_graph, rollout_source="gpt_oss_reasoning_planner")
     rollout["rollout_id"] = f"skill_rollout:{example.get('example_id')}:llm_v1"
 
     executed_skills: list[str] = []

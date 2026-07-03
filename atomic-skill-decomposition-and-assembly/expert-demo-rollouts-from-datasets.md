@@ -37,6 +37,27 @@ over that graph. Atomic skills are the executable operations in the skill graph;
 composed skills are reusable templates that must expand into atomic skill
 invocations before execution.
 
+This document focuses on the supervision-rich path where dataset annotations,
+ground-truth clue intervals, captions, subtitles, and explanations seed the
+clue-memory graph for `expert_demo` rollouts. Keep a parallel graph-building
+path for `video_only`: build the same clue-memory graph interface from visible
+video/tool outputs only. That alternative starts from automatic clips,
+tool-produced clip schemas, VLM captions, ASR/subtitles, OCR, entity mentions,
+and temporal event signals, then runs the same graph-construction skills and
+verifier gates without exposing hidden dataset clues.
+
+```text
+Path A: dataset-supervised graph seed
+  dataset clues / annotations / captions / GT intervals
+  -> evidence_index / clue-memory graph
+  -> expert_demo reasoning graph fitting
+
+Path B: video/tool-derived graph seed
+  raw video / automatic clips / VLM-ASR-OCR-tool outputs
+  -> evidence_index / clue-memory graph
+  -> video_only reasoning graph assembly
+```
+
 ## Dataset Supervision Audit
 
 | Dataset | Ground truth | Caption / subtitle / summary | Evidence anchors | Best use for rollouts | Confidence |
@@ -503,7 +524,7 @@ validity across held-out examples.
 
 ## Training Split Recommendation
 
-Start small:
+Start small, but keep learning and evaluation roles separate:
 
 ```text
 P0:
@@ -521,6 +542,30 @@ P2:
   CG-Bench full
   M3-Bench after graph reader
 ```
+
+For P0, split the training sources into a labeling subset and a held-out
+validation subset before generating expert demos:
+
+```text
+train_for_labeling:
+  Video-Holmes train first 400 QA
+  CG-Bench mini first 400 QA
+  VRBench 80 videos x all QA
+
+validation:
+  Video-Holmes train held-out 100 QA
+  CG-Bench mini held-out 100 QA
+  VRBench held-out 20 videos x all QA
+
+test:
+  official benchmark test/eval split only
+```
+
+Use `train_for_labeling` for expert-demo rollouts, SFT targets, repair-data
+generation, and current-policy samples for verified RL / GRPO. Use validation
+for prompt/schema iteration, reward weights, and motif thresholds. Do not use
+official test examples for expert planning, SFT, reward tuning, motif mining, or
+GRPO sampling.
 
 ## What This Gives Us
 
