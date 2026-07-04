@@ -160,9 +160,11 @@ def verify_rollout(
         "all_commits_have_evidence": not commit_errors,
     }
 
+    hard_errors = schema_errors + ref_errors + leakage_errors + retrieval_errors + commit_errors
+
     if not all_errors:
         acceptance = "accepted"
-    elif not schema_errors and not leakage_errors:
+    elif not hard_errors:
         acceptance = "accepted_weak"
     else:
         acceptance = "rejected"

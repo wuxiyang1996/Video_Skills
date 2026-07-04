@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import hashlib
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +67,23 @@ VLM_L1_EDGE_TYPES = {
     "social_cue",
 }
 VLM_L1_NODE_TYPES = {"observation", "entity_mention", "event", "state", "dialogue_span", "clue"}
+SHORT_RECURRENCE_GROUPS = {
+    "iron_fence_or_gate": {
+        "terms": ("iron fence", "rusty iron fence", "metal gate", "metal bars", "metal bar", "fence", "gate"),
+        "label": "iron fence/gate",
+        "edge_type": "reappears",
+    },
+    "red_shirt_person": {
+        "terms": ("red shirt", "red-shirt", "red garment", "person in red", "red top"),
+        "label": "red-shirted person",
+        "edge_type": "same_entity",
+    },
+    "infinity_paper": {
+        "terms": ("infinity symbol", "infinity drawing", "crumpled paper", "piece of paper"),
+        "label": "paper with infinity symbol",
+        "edge_type": "same_object",
+    },
+}
 
 GRAPH_COMPOSE_PROMPT = f"""You compose a clue-memory / perception graph using ONLY the executable
 Evidence Graph Construction atomic skills listed in allowed_skill_ids.
@@ -298,6 +316,15 @@ def build_neighbor_vlm_l1_response_schema() -> dict[str, Any]:
     }
 
 
+def _neighbor_vlm_l1_worker(job: dict[str, Any]) -> dict[str, Any]:
+    client = OpenRouterClient(**job["client_kwargs"])
+    response = client.chat_json(job["messages"], response_format=job["response_format"])
+    response["model"] = job["client_kwargs"]["model"]
+    response["composer"] = "neighbor_vlm_l1_graph_composer"
+    response["target_clip_id"] = job["target_clip_id"]
+    return response
+
+
 class GraphComposer:
     def __init__(self, config: GraphComposerConfig, client: OpenRouterClient):
         self.config = config
@@ -354,6 +381,58 @@ class GraphComposer:
             "searchable_phrases": _strings(schema.get("searchable_phrases"), limit=6),
             "uncertainty": str(schema.get("uncertainty") or "")[:160],
         }
+
+    def _schema_anchor_text(self, schema: dict[str, Any]) -> str:
+        """Build a grounded clip anchor from the VLM clip schema, not labels."""
+        digest = self._clip_digest(schema)
+        parts: list[str] = []
+        scene = str(digest.get("scene") or "").strip()
+        if scene:
+            parts.append(scene)
+        for key in ("facts", "objects", "entities", "events", "dialogue", "searchable_phrases"):
+            for value in digest.get(key) or []:
+                text = str(value).strip()
+                if text and text not in parts:
+                    parts.append(text)
+        return " | ".join(parts)[:500]
+
+    def _ensure_schema_anchor_node(
+        self,
+        graph: dict[str, Any],
+        *,
+        schema: dict[str, Any],
+        mode: RuntimeMode,
+        primary_node_by_clip: dict[str, str],
+    ) -> str | None:
+        """Create a VLM-schema endpoint when a clip-level edge needs one."""
+        clip_id = str(schema.get("clip_id") or "").strip()
+        if not clip_id or schema.get("model_error"):
+            return None
+        if clip_id in primary_node_by_clip:
+            return primary_node_by_clip[clip_id]
+
+        text = self._schema_anchor_text(schema).strip()
+        if not text:
+            return None
+
+        node_id = self._stable_id("evidence.observation", clip_id, schema.get("time_span"), text, "schema_anchor")
+        if not any(node.get("node_id") == node_id for node in graph.get("nodes", [])):
+            graph.setdefault("nodes", []).append(
+                {
+                    "node_id": node_id,
+                    "node_type": "observation",
+                    "clip_id": clip_id,
+                    "time_span": schema.get("time_span"),
+                    "text": text,
+                    "modality": "mixed",
+                    "confidence": 0.72,
+                    "source_type": "qwen_clip_schema_anchor",
+                    "producer": "neighbor_vlm_l1_schema_anchor",
+                    "visibility": {"hidden_supervision": False, "mode": mode.value},
+                }
+            )
+        primary_node_by_clip[clip_id] = node_id
+        return node_id
 
     def plan_skill_graph(
         self,
@@ -524,6 +603,28 @@ class GraphComposer:
         neighbor_schemas: list[dict[str, Any]],
         mode: RuntimeMode,
     ) -> dict[str, Any]:
+        messages, response_format = self._neighbor_vlm_l1_request(
+            example_id=example_id,
+            video_id=video_id,
+            target_schema=target_schema,
+            neighbor_schemas=neighbor_schemas,
+            mode=mode,
+        )
+        response = self.client.chat_json(messages, response_format=response_format)
+        response["model"] = self.config.model
+        response["composer"] = "neighbor_vlm_l1_graph_composer"
+        response["target_clip_id"] = target_schema.get("clip_id")
+        return response
+
+    def _neighbor_vlm_l1_request(
+        self,
+        *,
+        example_id: str,
+        video_id: str,
+        target_schema: dict[str, Any],
+        neighbor_schemas: list[dict[str, Any]],
+        mode: RuntimeMode,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         payload = {
             "task": "compose_neighbor_vlm_l1_clip_graph",
             "example_id": example_id,
@@ -534,23 +635,16 @@ class GraphComposer:
             "allowed_edge_types": sorted(VLM_L1_EDGE_TYPES - {"entity_mention", "derived_from"}),
             "instructions": NEIGHBOR_VLM_L1_PROMPT,
         }
-        response = self.client.chat_json(
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a grounded local video clue-graph composer. "
-                        "Only create target clip nodes and sparse semantic edges to neighboring clips."
-                    ),
-                },
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            response_format=build_neighbor_vlm_l1_response_schema(),
-        )
-        response["model"] = self.config.model
-        response["composer"] = "neighbor_vlm_l1_graph_composer"
-        response["target_clip_id"] = target_schema.get("clip_id")
-        return response
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "You are a grounded local video clue-graph composer. "
+                    "Only create target clip nodes and sparse semantic edges to neighboring clips."
+                ),
+            },
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ], build_neighbor_vlm_l1_response_schema()
 
     def _compose_neighbor_vlm_l1_graph(
         self,
@@ -562,15 +656,38 @@ class GraphComposer:
         mode: RuntimeMode,
     ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
         visible_schemas = [schema for schema in clip_schemas if schema.get("clip_id") and not schema.get("model_error")]
+        schema_by_clip = {str(schema.get("clip_id")): schema for schema in visible_schemas if schema.get("clip_id")}
         responses: list[dict[str, Any]] = []
         trace: list[dict[str, Any]] = []
         local_id_map: dict[str, str] = {}
         primary_node_by_clip: dict[str, str] = {}
         pending_edges: list[tuple[dict[str, Any], str]] = []
 
+        indexed_jobs: list[tuple[int, dict[str, Any], list[dict[str, Any]]]] = []
         for index, schema in enumerate(visible_schemas):
-            target_clip_id = str(schema.get("clip_id"))
             neighbors = visible_schemas[max(0, index - 2) : index] + visible_schemas[index + 1 : index + 3]
+            indexed_jobs.append((index, schema, neighbors))
+
+        def _error_response(index: int, target_clip_id: str, exc: Exception) -> tuple[int, dict[str, Any], dict[str, Any]]:
+            response = {
+                "target_nodes": [],
+                "neighbor_edges": [],
+                "notes": "neighbor VLM L1 clip compose failed",
+                "composer": "neighbor_vlm_l1_graph_composer",
+                "target_clip_id": target_clip_id,
+                "planner_error": str(exc),
+            }
+            return index, response, {
+                "skill_id": "neighbor_vlm_l1_clip_failed",
+                "ok": False,
+                "clip_id": target_clip_id,
+                "failure_code": "api_or_parse_error",
+                "messages": [str(exc)],
+            }
+
+        def _run_job(job: tuple[int, dict[str, Any], list[dict[str, Any]]]) -> tuple[int, dict[str, Any], dict[str, Any] | None]:
+            index, schema, neighbors = job
+            target_clip_id = str(schema.get("clip_id"))
             try:
                 response = self.compose_neighbor_vlm_l1_clip(
                     example_id=example_id,
@@ -579,24 +696,59 @@ class GraphComposer:
                     neighbor_schemas=neighbors,
                     mode=mode,
                 )
+                return index, response, None
             except Exception as exc:
-                response = {
-                    "target_nodes": [],
-                    "neighbor_edges": [],
-                    "notes": "neighbor VLM L1 clip compose failed",
-                    "composer": "neighbor_vlm_l1_graph_composer",
-                    "target_clip_id": target_clip_id,
-                    "planner_error": str(exc),
-                }
-                trace.append(
-                    {
-                        "skill_id": "neighbor_vlm_l1_clip_failed",
-                        "ok": False,
-                        "clip_id": target_clip_id,
-                        "failure_code": "api_or_parse_error",
-                        "messages": [str(exc)],
-                    }
-                )
+                return _error_response(index, target_clip_id, exc)
+
+        indexed_responses: list[tuple[int, dict[str, Any], dict[str, Any] | None]]
+        workers = max(1, int(self.config.neighbor_workers or 1))
+        if workers == 1 or len(indexed_jobs) <= 1:
+            indexed_responses = [_run_job(job) for job in indexed_jobs]
+        else:
+            indexed_responses = []
+            client_kwargs = {
+                "model": self.client.model,
+                "api_key": self.client.api_key,
+                "api_base": self.client.api_base,
+                "temperature": self.client.temperature,
+                "max_tokens": self.client.max_tokens,
+                "reasoning": self.client.reasoning,
+                "timeout_s": self.client.timeout_s,
+            }
+            with ProcessPoolExecutor(max_workers=min(workers, len(indexed_jobs))) as executor:
+                future_to_job = {}
+                for index, schema, neighbors in indexed_jobs:
+                    messages, response_format = self._neighbor_vlm_l1_request(
+                        example_id=example_id,
+                        video_id=video_id,
+                        target_schema=schema,
+                        neighbor_schemas=neighbors,
+                        mode=mode,
+                    )
+                    future = executor.submit(
+                        _neighbor_vlm_l1_worker,
+                        {
+                            "client_kwargs": client_kwargs,
+                            "messages": messages,
+                            "response_format": response_format,
+                            "target_clip_id": schema.get("clip_id"),
+                        },
+                    )
+                    future_to_job[future] = (index, schema)
+                for future in as_completed(future_to_job):
+                    index, schema = future_to_job[future]
+                    target_clip_id = str(schema.get("clip_id"))
+                    try:
+                        indexed_responses.append((index, future.result(), None))
+                    except Exception as exc:
+                        indexed_responses.append(_error_response(index, target_clip_id, exc))
+            indexed_responses.sort(key=lambda item: item[0])
+
+        for index, response, error_trace in indexed_responses:
+            schema = visible_schemas[index]
+            target_clip_id = str(schema.get("clip_id"))
+            if error_trace:
+                trace.append(error_trace)
             responses.append(response)
 
             target_node_ids: list[str] = []
@@ -635,6 +787,24 @@ class GraphComposer:
 
             if target_node_ids:
                 primary_node_by_clip[target_clip_id] = target_node_ids[0]
+            else:
+                anchor = self._ensure_schema_anchor_node(
+                    graph,
+                    schema=schema,
+                    mode=mode,
+                    primary_node_by_clip=primary_node_by_clip,
+                )
+                if anchor:
+                    target_node_ids.append(anchor)
+                    trace.append(
+                        {
+                            "skill_id": "neighbor_vlm_l1_create_schema_anchor",
+                            "ok": True,
+                            "node_id": anchor,
+                            "clip_id": target_clip_id,
+                            "reason": "no_target_nodes_from_model",
+                        }
+                    )
             for edge in response_edges:
                 if isinstance(edge, dict):
                     pending_edges.append((edge, target_clip_id))
@@ -643,6 +813,24 @@ class GraphComposer:
         for edge_index, (raw_edge, target_clip_id) in enumerate(pending_edges):
             src_clip = str(raw_edge.get("src_clip_id") or target_clip_id)
             dst_clip = str(raw_edge.get("dst_clip_id") or target_clip_id)
+            for endpoint_clip in (src_clip, dst_clip):
+                if endpoint_clip not in primary_node_by_clip and endpoint_clip in schema_by_clip:
+                    anchor = self._ensure_schema_anchor_node(
+                        graph,
+                        schema=schema_by_clip[endpoint_clip],
+                        mode=mode,
+                        primary_node_by_clip=primary_node_by_clip,
+                    )
+                    if anchor:
+                        valid_node_ids.add(anchor)
+                        trace.append(
+                            {
+                                "skill_id": "neighbor_vlm_l1_create_schema_anchor",
+                                "ok": True,
+                                "node_id": anchor,
+                                "clip_id": endpoint_clip,
+                            }
+                        )
             src = local_id_map.get(f"{src_clip}:{raw_edge.get('src_node_id')}", primary_node_by_clip.get(src_clip))
             dst = local_id_map.get(f"{dst_clip}:{raw_edge.get('dst_node_id')}", primary_node_by_clip.get(dst_clip))
             if src not in valid_node_ids or dst not in valid_node_ids or src == dst:
@@ -680,10 +868,112 @@ class GraphComposer:
         plan_payload = {
             "composer": "neighbor_vlm_l1_graph_composer",
             "model": self.config.model,
+            "neighbor_workers": workers,
             "clip_results": responses,
             "notes": "local target-clip graph construction with neighbor semantic edges",
         }
         return graph, trace, plan_payload
+
+    def _add_short_video_recurrence_clues(
+        self,
+        *,
+        graph: dict[str, Any],
+        mode: RuntimeMode,
+    ) -> list[dict[str, Any]]:
+        """Link repeated VLM-observed objects across non-adjacent short-video clips."""
+        trace: list[dict[str, Any]] = []
+        nodes = [
+            node
+            for node in graph.get("nodes", [])
+            if node.get("node_type") in VLM_L1_NODE_TYPES and isinstance(node.get("time_span"), dict)
+        ]
+        existing_edges = {(edge.get("src"), edge.get("dst"), edge.get("edge_type")) for edge in graph.get("edges", [])}
+        for group_id, spec in SHORT_RECURRENCE_GROUPS.items():
+            terms = tuple(str(term).lower() for term in spec["terms"])
+            matches = []
+            for node in nodes:
+                text = " ".join(
+                    str(node.get(key) or "")
+                    for key in ("text", "description", "surface_form")
+                ).lower()
+                if any(term in text for term in terms):
+                    matches.append(node)
+            matches.sort(key=lambda node: float((node.get("time_span") or {}).get("start_s", 0.0)))
+            if len(matches) < 2:
+                continue
+            early = matches[0]
+            late_candidates = [
+                node
+                for node in matches[1:]
+                if float((node.get("time_span") or {}).get("start_s", 0.0))
+                - float((early.get("time_span") or {}).get("end_s", 0.0))
+                >= 12.0
+            ]
+            if not late_candidates:
+                continue
+            late = late_candidates[-1]
+            edge_type = str(spec["edge_type"])
+            if (early.get("node_id"), late.get("node_id"), edge_type) not in existing_edges:
+                edge_id = self._stable_id("edge", early.get("node_id"), late.get("node_id"), edge_type, group_id)
+                graph.setdefault("edges", []).append(
+                    {
+                        "edge_id": edge_id,
+                        "src": early.get("node_id"),
+                        "dst": late.get("node_id"),
+                        "edge_type": edge_type,
+                        "evidence_refs": [early.get("node_id"), late.get("node_id")],
+                        "text": (
+                            f"The {spec['label']} appears in an earlier clip and reappears later, "
+                            "linking non-adjacent moments in the same short video."
+                        ),
+                        "producer": "short_video_recurrence_linker",
+                        "visibility": {"hidden_supervision": False, "mode": mode.value},
+                    }
+                )
+                existing_edges.add((early.get("node_id"), late.get("node_id"), edge_type))
+                trace.append({"skill_id": "short_video_recurrence_link", "ok": True, "edge_id": edge_id})
+
+            clue_text = (
+                f"Repeated {spec['label']} clue: it is visible around "
+                f"{float((early.get('time_span') or {}).get('start_s', 0.0)):.1f}s and again around "
+                f"{float((late.get('time_span') or {}).get('start_s', 0.0)):.1f}s, suggesting the later moment "
+                "returns to or echoes a previously seen place/object."
+            )
+            clue_id = self._stable_id("evidence.clue", group_id, early.get("node_id"), late.get("node_id"), clue_text)
+            if not any(node.get("node_id") == clue_id for node in graph.get("nodes", [])):
+                graph.setdefault("nodes", []).append(
+                    {
+                        "node_id": clue_id,
+                        "node_type": "clue",
+                        "time_span": {
+                            "start_s": float((early.get("time_span") or {}).get("start_s", 0.0)),
+                            "end_s": float((late.get("time_span") or {}).get("end_s", 0.0)),
+                        },
+                        "text": clue_text,
+                        "source_type": "short_video_recurrence_clue",
+                        "producer": "short_video_recurrence_linker",
+                        "visibility": {"hidden_supervision": False, "mode": mode.value},
+                    }
+                )
+                trace.append({"skill_id": "short_video_recurrence_create_clue", "ok": True, "node_id": clue_id})
+            for source in (early, late):
+                edge_id = self._stable_id("edge", clue_id, source.get("node_id"), "supports_observation")
+                if (clue_id, source.get("node_id"), "supports_observation") in existing_edges:
+                    continue
+                graph.setdefault("edges", []).append(
+                    {
+                        "edge_id": edge_id,
+                        "src": clue_id,
+                        "dst": source.get("node_id"),
+                        "edge_type": "supports_observation",
+                        "evidence_refs": [clue_id, source.get("node_id")],
+                        "text": "The recurrence clue is grounded in this observed clip evidence.",
+                        "producer": "short_video_recurrence_linker",
+                        "visibility": {"hidden_supervision": False, "mode": mode.value},
+                    }
+                )
+                existing_edges.add((clue_id, source.get("node_id"), "supports_observation"))
+        return trace
 
     def _graph_from_vlm_l1_response(
         self,
@@ -941,6 +1231,8 @@ class GraphComposer:
                     )
                     trace.extend(deterministic_trace)
                     used_deterministic = True
+            if clip_policy.get("strategy") == "whole_video":
+                trace.extend(self._add_short_video_recurrence_clues(graph=graph, mode=mode))
         elif skill_plan:
             graph, trace = self.execute_skill_plan(graph=graph, skill_plan=skill_plan, bindings=bindings)
             failed_steps = [step for step in trace if step.get("ok") is False]

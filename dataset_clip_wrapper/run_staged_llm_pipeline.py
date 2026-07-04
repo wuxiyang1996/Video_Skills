@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -14,12 +15,17 @@ from .clip_schema import QwenClipSchemaProducer
 from .clue_memory import extract_clue_memory_graph
 from .graph_composer import GraphComposer
 from .llm_pipeline import (
+    _answerability_diagnostic_graph,
     _build_coarse_fine_reference_graph,
     _build_skill_executor,
+    _coarse_schema_segments,
+    _coarse_fine_context_for_evidence_index,
     _derived_clips_for_spans,
+    _parse_time_anchors_s,
     _resolve_perception_spans,
     _subtitle_context_for_clip,
 )
+from .clip_policy import segment_coarse_index
 from .openrouter_client import OpenRouterClient, load_openrouter_api_key
 from .pipeline import build_canonical_example
 from .reasoning_rollout import build_reasoning_rollout
@@ -112,9 +118,19 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--clip-schema-frames", type=int, default=1)
     parser.add_argument("--clip-schema-max-tokens", type=int, default=700)
     parser.add_argument("--clip-schema-timeout-s", type=int, default=45)
+    parser.add_argument(
+        "--no-coarse-summary-index",
+        action="store_true",
+        help="Disable full coarse Qwen summary indexing before long-video retrieval.",
+    )
+    parser.add_argument("--anchor-repass-frames", type=int, default=6)
+    parser.add_argument("--anchor-repass-window-s", type=float, default=8.0)
+    parser.add_argument("--no-anchor-repass", action="store_true")
 
     parser.add_argument("--graph-model", default="openai/gpt-oss-120b")
     parser.add_argument("--graph-max-tokens", type=int, default=3500)
+    parser.add_argument("--graph-timeout-s", type=int, default=180)
+    parser.add_argument("--graph-neighbor-workers", type=int, default=1)
     parser.add_argument(
         "--graph-composer-mode",
         default="neighbor_vlm_l1",
@@ -122,6 +138,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--graph-deterministic", action="store_true")
     parser.add_argument("--skip-l2-planner", action="store_true")
+    parser.add_argument("--skill-model", default="qwen/qwen3.5-9b")
+    parser.add_argument("--llm-skill-scope", default="all", choices=["all", "verifier"])
     parser.add_argument("--disable-llm-skills", action="store_true")
     parser.add_argument("--disable-vlm-skills", action="store_true")
 
@@ -174,11 +192,14 @@ def _config_from_args(args: argparse.Namespace) -> WrapperConfig:
             use_llm_planner=not args.graph_deterministic,
             composer_mode="deterministic" if args.graph_deterministic else args.graph_composer_mode,
             max_tokens=args.graph_max_tokens,
+            timeout_s=args.graph_timeout_s,
+            neighbor_workers=args.graph_neighbor_workers,
         ),
         skill_execution=SkillExecutionConfig(
-            skill_model=args.clip_schema_model,
+            skill_model=args.skill_model,
             enable_llm_skills=not args.disable_llm_skills,
             enable_vlm_skills=not args.disable_vlm_skills,
+            llm_skill_scope=args.llm_skill_scope,
         ),
         split=args.split,
         limit=args.limit,
@@ -251,6 +272,122 @@ def _produce_or_resume_clip_schemas(
     return [by_clip_id[derived["clip_id"]] for derived in derived_clips if derived["clip_id"] in by_clip_id]
 
 
+def _coarse_summary_index_enabled(args: argparse.Namespace, config: WrapperConfig) -> bool:
+    return (
+        not args.no_coarse_summary_index
+        and config.clip_policy.strategy == "hierarchical"
+        and config.clip_policy.index_fine_expansion == "retrieval_gated"
+        and config.retrieval.enabled
+        and config.retrieval.query_in_video_only
+    )
+
+
+def _produce_or_resume_coarse_summaries(
+    *,
+    item: Any,
+    config: WrapperConfig,
+    coarse_spans: list[Any],
+    visible_segments: list[dict[str, Any]],
+    primary_path: str,
+    stage_path: Path,
+    force: bool,
+    retry_failed: bool,
+    fill_missing: bool,
+) -> list[dict[str, Any]]:
+    derived = _derived_clips_for_spans(video_id=item.video_id, primary_path=primary_path, spans=coarse_spans)
+    return _produce_or_resume_clip_schemas(
+        item=item,
+        config=config,
+        spans=coarse_spans,
+        derived_clips=derived,
+        visible_segments=visible_segments,
+        stage_path=stage_path,
+        force=force,
+        retry_failed=retry_failed,
+        fill_missing=fill_missing,
+    )
+
+
+def _anchor_repass_spans(
+    *,
+    spans: list[Any],
+    derived_clips: list[dict[str, Any]],
+    question_text: str,
+    window_s: float,
+) -> tuple[list[Any], list[dict[str, Any]], list[float]]:
+    anchors = _parse_time_anchors_s(question_text)
+    if not anchors:
+        return [], [], []
+    selected_spans: list[Any] = []
+    selected_derived: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for span, derived in zip(spans, derived_clips):
+        start_s = float(span.start_s)
+        end_s = float(span.end_s)
+        if any(start_s - window_s <= anchor <= end_s + window_s for anchor in anchors):
+            clip_id = derived.get("clip_id")
+            if clip_id in seen:
+                continue
+            seen.add(clip_id)
+            selected_spans.append(span)
+            selected_derived.append(derived)
+    return selected_spans, selected_derived, anchors
+
+
+def _produce_or_resume_anchor_repass(
+    *,
+    item: Any,
+    config: WrapperConfig,
+    spans: list[Any],
+    derived_clips: list[dict[str, Any]],
+    visible_segments: list[dict[str, Any]],
+    stage_path: Path,
+    force: bool,
+    retry_failed: bool,
+    fill_missing: bool,
+    request_frames: int,
+) -> list[dict[str, Any]]:
+    if not spans:
+        return []
+    if force and stage_path.exists():
+        stage_path.unlink()
+
+    cached = _read_jsonl(stage_path)
+    if retry_failed and cached:
+        cached = [row for row in cached if not row.get("model_error")]
+        _write_jsonl(stage_path, cached)
+    by_clip_id = {row.get("clip_id"): row for row in cached if row.get("clip_id")}
+
+    repass_config = replace(
+        config.clip_schema,
+        request_frames=max(config.clip_schema.request_frames, request_frames),
+        max_tokens=max(config.clip_schema.max_tokens or 0, 1000),
+    )
+    repass_wrapper = replace(config, clip_schema=repass_config)
+    producer = _clip_schema_producer(repass_wrapper)
+
+    question_text = item.question.get("question_text") or ""
+    for span, derived in zip(spans, derived_clips):
+        clip_id = derived["clip_id"]
+        if clip_id in by_clip_id:
+            continue
+        if not fill_missing:
+            continue
+        schema = producer.build_clip_schema(
+            clip_id=clip_id,
+            clip=span,
+            video_path=item.video_path,
+            subtitle_context=_subtitle_context_for_clip(visible_segments, span.to_dict()),
+            question_context=question_text,
+        )
+        schema["schema_attempt_context"] = "query_time_anchor_repass"
+        schema["request_frames"] = repass_config.request_frames
+        _append_jsonl(stage_path, schema)
+        by_clip_id[clip_id] = schema
+
+    return [by_clip_id[derived["clip_id"]] for derived in derived_clips if derived["clip_id"] in by_clip_id]
+
+
 def _compose_l1_and_l2(
     *,
     example: dict[str, Any],
@@ -272,6 +409,7 @@ def _compose_l1_and_l2(
             temperature=config.graph_composer.temperature,
             max_tokens=config.graph_composer.max_tokens,
             reasoning={"effort": config.graph_composer.reasoning_effort, "exclude": True},
+            timeout_s=config.graph_composer.timeout_s,
         )
     else:
         client = OpenRouterClient(model="offline", api_key="offline")
@@ -288,8 +426,31 @@ def _compose_l1_and_l2(
         observation_end_s=clip_policy.observation_end_s,
     )
     graph = composed["graph"]
-    example["evidence_index"]["nodes"] = graph.get("nodes", [])
-    example["evidence_index"]["edges"] = graph.get("edges", [])
+    context_nodes, context_edges = _coarse_fine_context_for_evidence_index(
+        example["metadata"].get("coarse_fine_graph") or {}
+    )
+    diagnostic = _answerability_diagnostic_graph(
+        example=example,
+        graph_nodes=graph.get("nodes", []) + context_nodes,
+        clip_schemas=clip_schemas,
+        visible_segments=visible_segments,
+    )
+    diagnostic_nodes = diagnostic.get("nodes") or []
+    diagnostic_edges = diagnostic.get("edges") or []
+    node_by_id = {
+        node.get("node_id"): node
+        for node in graph.get("nodes", []) + context_nodes + diagnostic_nodes
+        if node.get("node_id")
+    }
+    graph_edges = graph.get("edges", []) + context_edges + diagnostic_edges
+    valid_ids = set(node_by_id)
+    edge_by_id = {
+        edge.get("edge_id"): edge
+        for edge in graph_edges
+        if edge.get("edge_id") and edge.get("src") in valid_ids and edge.get("dst") in valid_ids
+    }
+    example["evidence_index"]["nodes"] = list(node_by_id.values())
+    example["evidence_index"]["edges"] = list(edge_by_id.values())
     example["evidence_index"]["graph_composer"] = config.graph_composer.to_dict()
     example["evidence_index"]["retrieval"] = config.retrieval.to_dict()
     example["metadata"]["graph_compose"] = {
@@ -299,6 +460,7 @@ def _compose_l1_and_l2(
         "execution_trace": composed.get("execution_trace"),
         "skill_plan": composed.get("skill_plan"),
     }
+    example["metadata"]["answerability_diagnostic"] = diagnostic.get("summary") or {}
 
     for node in graph.get("nodes", []):
         if node.get("node_type") == "observation" and node.get("text"):
@@ -328,6 +490,7 @@ def _compose_l1_and_l2(
             api_key=api_key,
             max_tokens=1800,
             reasoning={"effort": "minimal", "exclude": True},
+            timeout_s=config.graph_composer.timeout_s,
         )
         skill_exec = _build_skill_executor(api_key, config)
         rollout = build_llm_reasoning_rollout(example, clue_graph, client=l2_client, skill_executor=skill_exec)
@@ -347,6 +510,10 @@ def _run_item(
     rebuild_from_stages: bool,
     retry_failed_clip_schemas: bool,
     fill_missing_clip_schemas: bool,
+    build_coarse_summary_index: bool,
+    anchor_repass_frames: int,
+    anchor_repass_window_s: float,
+    anchor_repass_enabled: bool,
 ) -> dict[str, Any]:
     example_stage_dir = root_stage_dir / _safe_name(item.example_id)
     example_stage_dir.mkdir(parents=True, exist_ok=True)
@@ -359,16 +526,39 @@ def _run_item(
     duration_s = float(example["video"].get("duration_s") or 0.0)
     clip_policy = config.resolved_clip_policy(duration_s)
     visible_segments = example["video"]["segments"]
+    primary_path = str(item.video_path) if item.video_path else ""
+    coarse_schemas: list[dict[str, Any]] = []
+    retrieval_segments = visible_segments
+    if build_coarse_summary_index:
+        coarse_spans = segment_coarse_index(duration_s, clip_policy, regime=config.regime)
+        coarse_schemas = _produce_or_resume_coarse_summaries(
+            item=item,
+            config=config,
+            coarse_spans=coarse_spans,
+            visible_segments=visible_segments,
+            primary_path=primary_path,
+            stage_path=example_stage_dir / "00b_coarse_clip_schemas.jsonl",
+            force=force,
+            retry_failed=retry_failed_clip_schemas,
+            fill_missing=fill_missing_clip_schemas,
+        )
+        retrieval_segments = visible_segments + _coarse_schema_segments(coarse_schemas)
+        example["metadata"]["coarse_clip_schemas"] = coarse_schemas
+        example["metadata"]["coarse_summary_index"] = {
+            "enabled": True,
+            "clip_schema_count": len(coarse_schemas),
+            "stage_path": str(example_stage_dir / "00b_coarse_clip_schemas.jsonl"),
+        }
+
     perception_spans, perception_meta = _resolve_perception_spans(
         duration_s=duration_s,
         clip_policy=clip_policy,
         regime=config.regime,
         retrieval_config=config.retrieval,
         question_text=item.question.get("question_text") or "",
-        visible_segments=visible_segments,
+        visible_segments=retrieval_segments,
         mode=config.mode,
     )
-    primary_path = str(item.video_path) if item.video_path else ""
     derived = _derived_clips_for_spans(video_id=item.video_id, primary_path=primary_path, spans=perception_spans)
     example["metadata"]["perception"] = perception_meta
     _write_json(example_stage_dir / "00_shell.json", example)
@@ -388,6 +578,40 @@ def _run_item(
         retry_failed=retry_failed_clip_schemas,
         fill_missing=fill_missing_clip_schemas,
     )
+    anchor_schemas: list[dict[str, Any]] = []
+    if anchor_repass_enabled and config.mode == RuntimeMode.VIDEO_ONLY and anchor_repass_frames > config.clip_schema.request_frames:
+        anchor_spans, anchor_derived, anchors_s = _anchor_repass_spans(
+            spans=perception_spans,
+            derived_clips=derived,
+            question_text=item.question.get("question_text") or "",
+            window_s=anchor_repass_window_s,
+        )
+        anchor_schemas = _produce_or_resume_anchor_repass(
+            item=item,
+            config=config,
+            spans=anchor_spans,
+            derived_clips=anchor_derived,
+            visible_segments=visible_segments,
+            stage_path=example_stage_dir / "02b_anchor_clip_schemas.jsonl",
+            force=force,
+            retry_failed=retry_failed_clip_schemas,
+            fill_missing=fill_missing_clip_schemas,
+            request_frames=anchor_repass_frames,
+        )
+        if anchor_schemas:
+            by_clip_id = {schema.get("clip_id"): schema for schema in clip_schemas if schema.get("clip_id")}
+            for schema in anchor_schemas:
+                if schema.get("clip_id"):
+                    by_clip_id[schema["clip_id"]] = schema
+            clip_schemas = [by_clip_id[clip["clip_id"]] for clip in derived if clip["clip_id"] in by_clip_id]
+        example["metadata"]["anchor_repass"] = {
+            "enabled": bool(anchor_spans),
+            "anchors_s": anchors_s,
+            "window_s": anchor_repass_window_s,
+            "request_frames": anchor_repass_frames,
+            "clip_schema_count": len(anchor_schemas),
+            "stage_path": str(example_stage_dir / "02b_anchor_clip_schemas.jsonl"),
+        }
     example["metadata"]["clip_schemas"] = clip_schemas
     example["metadata"]["clip_schema_model"] = (
         config.clip_schema.model if config.clip_schema.backend == "qwen" else "local-video-tools"
@@ -402,6 +626,7 @@ def _run_item(
         perception_spans=perception_spans,
         perception_meta=perception_meta,
         clip_schemas=clip_schemas,
+        coarse_schemas=coarse_schemas,
     )
     _write_json(example_stage_dir / "03_l1_inputs.json", example)
 
@@ -445,6 +670,10 @@ def main(argv: list[str] | None = None) -> int:
             rebuild_from_stages=args.rebuild_from_stages,
             retry_failed_clip_schemas=args.retry_failed_clip_schemas,
             fill_missing_clip_schemas=not args.no_fill_missing_clip_schemas,
+            build_coarse_summary_index=_coarse_summary_index_enabled(args, config),
+            anchor_repass_frames=args.anchor_repass_frames,
+            anchor_repass_window_s=args.anchor_repass_window_s,
+            anchor_repass_enabled=not args.no_anchor_repass,
         )
         _append_jsonl(output_path, example)
         written += 1

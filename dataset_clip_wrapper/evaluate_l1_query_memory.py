@@ -55,6 +55,22 @@ _STOPWORDS = {
     "her",
     "video",
 }
+_SEMANTIC_NODE_TYPES = {"observation", "entity_mention", "entity", "event", "state", "dialogue_span", "clue"}
+_REFERENCE_NODE_TYPES = {"clip"}
+_TOKEN_SYNONYMS = {
+    "back": {"return", "returns", "returned", "previously", "earlier"},
+    "echoes": {"repeats", "returns", "reappears", "same"},
+    "earlier": {"previously", "before", "original"},
+    "location": {"place", "position"},
+    "original": {"previously", "earlier", "place", "position"},
+    "place": {"location", "position"},
+    "position": {"place", "location", "original"},
+    "previously": {"earlier", "before", "original"},
+    "reappears": {"returns", "again", "same"},
+    "repeated": {"same", "again", "reappears"},
+    "returns": {"back", "returned", "reappears", "original"},
+    "walked": {"moved", "went", "returns"},
+}
 
 
 @dataclass(frozen=True)
@@ -68,7 +84,28 @@ class MemoryItem:
 
 
 def _tokens(text: str) -> set[str]:
-    return {tok.lower() for tok in _TOKEN_RE.findall(text) if len(tok) > 1 and tok.lower() not in _STOPWORDS}
+    tokens = {tok.lower() for tok in _TOKEN_RE.findall(text) if len(tok) > 1 and tok.lower() not in _STOPWORDS}
+    expanded = set(tokens)
+    for token in tokens:
+        expanded.update(_TOKEN_SYNONYMS.get(token, set()))
+    return expanded
+
+
+def _parse_time_anchors_s(text: str) -> list[float]:
+    anchors: list[float] = []
+    for minutes, seconds in re.findall(r"\b(\d{1,2}):(\d{2})\b", text):
+        anchors.append(float(int(minutes) * 60 + int(seconds)))
+    for value in re.findall(r"\b(?:at|around|near|after|before)\s+(\d+(?:\.\d+)?)\s*(?:s|sec|secs|second|seconds)\b", text, re.I):
+        anchors.append(float(value))
+    return list(dict.fromkeys(anchors))
+
+
+def _near_time_anchor(time_span: dict[str, Any] | None, anchors_s: list[float], *, tolerance_s: float = 8.0) -> bool:
+    if not time_span or not anchors_s:
+        return False
+    start = float(time_span.get("start_s", 0.0))
+    end = float(time_span.get("end_s", start))
+    return any(start - tolerance_s <= anchor <= end + tolerance_s for anchor in anchors_s)
 
 
 def _text_of_node(node: dict[str, Any]) -> str:
@@ -154,9 +191,23 @@ def _score(query: str, item: MemoryItem) -> float:
     if not query_tokens or not item_tokens:
         return 0.0
     overlap = query_tokens & item_tokens
-    if not overlap:
+    anchors = _parse_time_anchors_s(query)
+    anchor_bonus = 1.0 if _near_time_anchor(item.time_span, anchors) else 0.0
+    if not overlap and not anchor_bonus:
         return 0.0
-    return len(overlap) / max(1.0, len(query_tokens) ** 0.5)
+    return (len(overlap) / max(1.0, len(query_tokens) ** 0.5)) + anchor_bonus
+
+
+def _dedupe_memory_items(items: list[MemoryItem]) -> list[MemoryItem]:
+    unique: list[MemoryItem] = []
+    seen: set[tuple[str, str]] = set()
+    for item in items:
+        key = (item.node_id, " ".join(item.text.lower().split()))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
 
 
 def _top_items(query: str, items: list[MemoryItem], *, topk: int) -> list[tuple[float, MemoryItem]]:
@@ -204,11 +255,118 @@ def _gold_label(example: dict[str, Any]) -> str | None:
     return None
 
 
+def _l1_graph_quality(example: dict[str, Any]) -> dict[str, Any]:
+    graph = ((example.get("metadata") or {}).get("clue_memory_graph") or {})
+    nodes = [node for node in graph.get("nodes") or [] if isinstance(node, dict)]
+    edges = [edge for edge in graph.get("edges") or [] if isinstance(edge, dict)]
+    node_by_id = {str(node.get("node_id") or ""): node for node in nodes if node.get("node_id")}
+    hidden_nodes = [node for node in nodes if _is_hidden(node)]
+    semantic_nodes = [
+        node
+        for node in nodes
+        if str(node.get("node_type") or "") in _SEMANTIC_NODE_TYPES and _text_of_node(node) and not _is_hidden(node)
+    ]
+    clip_ref_nodes = [node for node in nodes if str(node.get("node_type") or "") in _REFERENCE_NODE_TYPES]
+    schema_anchor_nodes = [
+        node
+        for node in semantic_nodes
+        if str(node.get("producer") or "") == "neighbor_vlm_l1_schema_anchor"
+        or str(node.get("source_type") or "") == "qwen_clip_schema_anchor"
+    ]
+    invalid_edges = [
+        edge
+        for edge in edges
+        if str(edge.get("src") or "") not in node_by_id or str(edge.get("dst") or "") not in node_by_id
+    ]
+    semantic_node_ids = {str(node.get("node_id") or "") for node in semantic_nodes}
+    semantic_edges = [
+        edge
+        for edge in edges
+        if str(edge.get("src") or "") in semantic_node_ids or str(edge.get("dst") or "") in semantic_node_ids
+    ]
+    successful_schemas = [
+        schema
+        for schema in ((example.get("metadata") or {}).get("clip_schemas") or [])
+        if isinstance(schema, dict) and schema.get("clip_id") and not schema.get("model_error")
+    ]
+    semantic_clip_ids = {str(node.get("clip_id") or "") for node in semantic_nodes if node.get("clip_id")}
+    successful_clip_ids = {str(schema.get("clip_id") or "") for schema in successful_schemas}
+    covered_successful = semantic_clip_ids & successful_clip_ids
+    coverage_ratio = round(len(covered_successful) / len(successful_clip_ids), 4) if successful_clip_ids else None
+    graph_compose = (example.get("metadata") or {}).get("graph_compose") or {}
+    trace = graph_compose.get("execution_trace") or []
+    failed_steps = [step for step in trace if isinstance(step, dict) and step.get("ok") is False]
+
+    if semantic_nodes and not invalid_edges and (coverage_ratio is None or coverage_ratio >= 0.5) and len(semantic_edges) >= max(1, len(semantic_nodes) // 4):
+        grade = "high"
+    elif semantic_nodes and not invalid_edges:
+        grade = "medium"
+    else:
+        grade = "low"
+
+    return {
+        "grade": grade,
+        "semantic_nodes": len(semantic_nodes),
+        "semantic_edges": len(semantic_edges),
+        "clip_ref_nodes": len(clip_ref_nodes),
+        "schema_anchor_nodes": len(schema_anchor_nodes),
+        "hidden_nodes": len(hidden_nodes),
+        "invalid_edges": len(invalid_edges),
+        "successful_clip_schemas": len(successful_schemas),
+        "semantic_clip_coverage": coverage_ratio,
+        "failed_compose_steps": len(failed_steps),
+        "used_deterministic_fallback": bool(graph_compose.get("used_deterministic_fallback")),
+    }
+
+
+def _qa_answerability(example: dict[str, Any], top: list[tuple[float, MemoryItem]], option_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    top_hit_count = len(top)
+    positive_option_count = sum(1 for row in option_rows if float(row.get("score") or 0.0) > 0)
+    best_score = float(option_rows[0].get("score") or 0.0) if option_rows else 0.0
+    second_score = float(option_rows[1].get("score") or 0.0) if len(option_rows) > 1 else 0.0
+    margin = round(best_score - second_score, 4)
+    if len(option_rows) > 1:
+        best_refs = set(option_rows[0].get("top_refs") or [])
+        second_refs = set(option_rows[1].get("top_refs") or [])
+        ref_union = best_refs | second_refs
+        shared_ref_ratio = round(len(best_refs & second_refs) / len(ref_union), 4) if ref_union else 0.0
+    else:
+        shared_ref_ratio = 0.0
+    retrieval = (((example.get("metadata") or {}).get("coarse_fine_graph") or {}).get("retrieval") or {})
+    fallback_reason = retrieval.get("fallback_reason")
+    answerability_diagnostic = (example.get("metadata") or {}).get("answerability_diagnostic") or {}
+    missing_requirements = answerability_diagnostic.get("missing_requirements") or []
+    if missing_requirements:
+        grade = "weak" if top_hit_count or best_score > 0 else "insufficient"
+    elif fallback_reason == "uniform_probe_no_lexical_match":
+        grade = "weak" if top_hit_count or best_score > 0 else "insufficient"
+    elif shared_ref_ratio >= 0.75 and margin < 0.75:
+        grade = "weak" if top_hit_count or best_score > 0 else "insufficient"
+    elif top_hit_count >= 2 and best_score > 0 and margin >= 0.15:
+        grade = "answerable"
+    elif top_hit_count or best_score > 0:
+        grade = "weak"
+    else:
+        grade = "insufficient"
+    return {
+        "grade": grade,
+        "top_question_hit_count": top_hit_count,
+        "positive_option_count": positive_option_count,
+        "best_option_score": round(best_score, 4),
+        "second_option_score": round(second_score, 4),
+        "option_margin": margin,
+        "top2_shared_ref_ratio": shared_ref_ratio,
+        "retrieval_fallback_reason": fallback_reason,
+        "missing_requirements": missing_requirements,
+        "answerability_diagnostic": answerability_diagnostic,
+    }
+
+
 def evaluate_example(example: dict[str, Any], *, topk: int) -> dict[str, Any]:
     question = example.get("question") or {}
     question_text = str(question.get("question_text") or "")
     options = question.get("options") or []
-    items = list(_iter_memory_items(example))
+    items = _dedupe_memory_items(list(_iter_memory_items(example)))
     graph = ((example.get("metadata") or {}).get("clue_memory_graph") or {})
     coarse_fine = ((example.get("metadata") or {}).get("coarse_fine_graph") or {})
     top = _top_items(question_text, items, topk=topk)
@@ -250,6 +408,8 @@ def evaluate_example(example: dict[str, Any], *, topk: int) -> dict[str, Any]:
         "l2_rollout_source": l2.get("rollout_source"),
         "l2_final_answer": l2_final,
         "l2_uses_gold_text_warning": bool(gold_text and l2_text == gold_text),
+        "l1_graph_quality": _l1_graph_quality(example),
+        "qa_answerability": _qa_answerability(example, top, option_rows),
     }
 
 

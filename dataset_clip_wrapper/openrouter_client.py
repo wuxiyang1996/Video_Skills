@@ -7,6 +7,7 @@ import json
 import os
 import re
 import signal
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,9 @@ DEFAULT_API_BASE = "https://openrouter.ai/api/v1/chat/completions"
 @contextmanager
 def _total_timeout(seconds: int):
     if seconds <= 0:
+        yield
+        return
+    if threading.current_thread() is not threading.main_thread():
         yield
         return
 

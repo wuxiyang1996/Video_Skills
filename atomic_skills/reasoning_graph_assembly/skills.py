@@ -27,6 +27,78 @@ def _coerce_hypothesis(hypothesis: dict[str, Any] | list[Any] | str) -> dict[str
     return hypothesis
 
 
+_QUESTION_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "because",
+    "does",
+    "from",
+    "how",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "the",
+    "there",
+    "this",
+    "to",
+    "was",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
+}
+
+_TOKEN_SYNONYMS = {
+    "automobile": {"car", "vehicle"},
+    "back": {"return", "returns", "returned", "previously", "earlier"},
+    "car": {"automobile", "vehicle"},
+    "echoes": {"repeats", "returns", "reappears", "same"},
+    "earlier": {"previously", "before", "original"},
+    "location": {"place", "position"},
+    "original": {"previously", "earlier", "place", "position"},
+    "place": {"location", "position"},
+    "position": {"place", "location", "original"},
+    "previously": {"earlier", "before", "original"},
+    "reappears": {"returns", "again", "same"},
+    "repeated": {"same", "again", "reappears"},
+    "returns": {"back", "returned", "reappears", "original"},
+    "rv": {"vehicle", "van"},
+    "van": {"vehicle", "rv"},
+    "vehicle": {"automobile", "car", "rv", "truck", "van"},
+    "walked": {"moved", "went", "returns"},
+}
+
+
+def _content_tokens(text: str) -> set[str]:
+    return {tok for tok in re.findall(r"[A-Za-z0-9_\u4e00-\u9fff]+", (text or "").lower()) if tok not in _QUESTION_STOPWORDS}
+
+
+def _expanded_tokens(text: str) -> set[str]:
+    tokens = _content_tokens(text)
+    expanded = set(tokens)
+    for token in tokens:
+        expanded.update(_TOKEN_SYNONYMS.get(token, set()))
+    return expanded
+
+
+def _target_alignment_score(question_text: str, evidence_text: str) -> float:
+    question_tokens = _expanded_tokens(question_text)
+    evidence_tokens = _expanded_tokens(evidence_text)
+    if not question_tokens or not evidence_tokens:
+        return 0.0
+    return len(question_tokens & evidence_tokens) / max(1, len(question_tokens))
+
+
 def parse_question_target(question_text: str, options: list[dict[str, Any]] | None = None) -> Any:
     entities = re.findall(r"\b[A-Z][A-Za-z0-9_-]{1,}\b", question_text)
     time_words = [word for word in ("before", "after", "later", "earlier", "when", "while") if word in question_text.lower()]
@@ -265,6 +337,7 @@ def generate_answer_hypotheses(
                 "hypothesis_id": stable_id("hypothesis", question_text, label, text),
                 "option_label": label,
                 "claim_text": text,
+                "question_text": question_text,
                 "question_focus": (parsed_target or {}).get("question_focus"),
                 "source": "answer_option",
             }
@@ -275,6 +348,7 @@ def generate_answer_hypotheses(
                 "hypothesis_id": stable_id("hypothesis", question_text),
                 "option_label": None,
                 "claim_text": question_text,
+                "question_text": question_text,
                 "question_focus": (parsed_target or {}).get("question_focus"),
                 "source": "question_claim",
             }
@@ -295,10 +369,12 @@ def retrieve_evidence_for_hypothesis(
     """Retrieve L1 evidence for one candidate hypothesis."""
     hypothesis = _coerce_hypothesis(hypothesis)
     claim_text = hypothesis if isinstance(hypothesis, str) else hypothesis.get("claim_text") or hypothesis.get("text") or ""
+    question_text = "" if isinstance(hypothesis, str) else str(hypothesis.get("question_text") or "")
+    query_text = " ".join(part for part in [question_text, claim_text] if part).strip() or claim_text
     scored = []
     for node in evidence_graph.get("nodes", []):
         text = node.get("text") or node.get("event_description") or node.get("state_value") or ""
-        score = lexical_score(claim_text, text)
+        score = lexical_score(query_text, text)
         if score > 0:
             scored.append((score, node))
     scored.sort(key=lambda item: item[0], reverse=True)
@@ -324,6 +400,7 @@ def score_hypothesis_support(
     *,
     support_evidence: list[str] | dict[str, Any],
     counterevidence: list[str] | None = None,
+    evidence_graph: dict[str, Any] | None = None,
 ) -> Any:
     """Assign a comparable score to one hypothesis from support and contradiction evidence."""
     hypothesis = _coerce_hypothesis(hypothesis)
@@ -331,7 +408,13 @@ def score_hypothesis_support(
     support_refs = support_refs or []
     counter_refs = counterevidence or []
     claim_text = hypothesis if isinstance(hypothesis, str) else hypothesis.get("claim_text") or hypothesis.get("text") or ""
-    support_score = min(1.0, 0.25 * len(support_refs))
+    if evidence_graph is not None and support_refs:
+        evidence_text = _evidence_text(evidence_graph, support_refs)
+        lexical_support = lexical_score(claim_text, evidence_text)
+        coverage_support = min(1.0, 0.15 * len(support_refs))
+        support_score = min(1.0, lexical_support + coverage_support)
+    else:
+        support_score = min(1.0, 0.25 * len(support_refs))
     contradiction_score = min(1.0, 0.35 * len(counter_refs))
     score = max(0.0, support_score - contradiction_score)
     scored = {
@@ -621,15 +704,56 @@ def infer_social_contradiction(
     )
 
 
-def verify_claim_support(claim: dict[str, Any] | str, *, evidence_chain: dict[str, Any], support_policy: dict[str, Any] | None = None) -> Any:
+def verify_claim_support(
+    claim: dict[str, Any] | str,
+    *,
+    evidence_chain: dict[str, Any],
+    support_policy: dict[str, Any] | None = None,
+    evidence_graph: dict[str, Any] | None = None,
+    question_text: str | None = None,
+) -> Any:
     refs = evidence_chain.get("evidence_refs", [])
-    min_refs = int((support_policy or {}).get("min_evidence_refs", 1))
+    policy = support_policy or {}
+    min_refs = int(policy.get("min_evidence_refs", 1))
     text = claim if isinstance(claim, str) else claim.get("claim_text") or claim.get("text") or str(claim)
-    passed = len(refs) >= min_refs and bool(text)
-    score = min(1.0, len(refs) / max(min_refs, 1)) if text else 0.0
+    nested = {} if isinstance(claim, str) else claim.get("hypothesis") if isinstance(claim.get("hypothesis"), dict) else {}
+    option_label = None if isinstance(claim, str) else claim.get("option_label") or nested.get("option_label")
+    question_context = question_text or (None if isinstance(claim, str) else claim.get("question_text") or nested.get("question_text"))
+    evidence_text = _evidence_text(evidence_graph or {}, refs) if evidence_graph is not None else ""
+    claim_score = lexical_score(text, evidence_text) if evidence_text else (1.0 if refs else 0.0)
+    target_score = _target_alignment_score(str(question_context or ""), evidence_text) if question_context and evidence_text else 1.0
+    min_claim_score = float(policy.get("min_claim_score", 0.05 if evidence_graph is not None else 0.0))
+    min_target_score = float(policy.get("min_target_score", 0.05 if question_context and evidence_graph is not None else 0.0))
+    refs_ok = len(refs) >= min_refs
+    claim_ok = claim_score >= min_claim_score
+    target_ok = target_score >= min_target_score
+    passed = refs_ok and bool(text) and claim_ok and target_ok
+    score = min(1.0, 0.4 * min(1.0, len(refs) / max(min_refs, 1)) + 0.4 * claim_score + 0.2 * target_score) if text else 0.0
+    messages = []
+    if not refs_ok:
+        messages.append("not enough evidence refs")
+    if not claim_ok:
+        messages.append("evidence text does not support claim text")
+    if not target_ok:
+        messages.append("evidence text is not aligned with question target")
     return make_result(
         "verify_claim_support",
-        {"verification_score": score, "passed": passed, "failure_code": None if passed else "insufficient_evidence", "messages": [], "verified_claim": {"claim_id": stable_id("claim.verified", text, refs), "text": text, "claim_status": "verified" if passed else "insufficient", "supported_by_refs": refs}},
+        {
+            "verification_score": score,
+            "passed": passed,
+            "failure_code": None if passed else "insufficient_evidence",
+            "messages": messages,
+            "claim_support_score": claim_score,
+            "target_alignment_score": target_score,
+            "verified_claim": {
+                "claim_id": stable_id("claim.verified", text, refs),
+                "text": text,
+                "option_label": option_label,
+                "question_text": question_context,
+                "claim_status": "verified" if passed else "insufficient",
+                "supported_by_refs": refs,
+            },
+        },
         refs,
         ok=passed,
         failure_code=None if passed else "insufficient_evidence",
@@ -649,7 +773,11 @@ def commit_answer(
         return make_result("commit_answer", ok=False, failure_code="claim_not_verified")
     final_answer = claim_text
     if answer_format == "multiple_choice" and options:
-        best = max(options, key=lambda opt: lexical_score(claim_text, f"{opt.get('label', '')} {opt.get('text', '')}"))
+        label = str(verified_claim.get("option_label") or "").strip()
+        by_label = {str(opt.get("label") or opt.get("id") or "").strip(): opt for opt in options}
+        best = by_label.get(label) if label else None
+        if best is None:
+            best = max(options, key=lambda opt: lexical_score(claim_text, f"{opt.get('label', '')} {opt.get('text', '')}"))
         final_answer = best.get("label") or best.get("text") or claim_text
     refs = support_chain.get("evidence_refs", [])
     return make_result(

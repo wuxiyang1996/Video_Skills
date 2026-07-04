@@ -167,6 +167,9 @@ Hyperparameters:
 | `--clip-schema-max-clips` | `3` | cap clip-schema calls per example |
 | `--graph-model` | `openai/gpt-oss-120b` | graph planner / composer |
 | `--graph-composer-mode` | `neighbor_vlm_l1` | target-clip + neighbor local graph JSON; `vlm_l1` is global graph JSON; `skill_plan` is legacy atomic-skill planner; `deterministic` is debug |
+| `--graph-timeout-s` | `180` | per OpenRouter graph/L2 request timeout |
+| `--graph-neighbor-workers` | `1` | parallel target-clip workers for `neighbor_vlm_l1`; useful for long videos |
+| `--no-coarse-summary-index` | off | disable full coarse Qwen summary indexing before long-video retrieval |
 | `--graph-deterministic` | off | force deterministic debug composer and skip VLM/LLM graph composition |
 | `--keys-py` | workspace `keys.py` | OpenRouter API key source |
 
@@ -224,6 +227,13 @@ The pipeline writes this reference layer to `metadata.coarse_fine_graph`:
 - `coarse_to_fine_links`: `refines` edges from fine clips back to parent coarse
   clips.
 
+For long-video `video_only` runs, the staged runner first builds a cached
+full-video coarse summary index at `00b_coarse_clip_schemas.jsonl` unless
+`--no-coarse-summary-index` is set. These Qwen summaries are visible runtime
+perception, not supervision. They are used for query-time coarse retrieval and
+are promoted into `evidence_index` / clue memory as `coarse_visual_summary`
+context nodes so L2 can cite what neighborhood was searched.
+
 Use the L1 query-memory diagnostic before trusting an L2 answer:
 
 ```bash
@@ -233,10 +243,46 @@ python dataset_clip_wrapper/evaluate_l1_query_memory.py \
   dataset_clip_wrapper/output/cg_bench_video_only_qwen_gptoss_entire.jsonl
 ```
 
-The report surfaces question-only hits, option scores, selected coarse indices,
-and a `l2_uses_gold_text_warning` flag. In valid `video_only` L2 experiments,
-the planner must not see or copy `question.answer`; official answers are
-evaluation-only hidden supervision.
+The report separates graph quality from answerability:
+
+- `l1_graph_quality`: semantic node/edge counts, schema coverage, invalid edge
+  count, fallback use, and failed compose steps.
+- `qa_answerability`: question hit count, option score margin, and an
+  `answerable` / `weak` / `insufficient` grade for deciding whether to run L2.
+
+It also surfaces selected coarse indices and a `l2_uses_gold_text_warning`
+flag. In valid `video_only` L2 experiments, the planner must not see or copy
+`question.answer`; official answers are evaluation-only hidden supervision.
+
+The L2 gate is intentionally conservative. It rejects examples whose long-video
+retrieval fell back to `uniform_probe_no_lexical_match`, and it rejects cases
+where the top answer options are supported by essentially the same evidence
+refs. This keeps "the graph has nodes" separate from "the evidence can
+distinguish an answer."
+
+For short videos with explicit timestamps in the visible question, the staged
+runner performs a query-time anchor repass by default. It writes
+`02b_anchor_clip_schemas.jsonl`, re-sampling only clips near the timestamp with
+more frames, then merges those schemas back into L1. This is meant for cases
+such as Video-Holmes where a key prop is visible only in a narrow moment. The
+repass uses the visible question text but never the answer label or hidden
+clues.
+
+Short-video L1 also adds recurrence clue edges for repeated VLM-observed
+objects or places, such as a fence/gate appearing earlier and again near a
+timestamp. These `short_video_recurrence_linker` nodes/edges store the
+cross-time clue explicitly so query memory and L2 can cite it.
+
+The graph also stores an answerability diagnostic subgraph. For each visible
+question, the pipeline adds `question_requirement`, `required_modality`, and
+when needed `answerability_gap` nodes to `evidence_index` / clue memory. These
+nodes are runtime-visible diagnostics, not answer supervision: they record that
+the current video-only graph appears to be missing required evidence such as
+dialogue/ASR, social intent, or causal motivation. This is important for
+benchmarks like SIV-Bench, where a visually plausible graph may still be unable
+to support questions about confidential information or hesitation without
+speech/subtitle/social-cue evidence. The L1 gate rejects examples with missing
+required modalities instead of letting L2 guess.
 
 ## Staged Outputs and Resume
 

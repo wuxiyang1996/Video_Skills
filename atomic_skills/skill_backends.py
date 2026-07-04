@@ -76,6 +76,8 @@ class SkillBackendConfig:
             return SkillBackendMode.RULE
         if skill_id in self.vlm_skills:
             return SkillBackendMode.VLM
+        if skill_id in self.llm_skills:
+            return SkillBackendMode.LLM
         return self.default_mode
 
 
@@ -115,10 +117,14 @@ _SKILL_LLM_PROMPTS: dict[str, str] = {
         "Answer with JSON: {{\"contradicted\": true/false, \"contradiction_claim\": \"...\", \"confidence\": 0.0-1.0}}"
     ),
     "verify_claim_support": (
-        "Does the following evidence ENTAIL or SUPPORT the claim?\n"
+        "Does the following evidence ENTAIL or SUPPORT the claim for the given video question?\n"
+        "Question: '{question}'\n"
         "Claim: '{claim}'\n"
         "Evidence: {evidence}\n"
-        "Answer with JSON: {{\"supported\": true/false, \"score\": 0.0-1.0, \"reasoning\": \"...\"}}"
+        "Check both claim support and target alignment. For example, if the question asks for a vehicle color, "
+        "evidence about a white bow does not support a vehicle-color claim.\n"
+        "Answer with JSON: {{\"supported\": true/false, \"score\": 0.0-1.0, "
+        "\"target_aligned\": true/false, \"reasoning\": \"...\"}}"
     ),
     "score_hypothesis_support": (
         "How well does the evidence support this hypothesis?\n"

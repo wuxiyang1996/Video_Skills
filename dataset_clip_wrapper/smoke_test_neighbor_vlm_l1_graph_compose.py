@@ -35,16 +35,17 @@ class FakeNeighborVlmClient:
                     "confidence": 0.82,
                 }
             )
+        target_nodes = [] if target_clip_id == "clip_a" else [
+            {
+                "node_id": "target_fence",
+                "node_type": "observation",
+                "text": f"{target_clip_id} shows a metal fence clue.",
+                "modality": "visual",
+                "confidence": 0.8,
+            }
+        ]
         return {
-            "target_nodes": [
-                {
-                    "node_id": "target_fence",
-                    "node_type": "observation",
-                    "text": f"{target_clip_id} shows a metal fence clue.",
-                    "modality": "visual",
-                    "confidence": 0.8,
-                }
-            ],
+            "target_nodes": target_nodes,
             "neighbor_edges": edges,
             "notes": "fake local neighbor graph",
         }
@@ -102,10 +103,11 @@ def main() -> int:
         "nodes": len(composed["graph"].get("nodes", [])),
         "edges": len(composed["graph"].get("edges", [])),
         "has_neighbor_nodes": "neighbor_vlm_l1_graph_composer" in producers,
+        "has_schema_anchor": "neighbor_vlm_l1_schema_anchor" in producers,
         "has_reappears": "reappears" in edge_types,
     }
     print(json.dumps(report, indent=2))
-    return 0 if report["composer_mode"] == "neighbor_vlm_l1" and report["has_reappears"] else 2
+    return 0 if report["composer_mode"] == "neighbor_vlm_l1" and report["has_reappears"] and report["has_schema_anchor"] else 2
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import hashlib
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -142,6 +143,230 @@ def _schema_text(schema: dict[str, Any]) -> str:
     return " ".join(dict.fromkeys(parts))
 
 
+def _stable_short_hash(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+
+
+_QUESTION_REQUIREMENT_TERMS = {
+    "dialogue_or_asr": (
+        "say",
+        "said",
+        "tell",
+        "told",
+        "reveal",
+        "knows",
+        "know",
+        "confidential",
+        "secret",
+        "answer",
+        "ask",
+        "conversation",
+        "talk",
+        "mentions",
+    ),
+    "social_intent_or_affect": (
+        "why",
+        "hesitant",
+        "reluctant",
+        "afraid",
+        "fear",
+        "nervous",
+        "embarrassed",
+        "upset",
+        "angry",
+        "wants",
+        "believes",
+        "feels",
+        "intention",
+        "motive",
+    ),
+    "causal_explanation": ("why", "because", "reason", "motive", "cause", "causes"),
+}
+
+
+def _question_requirements(question_text: str) -> list[str]:
+    lowered = question_text.lower()
+    requirements = [
+        name
+        for name, terms in _QUESTION_REQUIREMENT_TERMS.items()
+        if any(term in lowered for term in terms)
+    ]
+    return list(dict.fromkeys(requirements))
+
+
+def _observed_modalities(
+    *,
+    clip_schemas: list[dict[str, Any]],
+    visible_segments: list[dict[str, Any]],
+) -> set[str]:
+    observed = {"visual_context"} if clip_schemas else set()
+    if visible_segments:
+        observed.add("subtitle_or_visible_text")
+        observed.add("dialogue_or_asr")
+    for schema in clip_schemas:
+        if not isinstance(schema, dict) or schema.get("model_error"):
+            continue
+        dialogue = schema.get("dialogue_spans")
+        if isinstance(dialogue, list) and any(str(item).strip() for item in dialogue):
+            observed.add("dialogue_or_asr")
+        text = _schema_text(schema).lower()
+        if any(term in text for term in _QUESTION_REQUIREMENT_TERMS["social_intent_or_affect"]):
+            observed.add("social_intent_or_affect")
+        if any(term in text for term in ("because", "therefore", "so that", "causes", "reason")):
+            observed.add("causal_explanation")
+    return observed
+
+
+def _token_overlap_score(query: str, text: str) -> int:
+    query_tokens = {tok for tok in re.findall(r"[a-z0-9]+", query.lower()) if len(tok) > 2}
+    text_tokens = {tok for tok in re.findall(r"[a-z0-9]+", text.lower()) if len(tok) > 2}
+    return len(query_tokens & text_tokens)
+
+
+def _answerability_diagnostic_graph(
+    *,
+    example: dict[str, Any],
+    graph_nodes: list[dict[str, Any]],
+    clip_schemas: list[dict[str, Any]],
+    visible_segments: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Add visible graph nodes that mark question evidence requirements and gaps."""
+    question = example.get("question") or {}
+    question_text = str(question.get("question_text") or "").strip()
+    if not question_text:
+        return {"nodes": [], "edges": [], "summary": {"requirements": [], "missing_requirements": []}}
+
+    requirements = _question_requirements(question_text)
+    observed = _observed_modalities(clip_schemas=clip_schemas, visible_segments=visible_segments)
+    missing = [requirement for requirement in requirements if requirement not in observed]
+    suffix = _stable_short_hash(f"{example.get('example_id')}:{question_text}")
+    question_node_id = f"diagnostic.question_requirement:{suffix}"
+    nodes: list[dict[str, Any]] = [
+        {
+            "node_id": question_node_id,
+            "node_type": "question_requirement",
+            "source_type": "answerability_diagnostic",
+            "text": (
+                "Question evidence requirements: "
+                + (", ".join(requirements) if requirements else "generic visual retrieval")
+            ),
+            "requirements": requirements,
+            "observed_modalities": sorted(observed),
+            "producer": "dataset_clip_wrapper.answerability_diagnostic",
+            "visibility": {"hidden_supervision": False, "mode": "video_only"},
+        }
+    ]
+    edges: list[dict[str, Any]] = []
+
+    for requirement in requirements:
+        req_id = f"diagnostic.required_modality:{suffix}:{requirement}"
+        status = "observed" if requirement in observed else "missing"
+        nodes.append(
+            {
+                "node_id": req_id,
+                "node_type": "required_modality",
+                "source_type": "answerability_diagnostic",
+                "text": f"Required evidence modality: {requirement} ({status} in current video-only L1 graph).",
+                "required_modality": requirement,
+                "status": status,
+                "producer": "dataset_clip_wrapper.answerability_diagnostic",
+                "visibility": {"hidden_supervision": False, "mode": "video_only"},
+            }
+        )
+        edges.append(
+            {
+                "edge_id": f"edge:{question_node_id}->{req_id}:requires_evidence",
+                "src": question_node_id,
+                "dst": req_id,
+                "edge_type": "requires_evidence",
+            }
+        )
+
+    if missing:
+        gap_id = f"diagnostic.answerability_gap:{suffix}"
+        nodes.append(
+            {
+                "node_id": gap_id,
+                "node_type": "answerability_gap",
+                "source_type": "answerability_diagnostic",
+                "text": (
+                    "Current video-only L1 graph may be insufficient for this question; missing "
+                    + ", ".join(missing)
+                    + " evidence. Treat answer generation as unsupported until that modality is recovered."
+                ),
+                "missing_modalities": missing,
+                "producer": "dataset_clip_wrapper.answerability_diagnostic",
+                "visibility": {"hidden_supervision": False, "mode": "video_only"},
+            }
+        )
+        edges.append(
+            {
+                "edge_id": f"edge:{gap_id}->{question_node_id}:limits_answerability",
+                "src": gap_id,
+                "dst": question_node_id,
+                "edge_type": "limits_answerability",
+            }
+        )
+        scored_nodes = sorted(
+            (
+                (_token_overlap_score(question_text, str(node.get("text") or "")), node)
+                for node in graph_nodes
+                if isinstance(node, dict) and node.get("node_id") and node.get("text")
+            ),
+            key=lambda item: item[0],
+            reverse=True,
+        )
+        for score, node in scored_nodes[:3]:
+            if score <= 0:
+                break
+            edges.append(
+                {
+                    "edge_id": f"edge:{gap_id}->{node['node_id']}:weak_visual_context",
+                    "src": gap_id,
+                    "dst": node["node_id"],
+                    "edge_type": "weak_visual_context",
+                    "overlap_score": score,
+                }
+            )
+
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "summary": {
+            "requirements": requirements,
+            "observed_modalities": sorted(observed),
+            "missing_requirements": missing,
+            "has_answerability_gap": bool(missing),
+        },
+    }
+
+
+def _coarse_schema_segments(coarse_schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Expose coarse VLM summaries as visible retrieval text, not answer supervision."""
+    segments: list[dict[str, Any]] = []
+    for schema in coarse_schemas:
+        if not isinstance(schema, dict) or schema.get("model_error"):
+            continue
+        text = _schema_text(schema).strip()
+        if not text:
+            continue
+        segments.append(
+            {
+                "segment_id": f"coarse_schema:{schema.get('clip_id')}",
+                "source_type": "coarse_visual_summary",
+                "time_span": schema.get("time_span"),
+                "text": text,
+                "visibility": {"hidden_supervision": False, "mode": "video_only"},
+                "provenance": {
+                    "created_by": "dataset_clip_wrapper.coarse_clip_schema",
+                    "model": schema.get("model"),
+                    "clip_id": schema.get("clip_id"),
+                },
+            }
+        )
+    return segments
+
+
 def _spans_overlap(left: dict[str, Any] | None, right: dict[str, Any] | None) -> bool:
     if not left or not right:
         return False
@@ -183,6 +408,7 @@ def _build_coarse_fine_reference_graph(
     perception_spans: list[ClipSpan],
     perception_meta: dict[str, Any],
     clip_schemas: list[dict[str, Any]],
+    coarse_schemas: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Expose the video-reference layer: full coarse coverage + retrieved fine refs."""
     if clip_policy.strategy == "hierarchical":
@@ -233,6 +459,7 @@ def _build_coarse_fine_reference_graph(
         }
         for obs in fine_schema_nodes
     ]
+    coarse_schema_by_clip = {schema.get("clip_id"): schema for schema in coarse_schemas or []}
     coarse_summary_nodes: list[dict[str, Any]] = []
     coarse_summary_edges: list[dict[str, Any]] = []
     for coarse_node in coarse_nodes:
@@ -241,7 +468,10 @@ def _build_coarse_fine_reference_graph(
             for schema in clip_schemas
             if _spans_overlap(schema.get("time_span"), coarse_node.get("time_span"))
         ]
-        summary_text = " ".join(_schema_text(schema) for schema in overlapping).strip()
+        coarse_schema = coarse_schema_by_clip.get(coarse_node["node_id"])
+        coarse_schema_text = _schema_text(coarse_schema) if coarse_schema else ""
+        fine_text = " ".join(_schema_text(schema) for schema in overlapping).strip()
+        summary_text = " ".join(part for part in [coarse_schema_text, fine_text] if part).strip()
         if not summary_text:
             span = coarse_node["time_span"]
             summary_text = (
@@ -256,6 +486,7 @@ def _build_coarse_fine_reference_graph(
             "time_span": coarse_node.get("time_span"),
             "text": summary_text,
             "expanded": bool(overlapping),
+            "coarse_indexed": bool(coarse_schema_text),
             "provenance": {"created_by": "dataset_clip_wrapper.coarse_summary"},
         }
         coarse_summary_nodes.append(summary)
@@ -298,11 +529,54 @@ def _build_coarse_fine_reference_graph(
             "coarse_nodes": len(coarse_nodes),
             "coarse_summary_nodes": len(coarse_summary_nodes),
             "expanded_coarse_summary_nodes": sum(1 for node in coarse_summary_nodes if node["expanded"]),
+            "indexed_coarse_summary_nodes": sum(1 for node in coarse_summary_nodes if node.get("coarse_indexed")),
             "fine_clip_nodes": len(fine_nodes),
             "fine_observation_nodes": len(fine_schema_nodes),
             "coarse_to_fine_links": len(links),
         },
     }
+
+
+def _coarse_fine_context_for_evidence_index(coarse_fine_graph: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Promote visible reference-layer context into L1 evidence storage."""
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+    coarse_graph = coarse_fine_graph.get("coarse_graph") or {}
+    fine_graph = coarse_fine_graph.get("fine_graph") or {}
+    for node in list(coarse_graph.get("nodes") or []) + list(fine_graph.get("nodes") or []):
+        if not isinstance(node, dict):
+            continue
+        node_type = node.get("node_type")
+        if node_type == "coarse_summary":
+            promoted = dict(node)
+            promoted["node_type"] = "observation"
+            promoted["source_type"] = "coarse_visual_summary"
+            promoted["producer"] = "coarse_fine_reference_graph"
+            promoted.setdefault("visibility", {"hidden_supervision": False, "mode": "video_only"})
+            nodes.append(promoted)
+        elif node_type == "observation":
+            promoted = dict(node)
+            promoted["source_type"] = "fine_visual_summary"
+            promoted["producer"] = promoted.get("producer") or "coarse_fine_reference_graph"
+            promoted.setdefault("visibility", {"hidden_supervision": False, "mode": "video_only"})
+            nodes.append(promoted)
+        elif node_type == "clip":
+            promoted = dict(node)
+            promoted.setdefault("source_type", "clip_reference")
+            promoted.setdefault("visibility", {"hidden_supervision": False, "mode": "video_only"})
+            nodes.append(promoted)
+
+    context_ids = {node.get("node_id") for node in nodes}
+    for edge in (
+        list(coarse_graph.get("edges") or [])
+        + list(fine_graph.get("edges") or [])
+        + list(coarse_fine_graph.get("coarse_to_fine_links") or [])
+    ):
+        if not isinstance(edge, dict):
+            continue
+        if edge.get("src") in context_ids and edge.get("dst") in context_ids:
+            edges.append(dict(edge))
+    return nodes, edges
 
 
 def _resolve_perception_spans(
@@ -472,7 +746,17 @@ def _build_skill_executor(api_key: str, config: WrapperConfig):
             timeout_s=skill_cfg.skill_timeout_s,
         )
 
-    backend_config = SkillBackendConfig(default_mode=SkillBackendMode.LLM)
+    if skill_cfg.llm_skill_scope == "verifier":
+        backend_config = SkillBackendConfig(
+            default_mode=SkillBackendMode.RULE,
+            llm_skills={
+                "score_hypothesis_support",
+                "verify_claim_support",
+                "verify_temporal_social_consistency",
+            },
+        )
+    else:
+        backend_config = SkillBackendConfig(default_mode=SkillBackendMode.LLM)
     return SkillExecutor(llm_client=llm_client, vlm_client=vlm_client, config=backend_config)
 
 
@@ -551,6 +835,7 @@ def build_llm_enriched_example(
                 reasoning={"effort": config.graph_composer.reasoning_effort, "exclude": True}
                 if config.graph_composer.reasoning_effort
                 else None,
+                timeout_s=config.graph_composer.timeout_s,
             )
         else:
             client = OpenRouterClient(model="offline", api_key="offline")
@@ -566,8 +851,31 @@ def build_llm_enriched_example(
             observation_end_s=clip_policy.observation_end_s,
         )
         graph = composed["graph"]
-        example["evidence_index"]["nodes"] = graph.get("nodes", [])
-        example["evidence_index"]["edges"] = graph.get("edges", [])
+        context_nodes, context_edges = _coarse_fine_context_for_evidence_index(
+            example["metadata"].get("coarse_fine_graph") or {}
+        )
+        diagnostic = _answerability_diagnostic_graph(
+            example=example,
+            graph_nodes=graph.get("nodes", []) + context_nodes,
+            clip_schemas=clip_schemas,
+            visible_segments=visible_segments,
+        )
+        diagnostic_nodes = diagnostic.get("nodes") or []
+        diagnostic_edges = diagnostic.get("edges") or []
+        node_by_id = {
+            node.get("node_id"): node
+            for node in graph.get("nodes", []) + context_nodes + diagnostic_nodes
+            if node.get("node_id")
+        }
+        graph_edges = graph.get("edges", []) + context_edges + diagnostic_edges
+        valid_ids = set(node_by_id)
+        edge_by_id = {
+            edge.get("edge_id"): edge
+            for edge in graph_edges
+            if edge.get("edge_id") and edge.get("src") in valid_ids and edge.get("dst") in valid_ids
+        }
+        example["evidence_index"]["nodes"] = list(node_by_id.values())
+        example["evidence_index"]["edges"] = list(edge_by_id.values())
         example["evidence_index"]["graph_composer"] = config.graph_composer.to_dict()
         example["evidence_index"]["retrieval"] = config.retrieval.to_dict()
         example["metadata"]["graph_compose"] = {
@@ -577,6 +885,7 @@ def build_llm_enriched_example(
             "execution_trace": composed.get("execution_trace"),
             "skill_plan": composed.get("skill_plan"),
         }
+        example["metadata"]["answerability_diagnostic"] = diagnostic.get("summary") or {}
 
         for node in graph.get("nodes", []):
             if node.get("node_type") != "observation" or not node.get("text"):
@@ -609,6 +918,7 @@ def build_llm_enriched_example(
                 api_key=api_key,
                 max_tokens=1800,
                 reasoning={"effort": "minimal", "exclude": True},
+                timeout_s=config.graph_composer.timeout_s,
             )
             skill_exec = _build_skill_executor(api_key, config) if config.run_l2_llm_planner else None
             reasoning_rollout = build_llm_reasoning_rollout(example, clue_graph, client=l2_client, skill_executor=skill_exec)

@@ -113,9 +113,11 @@ def retrieve_coarse_clips(
     query_tokens = tokenize(query_text)
 
     candidates: list[tuple[int, ClipSpan, float]] = []
+    visible_coarse: list[tuple[int, ClipSpan]] = []
     for coarse_index, clip in enumerate(coarse_spans):
         if not _clip_before_observation(clip, observation_end_s):
             continue
+        visible_coarse.append((coarse_index, clip))
         if mode == "sequential":
             score = float(len(coarse_spans) - coarse_index)
         else:
@@ -127,11 +129,31 @@ def retrieve_coarse_clips(
         if score >= threshold:
             candidates.append((coarse_index, clip, score))
 
-    if not candidates and coarse_spans:
+    fallback_reason = None
+    positive_candidates = [item for item in candidates if item[2] > 0]
+    if mode == "lexical" and query_tokens and not positive_candidates and visible_coarse:
+        fallback_reason = "uniform_probe_no_lexical_match"
+        if topk <= 1:
+            chosen_positions = [len(visible_coarse) // 2]
+        else:
+            chosen_positions = [
+                min(len(visible_coarse) - 1, max(0, round((rank + 1) * len(visible_coarse) / (topk + 1)) - 1))
+                for rank in range(topk)
+            ]
+        seen_positions: set[int] = set()
+        candidates = []
+        for position in chosen_positions:
+            if position in seen_positions:
+                continue
+            seen_positions.add(position)
+            coarse_index, clip = visible_coarse[position]
+            candidates.append((coarse_index, clip, 0.0))
+
+    if not candidates and visible_coarse:
+        fallback_reason = fallback_reason or "sequential_visible_prefix"
         # Fallback: first visible coarse clips (M3 always returns something searchable).
-        for coarse_index, clip in enumerate(coarse_spans):
-            if _clip_before_observation(clip, observation_end_s):
-                candidates.append((coarse_index, clip, 0.0))
+        for coarse_index, clip in visible_coarse:
+            candidates.append((coarse_index, clip, 0.0))
             if len(candidates) >= topk:
                 break
 
@@ -144,6 +166,7 @@ def retrieve_coarse_clips(
         "threshold": threshold,
         "query_tokens": sorted(query_tokens),
         "selected_coarse_indices": [item[0] for item in selected],
+        "fallback_reason": fallback_reason,
         "scores": [
             {
                 "coarse_index": item[0],

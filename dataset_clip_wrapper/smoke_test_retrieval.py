@@ -71,6 +71,7 @@ def main() -> int:
         limit=1,
     )
     stream = next(iter_canonical_examples(stream_config))
+    coarse_visual = _coarse_visual_summary_retrieval()
 
     report = {
         "synthetic_2741s": {
@@ -95,14 +96,45 @@ def main() -> int:
             "strategy": stream["evidence_index"]["clip_policy"]["strategy"],
             "passed": stream["metadata"]["fine_clip_count"] == 0 and stream["metadata"]["coarse_clip_count"] > 0 and stream["metadata"]["clip_count"] < 200,
         },
+        "coarse_visual_summary_retrieval": coarse_visual,
     }
     report["all_passed"] = (
         report["synthetic_2741s"]["passed"]
         and report["cg_bench_sample"]["passed"]
         and report["cg_bench_streaming"]["passed"]
+        and report["coarse_visual_summary_retrieval"]["passed"]
     )
     print(json.dumps(report, indent=2))
     return 0 if report["all_passed"] else 2
+
+
+def _coarse_visual_summary_retrieval() -> dict[str, object]:
+    policy = ClipPolicyConfig.for_regime(VideoRegime.LONG, duration_s=180.0)
+    coarse = segment_coarse_index(180.0, policy, regime=VideoRegime.LONG)
+    target = coarse[3]
+    center_span = {
+        "start_s": (target.start_s + target.end_s) / 2.0 - 1.0,
+        "end_s": (target.start_s + target.end_s) / 2.0 + 1.0,
+    }
+    retrieval = retrieve_coarse_clips(
+        coarse_spans=coarse,
+        query_text="what color is the vehicle driving from the left in the animation",
+        segments=[
+            {
+                "segment_id": "coarse_schema:test:0003",
+                "source_type": "coarse_visual_summary",
+                "time_span": center_span,
+                "text": "A white vehicle drives from the left in a simple animation.",
+            }
+        ],
+        topk=2,
+    )
+    selected = retrieval["selected_coarse_indices"]
+    return {
+        "selected": selected,
+        "fallback_reason": retrieval.get("fallback_reason"),
+        "passed": bool(selected and selected[0] == 3 and retrieval.get("fallback_reason") is None),
+    }
 
 
 if __name__ == "__main__":

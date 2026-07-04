@@ -8,7 +8,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .evaluate_l1_query_memory import evaluate_example
+try:
+    from .evaluate_l1_query_memory import evaluate_example
+except ImportError:  # pragma: no cover - direct script execution
+    from evaluate_l1_query_memory import evaluate_example
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -46,6 +49,21 @@ def gate_report(
         "top_question_score": top_score >= min_top_score,
         "no_hidden_memory_items": report["hidden_memory_items"] == 0,
     }
+    qa_answerability = report.get("qa_answerability") or {}
+    checks["no_uniform_probe_fallback"] = qa_answerability.get("retrieval_fallback_reason") != "uniform_probe_no_lexical_match"
+    checks["no_missing_required_modalities"] = not qa_answerability.get("missing_requirements")
+    checks["option_refs_discriminative"] = (
+        float(qa_answerability.get("top2_shared_ref_ratio") or 0.0) < 0.75
+        or option_margin >= 0.75
+    )
+    if top_hits:
+        fine_or_l1_hits = [
+            hit
+            for hit in top_hits
+            if hit.get("source") in {"clue_memory_graph", "evidence_index", "coarse_fine_graph.fine"}
+            and hit.get("node_type") != "coarse_summary"
+        ]
+        checks["has_fine_or_l1_evidence"] = bool(fine_or_l1_hits)
     if option_scores:
         checks["option_margin"] = option_margin >= min_option_margin
 

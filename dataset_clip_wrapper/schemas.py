@@ -200,6 +200,8 @@ class GraphComposerConfig:
     composer_mode: Literal["neighbor_vlm_l1", "vlm_l1", "skill_plan", "deterministic"] = "neighbor_vlm_l1"
     max_tokens: int | None = 1800
     reasoning_effort: str | None = "minimal"
+    timeout_s: int = 180
+    neighbor_workers: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -212,6 +214,8 @@ class GraphComposerConfig:
             "composer_mode": self.composer_mode,
             "max_tokens": self.max_tokens,
             "reasoning_effort": self.reasoning_effort,
+            "timeout_s": self.timeout_s,
+            "neighbor_workers": self.neighbor_workers,
         }
 
 
@@ -237,6 +241,7 @@ class SkillExecutionConfig:
     skill_timeout_s: int = 120
     enable_llm_skills: bool = True
     enable_vlm_skills: bool = True
+    llm_skill_scope: Literal["all", "verifier"] = "all"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -245,8 +250,10 @@ class SkillExecutionConfig:
             "skill_max_tokens_llm": self.skill_max_tokens_llm,
             "skill_max_tokens_vlm": self.skill_max_tokens_vlm,
             "skill_temperature": self.skill_temperature,
+            "skill_timeout_s": self.skill_timeout_s,
             "enable_llm_skills": self.enable_llm_skills,
             "enable_vlm_skills": self.enable_vlm_skills,
+            "llm_skill_scope": self.llm_skill_scope,
         }
 
 

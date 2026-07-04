@@ -85,7 +85,7 @@ class SkillExecutor:
             "assign_evidence_role": lambda: reasoning.assign_evidence_role(graph or {}, evidence_ref=args.get("evidence_ref", ""), role_schema=args.get("role_schema", ""), question_context=args.get("question_context", "")),
             "generate_answer_hypotheses": lambda: reasoning.generate_answer_hypotheses(args.get("question_text", ""), options=args.get("options"), parsed_target=args.get("parsed_target")),
             "retrieve_evidence_for_hypothesis": lambda: reasoning.retrieve_evidence_for_hypothesis(graph or {}, hypothesis=args.get("hypothesis", ""), max_refs=args.get("max_refs", 6)),
-            "score_hypothesis_support": lambda: reasoning.score_hypothesis_support(args.get("hypothesis", ""), support_evidence=args.get("support_evidence", []), counterevidence=args.get("counterevidence")),
+            "score_hypothesis_support": lambda: reasoning.score_hypothesis_support(args.get("hypothesis", ""), support_evidence=args.get("support_evidence", []), counterevidence=args.get("counterevidence"), evidence_graph=graph),
             "compare_hypotheses": lambda: reasoning.compare_hypotheses(args.get("scored_hypotheses", []), decision_policy=args.get("decision_policy")),
             "bridge_evidence_hops": lambda: reasoning.bridge_evidence_hops(graph or {}, source_evidence=args.get("source_evidence", []), target_hypothesis=args.get("target_hypothesis", ""), allowed_hop_types=args.get("allowed_hop_types"), max_hops=args.get("max_hops", 2)),
             "verify_temporal_social_consistency": lambda: reasoning.verify_temporal_social_consistency(args.get("evidence_chain", {"evidence_refs": []}), hypothesis=args.get("hypothesis", ""), evidence_graph=graph),
@@ -97,7 +97,7 @@ class SkillExecutor:
             "infer_causal_relation": lambda: reasoning.infer_causal_relation(args.get("candidate_cause", ""), args.get("candidate_effect", ""), evidence_chain=args.get("evidence_chain", {"evidence_refs": []})),
             "infer_intention_or_motive": lambda: reasoning.infer_intention_or_motive(args.get("agent", ""), args.get("actions", []), context_evidence=args.get("context_evidence", [])),
             "infer_social_contradiction": lambda: reasoning.infer_social_contradiction(args.get("claim_or_alibi", {}), evidence_chain=args.get("evidence_chain", {"evidence_refs": []}), counterevidence=args.get("counterevidence")),
-            "verify_claim_support": lambda: reasoning.verify_claim_support(args.get("claim", ""), evidence_chain=args.get("evidence_chain", {"evidence_refs": []}), support_policy=args.get("support_policy")),
+            "verify_claim_support": lambda: reasoning.verify_claim_support(args.get("claim", ""), evidence_chain=args.get("evidence_chain", {"evidence_refs": []}), support_policy=args.get("support_policy"), evidence_graph=graph, question_text=args.get("question_text")),
             "commit_answer": lambda: reasoning.commit_answer(args.get("verified_claim", {}), options=args.get("options"), answer_format=args.get("answer_format", "free_text"), support_chain=args.get("support_chain", {"evidence_refs": []})),
             "segment_video_or_select_clip": lambda: evidence.segment_video_or_select_clip(graph, video_id=args.get("video_id", ""), clip_policy=args.get("clip_policy", {}), observation_end_s=args.get("observation_end_s")),
             "extract_observation": lambda: evidence.extract_observation(graph, clip_or_text_ref=args.get("clip_or_text_ref", ""), modality=args.get("modality", "text"), text=args.get("text", ""), time_span=args.get("time_span"), observation_query=args.get("observation_query")),
@@ -468,6 +468,7 @@ class SkillExecutor:
         elif skill_id == "verify_claim_support":
             claim = args.get("claim", "")
             kwargs["claim"] = claim if isinstance(claim, str) else claim.get("claim_text") or claim.get("text") or str(claim)
+            kwargs["question"] = args.get("question_text") or (claim.get("question_text") if isinstance(claim, dict) else "")
         elif skill_id == "score_hypothesis_support":
             h = args.get("hypothesis", "")
             kwargs["hypothesis"] = h if isinstance(h, str) else h.get("claim_text") or str(h)
@@ -544,29 +545,55 @@ class SkillExecutor:
         elif skill_id == "verify_claim_support":
             ok = bool(response.get("supported", False))
             score = float(response.get("score", 0.5))
+            claim = args.get("claim", "")
+            claim_text = claim if isinstance(claim, str) else claim.get("claim_text") or claim.get("text") or str(claim)
+            option_label = None if isinstance(claim, str) else claim.get("option_label")
+            refs = []
+            chain = args.get("evidence_chain")
+            if isinstance(chain, dict):
+                refs = chain.get("evidence_refs") or []
             return make_result(skill_id, {
                 "verification_score": score,
                 "passed": ok,
                 "failure_code": None if ok else "insufficient_evidence",
                 "messages": [response.get("reasoning", "")],
-                "verified_claim": {"claim_text": str(args.get("claim", "")), "claim_status": "verified" if ok else "insufficient"},
+                "claim_support_score": score,
+                "target_alignment_score": score if response.get("target_aligned", ok) else 0.0,
+                "verified_claim": {
+                    "claim_text": claim_text,
+                    "text": claim_text,
+                    "option_label": option_label,
+                    "question_text": args.get("question_text") or (claim.get("question_text") if isinstance(claim, dict) else None),
+                    "claim_status": "verified" if ok else "insufficient",
+                    "supported_by_refs": refs if ok else [],
+                },
                 "backend": "llm",
-            }, confidence=score, ok=ok, failure_code=None if ok else "insufficient_evidence")
+            }, refs if ok else [], confidence=score, ok=ok, failure_code=None if ok else "insufficient_evidence")
 
         elif skill_id == "score_hypothesis_support":
             support_score = float(response.get("support_score", 0.5))
             contradiction_score = float(response.get("contradiction_score", 0.0))
+            support_arg = args.get("support_evidence", [])
+            if isinstance(support_arg, dict):
+                support_refs = support_arg.get("support_refs") or support_arg.get("evidence_refs") or []
+            else:
+                support_refs = support_arg if isinstance(support_arg, list) else []
+            counter_refs = args.get("counterevidence") or []
+            hypothesis = args.get("hypothesis")
             return make_result(skill_id, {
                 "scored_hypothesis": {
-                    "hypothesis": args.get("hypothesis"),
+                    "hypothesis": hypothesis,
+                    "claim_text": hypothesis.get("claim_text") if isinstance(hypothesis, dict) else str(hypothesis or ""),
+                    "option_label": hypothesis.get("option_label") if isinstance(hypothesis, dict) else None,
                     "support_score": support_score,
                     "contradiction_score": contradiction_score,
                     "overall_score": max(0, support_score - contradiction_score),
-                    "support_refs": [],
-                    "counterevidence_refs": [],
+                    "support_refs": support_refs,
+                    "counterevidence_refs": counter_refs,
+                    "backend": "llm",
                 },
                 "backend": "llm",
-            }, confidence=support_score, ok=support_score > 0)
+            }, support_refs + counter_refs, confidence=support_score, ok=support_score > 0)
 
         elif skill_id == "compare_hypotheses":
             best_label = response.get("best_label", "")
@@ -609,12 +636,14 @@ class SkillExecutor:
             temporal_ok = bool(response.get("temporal_ok", True))
             social_ok = bool(response.get("social_ok", True))
             conflicts = response.get("conflicts", [])
+            chain = args.get("evidence_chain") if isinstance(args.get("evidence_chain"), dict) else {}
+            refs = chain.get("evidence_refs") or []
             return make_result(skill_id, {
                 "temporal_ok": temporal_ok,
                 "social_plausibility_ok": social_ok,
                 "conflicts": conflicts,
                 "backend": "llm",
-            }, confidence=1.0 if not conflicts else 0.4, ok=not conflicts)
+            }, refs, confidence=1.0 if not conflicts else 0.4, ok=not conflicts)
 
         elif skill_id == "bridge_evidence_hops":
             path = response.get("bridge_path", [])

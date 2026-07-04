@@ -18,9 +18,25 @@ from atomic_skills.reasoning_graph_assembly import (
     generate_answer_hypotheses,
     retrieve_evidence_for_hypothesis,
     score_hypothesis_support,
+    verify_claim_support,
     verify_temporal_social_consistency,
 )
 from dataset_clip_wrapper.reasoning_planner import REASONING_SKILL_IDS, execute_reasoning_plan
+from atomic_skills.skill_backends import SkillBackendConfig, SkillBackendMode
+from atomic_skills.skill_executor import SkillExecutor
+
+
+class FakeVerifierLlmClient:
+    model = "fake-gpt-oss-verifier"
+
+    def reason(self, prompt: str, *, max_tokens: int = 512) -> dict[str, object]:
+        supported = "Claim: 'White'" in prompt and "white RV vehicle" in prompt
+        return {
+            "supported": supported,
+            "target_aligned": supported,
+            "score": 0.95 if supported else 0.05,
+            "reasoning": "fake verifier checks claim text and vehicle evidence",
+        }
 
 
 def _graph() -> dict[str, object]:
@@ -75,6 +91,44 @@ def main() -> int:
     scored = score_hypothesis_support(best_option, support_evidence=support.outputs)
     compared = compare_hypotheses([scored.outputs["scored_hypothesis"]])
     consistency = verify_temporal_social_consistency(bridge.outputs["multi_hop_chain"], hypothesis=best_option, evidence_graph=graph)
+    color_graph = {
+        "nodes": [
+            {
+                "node_id": "obs:white_rv",
+                "node_type": "observation",
+                "text": "A white RV vehicle is visible in the scene.",
+            },
+            {
+                "node_id": "obs:white_bow",
+                "node_type": "observation",
+                "text": "A large white bow hangs above the door.",
+            },
+        ],
+        "edges": [],
+    }
+    white_verify = verify_claim_support(
+        {"claim_text": "White", "option_label": "E", "question_text": "What color is the vehicle?"},
+        evidence_chain={"evidence_refs": ["obs:white_rv"]},
+        evidence_graph=color_graph,
+    )
+    gray_verify = verify_claim_support(
+        {"claim_text": "Light gray", "option_label": "A", "question_text": "What color is the vehicle?"},
+        evidence_chain={"evidence_refs": ["obs:white_rv", "obs:white_bow"]},
+        evidence_graph=color_graph,
+    )
+    llm_executor = SkillExecutor(
+        llm_client=FakeVerifierLlmClient(),  # type: ignore[arg-type]
+        config=SkillBackendConfig(default_mode=SkillBackendMode.LLM),
+    )
+    llm_white_verify = llm_executor.execute(
+        "verify_claim_support",
+        args={
+            "claim": {"claim_text": "White", "option_label": "E", "question_text": "What color is the vehicle?"},
+            "evidence_chain": {"evidence_refs": ["obs:white_rv"]},
+            "question_text": "What color is the vehicle?",
+        },
+        graph=color_graph,
+    )
 
     planned = [
         {"step_id": "r1", "skill_id": "generate_answer_hypotheses", "args": {"question_text": "$bindings.question_text", "options": "$bindings.options"}, "depends_on": []},
@@ -93,6 +147,7 @@ def main() -> int:
         "compare_hypotheses",
         "bridge_evidence_hops",
         "verify_temporal_social_consistency",
+        "verify_claim_support",
     }
     errors = []
     missing_enum = sorted(required - set(REASONING_SKILL_IDS))
@@ -105,9 +160,13 @@ def main() -> int:
         ("compare_hypotheses", compared),
         ("bridge_evidence_hops", bridge),
         ("verify_temporal_social_consistency", consistency),
+        ("verify_claim_support_white", white_verify),
+        ("llm_verify_claim_support_white", llm_white_verify),
     ]:
         if not result.ok:
             errors.append(f"{name} failed: {result.failure_code}")
+    if gray_verify.ok:
+        errors.append("verify_claim_support accepted unsupported Light gray claim")
     executor_failures = [item for item in trace if item.get("failure_code") in {"unknown_skill_id", "invalid_skill_args"}]
     if executor_failures:
         errors.append(f"planner executor failures: {executor_failures}")
@@ -119,6 +178,9 @@ def main() -> int:
         "support_refs": support.evidence_refs,
         "bridge_refs": bridge.evidence_refs,
         "best_option": compared.outputs.get("best_hypothesis", {}).get("option_label"),
+        "white_verify_score": white_verify.outputs.get("verification_score"),
+        "gray_verify_score": gray_verify.outputs.get("verification_score"),
+        "llm_verify_backend": llm_white_verify.outputs.get("backend"),
         "planner_trace": trace,
     }
     print(json.dumps(report, indent=2))

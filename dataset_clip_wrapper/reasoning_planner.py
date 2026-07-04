@@ -428,6 +428,27 @@ def execute_reasoning_plan(
             })
             continue
 
+        if skill_id == "verify_claim_support":
+            raw_claim = resolved_args.get("claim")
+            if raw_claim in (None, [], {}):
+                raw_claim = _lookup_recent_best_hypothesis()
+            elif isinstance(raw_claim, str):
+                recent_best = _lookup_recent_best_hypothesis()
+                if isinstance(recent_best, dict):
+                    recent_text = recent_best.get("claim_text") or recent_best.get("text")
+                    if recent_text == raw_claim:
+                        raw_claim = recent_best
+            resolved_args["claim"] = _claim(raw_claim, fallback=question_text)
+            support_policy = resolved_args.get("support_policy") or {"min_evidence_refs": 1}
+            if isinstance(support_policy, str):
+                support_policy = {"min_evidence_refs": 1}
+            resolved_args["support_policy"] = support_policy
+            evidence_chain = _chain(resolved_args.get("evidence_chain"))
+            if not evidence_chain.get("evidence_refs"):
+                evidence_chain = _chain(resolved_args["claim"])
+            resolved_args["evidence_chain"] = evidence_chain
+            resolved_args.setdefault("question_text", resolved_args["claim"].get("question_text") or question_text)
+
         # --- LLM/VLM dispatch via SkillExecutor ---
         if skill_executor is not None:
             from atomic_skills.skill_backends import SkillBackendMode
@@ -576,7 +597,12 @@ def execute_reasoning_plan(
                 support_by_hypothesis = support_arg.get("support_by_hypothesis") if isinstance(support_arg, dict) else None
                 if len(hypotheses) == 1:
                     support = support_arg if isinstance(support_arg, dict) else _refs(support_arg)
-                    result = executor(hypotheses[0], support_evidence=support, counterevidence=_refs(counter))
+                    result = executor(
+                        hypotheses[0],
+                        support_evidence=support,
+                        counterevidence=_refs(counter),
+                        evidence_graph=graph,
+                    )
                 else:
                     scored = []
                     refs: list[str] = []
@@ -588,7 +614,12 @@ def execute_reasoning_plan(
                             support = support_arg.get("support_refs") or support_arg.get("evidence_refs") or []
                         else:
                             support = _refs(support_arg)
-                        partial = executor(hypothesis, support_evidence=support, counterevidence=_refs(counter))
+                        partial = executor(
+                            hypothesis,
+                            support_evidence=support,
+                            counterevidence=_refs(counter),
+                            evidence_graph=graph,
+                        )
                         scored.append(partial.outputs.get("scored_hypothesis") or {})
                         refs.extend(partial.evidence_refs)
                     refs = list(dict.fromkeys(refs))
@@ -671,6 +702,12 @@ def execute_reasoning_plan(
                 raw_claim = resolved_args.get("claim")
                 if raw_claim in (None, [], {}):
                     raw_claim = _lookup_recent_best_hypothesis()
+                elif isinstance(raw_claim, str):
+                    recent_best = _lookup_recent_best_hypothesis()
+                    if isinstance(recent_best, dict):
+                        recent_text = recent_best.get("claim_text") or recent_best.get("text")
+                        if recent_text == raw_claim:
+                            raw_claim = recent_best
                 claim_arg = _claim(raw_claim, fallback=question_text)
                 support_policy = resolved_args.get("support_policy") or {"min_evidence_refs": 1}
                 if isinstance(support_policy, str):
@@ -682,6 +719,8 @@ def execute_reasoning_plan(
                     claim_arg,
                     evidence_chain=evidence_chain,
                     support_policy=support_policy,
+                    evidence_graph=graph,
+                    question_text=claim_arg.get("question_text") or question_text,
                 )
             elif skill_id == "commit_answer":
                 verified_claim = resolved_args.get("verified_claim")
@@ -820,8 +859,14 @@ def build_llm_reasoning_rollout(
         if step_trace.get("skill_id"):
             executed_skills.append(step_trace["skill_id"])
 
-    last_output = step_outputs.get(trace[-1].get("step_id", ""), {}) if trace else {}
+    last_trace = trace[-1] if trace else {}
+    last_output = step_outputs.get(last_trace.get("step_id", ""), {}) if trace else {}
     final_answer = last_output.get("final_answer")
+    support_chain = last_output.get("answer_support_chain") if isinstance(last_output.get("answer_support_chain"), dict) else {}
+    if not support_chain:
+        support_chain = {"evidence_refs": last_output.get("evidence_refs") or [], "items": []}
+    support_refs = support_chain.get("evidence_refs") or last_output.get("evidence_refs") or []
+    commit_ok = bool(last_trace.get("ok") and final_answer and support_refs)
     options = question.get("options") or []
     final_label = final_answer
     final_text = str(final_answer) if final_answer is not None else ""
@@ -844,16 +889,17 @@ def build_llm_reasoning_rollout(
     rollout["claims"] = [{
         "claim_id": stable_id("claim", final_text),
         "text": final_text,
-        "claim_status": "verified" if ok_steps else "insufficient",
-        "supported_by_refs": last_output.get("evidence_refs") or [],
+        "claim_status": "verified" if commit_ok else "insufficient",
+        "supported_by_refs": support_refs if commit_ok else [],
     }]
+    rollout["answer_support_chain"] = [support_chain] if commit_ok else []
     rollout["final_answer"] = {
         "label": final_label,
         "text": final_text,
-        "confidence": last_output.get("confidence", 0.0) if final_answer else 0.0,
+        "confidence": last_output.get("confidence", 0.0) if commit_ok else 0.0,
     }
-    rollout["acceptance_status"] = "accepted_weak" if final_answer else "rejected"
-    rollout["failure_reasons"] = [] if final_answer else ["no_final_answer"]
+    rollout["acceptance_status"] = "accepted_weak" if commit_ok else "rejected"
+    rollout["failure_reasons"] = [] if commit_ok else ["no_supported_final_answer" if final_answer else "no_final_answer"]
     rollout["metadata"] = {
         "executed_skill_ids": list(dict.fromkeys(executed_skills)),
         "executed_skill_count": len(set(executed_skills)),
