@@ -46,7 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--graph-model", default="openai/gpt-oss-120b")
     parser.add_argument("--graph-max-tokens", type=int, default=1800)
     parser.add_argument("--graph-reasoning-effort", default="minimal")
-    parser.add_argument("--graph-composer-mode", default="vlm_l1", choices=["vlm_l1", "skill_plan", "deterministic"])
+    parser.add_argument(
+        "--graph-composer-mode",
+        default="neighbor_vlm_l1",
+        choices=["neighbor_vlm_l1", "vlm_l1", "skill_plan", "deterministic"],
+    )
     parser.add_argument("--graph-deterministic", action="store_true", help="Skip gpt-oss planner; apply atomic skills directly")
     parser.add_argument("--skip-graph-compose", action="store_true")
 

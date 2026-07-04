@@ -91,24 +91,23 @@ tools instead.
 
 The clip-schema prompt is clue-oriented, not caption-only. It asks for grounded
 observations, dialogue, entity mentions, salient objects, place descriptions,
-cross-clip cues, searchable phrases, and uncertainty. The deterministic graph
-composer turns those fields into L1 observations / mentions and adds
-`same_entity` links for repeated surface forms, giving L2 memory something
-searchable beyond a generic scene caption.
+cross-clip cues, searchable phrases, and uncertainty.
 
-Stage 2 uses `openai/gpt-oss-120b` as a VLM/LLM-first L1 graph composer by
-default. The model directly emits clue-memory nodes and semantic edges such as
-`reappears`, `same_object`, `state_change`, and `social_cue`; local code only
-normalizes IDs, timestamps, media references, and validates edge endpoints.
-Heuristic graph construction is kept as `deterministic` debug/fallback mode,
-not the primary quality path.
+Stage 2 uses `openai/gpt-oss-120b` as a neighbor-local VLM/LLM-first L1 graph
+composer by default. Instead of asking GPT-OSS to emit one huge graph JSON, the
+pipeline gives it one target clip digest plus a small neighbor context. GPT-OSS
+emits target clip nodes and sparse semantic edges such as `reappears`,
+`same_object`, `state_change`, and `social_cue`. Local code only normalizes IDs,
+timestamps, media references, and validates edge endpoints. Heuristic graph
+construction is kept as `deterministic` debug/fallback mode, not the primary
+quality path.
 
 ```text
 segment clips (short / long / streaming)
   -> [long] baseline or query-time coarse selection
   -> [long] expand fine windows inside candidates only
   -> clip-schema producer (Qwen or local video_tools)
-  -> gpt-oss-120B VLM L1 graph composer
+  -> gpt-oss-120B target-clip + neighbor VLM L1 graph composer
   -> canonical example with evidence_index graph
 ```
 
@@ -167,7 +166,7 @@ Hyperparameters:
 | `--clip-schema-model` | `qwen/qwen3.5-9b` | multimodal clip-schema producer |
 | `--clip-schema-max-clips` | `3` | cap clip-schema calls per example |
 | `--graph-model` | `openai/gpt-oss-120b` | graph planner / composer |
-| `--graph-composer-mode` | `vlm_l1` | `vlm_l1` direct graph JSON, `skill_plan` legacy atomic-skill planner, or `deterministic` debug |
+| `--graph-composer-mode` | `neighbor_vlm_l1` | target-clip + neighbor local graph JSON; `vlm_l1` is global graph JSON; `skill_plan` is legacy atomic-skill planner; `deterministic` is debug |
 | `--graph-deterministic` | off | force deterministic debug composer and skip VLM/LLM graph composition |
 | `--keys-py` | workspace `keys.py` | OpenRouter API key source |
 
@@ -190,6 +189,7 @@ Offline graph-compose smoke test:
 
 ```bash
 python dataset_clip_wrapper/smoke_test_graph_compose.py
+python dataset_clip_wrapper/smoke_test_neighbor_vlm_l1_graph_compose.py
 python dataset_clip_wrapper/smoke_test_vlm_l1_graph_compose.py
 python dataset_clip_wrapper/smoke_test_video_tools.py
 python dataset_clip_wrapper/smoke_test_video_only_takein.py
@@ -331,6 +331,12 @@ Only examples that pass this gate should spend GPT-OSS L2 calls. The gate uses
 visible-question retrieval, graph size, question-hit score, option-score margin,
 and hidden-supervision checks. Gold labels remain evaluation-only fields in the
 report and are not used to decide whether L2 runs.
+
+The same locality principle should be used for L2 when needed: do not give
+GPT-OSS the full L1 graph as one large prompt. Build a compact evidence pack
+from gated L1 refs, option scores, snippets, and uncertainty, then ask L2 to
+reason over that pack only. This keeps L2 grounded in retrieved evidence and
+avoids a second large-JSON failure mode.
 
 When rerunning from cached stages:
 

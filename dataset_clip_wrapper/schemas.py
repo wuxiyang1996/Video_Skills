@@ -197,7 +197,7 @@ class GraphComposerConfig:
     keys_py_path: str | None = None
     temperature: float = 0.0
     use_llm_planner: bool = True
-    composer_mode: Literal["vlm_l1", "skill_plan", "deterministic"] = "vlm_l1"
+    composer_mode: Literal["neighbor_vlm_l1", "vlm_l1", "skill_plan", "deterministic"] = "neighbor_vlm_l1"
     max_tokens: int | None = 1800
     reasoning_effort: str | None = "minimal"
 
