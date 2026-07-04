@@ -30,6 +30,8 @@ CASES = {
     "cg_bench": VideoRegime.LONG,
     "vrbench": VideoRegime.LONG,
     "siv_bench": VideoRegime.SHORT,
+    "ovo_bench": VideoRegime.STREAMING,
+    "videomme": VideoRegime.SHORT,
 }
 
 
@@ -92,6 +94,13 @@ def _check_dataset(dataset: str, regime: VideoRegime) -> dict[str, Any]:
             errors.append("long video missing fine-to-coarse refines links")
         if not _has_no_gaps(coarse_nodes):
             errors.append("coarse graph has temporal gaps")
+    elif regime == VideoRegime.STREAMING:
+        if coarse_nodes:
+            errors.append("streaming fixed-window graph should not require coarse graph")
+        if fine.get("coverage") != "full_video":
+            errors.append("streaming fine coverage is not full_video")
+        if not _has_no_gaps(fine_clip_nodes):
+            errors.append("streaming fine graph has temporal gaps")
     else:
         if coarse_nodes:
             errors.append("short video should not require coarse graph")

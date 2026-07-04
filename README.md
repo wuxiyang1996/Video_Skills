@@ -99,7 +99,7 @@ M3-Bench is intentionally deferred until its memory graph reader is ready.
 - [Clip processing policy](docs/clip-processing-policy.md) — short / long / streaming segmentation
 - [MDP formulation](docs/mdp-formulation.md) — atomic skill invocations as graph-state actions
 - [Implementation status](docs/implementation-status.md) — runnable code, datasets, gaps
-- [Dataset clip wrapper](dataset_clip_wrapper/README.md) — four-benchmark canonical clip exporter
+- [Dataset clip wrapper](dataset_clip_wrapper/README.md) — core + streaming benchmark canonical clip exporter
 - [Canonical example JSON schema](schemas/canonical_video_example.schema.json)
 - [Skill graph rollout JSON schema](schemas/skill_graph_rollout.schema.json)
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate two-layer graph shells across four datasets and video regimes."""
+"""Validate two-layer graph shells across supported datasets and video regimes."""
 
 from __future__ import annotations
 
@@ -34,6 +34,8 @@ def main() -> int:
         ("cg_bench", VideoRegime.LONG),
         ("vrbench", VideoRegime.LONG),
         ("cg_bench", VideoRegime.STREAMING),
+        ("ovo_bench", VideoRegime.STREAMING),
+        ("videomme", VideoRegime.SHORT),
     ]
     report = []
     for dataset, regime in cases:

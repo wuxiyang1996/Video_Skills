@@ -22,7 +22,7 @@
     "graph_id": {"type": "string"},
     "example_id": {"type": "string"},
     "dataset": {
-      "enum": ["video_holmes", "siv_bench", "cg_bench", "vrbench"]
+      "enum": ["video_holmes", "siv_bench", "cg_bench", "vrbench", "ovo_bench", "videomme"]
     },
     "video_id": {"type": "string"},
     "video_regime": {

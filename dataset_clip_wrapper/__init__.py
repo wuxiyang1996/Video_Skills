@@ -1,4 +1,4 @@
-"""Dataset clip wrappers for the four core video benchmarks."""
+"""Dataset clip wrappers for core and streaming video benchmarks."""
 
 from .clue_memory import extract_clue_memory_graph, make_reasoning_rollout_shell
 from .dataset_graph_presets import (

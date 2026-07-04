@@ -9,6 +9,8 @@ DATASET_DEFAULT_REGIME: dict[DatasetName, VideoRegime] = {
     "siv_bench": VideoRegime.SHORT,
     "cg_bench": VideoRegime.LONG,
     "vrbench": VideoRegime.LONG,
+    "ovo_bench": VideoRegime.STREAMING,
+    "videomme": VideoRegime.SHORT,
 }
 
 DATASET_TASK_FAMILY: dict[DatasetName, str] = {
@@ -16,6 +18,8 @@ DATASET_TASK_FAMILY: dict[DatasetName, str] = {
     "siv_bench": "short_video_social_interaction_qa",
     "cg_bench": "long_video_clue_grounding_qa",
     "vrbench": "long_video_temporal_chain_qa",
+    "ovo_bench": "streaming_video_realtime_qa",
+    "videomme": "streaming_video_whole_video_qa",
 }
 
 # Hidden supervision fields available per dataset (expert_demo only).
@@ -24,6 +28,8 @@ DATASET_HIDDEN_SOURCES: dict[DatasetName, list[str]] = {
     "siv_bench": ["official_answer"],
     "cg_bench": ["official_answer", "clue_intervals", "clue_clips"],
     "vrbench": ["official_answer", "reasoning_process", "video_summary"],
+    "ovo_bench": ["official_answer"],
+    "videomme": ["official_answer"],
 }
 
 # Layer-1 index characteristics per dataset under each regime.
@@ -47,6 +53,16 @@ DATASET_LAYER1_PROFILE: dict[DatasetName, dict[str, str]] = {
         "short": "hierarchical for clips <10 min",
         "long": "hierarchical 30s coarse + retrieval_gated fine; reasoning_process timestamps as expert seeds",
         "streaming": "hierarchical 30s coarse online index only; reasoning steps after observation_end_s hidden",
+    },
+    "ovo_bench": {
+        "short": "fixed_window streaming clips around realtime anchors; mainly for coding smoke",
+        "long": "not the default; OVO is evaluated as timestamped streaming QA",
+        "streaming": "fixed_window online index with realtime question anchors from StreamBridge records",
+    },
+    "videomme": {
+        "short": "whole_video + 4s fine windows for short VideoMME-style records",
+        "long": "hierarchical if full VideoMME long videos are supplied",
+        "streaming": "not the default; VideoMME is single-turn/offline in StreamBridge",
     },
 }
 
@@ -75,6 +91,15 @@ def clip_policy_for(dataset: DatasetName, regime: VideoRegime, *, duration_s: fl
             policy.index_fine_expansion = "none"
             if duration_s is not None and policy.observation_end_s is None:
                 policy.observation_end_s = duration_s
+            return policy
+        if dataset == "ovo_bench":
+            policy = ClipPolicyConfig.for_regime(
+                VideoRegime.STREAMING,
+                duration_s=duration_s,
+                observation_end_s=observation_end_s,
+            )
+            policy.window_s = 4.0
+            policy.overlap_s = 1.0
             return policy
         policy = ClipPolicyConfig.for_regime(VideoRegime.STREAMING, duration_s=duration_s, observation_end_s=observation_end_s)
         if duration_s is not None and policy.observation_end_s is None:

@@ -86,7 +86,11 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run a staged/resumable Qwen + GPT-OSS graph pipeline.")
-    parser.add_argument("--dataset", required=True, choices=["video_holmes", "cg_bench", "vrbench", "siv_bench"])
+    parser.add_argument(
+        "--dataset",
+        required=True,
+        choices=["video_holmes", "cg_bench", "vrbench", "siv_bench", "ovo_bench", "videomme"],
+    )
     parser.add_argument("--dataset-root", default="/fs/gamma-projects/vlm-robot/datasets")
     parser.add_argument("--split", default="train", choices=["train", "test"])
     parser.add_argument("--regime", default=None, choices=["short", "long", "streaming"])
@@ -158,6 +162,8 @@ def _config_from_args(args: argparse.Namespace) -> WrapperConfig:
         "siv_bench": VideoRegime.SHORT,
         "cg_bench": VideoRegime.LONG,
         "vrbench": VideoRegime.LONG,
+        "ovo_bench": VideoRegime.STREAMING,
+        "videomme": VideoRegime.SHORT,
     }[args.dataset]
 
     clip_policy = ClipPolicyConfig.dataset_default(args.dataset, dataset_regime)

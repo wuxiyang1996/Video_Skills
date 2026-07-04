@@ -1,15 +1,28 @@
 # Dataset Clip Wrapper
 
-Wrap the four core video benchmarks into the canonical
+Wrap the core and streaming video benchmarks into the canonical
 `CanonicalVideoExample` schema with clip segmentation for **short**, **long**,
 and **streaming** regimes.
 
 Supported datasets:
 
+Core clue/video reasoning benchmarks:
+
 - `video_holmes`
 - `cg_bench`
 - `vrbench`
 - `siv_bench`
+
+Streaming video benchmarks:
+
+- `ovo_bench` — StreamBridge/OVO-Bench-style realtime QA records with `realtime`
+  anchors; local coding uses `datasets/streambridge_tiny/tiny_ovo_bench_50videos.json`.
+- `videomme` — StreamBridge/VideoMME-style whole-video QA records; local coding
+  uses `datasets/streambridge_tiny/tiny_videomme.json`.
+
+The local StreamBridge files are smoke-test data for adapter and pipeline
+validation, not accuracy reporting. Full OVO-Bench or VideoMME can reuse the
+same adapter format by supplying matching annotation/video layouts.
 
 ## Pipeline
 
@@ -136,6 +149,24 @@ python -m dataset_clip_wrapper.run_llm_pipeline \
   --retrieval-topk 4 \
   --limit 1
 
+# Streaming video benchmark smoke: OVO-Bench-style realtime QA
+python -m dataset_clip_wrapper.run_llm_pipeline \
+  --dataset ovo_bench \
+  --regime streaming \
+  --mode video_only \
+  --clip-schema-backend video_tools \
+  --clip-schema-max-clips 2 \
+  --limit 1
+
+# Streaming video benchmark smoke: VideoMME-style whole-video QA
+python -m dataset_clip_wrapper.run_llm_pipeline \
+  --dataset videomme \
+  --regime short \
+  --mode video_only \
+  --clip-schema-backend video_tools \
+  --clip-schema-max-clips 2 \
+  --limit 1
+
 # Staged/resumable runner: writes intermediate clip schemas, L1, and L2 files
 python -m dataset_clip_wrapper.run_staged_llm_pipeline \
   --dataset vrbench \
@@ -199,11 +230,11 @@ python dataset_clip_wrapper/smoke_test_video_only_takein.py
 python dataset_clip_wrapper/smoke_test_coarse_fine_graph_crafting.py
 ```
 
-`smoke_test_video_only_takein.py` covers all four current video datasets
-(`video_holmes`, `cg_bench`, `vrbench`, `siv_bench`). It verifies that each one
-can load a real video in `video_only`, sample frames through `video_tools`,
-produce clip schemas, craft an `evidence_index` / clue-memory graph, and avoid
-hidden-supervision leakage.
+`smoke_test_video_only_takein.py` covers all supported current video datasets,
+including the streaming video benchmarks (`ovo_bench`, `videomme`). It verifies
+that each one can load a real video in `video_only`, sample frames through
+`video_tools`, produce clip schemas, craft an `evidence_index` / clue-memory
+graph, and avoid hidden-supervision leakage.
 
 `smoke_test_coarse_fine_graph_crafting.py` checks the two-level graph contract.
 For long videos, it builds a full-video coarse graph, retrieves a small set of
@@ -212,11 +243,12 @@ links fine nodes back to parent coarse nodes with `refines` edges. For short
 videos, it validates the fine graph directly.
 
 Use this test when checking whether an entire video can be taken in for all
-four datasets. "Entire video" means full temporal coverage at the appropriate
-level: short datasets build the fine graph over the full video, while long
-datasets build a full-video coarse graph first and then craft a fine graph only
-inside retrieved coarse neighborhoods. Do not interpret the test as full
-fine-grained VLM processing over every 8s window of CG-Bench or VRBench.
+supported datasets. "Entire video" means full temporal coverage at the
+appropriate level: short and fixed-window streaming datasets build the fine
+graph over the full video, while long datasets build a full-video coarse graph
+first and then craft a fine graph only inside retrieved coarse neighborhoods.
+Do not interpret the test as full fine-grained VLM processing over every 8s
+window of CG-Bench or VRBench.
 
 The pipeline writes this reference layer to `metadata.coarse_fine_graph`:
 
@@ -278,11 +310,22 @@ question, the pipeline adds `question_requirement`, `required_modality`, and
 when needed `answerability_gap` nodes to `evidence_index` / clue memory. These
 nodes are runtime-visible diagnostics, not answer supervision: they record that
 the current video-only graph appears to be missing required evidence such as
-dialogue/ASR, social intent, or causal motivation. This is important for
-benchmarks like SIV-Bench, where a visually plausible graph may still be unable
-to support questions about confidential information or hesitation without
-speech/subtitle/social-cue evidence. The L1 gate rejects examples with missing
-required modalities instead of letting L2 guess.
+dialogue, social intent, or causal motivation. Audio/ASR/subtitle recovery is
+out of scope for this video-only setting, so dialogue gaps are flagged as
+`out_of_scope_modalities` rather than offered as a repair path. This is
+important for benchmarks like SIV-Bench, where a visually plausible graph may
+still be unable to support questions about confidential information or
+hesitation from visual evidence alone. The L1 gate rejects examples with missing
+required modalities instead of letting ordinary L2 guess.
+
+These gaps are typed. `answerability_diagnostic` includes `gap_category`,
+`l2_repair_policy`, `allowed_repair_l2`, `out_of_scope_modalities`, and
+`audio_repair_allowed=false`. For example, a SIV-style question may be marked
+`visual_social_common_sense_gap_with_out_of_scope_dialogue` with
+`visual_social_l2_may_attempt_weak_repair_no_audio`. That flag means ordinary
+L2 answer commit is blocked. A future specialized L2 module may only try
+visual social-intent or causal-motive verification; it must not use audio,
+ASR, or subtitles as evidence in this scope.
 
 ## Staged Outputs and Resume
 

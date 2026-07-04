@@ -20,7 +20,7 @@ class RuntimeMode(str, Enum):
     VIDEO_ONLY = "video_only"
 
 
-DatasetName = Literal["video_holmes", "cg_bench", "vrbench", "siv_bench"]
+DatasetName = Literal["video_holmes", "cg_bench", "vrbench", "siv_bench", "ovo_bench", "videomme"]
 
 
 @dataclass
@@ -121,6 +121,8 @@ class ClipPolicyConfig:
             "siv_bench": VideoRegime.SHORT,
             "cg_bench": VideoRegime.LONG,
             "vrbench": VideoRegime.LONG,
+            "ovo_bench": VideoRegime.STREAMING,
+            "videomme": VideoRegime.SHORT,
         }[dataset]
         return cls.for_regime(inferred)
 

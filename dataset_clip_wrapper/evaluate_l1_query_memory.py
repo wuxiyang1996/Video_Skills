@@ -358,6 +358,11 @@ def _qa_answerability(example: dict[str, Any], top: list[tuple[float, MemoryItem
         "top2_shared_ref_ratio": shared_ref_ratio,
         "retrieval_fallback_reason": fallback_reason,
         "missing_requirements": missing_requirements,
+        "gap_category": answerability_diagnostic.get("gap_category"),
+        "l2_repair_policy": answerability_diagnostic.get("l2_repair_policy"),
+        "allowed_repair_l2": answerability_diagnostic.get("allowed_repair_l2") or [],
+        "out_of_scope_modalities": answerability_diagnostic.get("out_of_scope_modalities") or [],
+        "audio_repair_allowed": bool(answerability_diagnostic.get("audio_repair_allowed")),
         "answerability_diagnostic": answerability_diagnostic,
     }
 

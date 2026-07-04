@@ -40,6 +40,8 @@ DATASET_REGIMES = {
     "cg_bench": VideoRegime.LONG,
     "vrbench": VideoRegime.LONG,
     "siv_bench": VideoRegime.SHORT,
+    "ovo_bench": VideoRegime.STREAMING,
+    "videomme": VideoRegime.SHORT,
 }
 
 

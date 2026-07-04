@@ -98,6 +98,8 @@ def main() -> int:
         ("cg_bench", VideoRegime.LONG, "train"),
         ("vrbench", VideoRegime.LONG, "train"),
         ("siv_bench", VideoRegime.SHORT, "train"),
+        ("ovo_bench", VideoRegime.STREAMING, "train"),
+        ("videomme", VideoRegime.SHORT, "train"),
     ]
     report = []
     for dataset, regime, split in cases:
@@ -159,7 +161,7 @@ def main() -> int:
 
     streaming_config = WrapperConfig(
         dataset_root=dataset_root,
-        dataset="video_holmes",
+        dataset="ovo_bench",
         regime=VideoRegime.STREAMING,
         mode=RuntimeMode.VIDEO_ONLY,
         split="train",
@@ -173,7 +175,7 @@ def main() -> int:
     streaming_errors = _check_example(streaming) + _check_video_only_no_hidden_leakage(streaming) + _check_skill_graph(streaming)
     report.append(
         {
-            "dataset": "video_holmes",
+            "dataset": "ovo_bench",
             "regime": "streaming",
             "mode": "video_only",
             "clip_count": len(streaming["video"]["derived_clips"]),

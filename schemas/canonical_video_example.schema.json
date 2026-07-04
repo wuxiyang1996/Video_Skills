@@ -27,7 +27,7 @@
       "minLength": 1
     },
     "dataset": {
-      "enum": ["video_holmes", "siv_bench", "cg_bench", "vrbench"]
+      "enum": ["video_holmes", "siv_bench", "cg_bench", "vrbench", "ovo_bench", "videomme"]
     },
     "split": {
       "type": "string"

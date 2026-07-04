@@ -16,12 +16,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dataset",
         required=True,
-        choices=["video_holmes", "cg_bench", "vrbench", "siv_bench"],
+        choices=["video_holmes", "cg_bench", "vrbench", "siv_bench", "ovo_bench", "videomme"],
     )
     parser.add_argument(
         "--dataset-root",
         default="/fs/gamma-projects/vlm-robot/datasets",
-        help="Root directory containing Video-Holmes, CG-Bench, VRBench, SIV-Bench",
+        help="Root directory containing video benchmark folders",
     )
     parser.add_argument("--split", default="train", choices=["train", "test"])
     parser.add_argument(
@@ -77,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
         "siv_bench": VideoRegime.SHORT,
         "cg_bench": VideoRegime.LONG,
         "vrbench": VideoRegime.LONG,
+        "ovo_bench": VideoRegime.STREAMING,
+        "videomme": VideoRegime.SHORT,
     }[args.dataset]
 
     clip_policy = ClipPolicyConfig.dataset_default(args.dataset, dataset_regime)

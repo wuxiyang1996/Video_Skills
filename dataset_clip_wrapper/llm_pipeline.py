@@ -194,6 +194,45 @@ def _question_requirements(question_text: str) -> list[str]:
     return list(dict.fromkeys(requirements))
 
 
+def _gap_policy(missing: list[str]) -> dict[str, Any]:
+    missing_set = set(missing)
+    requires_dialogue = "dialogue_or_asr" in missing_set
+    social_missing = bool(missing_set & {"social_intent_or_affect", "causal_explanation"})
+    if requires_dialogue and social_missing:
+        category = "visual_social_common_sense_gap_with_out_of_scope_dialogue"
+        policy = "visual_social_l2_may_attempt_weak_repair_no_audio"
+        allowed_l2 = ["visual_social_intent_reasoner", "visual_causal_motive_verifier"]
+        out_of_scope = ["dialogue_or_asr"]
+    elif requires_dialogue:
+        category = "out_of_scope_dialogue_gap"
+        policy = "do_not_repair_with_audio_in_video_only_scope"
+        allowed_l2 = []
+        out_of_scope = ["dialogue_or_asr"]
+    elif social_missing:
+        category = "visual_social_common_sense_gap"
+        policy = "visual_social_l2_may_attempt_weak_repair_no_audio"
+        allowed_l2 = ["visual_social_intent_reasoner", "visual_causal_motive_verifier"]
+        out_of_scope = []
+    elif missing:
+        category = "missing_required_visual_or_context_evidence"
+        policy = "needs_additional_perception_before_answer"
+        allowed_l2 = ["targeted_visual_retrieval"]
+        out_of_scope = []
+    else:
+        category = "none"
+        policy = "standard_l2_allowed"
+        allowed_l2 = []
+        out_of_scope = []
+    return {
+        "gap_category": category,
+        "l2_repair_policy": policy,
+        "allowed_repair_l2": allowed_l2,
+        "out_of_scope_modalities": out_of_scope,
+        "audio_repair_allowed": False,
+        "ordinary_l2_should_answer": not missing,
+    }
+
+
 def _observed_modalities(
     *,
     clip_schemas: list[dict[str, Any]],
@@ -239,6 +278,7 @@ def _answerability_diagnostic_graph(
     requirements = _question_requirements(question_text)
     observed = _observed_modalities(clip_schemas=clip_schemas, visible_segments=visible_segments)
     missing = [requirement for requirement in requirements if requirement not in observed]
+    gap_policy = _gap_policy(missing)
     suffix = _stable_short_hash(f"{example.get('example_id')}:{question_text}")
     question_node_id = f"diagnostic.question_requirement:{suffix}"
     nodes: list[dict[str, Any]] = [
@@ -251,10 +291,11 @@ def _answerability_diagnostic_graph(
                 + (", ".join(requirements) if requirements else "generic visual retrieval")
             ),
             "requirements": requirements,
-            "observed_modalities": sorted(observed),
-            "producer": "dataset_clip_wrapper.answerability_diagnostic",
-            "visibility": {"hidden_supervision": False, "mode": "video_only"},
-        }
+                "observed_modalities": sorted(observed),
+                **gap_policy,
+                "producer": "dataset_clip_wrapper.answerability_diagnostic",
+                "visibility": {"hidden_supervision": False, "mode": "video_only"},
+            }
     ]
     edges: list[dict[str, Any]] = []
 
@@ -269,6 +310,8 @@ def _answerability_diagnostic_graph(
                 "text": f"Required evidence modality: {requirement} ({status} in current video-only L1 graph).",
                 "required_modality": requirement,
                 "status": status,
+                "gap_category": gap_policy["gap_category"] if status == "missing" else "none",
+                "l2_repair_policy": gap_policy["l2_repair_policy"] if status == "missing" else "standard_l2_allowed",
                 "producer": "dataset_clip_wrapper.answerability_diagnostic",
                 "visibility": {"hidden_supervision": False, "mode": "video_only"},
             }
@@ -295,6 +338,7 @@ def _answerability_diagnostic_graph(
                     + " evidence. Treat answer generation as unsupported until that modality is recovered."
                 ),
                 "missing_modalities": missing,
+                **gap_policy,
                 "producer": "dataset_clip_wrapper.answerability_diagnostic",
                 "visibility": {"hidden_supervision": False, "mode": "video_only"},
             }
@@ -337,6 +381,7 @@ def _answerability_diagnostic_graph(
             "observed_modalities": sorted(observed),
             "missing_requirements": missing,
             "has_answerability_gap": bool(missing),
+            **gap_policy,
         },
     }
 
