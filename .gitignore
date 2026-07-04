@@ -9,3 +9,6 @@ experiments/expert_demo_video_holmes_gpt5mini_output.json
 
 # Dataset clip wrapper outputs
 dataset_clip_wrapper/output/*.jsonl
+dataset_clip_wrapper/output/*.json
+dataset_clip_wrapper/output/*.txt
+dataset_clip_wrapper/output/staged*/

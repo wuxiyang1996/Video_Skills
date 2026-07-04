@@ -1,6 +1,6 @@
 # Implementation Status
 
-Last updated: 2026-07-01
+Last updated: 2026-07-04
 
 This document tracks what is designed, what is implemented, and how to run the
 current code. It consolidates status from README, atomic skills v1, dataset
@@ -188,7 +188,49 @@ Alternative graph-building path:
 
 ## 4. Runnable Code
 
-### 4.1 Smoke Tests (no API key)
+### 4.1 Current API L1/L2 Probe: Qwen + GPT-OSS
+
+The current `video_only` API path was probed with:
+
+```text
+video
+  -> qwen/qwen3.5-9b clip schemas
+  -> openai/gpt-oss-120b neighbor_vlm_l1 graph composition
+  -> L1 query-memory retrieval
+  -> openai/gpt-oss-120b L2 reasoning planner
+```
+
+Observed outputs from the July 4 probe:
+
+| Dataset | Scope | L1 graph | L1 query-memory | L2 result | Status |
+|---------|-------|----------|-----------------|-----------|--------|
+| SIV-Bench | one short example | 14 nodes / 16 edges | chose A, gold B | chose B | L2 answer correct, but L1 did not support it strongly |
+| CG-Bench | one small 3-clip slice | 101 nodes / 0 edges | chose E, gold E | chose A | L1 option signal correct; L2 degraded it |
+| VRBench | one small 4-clip slice | 89 nodes / 6 edges | chose D, gold D | chose A | L1 option signal correct; L2 degraded it |
+| Video-Holmes | 12 saved Qwen clip schemas | incomplete | incomplete | incomplete | stopped in serial GPT-OSS L1 compose latency |
+
+Takeaway:
+
+- The current path is feasible: Qwen clip schemas and GPT-OSS neighbor-local L1
+  can produce graph nodes and, on some examples, useful semantic edges such as
+  `same_entity`, `same_place`, `supports_observation`, and `temporal_next`.
+- The current path is not yet a stable high-quality setting. L2 can override a
+  correct L1 option-memory signal, and weak L1 gates can still produce
+  plausible-looking L2 answers.
+- Long or dense clips expose a throughput issue because `neighbor_vlm_l1`
+  currently calls GPT-OSS serially per target clip.
+
+Next fixes:
+
+- Add per-clip GPT-OSS timeout and parallel workers for `neighbor_vlm_l1`.
+- Run L2 only from a gated evidence pack: top evidence refs, option score table,
+  local snippets, and uncertainty notes.
+- Skip L2 or return insufficient evidence when the L1 gate fails.
+- Strengthen the L1 prompt/schema so every target node is encouraged to emit
+  searchable cross-clip edges when evidence exists, instead of allowing
+  node-only graphs.
+
+### 4.2 Smoke Tests (no API key)
 
 Runs the original 28 core atomic skills on a synthetic social-contradiction
 example:
@@ -210,13 +252,13 @@ Validates the 6 option-level multi-hop/social L2 extensions:
 python dataset_clip_wrapper/smoke_test_multi_hop_reasoning_skills.py
 ```
 
-### 4.2 Graph Crafting from Video-Holmes (no API key)
+### 4.3 Graph Crafting from Video-Holmes (no API key)
 
 `experiments/expert_demo_gpt5mini.py` exposes `load_video_holmes_example()` and
 `build_seed_clue_memory_graph()`, which chain graph-construction atomic skills
 over dataset annotations.
 
-### 4.5 Dataset Clip Wrapper (no API key by default)
+### 4.4 Dataset Clip Wrapper (no API key by default)
 
 ```bash
 python dataset_clip_wrapper/smoke_test.py
