@@ -96,15 +96,19 @@ composer turns those fields into L1 observations / mentions and adds
 `same_entity` links for repeated surface forms, giving L2 memory something
 searchable beyond a generic scene caption.
 
-Stage 2 uses `openai/gpt-oss-120b` to plan and execute Evidence Graph
-Construction atomic skills, producing a clue-memory / perception graph.
+Stage 2 uses `openai/gpt-oss-120b` as a VLM/LLM-first L1 graph composer by
+default. The model directly emits clue-memory nodes and semantic edges such as
+`reappears`, `same_object`, `state_change`, and `social_cue`; local code only
+normalizes IDs, timestamps, media references, and validates edge endpoints.
+Heuristic graph construction is kept as `deterministic` debug/fallback mode,
+not the primary quality path.
 
 ```text
 segment clips (short / long / streaming)
   -> [long] baseline or query-time coarse selection
   -> [long] expand fine windows inside candidates only
   -> clip-schema producer (Qwen or local video_tools)
-  -> gpt-oss-120B graph composer over atomic graph-crafting skills
+  -> gpt-oss-120B VLM L1 graph composer
   -> canonical example with evidence_index graph
 ```
 
@@ -163,7 +167,8 @@ Hyperparameters:
 | `--clip-schema-model` | `qwen/qwen3.5-9b` | multimodal clip-schema producer |
 | `--clip-schema-max-clips` | `3` | cap clip-schema calls per example |
 | `--graph-model` | `openai/gpt-oss-120b` | graph planner / composer |
-| `--graph-deterministic` | off | apply atomic skills directly from clip schemas |
+| `--graph-composer-mode` | `vlm_l1` | `vlm_l1` direct graph JSON, `skill_plan` legacy atomic-skill planner, or `deterministic` debug |
+| `--graph-deterministic` | off | force deterministic debug composer and skip VLM/LLM graph composition |
 | `--keys-py` | workspace `keys.py` | OpenRouter API key source |
 
 Optional local raw-video perception backend:
@@ -185,6 +190,7 @@ Offline graph-compose smoke test:
 
 ```bash
 python dataset_clip_wrapper/smoke_test_graph_compose.py
+python dataset_clip_wrapper/smoke_test_vlm_l1_graph_compose.py
 python dataset_clip_wrapper/smoke_test_video_tools.py
 python dataset_clip_wrapper/smoke_test_video_only_takein.py
 python dataset_clip_wrapper/smoke_test_coarse_fine_graph_crafting.py

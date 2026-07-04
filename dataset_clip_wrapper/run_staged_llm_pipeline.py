@@ -115,6 +115,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--graph-model", default="openai/gpt-oss-120b")
     parser.add_argument("--graph-max-tokens", type=int, default=3500)
+    parser.add_argument("--graph-composer-mode", default="vlm_l1", choices=["vlm_l1", "skill_plan", "deterministic"])
     parser.add_argument("--graph-deterministic", action="store_true")
     parser.add_argument("--skip-l2-planner", action="store_true")
     parser.add_argument("--disable-llm-skills", action="store_true")
@@ -167,6 +168,7 @@ def _config_from_args(args: argparse.Namespace) -> WrapperConfig:
             model=args.graph_model,
             keys_py_path=args.keys_py,
             use_llm_planner=not args.graph_deterministic,
+            composer_mode="deterministic" if args.graph_deterministic else args.graph_composer_mode,
             max_tokens=args.graph_max_tokens,
         ),
         skill_execution=SkillExecutionConfig(
@@ -288,6 +290,8 @@ def _compose_l1_and_l2(
     example["evidence_index"]["retrieval"] = config.retrieval.to_dict()
     example["metadata"]["graph_compose"] = {
         "composer_model": composed.get("composer_model"),
+        "composer_mode": composed.get("composer_mode"),
+        "used_deterministic_fallback": composed.get("used_deterministic_fallback"),
         "execution_trace": composed.get("execution_trace"),
         "skill_plan": composed.get("skill_plan"),
     }

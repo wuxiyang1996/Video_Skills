@@ -572,6 +572,8 @@ def build_llm_enriched_example(
         example["evidence_index"]["retrieval"] = config.retrieval.to_dict()
         example["metadata"]["graph_compose"] = {
             "composer_model": composed.get("composer_model"),
+            "composer_mode": composed.get("composer_mode"),
+            "used_deterministic_fallback": composed.get("used_deterministic_fallback"),
             "execution_trace": composed.get("execution_trace"),
             "skill_plan": composed.get("skill_plan"),
         }

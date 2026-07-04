@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,22 @@ SKILL_EXECUTORS = {
 
 EXECUTABLE_SKILL_IDS = executable_skill_ids(SKILL_EXECUTORS)
 _ALLOWED_EDGE_TYPES = ", ".join(sorted(ALLOWED_MEMORY_EDGES))
+VLM_L1_EDGE_TYPES = {
+    "temporal_next",
+    "entity_mention",
+    "derived_from",
+    "same_entity",
+    "same_object",
+    "same_place",
+    "reappears",
+    "before_after",
+    "state_change",
+    "supports_observation",
+    "contrasts_observation",
+    "located_in",
+    "causal_hint",
+    "social_cue",
+}
 
 GRAPH_COMPOSE_PROMPT = f"""You compose a clue-memory / perception graph using ONLY the executable
 Evidence Graph Construction atomic skills listed in allowed_skill_ids.
@@ -99,6 +116,96 @@ Rules:
 9. Do not output chain-of-thought.
 """
 
+VLM_L1_GRAPH_PROMPT = """You build a video-only L1 clue-memory graph directly from clip schemas.
+
+Return JSON only:
+{
+  "nodes": [
+    {
+      "node_id": "optional stable local id",
+      "node_type": "observation|entity_mention|event|state|dialogue_span|clue",
+      "clip_id": "clip id from input",
+      "time_span": {"start_s": number, "end_s": number},
+      "text": "grounded clue text",
+      "modality": "visual|audio|subtitle|ocr|mixed",
+      "confidence": 0.0
+    }
+  ],
+  "edges": [
+    {
+      "edge_id": "optional stable local id",
+      "src": "node_id",
+      "dst": "node_id",
+      "edge_type": "same_object|same_place|reappears|before_after|state_change|supports_observation|contrasts_observation|located_in|causal_hint|social_cue|temporal_next|derived_from",
+      "evidence_refs": ["node_id"],
+      "text": "short grounded reason"
+    }
+  ],
+  "notes": "short quality note"
+}
+
+Rules:
+1. Use only visible/spoken/subtitle/OCR evidence from clip_schemas.
+2. Do not use official answers, hidden clues, labels, or dataset supervision.
+3. Prefer reasoning-useful clues over generic captions.
+4. Cross-clip semantic edges must be model-judged from the clip evidence, not string matching.
+5. If evidence is weak, include uncertainty in node text and keep confidence low.
+6. Every node must reference an input clip_id and time_span when possible.
+7. Every edge src/dst must refer to nodes you output.
+8. Do not output chain-of-thought.
+"""
+
+
+def build_vlm_l1_response_schema() -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "vlm_l1_clue_graph",
+            "strict": False,
+            "schema": {
+                "type": "object",
+                "additionalProperties": True,
+                "properties": {
+                    "nodes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": True,
+                            "properties": {
+                                "node_id": {"type": "string"},
+                                "node_type": {"type": "string"},
+                                "clip_id": {"type": "string"},
+                                "time_span": {"type": "object", "additionalProperties": True},
+                                "text": {"type": "string"},
+                                "modality": {"type": "string"},
+                                "confidence": {"type": "number"},
+                            },
+                            "required": ["node_type", "text"],
+                        },
+                    },
+                    "edges": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": True,
+                            "properties": {
+                                "edge_id": {"type": "string"},
+                                "src": {"type": "string"},
+                                "dst": {"type": "string"},
+                                "edge_type": {"type": "string"},
+                                "evidence_refs": {"type": "array", "items": {"type": "string"}},
+                                "text": {"type": "string"},
+                            },
+                            "required": ["src", "dst", "edge_type"],
+                        },
+                    },
+                    "notes": {"type": "string"},
+                },
+                "required": ["nodes", "edges", "notes"],
+            },
+        },
+    }
+
 
 class GraphComposer:
     def __init__(self, config: GraphComposerConfig, client: OpenRouterClient):
@@ -108,6 +215,11 @@ class GraphComposer:
         executable = set(EXECUTABLE_SKILL_IDS)
         self.ontology = [item for item in full_ontology if item["skill_id"] in executable]
         self.allowed_skill_ids = executable
+
+    @staticmethod
+    def _stable_id(prefix: str, *parts: Any) -> str:
+        payload = json.dumps(parts, sort_keys=True, ensure_ascii=False, default=str)
+        return f"{prefix}:{hashlib.sha1(payload.encode('utf-8')).hexdigest()[:10]}"
 
     def plan_skill_graph(
         self,
@@ -230,6 +342,145 @@ class GraphComposer:
                 step_outputs[step_id] = {**result.outputs, "evidence_refs": result.evidence_refs}
         return graph, trace
 
+    def compose_vlm_l1_graph(
+        self,
+        *,
+        example_id: str,
+        video_id: str,
+        clip_policy: dict[str, Any],
+        clip_schemas: list[dict[str, Any]],
+        segments: list[dict[str, Any]],
+        mode: RuntimeMode,
+    ) -> dict[str, Any]:
+        visible_schemas = [schema for schema in clip_schemas if not schema.get("model_error")]
+        payload = {
+            "task": "compose_video_only_vlm_l1_clue_graph",
+            "example_id": example_id,
+            "video_id": video_id,
+            "mode": mode.value,
+            "clip_policy": clip_policy,
+            "clip_schemas": visible_schemas,
+            "segments": segments,
+            "allowed_edge_types": sorted(VLM_L1_EDGE_TYPES),
+            "instructions": VLM_L1_GRAPH_PROMPT,
+        }
+        response = self.client.chat_json(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a grounded video clue-graph composer. "
+                        "Create semantic L1 nodes and edges only from the supplied clip schemas."
+                    ),
+                },
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            response_format=build_vlm_l1_response_schema(),
+        )
+        response["model"] = self.config.model
+        response["composer"] = "vlm_l1_graph_composer"
+        return response
+
+    def _graph_from_vlm_l1_response(
+        self,
+        *,
+        response: dict[str, Any],
+        base_graph: dict[str, Any],
+        clip_schemas: list[dict[str, Any]],
+        mode: RuntimeMode,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        trace: list[dict[str, Any]] = []
+        graph = base_graph
+        clip_by_id = {schema.get("clip_id"): schema for schema in clip_schemas if schema.get("clip_id")}
+        existing_node_ids = {node.get("node_id") for node in graph.get("nodes", [])}
+        id_map: dict[str, str] = {}
+
+        for index, raw_node in enumerate(response.get("nodes") or []):
+            if not isinstance(raw_node, dict):
+                continue
+            text = str(raw_node.get("text") or raw_node.get("description") or "").strip()
+            if not text:
+                continue
+            node_type = str(raw_node.get("node_type") or "observation").strip() or "observation"
+            clip_id = str(raw_node.get("clip_id") or "").strip()
+            schema = clip_by_id.get(clip_id) or {}
+            time_span = raw_node.get("time_span") if isinstance(raw_node.get("time_span"), dict) else schema.get("time_span")
+            proposed_id = str(raw_node.get("node_id") or "").strip()
+            node_id = proposed_id if proposed_id and proposed_id not in existing_node_ids else self._stable_id(
+                f"evidence.{node_type}",
+                clip_id,
+                time_span,
+                text,
+                index,
+            )
+            id_map[proposed_id] = node_id
+            existing_node_ids.add(node_id)
+            graph.setdefault("nodes", []).append(
+                {
+                    **raw_node,
+                    "node_id": node_id,
+                    "node_type": node_type,
+                    "text": text,
+                    "clip_id": clip_id or schema.get("clip_id"),
+                    "time_span": time_span,
+                    "modality": raw_node.get("modality") or "mixed",
+                    "source_type": raw_node.get("source_type") or "vlm_l1",
+                    "producer": "vlm_l1_graph_composer",
+                    "visibility": {"hidden_supervision": False, "mode": mode.value},
+                }
+            )
+            trace.append({"skill_id": "vlm_l1_create_node", "ok": True, "node_id": node_id})
+
+        valid_node_ids = {node.get("node_id") for node in graph.get("nodes", [])}
+        for index, raw_edge in enumerate(response.get("edges") or []):
+            if not isinstance(raw_edge, dict):
+                continue
+            src = id_map.get(str(raw_edge.get("src") or ""), raw_edge.get("src"))
+            dst = id_map.get(str(raw_edge.get("dst") or ""), raw_edge.get("dst"))
+            if src not in valid_node_ids or dst not in valid_node_ids:
+                trace.append(
+                    {
+                        "skill_id": "vlm_l1_skip_edge",
+                        "ok": True,
+                        "reason": "missing_endpoint",
+                        "src": src,
+                        "dst": dst,
+                    }
+                )
+                continue
+            edge_type = str(raw_edge.get("edge_type") or "supports_observation").strip()
+            if edge_type not in VLM_L1_EDGE_TYPES:
+                edge_type = "supports_observation"
+            refs = [
+                id_map.get(str(ref), str(ref))
+                for ref in raw_edge.get("evidence_refs") or [src, dst]
+                if id_map.get(str(ref), str(ref)) in valid_node_ids
+            ]
+            edge_id = str(raw_edge.get("edge_id") or "").strip() or self._stable_id(
+                "edge",
+                src,
+                dst,
+                edge_type,
+                index,
+            )
+            graph.setdefault("edges", []).append(
+                {
+                    **raw_edge,
+                    "edge_id": edge_id,
+                    "src": src,
+                    "dst": dst,
+                    "edge_type": edge_type,
+                    "evidence_refs": refs or [src, dst],
+                    "producer": "vlm_l1_graph_composer",
+                    "visibility": {"hidden_supervision": False, "mode": mode.value},
+                }
+            )
+            trace.append({"skill_id": "vlm_l1_create_edge", "ok": True, "edge_id": edge_id, "edge_type": edge_type})
+
+        if not any(node.get("producer") == "vlm_l1_graph_composer" for node in graph.get("nodes", [])):
+            raise ValueError("VLM L1 composer produced no usable graph nodes")
+        return graph, trace
+
     def compose_from_clip_schemas(
         self,
         *,
@@ -242,8 +493,15 @@ class GraphComposer:
         duration_s: float,
         observation_end_s: float | None = None,
     ) -> dict[str, Any]:
+        composer_mode = self.config.composer_mode
+        if not self.config.use_llm_planner:
+            composer_mode = "deterministic"
+
         plan_payload: dict[str, Any]
-        if self.config.use_llm_planner:
+        if composer_mode == "vlm_l1":
+            plan_payload = {"nodes": [], "edges": [], "notes": "vlm_l1 graph compose not attempted"}
+            skill_plan = []
+        elif composer_mode == "skill_plan":
             try:
                 plan_payload = self.plan_skill_graph(
                     example_id=example_id,
@@ -264,7 +522,7 @@ class GraphComposer:
                 }
                 skill_plan = []
         else:
-            plan_payload = {"skill_plan": [], "notes": "deterministic fallback"}
+            plan_payload = {"skill_plan": [], "notes": "deterministic debug composer"}
             skill_plan = []
 
         bindings = {
@@ -278,7 +536,66 @@ class GraphComposer:
         trace: list[dict[str, Any]] = []
         used_deterministic = False
 
-        if skill_plan:
+        if composer_mode == "vlm_l1":
+            seg_result = segment_video_or_select_clip(
+                graph,
+                video_id=video_id,
+                clip_policy={**clip_policy, "duration_s": duration_s},
+                observation_end_s=observation_end_s,
+            )
+            graph = seg_result.outputs["graph"]
+            trace.append(
+                {
+                    "skill_id": "segment_video_or_select_clip",
+                    "ok": seg_result.ok,
+                    "source": "vlm_l1_plumbing",
+                }
+            )
+            try:
+                plan_payload = self.compose_vlm_l1_graph(
+                    example_id=example_id,
+                    video_id=video_id,
+                    clip_policy=clip_policy,
+                    clip_schemas=clip_schemas,
+                    segments=segments,
+                    mode=mode,
+                )
+                graph, vlm_trace = self._graph_from_vlm_l1_response(
+                    response=plan_payload,
+                    base_graph=graph,
+                    clip_schemas=clip_schemas,
+                    mode=mode,
+                )
+                trace.extend(vlm_trace)
+            except Exception as exc:
+                plan_payload = {
+                    "nodes": [],
+                    "edges": [],
+                    "notes": "VLM L1 composer failed; deterministic debug fallback used",
+                    "planner_error": str(exc),
+                    "model": self.config.model,
+                    "composer": "vlm_l1_graph_composer",
+                }
+                graph, deterministic_trace = self._compose_deterministically(
+                    graph={"schema_version": "video-skills-relaunch/v0.1", "nodes": [], "edges": []},
+                    video_id=video_id,
+                    clip_policy=clip_policy,
+                    clip_schemas=clip_schemas,
+                    segments=segments,
+                    duration_s=duration_s,
+                    observation_end_s=observation_end_s,
+                    mode=mode,
+                )
+                trace.append(
+                    {
+                        "skill_id": "deterministic_fallback",
+                        "ok": True,
+                        "reason": "vlm_l1_failed",
+                    }
+                )
+                trace.extend(deterministic_trace)
+                used_deterministic = True
+        elif skill_plan:
             graph, trace = self.execute_skill_plan(graph=graph, skill_plan=skill_plan, bindings=bindings)
             failed_steps = [step for step in trace if step.get("ok") is False]
             successful_graph_steps = [
@@ -326,6 +643,7 @@ class GraphComposer:
             "skill_plan": plan_payload,
             "execution_trace": trace,
             "composer_model": self.config.model,
+            "composer_mode": composer_mode,
             "used_deterministic_fallback": used_deterministic,
         }
 
