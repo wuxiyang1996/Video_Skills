@@ -133,6 +133,20 @@ python -m dataset_clip_wrapper.run_llm_pipeline \
   --retrieval-topk 4 \
   --limit 1
 
+# Staged/resumable runner: writes intermediate clip schemas, L1, and L2 files
+python -m dataset_clip_wrapper.run_staged_llm_pipeline \
+  --dataset vrbench \
+  --regime long \
+  --mode video_only \
+  --query-time-retrieval \
+  --retrieval-topk 2 \
+  --clip-schema-frames 1 \
+  --clip-schema-timeout-s 45 \
+  --disable-llm-skills \
+  --disable-vlm-skills \
+  --stage-dir dataset_clip_wrapper/output/staged_vrbench \
+  --output dataset_clip_wrapper/output/vrbench_staged.jsonl
+
 # Deterministic graph compose only (no gpt-oss planner call)
 python -m dataset_clip_wrapper.run_llm_pipeline \
   --dataset video_holmes \
@@ -217,6 +231,109 @@ The report surfaces question-only hits, option scores, selected coarse indices,
 and a `l2_uses_gold_text_warning` flag. In valid `video_only` L2 experiments,
 the planner must not see or copy `question.answer`; official answers are
 evaluation-only hidden supervision.
+
+## Staged Outputs and Resume
+
+`run_staged_llm_pipeline.py` is the recommended API runner for slow videos. It
+creates one directory per example:
+
+```text
+00_shell.json
+01_perception_spans.json
+02_clip_schemas.jsonl
+03_l1_inputs.json
+04_l1_example.json
+05_l2_rollout.json
+final_example.json
+```
+
+The clip-schema file is appended after each clip, so interrupted Qwen runs can
+resume without repeating completed clips. Re-run the same command to reuse
+cached stages; pass `--force` to rebuild. If an API run produced malformed JSON,
+timeouts, or empty clip schemas, pass `--retry-failed-clip-schemas` to keep the
+good cached rows, discard only rows with `model_error`, and recompute those
+clips before rebuilding L1/L2.
+
+Clip-schema generation now uses three guards before a clip is allowed into L1:
+
+- OpenRouter `json_schema` response format for the full and compact prompts;
+- a compact `json_object` fallback when provider-side schema enforcement fails;
+- local normalization / validation that rejects empty or type-broken payloads.
+
+Use the retry flag when comparing graph quality after prompt or format fixes:
+
+```bash
+python -m dataset_clip_wrapper.run_staged_llm_pipeline \
+  --dataset video_holmes \
+  --regime short \
+  --mode video_only \
+  --query-time-retrieval \
+  --clip-schema-frames 1 \
+  --clip-schema-timeout-s 45 \
+  --disable-llm-skills \
+  --disable-vlm-skills \
+  --stage-dir dataset_clip_wrapper/output/staged_fix_rerun_video_holmes \
+  --output dataset_clip_wrapper/output/video_holmes_retry_failed.jsonl \
+  --retry-failed-clip-schemas
+```
+
+For long videos, prefer acceleration by reducing work before increasing
+parallelism:
+
+- keep `index_fine_expansion=retrieval_gated`;
+- use `--query-time-retrieval` and timestamp anchors to select fine clips;
+- keep `--retrieval-topk` small for the first pass;
+- use `--clip-schema-frames 1` and lower `--clip-schema-max-tokens`;
+- run L1 gate passes with `--graph-deterministic --skip-l2-planner`;
+- disable skill-level API calls with `--disable-llm-skills --disable-vlm-skills`;
+- retry only failed or relevant clips from the staged cache.
+
+## L1 Gate Before GPT-OSS L2
+
+For batch experiments, do not run GPT-OSS L2 on every video immediately. First
+build a deterministic L1/query-memory candidate:
+
+```bash
+python -m dataset_clip_wrapper.run_staged_llm_pipeline \
+  --dataset vrbench \
+  --regime long \
+  --mode video_only \
+  --query-time-retrieval \
+  --retrieval-topk 2 \
+  --graph-deterministic \
+  --skip-l2-planner \
+  --disable-llm-skills \
+  --disable-vlm-skills \
+  --stage-dir dataset_clip_wrapper/output/staged_fix_rerun_vr \
+  --output dataset_clip_wrapper/output/vrbench_video_only_qwen_l1_gate.jsonl \
+  --rebuild-from-stages \
+  --no-fill-missing-clip-schemas
+```
+
+Then gate the L1 graph without using hidden answers:
+
+```bash
+python -m dataset_clip_wrapper.gate_l1_for_l2 \
+  --topk 5 \
+  --min-option-margin 0.2 \
+  --output dataset_clip_wrapper/output/l1_gate_report.json \
+  --passed-output dataset_clip_wrapper/output/l1_gate_passed_example_ids.txt \
+  dataset_clip_wrapper/output/*_l1_gate.jsonl
+```
+
+Only examples that pass this gate should spend GPT-OSS L2 calls. The gate uses
+visible-question retrieval, graph size, question-hit score, option-score margin,
+and hidden-supervision checks. Gold labels remain evaluation-only fields in the
+report and are not used to decide whether L2 runs.
+
+When rerunning from cached stages:
+
+- `--rebuild-from-stages` ignores `final_example.json` and rebuilds L1/L2 from
+  cached intermediate files.
+- `--no-fill-missing-clip-schemas` prevents the gate pass from calling Qwen for
+  missing clips; useful after interrupted retries.
+- `--retry-failed-clip-schemas` should be reserved for perception-quality repair,
+  because it will call Qwen for failed clips.
 
 VRBench video-only graph-quality probe:
 

@@ -76,6 +76,22 @@ REASONING_SKILL_EXECUTORS = {
 
 REASONING_SKILL_IDS = sorted(REASONING_SKILL_EXECUTORS.keys())
 
+_REASONING_SKILL_CONTRACTS = {
+    "parse_question_target": "args: question_text, options -> parsed_target object",
+    "propose_evidence_roles": "args: question_text, parsed_target, task_family -> role_constraints",
+    "generate_answer_hypotheses": "args: question_text, options, parsed_target -> hypotheses list",
+    "retrieve_evidence_for_hypothesis": "args: hypothesis, max_refs -> support_refs",
+    "score_hypothesis_support": "args: hypothesis, support_evidence, counterevidence -> scored_hypothesis/scored_hypotheses",
+    "compare_hypotheses": "args: scored_hypotheses -> best_hypothesis",
+    "retrieve_by_event": "args: evidence_graph, event_description, time_range? -> event_nodes, evidence_refs",
+    "localize_clue": "args: candidate_evidence, role_constraint, question_context -> clue_refs",
+    "extract_claim": "args: evidence_ref, claim_query? -> claim_text, evidence_ref",
+    "assign_evidence_role": "args: evidence_ref, role_schema, question_context -> role_labeled_evidence",
+    "bridge_evidence_hops": "args: source_evidence, target_hypothesis -> multi_hop_chain",
+    "verify_claim_support": "args: claim, evidence_chain, support_policy -> verified_claim",
+    "commit_answer": "args: verified_claim, options, answer_format, support_chain -> final_answer",
+}
+
 _REASONING_PLAN_PROMPT = """You are an expert video-reasoning planner. Given a question and a Layer-1
 clue-memory graph (perception evidence), plan which reasoning skills to execute and in what order.
 
@@ -121,6 +137,15 @@ Skill execution rules:
 9. Always end with verify_claim_support then commit_answer.
 10. Keep plans between 8-18 steps. Do not over-plan.
 11. Do not output chain-of-thought.
+
+Stable output contracts:
+- parse_question_target outputs the parsed target object directly; refer to $step.r1.parsed_target.
+- generate_answer_hypotheses outputs hypotheses; pass the full $step.rN.hypotheses list to option scoring.
+- retrieve_evidence_for_hypothesis outputs support_refs and evidence_refs.
+- score_hypothesis_support outputs scored_hypothesis for one item or scored_hypotheses for a list.
+- compare_hypotheses outputs best_hypothesis.
+- verify_claim_support outputs verified_claim; commit_answer.verified_claim MUST use that object, not $step.x.passed.
+- commit_answer.support_chain MUST be an object with evidence_refs, not a raw list.
 """
 
 
@@ -185,35 +210,51 @@ def plan_reasoning_skills(
 ) -> dict[str, Any]:
     """Call gpt-oss to plan a question-conditioned reasoning skill program."""
     ontology = export_skill_ontology()["reasoning_graph_assembly"]
-    graph_summary = _summarize_clue_graph(clue_memory_graph)
+    errors: list[str] = []
+    attempts = [
+        {"name": "full", "max_nodes": 20, "include_ontology": True},
+        {"name": "compact_retry", "max_nodes": 10, "include_ontology": False},
+    ]
 
-    payload = {
-        "task": "plan_reasoning_over_clue_graph",
-        "question": question,
-        "task_family": task_family,
-        "clue_graph_summary": graph_summary,
-        "allowed_skill_ids": REASONING_SKILL_IDS,
-        "ontology": ontology,
-        "instructions": _REASONING_PLAN_PROMPT,
-    }
+    for attempt in attempts:
+        graph_summary = _summarize_clue_graph(clue_memory_graph, max_nodes=attempt["max_nodes"])
+        payload = {
+            "task": "plan_reasoning_over_clue_graph",
+            "question": question,
+            "task_family": task_family,
+            "clue_graph_summary": graph_summary,
+            "allowed_skill_ids": REASONING_SKILL_IDS,
+            "skill_contracts": _REASONING_SKILL_CONTRACTS,
+            "instructions": _REASONING_PLAN_PROMPT,
+        }
+        if attempt["include_ontology"]:
+            payload["ontology"] = ontology
 
-    response = client.chat_json(
-        [
-            {
-                "role": "system",
-                "content": (
-                    "You are an expert video-reasoning planner. "
-                    "Choose reasoning skills from allowed_skill_ids (multiple choice). "
-                    "Plan a skill program to answer the question using L1 evidence."
-                ),
-            },
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-        ],
-        response_format=_build_reasoning_plan_schema(REASONING_SKILL_IDS),
-    )
-    response["model"] = client.model
-    response["planner"] = "gpt_oss_reasoning_planner"
-    return response
+        try:
+            response = client.chat_json(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are an expert video-reasoning planner. "
+                            "Choose reasoning skills from allowed_skill_ids. "
+                            "Return compact valid JSON only; no markdown, no comments, no trailing commas."
+                        ),
+                    },
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ],
+                response_format=_build_reasoning_plan_schema(REASONING_SKILL_IDS),
+            )
+            response["model"] = client.model
+            response["planner"] = "gpt_oss_reasoning_planner"
+            response["planner_attempt"] = attempt["name"]
+            if errors:
+                response["planner_retry_errors"] = errors
+            return response
+        except Exception as exc:
+            errors.append(f"{attempt['name']}: {exc}")
+
+    raise RuntimeError("; ".join(errors))
 
 
 def execute_reasoning_plan(
@@ -241,6 +282,11 @@ def execute_reasoning_plan(
     bindings = {
         "question_text": question_text,
         "options": options,
+        "question": {
+            "question_text": question_text,
+            "options": options,
+            "answer_format": question.get("answer_format") or ("multiple_choice" if options else "free_text"),
+        },
         "graph": graph,
         "task_family": question.get("task_family") or "",
     }
@@ -253,6 +299,114 @@ def execute_reasoning_plan(
             return next((item for item in value if isinstance(item, dict)), value[0] if value else {"claim_text": question_text})
         return value or {"claim_text": question_text}
 
+    def _hypothesis_list(value: Any) -> list[Any]:
+        if isinstance(value, list):
+            return value or [{"claim_text": question_text}]
+        if value:
+            return [value]
+        return [{"claim_text": question_text}]
+
+    def _refs(value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, dict):
+            for key in ("evidence_refs", "support_refs", "clue_refs", "counterevidence_refs", "supporting_evidence"):
+                if key in value:
+                    return _refs(value.get(key))
+            if "multi_hop_chain" in value:
+                return _refs(value.get("multi_hop_chain"))
+            node_id = value.get("node_id") or value.get("evidence_ref")
+            return [str(node_id)] if node_id else []
+        if isinstance(value, list):
+            refs: list[str] = []
+            for item in value:
+                refs.extend(_refs(item))
+            return list(dict.fromkeys(refs))
+        return []
+
+    def _chain(value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            if "evidence_refs" in value or "items" in value:
+                return {
+                    **value,
+                    "evidence_refs": _refs(value),
+                    "items": value.get("items") or [],
+                }
+            if "role_labeled_evidence" in value:
+                item = value["role_labeled_evidence"]
+                return {
+                    "items": [item] if isinstance(item, dict) else [],
+                    "evidence_refs": _refs(item),
+                }
+            if "multi_hop_chain" in value:
+                return _chain(value["multi_hop_chain"])
+        return {"evidence_refs": _refs(value), "items": []}
+
+    def _claim(value: Any, *, fallback: str | None = None) -> dict[str, Any]:
+        if isinstance(value, dict):
+            if value.get("verified_claim") and isinstance(value["verified_claim"], dict):
+                return value["verified_claim"]
+            if value.get("best_hypothesis") and isinstance(value["best_hypothesis"], dict):
+                value = value["best_hypothesis"]
+            text = value.get("claim_text") or value.get("text") or value.get("final_answer") or fallback or question_text
+            return {
+                **value,
+                "claim_text": text,
+                "text": value.get("text") or text,
+                "claim_status": value.get("claim_status") or "verified",
+            }
+        if isinstance(value, str):
+            return {"claim_text": value, "text": value, "claim_status": "verified"}
+        return {"claim_text": fallback or question_text, "text": fallback or question_text, "claim_status": "verified"}
+
+    def _lookup_recent_verified_claim() -> dict[str, Any] | None:
+        for outputs in reversed(list(step_outputs.values())):
+            verified = outputs.get("verified_claim") if isinstance(outputs, dict) else None
+            if isinstance(verified, dict):
+                return verified
+            best = outputs.get("best_hypothesis") if isinstance(outputs, dict) else None
+            if isinstance(best, dict):
+                return _claim(best)
+        return None
+
+    def _lookup_recent_best_hypothesis() -> dict[str, Any] | None:
+        for outputs in reversed(list(step_outputs.values())):
+            best = outputs.get("best_hypothesis") if isinstance(outputs, dict) else None
+            if isinstance(best, dict):
+                return best
+            scored = outputs.get("scored_hypothesis") if isinstance(outputs, dict) else None
+            if isinstance(scored, dict):
+                return scored
+        return None
+
+    def _lookup_recent_evidence_refs() -> list[str]:
+        for outputs in reversed(list(step_outputs.values())):
+            refs = _refs(outputs) if isinstance(outputs, dict) else []
+            if refs:
+                return refs
+        return []
+
+    def _augment_step_outputs(skill_id: str, outputs: dict[str, Any], evidence_refs: list[str]) -> dict[str, Any]:
+        augmented = {**outputs, "evidence_refs": evidence_refs}
+        if skill_id == "parse_question_target":
+            augmented.setdefault("parsed_target", outputs)
+        if skill_id == "retrieve_by_event":
+            augmented.setdefault("support_refs", evidence_refs)
+        if skill_id == "localize_clue":
+            augmented.setdefault("support_refs", evidence_refs)
+        if skill_id == "assign_evidence_role":
+            augmented.setdefault("evidence_chain", _chain(outputs))
+        if skill_id == "bridge_evidence_hops":
+            augmented.setdefault("evidence_chain", _chain(outputs.get("multi_hop_chain")))
+        if skill_id == "verify_claim_support":
+            augmented.setdefault("claim", outputs.get("verified_claim"))
+            augmented.setdefault("evidence_chain", _chain(evidence_refs))
+        if skill_id == "score_hypothesis_support" and "scored_hypothesis" in outputs:
+            augmented.setdefault("scored_hypotheses", [outputs["scored_hypothesis"]])
+        return augmented
+
     for step in reasoning_plan:
         step_id = step.get("step_id")
         skill_id = step.get("skill_id")
@@ -262,7 +416,17 @@ def execute_reasoning_plan(
             trace.append({"step_id": step_id, "skill_id": skill_id, "ok": False, "failure_code": "unknown_skill_id"})
             continue
 
-        resolved_args = resolve_plan_value(raw_args, bindings, step_outputs)
+        try:
+            resolved_args = resolve_plan_value(raw_args, bindings, step_outputs)
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            trace.append({
+                "step_id": step_id,
+                "skill_id": skill_id,
+                "ok": False,
+                "failure_code": "invalid_step_reference",
+                "messages": [str(exc)],
+            })
+            continue
 
         # --- LLM/VLM dispatch via SkillExecutor ---
         if skill_executor is not None:
@@ -372,20 +536,71 @@ def execute_reasoning_plan(
                     parsed_target=parsed_target,
                 )
             elif skill_id == "retrieve_evidence_for_hypothesis":
-                result = executor(
-                    graph,
-                    hypothesis=_one_hypothesis(resolved_args.get("hypothesis")),
-                    max_refs=int(resolved_args.get("max_refs") or 6),
-                )
+                hypotheses = _hypothesis_list(resolved_args.get("hypothesis"))
+                if len(hypotheses) == 1:
+                    result = executor(
+                        graph,
+                        hypothesis=hypotheses[0],
+                        max_refs=int(resolved_args.get("max_refs") or 6),
+                    )
+                else:
+                    support_by_hypothesis = []
+                    all_refs: list[str] = []
+                    best_confidence = 0.0
+                    for hypothesis in hypotheses:
+                        partial = executor(graph, hypothesis=hypothesis, max_refs=int(resolved_args.get("max_refs") or 6))
+                        all_refs.extend(partial.evidence_refs)
+                        best_confidence = max(best_confidence, partial.confidence)
+                        support_by_hypothesis.append({
+                            "hypothesis": hypothesis,
+                            "support_refs": partial.outputs.get("support_refs") or [],
+                            "retrieval_scores": partial.outputs.get("retrieval_scores") or {},
+                            "ok": partial.ok,
+                        })
+                    all_refs = list(dict.fromkeys(all_refs))
+                    from atomic_skills.common import make_result
+                    result = make_result(
+                        "retrieve_evidence_for_hypothesis",
+                        {"support_by_hypothesis": support_by_hypothesis, "support_refs": all_refs},
+                        all_refs,
+                        ok=bool(all_refs),
+                        failure_code=None if all_refs else "no_hypothesis_evidence",
+                        confidence=best_confidence,
+                    )
             elif skill_id == "score_hypothesis_support":
                 counter = resolved_args.get("counterevidence") or []
                 if isinstance(counter, dict):
                     counter = counter.get("counterevidence_refs") or counter.get("evidence_refs") or []
-                result = executor(
-                    _one_hypothesis(resolved_args.get("hypothesis")),
-                    support_evidence=resolved_args.get("support_evidence") or [],
-                    counterevidence=counter,
-                )
+                hypotheses = _hypothesis_list(resolved_args.get("hypothesis"))
+                support_arg = resolved_args.get("support_evidence") or []
+                support_by_hypothesis = support_arg.get("support_by_hypothesis") if isinstance(support_arg, dict) else None
+                if len(hypotheses) == 1:
+                    support = support_arg if isinstance(support_arg, dict) else _refs(support_arg)
+                    result = executor(hypotheses[0], support_evidence=support, counterevidence=_refs(counter))
+                else:
+                    scored = []
+                    refs: list[str] = []
+                    for index, hypothesis in enumerate(hypotheses):
+                        support = []
+                        if isinstance(support_by_hypothesis, list) and index < len(support_by_hypothesis):
+                            support = support_by_hypothesis[index].get("support_refs") or []
+                        elif isinstance(support_arg, dict):
+                            support = support_arg.get("support_refs") or support_arg.get("evidence_refs") or []
+                        else:
+                            support = _refs(support_arg)
+                        partial = executor(hypothesis, support_evidence=support, counterevidence=_refs(counter))
+                        scored.append(partial.outputs.get("scored_hypothesis") or {})
+                        refs.extend(partial.evidence_refs)
+                    refs = list(dict.fromkeys(refs))
+                    from atomic_skills.common import make_result
+                    result = make_result(
+                        "score_hypothesis_support",
+                        {"scored_hypotheses": scored, "scored_hypothesis": scored[0] if scored else {}},
+                        refs,
+                        ok=any(item.get("support_refs") for item in scored),
+                        failure_code=None if any(item.get("support_refs") for item in scored) else "missing_support_evidence",
+                        confidence=max((item.get("overall_score", 0.0) for item in scored), default=0.0),
+                    )
             elif skill_id == "compare_hypotheses":
                 scored = resolved_args.get("scored_hypotheses") or []
                 if isinstance(scored, dict):
@@ -408,7 +623,7 @@ def execute_reasoning_plan(
                 )
             elif skill_id == "verify_temporal_social_consistency":
                 result = executor(
-                    resolved_args.get("evidence_chain") or {"evidence_refs": []},
+                    _chain(resolved_args.get("evidence_chain")),
                     hypothesis=_one_hypothesis(resolved_args.get("hypothesis")),
                     evidence_graph=graph,
                 )
@@ -421,45 +636,62 @@ def execute_reasoning_plan(
                 )
             elif skill_id == "detect_missing_role":
                 result = executor(
-                    resolved_args.get("evidence_chain") or {"items": [], "evidence_refs": []},
+                    _chain(resolved_args.get("evidence_chain")),
                     required_roles=resolved_args.get("required_roles") or [],
                 )
             elif skill_id == "infer_causal_relation":
                 result = executor(
                     resolved_args.get("candidate_cause") or "cause",
                     resolved_args.get("candidate_effect") or "effect",
-                    evidence_chain=resolved_args.get("evidence_chain") or {"evidence_refs": []},
+                    evidence_chain=_chain(resolved_args.get("evidence_chain")),
                 )
             elif skill_id == "infer_intention_or_motive":
+                hypothesis = _one_hypothesis(resolved_args.get("hypothesis"))
+                if isinstance(hypothesis, dict):
+                    action = hypothesis.get("claim_text") or hypothesis.get("text") or "action"
+                    agent = hypothesis.get("agent") or resolved_args.get("agent") or "person"
+                else:
+                    action = str(hypothesis or "action")
+                    agent = resolved_args.get("agent") or "person"
+                context_refs = _refs(resolved_args.get("context_evidence") or resolved_args.get("support_evidence"))
+                if not context_refs:
+                    context_refs = _refs(hypothesis) or _lookup_recent_evidence_refs()
                 result = executor(
-                    resolved_args.get("agent") or "person",
-                    resolved_args.get("actions") or ["action"],
-                    context_evidence=resolved_args.get("context_evidence") or [],
+                    agent,
+                    resolved_args.get("actions") or [action],
+                    context_evidence=context_refs,
                 )
             elif skill_id == "infer_social_contradiction":
                 result = executor(
-                    resolved_args.get("claim_or_alibi") or {"claim_text": question_text},
-                    evidence_chain=resolved_args.get("evidence_chain") or {"evidence_refs": []},
+                    _claim(resolved_args.get("claim_or_alibi"), fallback=question_text),
+                    evidence_chain=_chain(resolved_args.get("evidence_chain")),
                     counterevidence=resolved_args.get("counterevidence") or [],
                 )
             elif skill_id == "verify_claim_support":
-                claim_arg = resolved_args.get("claim") or {"claim_text": question_text, "claim_status": "candidate"}
-                if isinstance(claim_arg, str):
-                    claim_arg = {"claim_text": claim_arg, "claim_status": "candidate"}
+                raw_claim = resolved_args.get("claim")
+                if raw_claim in (None, [], {}):
+                    raw_claim = _lookup_recent_best_hypothesis()
+                claim_arg = _claim(raw_claim, fallback=question_text)
                 support_policy = resolved_args.get("support_policy") or {"min_evidence_refs": 1}
                 if isinstance(support_policy, str):
                     support_policy = {"min_evidence_refs": 1}
+                evidence_chain = _chain(resolved_args.get("evidence_chain"))
+                if not evidence_chain.get("evidence_refs"):
+                    evidence_chain = _chain(claim_arg)
                 result = executor(
                     claim_arg,
-                    evidence_chain=resolved_args.get("evidence_chain") or {"evidence_refs": []},
+                    evidence_chain=evidence_chain,
                     support_policy=support_policy,
                 )
             elif skill_id == "commit_answer":
+                verified_claim = resolved_args.get("verified_claim")
+                if not isinstance(verified_claim, dict):
+                    verified_claim = _lookup_recent_verified_claim() or _claim(verified_claim, fallback=question_text)
                 result = executor(
-                    resolved_args.get("verified_claim") or {"claim_text": question_text, "claim_status": "verified"},
+                    verified_claim,
                     options=resolved_args.get("options") or options or None,
                     answer_format=resolved_args.get("answer_format") or ("multiple_choice" if options else "free_text"),
-                    support_chain=resolved_args.get("support_chain") or {"evidence_refs": []},
+                    support_chain=_chain(resolved_args.get("support_chain")),
                 )
             else:
                 result = executor(**resolved_args)
@@ -482,7 +714,7 @@ def execute_reasoning_plan(
             "confidence": result.confidence,
         })
         if step_id:
-            step_outputs[step_id] = {**result.outputs, "evidence_refs": result.evidence_refs}
+            step_outputs[step_id] = _augment_step_outputs(skill_id, result.outputs, result.evidence_refs)
 
     return trace, step_outputs
 
@@ -591,16 +823,33 @@ def build_llm_reasoning_rollout(
     last_output = step_outputs.get(trace[-1].get("step_id", ""), {}) if trace else {}
     final_answer = last_output.get("final_answer")
     options = question.get("options") or []
+    final_label = final_answer
+    final_text = str(final_answer) if final_answer is not None else ""
+    if isinstance(final_answer, dict):
+        final_label = final_answer.get("label") or final_answer.get("answer")
+        final_text = str(final_answer.get("text") or final_label or "")
+    elif options:
+        answer_string = str(final_answer or "").strip()
+        by_label = {str(option.get("label", "")).strip(): option for option in options}
+        if answer_string in by_label:
+            final_label = answer_string
+            final_text = str(by_label[answer_string].get("text") or answer_string)
+        else:
+            for option in options:
+                if answer_string and answer_string == str(option.get("text", "")).strip():
+                    final_label = option.get("label") or answer_string
+                    final_text = answer_string
+                    break
 
     rollout["claims"] = [{
-        "claim_id": stable_id("claim", str(final_answer)),
-        "text": str(final_answer),
+        "claim_id": stable_id("claim", final_text),
+        "text": final_text,
         "claim_status": "verified" if ok_steps else "insufficient",
         "supported_by_refs": last_output.get("evidence_refs") or [],
     }]
     rollout["final_answer"] = {
-        "label": final_answer,
-        "text": str(final_answer),
+        "label": final_label,
+        "text": final_text,
         "confidence": last_output.get("confidence", 0.0) if final_answer else 0.0,
     }
     rollout["acceptance_status"] = "accepted_weak" if final_answer else "rejected"

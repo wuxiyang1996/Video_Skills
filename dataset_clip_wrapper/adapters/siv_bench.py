@@ -3,10 +3,34 @@
 from __future__ import annotations
 
 import csv
+import re
 from pathlib import Path
 from typing import Iterator
 
 from .base import DatasetAdapter, RawDatasetItem
+
+
+def _parse_options(options_raw: str) -> list[dict[str, str]]:
+    text = options_raw.strip()
+    if not text:
+        return []
+
+    if "|" in text:
+        parts = [part.strip() for part in text.split("|") if part.strip()]
+    else:
+        matches = re.findall(r"(?:^|,\s*)([A-Z])\.\s*(.*?)(?=,\s*[A-Z]\.\s*|$)", text)
+        if matches:
+            return [{"label": label.strip(), "text": option.strip()} for label, option in matches if option.strip()]
+        parts = [text]
+
+    options = []
+    for part in parts:
+        if "." in part[:3]:
+            label, option_text = part.split(".", 1)
+            options.append({"label": label.strip(), "text": option_text.strip()})
+        else:
+            options.append({"label": str(len(options)), "text": part})
+    return options
 
 
 class SIVBenchAdapter(DatasetAdapter):
@@ -50,28 +74,24 @@ class SIVBenchAdapter(DatasetAdapter):
                 qid = row.get("question_id") or row.get("index")
                 example_id = f"siv_bench:{row.get('index')}:{qid}"
                 options_raw = row.get("options", "")
-                options = []
-                if options_raw:
-                    for part in options_raw.split("|"):
-                        part = part.strip()
-                        if not part:
-                            continue
-                        if "." in part[:3]:
-                            label, text = part.split(".", 1)
-                            options.append({"label": label.strip(), "text": text.strip()})
-                        else:
-                            options.append({"label": str(len(options)), "text": part})
+                options = _parse_options(options_raw)
                 answer_idx = row.get("correct_answer_index")
                 answer_label = None
                 answer_text = row.get("answer")
                 if answer_idx is not None and options:
-                    try:
-                        idx = int(answer_idx)
-                        if 0 <= idx < len(options):
-                            answer_label = options[idx]["label"]
-                            answer_text = options[idx]["text"]
-                    except ValueError:
-                        pass
+                    answer_key = answer_idx.strip()
+                    by_label = {option["label"]: option for option in options}
+                    if answer_key in by_label:
+                        answer_label = answer_key
+                        answer_text = by_label[answer_key]["text"]
+                    else:
+                        try:
+                            idx = int(answer_key)
+                            if 0 <= idx < len(options):
+                                answer_label = options[idx]["label"]
+                                answer_text = options[idx]["text"]
+                        except ValueError:
+                            pass
                 yield RawDatasetItem(
                     dataset=self.name,
                     example_id=example_id,

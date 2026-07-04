@@ -12,9 +12,30 @@ from __future__ import annotations
 
 import json
 import re
+import signal
+from contextlib import contextmanager
 from typing import Any
 
 import requests
+
+
+@contextmanager
+def _total_timeout(seconds: int):
+    if seconds <= 0:
+        yield
+        return
+
+    def _handle_timeout(signum, frame):  # type: ignore[no-untyped-def]
+        raise TimeoutError(f"Skill model request exceeded {seconds}s total timeout")
+
+    old_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _handle_timeout)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old_handler)
 
 
 def _parse_json_from_text(text: str) -> dict[str, Any]:
@@ -69,14 +90,15 @@ class SkillModelClient:
             "temperature": self.temperature,
         }
 
-        resp = requests.post(
-            self.api_base,
-            headers=headers,
-            json=payload,
-            timeout=self.timeout_s,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        with _total_timeout(self.timeout_s):
+            resp = requests.post(
+                self.api_base,
+                headers=headers,
+                json=payload,
+                timeout=self.timeout_s,
+            )
+            resp.raise_for_status()
+            data = resp.json()
         content = data["choices"][0]["message"].get("content") or ""
         return content.strip()
 

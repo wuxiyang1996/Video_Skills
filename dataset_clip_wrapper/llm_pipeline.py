@@ -105,6 +105,8 @@ def _coarse_indices_for_time_anchors(coarse_spans: list[ClipSpan], anchors_s: li
 
 
 def _schema_text(schema: dict[str, Any]) -> str:
+    if schema.get("model_error"):
+        return ""
     parts: list[str] = []
     for key in ("scene_description", "uncertainty"):
         value = schema.get(key)
@@ -200,21 +202,27 @@ def _build_coarse_fine_reference_graph(
         for span in fine_spans
     ]
     schema_by_clip = {schema.get("clip_id"): schema for schema in clip_schemas}
-    fine_schema_nodes = [
-        {
-            "node_id": f"obs:fine:{node['node_id']}",
-            "node_type": "observation",
-            "level": "fine",
-            "source_ids": [node["node_id"]],
-            "time_span": node.get("time_span"),
-            "text": schema_by_clip[node["node_id"]].get("scene_description"),
-            "producer": schema_by_clip[node["node_id"]].get("producer"),
-            "model": schema_by_clip[node["node_id"]].get("model"),
-            "provenance": {"created_by": "dataset_clip_wrapper.clip_schema"},
-        }
-        for node in fine_nodes
-        if node["node_id"] in schema_by_clip
-    ]
+    fine_schema_nodes = []
+    for node in fine_nodes:
+        schema = schema_by_clip.get(node["node_id"])
+        if not schema or schema.get("model_error"):
+            continue
+        text = schema.get("scene_description")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        fine_schema_nodes.append(
+            {
+                "node_id": f"obs:fine:{node['node_id']}",
+                "node_type": "observation",
+                "level": "fine",
+                "source_ids": [node["node_id"]],
+                "time_span": node.get("time_span"),
+                "text": text,
+                "producer": schema.get("producer"),
+                "model": schema.get("model"),
+                "provenance": {"created_by": "dataset_clip_wrapper.clip_schema"},
+            }
+        )
     fine_schema_edges = [
         {
             "edge_id": f"edge:{obs['node_id']}->{obs['source_ids'][0]}:derived_from",

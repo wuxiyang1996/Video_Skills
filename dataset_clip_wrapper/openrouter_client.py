@@ -6,12 +6,33 @@ import importlib.util
 import json
 import os
 import re
+import signal
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import requests
 
 DEFAULT_API_BASE = "https://openrouter.ai/api/v1/chat/completions"
+
+
+@contextmanager
+def _total_timeout(seconds: int):
+    if seconds <= 0:
+        yield
+        return
+
+    def _handle_timeout(signum, frame):  # type: ignore[no-untyped-def]
+        raise TimeoutError(f"OpenRouter request exceeded {seconds}s total timeout")
+
+    old_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _handle_timeout)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old_handler)
 
 
 def load_openrouter_api_key(*, keys_py_path: str | None = None, env_var: str = "OPENROUTER_API_KEY") -> str:
@@ -36,10 +57,28 @@ def parse_json_response(text: str) -> dict[str, Any]:
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
-    payload = json.loads(text)
-    if not isinstance(payload, dict):
-        raise ValueError("model response must be a JSON object")
-    return payload
+
+    def _loads(candidate: str) -> dict[str, Any]:
+        payload = json.loads(candidate)
+        if not isinstance(payload, dict):
+            raise ValueError("model response must be a JSON object")
+        return payload
+
+    candidates = [text]
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(text[start : end + 1])
+
+    last_error: Exception | None = None
+    for candidate in candidates:
+        for normalized in (candidate, re.sub(r",\s*([}\]])", r"\1", candidate)):
+            try:
+                return _loads(normalized)
+            except Exception as exc:
+                last_error = exc
+    assert last_error is not None
+    raise last_error
 
 
 class OpenRouterClient:
@@ -74,22 +113,24 @@ class OpenRouterClient:
             payload["reasoning"] = self.reasoning
         if response_format is not None:
             payload["response_format"] = response_format
-        response = requests.post(
-            self.api_base,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=self.timeout_s,
-        )
-        response.raise_for_status()
-        message = response.json()["choices"][0]["message"]
+        with _total_timeout(self.timeout_s):
+            response = requests.post(
+                self.api_base,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=self.timeout_s,
+            )
+            response.raise_for_status()
+            response_payload = response.json()
+        message = response_payload["choices"][0]["message"]
         content = message.get("content")
         if content is None:
             raise ValueError(
                 "OpenRouter response did not include assistant content; "
-                f"finish_reason={response.json()['choices'][0].get('finish_reason')}, "
+                f"finish_reason={response_payload['choices'][0].get('finish_reason')}, "
                 f"reasoning_preview={repr(message.get('reasoning'))[:300]}"
             )
         return content.strip()

@@ -354,6 +354,16 @@ class GraphComposer:
         clip_ref_by_id = {node["node_id"]: node for node in seg_result.outputs.get("clip_nodes", [])}
         clip_nodes = list(clip_ref_by_id.keys())
         for schema in clip_schemas:
+            if schema.get("model_error"):
+                trace.append(
+                    {
+                        "skill_id": "skip_failed_clip_schema",
+                        "ok": True,
+                        "clip_id": schema.get("clip_id"),
+                        "source": "model_error",
+                    }
+                )
+                continue
             clip_id = schema.get("clip_id")
             clip_ref = clip_id if clip_id in clip_ref_by_id else (clip_nodes[0] if clip_nodes else clip_id)
             scene = schema.get("scene_description") or ""
