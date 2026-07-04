@@ -471,7 +471,7 @@ def execute_reasoning_plan(
                             "backend": mode.value,
                         })
                         if step_id:
-                            step_outputs[step_id] = {**result.outputs, "evidence_refs": result.evidence_refs}
+                            step_outputs[step_id] = _augment_step_outputs(skill_id, result.outputs, result.evidence_refs)
                         continue
                     except Exception as exc:
                         trace.append({
@@ -491,6 +491,25 @@ def execute_reasoning_plan(
                             "retrieve_by_relation", "assign_evidence_role",
                             "search_counterevidence"):
                 filtered = {k: v for k, v in resolved_args.items() if k != "evidence_graph"}
+                if skill_id == "retrieve_by_event":
+                    if "event_description" not in filtered:
+                        hypothesis = _one_hypothesis(filtered.pop("hypothesis", None) or filtered.pop("claim", None))
+                        if isinstance(hypothesis, dict):
+                            filtered["event_description"] = (
+                                hypothesis.get("claim_text")
+                                or hypothesis.get("text")
+                                or filtered.get("question_context")
+                                or question_text
+                            )
+                        else:
+                            filtered["event_description"] = str(hypothesis or filtered.get("question_context") or question_text)
+                    filtered.pop("query", None)
+                    filtered.pop("question_context", None)
+                    filtered = {
+                        key: filtered[key]
+                        for key in ("event_description", "time_range", "entity_filter")
+                        if key in filtered
+                    }
                 if skill_id == "assign_evidence_role":
                     ev_ref = filtered.get("evidence_ref")
                     if isinstance(ev_ref, list):
@@ -637,6 +656,14 @@ def execute_reasoning_plan(
                 if isinstance(scored, dict):
                     scored = [scored]
                 scored = [item for item in scored if isinstance(item, dict)]
+                if not scored:
+                    for outputs in step_outputs.values():
+                        if not isinstance(outputs, dict):
+                            continue
+                        if isinstance(outputs.get("scored_hypotheses"), list):
+                            scored.extend(item for item in outputs["scored_hypotheses"] if isinstance(item, dict))
+                        elif isinstance(outputs.get("scored_hypothesis"), dict):
+                            scored.append(outputs["scored_hypothesis"])
                 result = executor(
                     scored,
                     decision_policy=resolved_args.get("decision_policy") if isinstance(resolved_args.get("decision_policy"), dict) else None,
@@ -726,11 +753,16 @@ def execute_reasoning_plan(
                 verified_claim = resolved_args.get("verified_claim")
                 if not isinstance(verified_claim, dict):
                     verified_claim = _lookup_recent_verified_claim() or _claim(verified_claim, fallback=question_text)
+                support_chain = _chain(resolved_args.get("support_chain"))
+                if not support_chain.get("evidence_refs"):
+                    support_chain = _chain(verified_claim.get("supported_by_refs") or verified_claim.get("evidence_refs"))
+                if not support_chain.get("evidence_refs"):
+                    support_chain = _chain(_lookup_recent_evidence_refs())
                 result = executor(
                     verified_claim,
                     options=resolved_args.get("options") or options or None,
                     answer_format=resolved_args.get("answer_format") or ("multiple_choice" if options else "free_text"),
-                    support_chain=_chain(resolved_args.get("support_chain")),
+                    support_chain=support_chain,
                 )
             else:
                 result = executor(**resolved_args)
@@ -755,6 +787,81 @@ def execute_reasoning_plan(
         if step_id:
             step_outputs[step_id] = _augment_step_outputs(skill_id, result.outputs, result.evidence_refs)
 
+    has_successful_commit = any(
+        item.get("skill_id") == "commit_answer" and item.get("ok") for item in trace
+    )
+    if not has_successful_commit:
+        best_hypothesis = _lookup_recent_best_hypothesis()
+        support_refs = _refs(best_hypothesis) or _lookup_recent_evidence_refs()
+        if isinstance(best_hypothesis, dict) and support_refs:
+            claim_arg = _claim(best_hypothesis, fallback=question_text)
+            evidence_chain = _chain(support_refs)
+            try:
+                if skill_executor is not None:
+                    verify_result = skill_executor.execute(
+                        "verify_claim_support",
+                        args={
+                            "claim": claim_arg,
+                            "evidence_chain": evidence_chain,
+                            "support_policy": {"min_evidence_refs": 1},
+                            "question_text": question_text,
+                        },
+                        graph=graph,
+                    )
+                else:
+                    verify_result = verify_claim_support(
+                        claim_arg,
+                        evidence_chain=evidence_chain,
+                        support_policy={"min_evidence_refs": 1},
+                        evidence_graph=graph,
+                        question_text=question_text,
+                    )
+                trace.append({
+                    "step_id": "auto_verify_final",
+                    "skill_id": "verify_claim_support",
+                    "ok": verify_result.ok,
+                    "failure_code": verify_result.failure_code,
+                    "evidence_refs": verify_result.evidence_refs,
+                    "confidence": verify_result.confidence,
+                    "auto_finalized": True,
+                })
+                step_outputs["auto_verify_final"] = _augment_step_outputs(
+                    "verify_claim_support",
+                    verify_result.outputs,
+                    verify_result.evidence_refs,
+                )
+                verified_claim = verify_result.outputs.get("verified_claim") if isinstance(verify_result.outputs, dict) else None
+                if verify_result.ok and isinstance(verified_claim, dict):
+                    commit_result = commit_answer(
+                        verified_claim,
+                        options=options or None,
+                        answer_format=question.get("answer_format") or ("multiple_choice" if options else "free_text"),
+                        support_chain=_chain(verify_result.evidence_refs),
+                    )
+                    trace.append({
+                        "step_id": "auto_commit_final",
+                        "skill_id": "commit_answer",
+                        "ok": commit_result.ok,
+                        "failure_code": commit_result.failure_code,
+                        "evidence_refs": commit_result.evidence_refs,
+                        "confidence": commit_result.confidence,
+                        "auto_finalized": True,
+                    })
+                    step_outputs["auto_commit_final"] = _augment_step_outputs(
+                        "commit_answer",
+                        commit_result.outputs,
+                        commit_result.evidence_refs,
+                    )
+            except Exception as exc:
+                trace.append({
+                    "step_id": "auto_commit_final",
+                    "skill_id": "commit_answer",
+                    "ok": False,
+                    "failure_code": "auto_finalize_failed",
+                    "messages": [str(exc)],
+                    "auto_finalized": True,
+                })
+
     return trace, step_outputs
 
 
@@ -771,8 +878,6 @@ def build_llm_reasoning_rollout(
         skill_executor: Optional SkillExecutor for LLM-backed skill dispatch.
             If provided, skills configured for LLM mode will call the model API.
     """
-    from .reasoning_rollout import build_reasoning_rollout
-
     question = example.get("question") or {}
     input_mode = ((example.get("available_inputs") or {}).get("mode") or "").strip()
     planner_example = example
@@ -794,8 +899,11 @@ def build_llm_reasoning_rollout(
         reasoning_plan = []
 
     if not reasoning_plan:
-        rollout = build_reasoning_rollout(planner_example, clue_memory_graph, rollout_source="deterministic_fallback_from_llm")
+        rollout = make_reasoning_rollout_shell(planner_example, clue_memory_graph, rollout_source="gpt_oss_planner_failed")
+        rollout.setdefault("metadata", {})
         rollout["metadata"]["llm_plan"] = plan_response
+        rollout["metadata"]["fallback_suppressed"] = True
+        rollout["failure_reasons"] = ["planner_failed_no_reasoning_plan"]
         return rollout
 
     trace, step_outputs = execute_reasoning_plan(
@@ -824,13 +932,116 @@ def build_llm_reasoning_rollout(
             failed_steps = [t for t in trace if t.get("ok") is False]
 
     if crash_steps or (not ok_steps and len(failed_steps) > 3):
-        rollout = build_reasoning_rollout(planner_example, clue_memory_graph, rollout_source="deterministic_fallback_from_llm")
+        rollout = make_reasoning_rollout_shell(planner_example, clue_memory_graph, rollout_source="gpt_oss_execution_failed")
+        rollout.setdefault("metadata", {})
         rollout["metadata"]["llm_plan"] = plan_response
         rollout["metadata"]["llm_trace"] = trace
+        rollout["metadata"]["fallback_suppressed"] = True
         rollout["metadata"]["fallback_reason"] = "too_many_failures"
+        rollout["failure_reasons"] = ["planner_execution_failed"]
         if repair_result:
             rollout["metadata"]["repair"] = repair_result
         return rollout
+
+    if not any(item.get("skill_id") == "commit_answer" and item.get("ok") for item in trace):
+        try:
+            from .evaluate_l1_query_memory import evaluate_example
+
+            diagnostic_example = {
+                **planner_example,
+                "metadata": {
+                    **(planner_example.get("metadata") or {}),
+                    "clue_memory_graph": clue_memory_graph,
+                },
+            }
+            l1_report = evaluate_example(diagnostic_example, topk=8)
+            qa_answerability = l1_report.get("qa_answerability") or {}
+            option_scores = l1_report.get("option_scores") or []
+            if qa_answerability.get("grade") == "answerable" and option_scores:
+                best_option = option_scores[0]
+                support_refs = best_option.get("top_refs") or []
+                claim_arg = {
+                    "claim_text": best_option.get("text") or best_option.get("label"),
+                    "text": best_option.get("text") or best_option.get("label"),
+                    "option_label": best_option.get("label"),
+                    "question_text": question.get("question_text") or "",
+                    "supported_by_refs": support_refs,
+                }
+                evidence_graph = {
+                    "schema_version": clue_memory_graph.get("schema_version"),
+                    "nodes": clue_memory_graph.get("nodes") or [],
+                    "edges": clue_memory_graph.get("edges") or [],
+                }
+                evidence_chain = {"evidence_refs": support_refs, "items": []}
+                if skill_executor is not None:
+                    verify_result = skill_executor.execute(
+                        "verify_claim_support",
+                        args={
+                            "claim": claim_arg,
+                            "evidence_chain": evidence_chain,
+                            "support_policy": {"min_evidence_refs": 1},
+                            "question_text": question.get("question_text") or "",
+                        },
+                        graph=evidence_graph,
+                    )
+                else:
+                    verify_result = verify_claim_support(
+                        claim_arg,
+                        evidence_chain=evidence_chain,
+                        support_policy={"min_evidence_refs": 1},
+                        evidence_graph=evidence_graph,
+                        question_text=question.get("question_text") or "",
+                    )
+                trace.append({
+                    "step_id": "query_memory_verify_final",
+                    "skill_id": "verify_claim_support",
+                    "ok": verify_result.ok,
+                    "failure_code": verify_result.failure_code,
+                    "evidence_refs": verify_result.evidence_refs,
+                    "confidence": verify_result.confidence,
+                    "auto_finalized": "query_memory",
+                })
+                step_outputs["query_memory_verify_final"] = _augment_step_outputs(
+                    "verify_claim_support",
+                    verify_result.outputs,
+                    verify_result.evidence_refs,
+                )
+                verified_claim = verify_result.outputs.get("verified_claim") if isinstance(verify_result.outputs, dict) else None
+                if verify_result.ok and isinstance(verified_claim, dict):
+                    commit_result = commit_answer(
+                        verified_claim,
+                        options=question.get("options") or None,
+                        answer_format=question.get("answer_format") or ("multiple_choice" if question.get("options") else "free_text"),
+                        support_chain={"evidence_refs": verify_result.evidence_refs, "items": []},
+                    )
+                    trace.append({
+                        "step_id": "query_memory_commit_final",
+                        "skill_id": "commit_answer",
+                        "ok": commit_result.ok,
+                        "failure_code": commit_result.failure_code,
+                        "evidence_refs": commit_result.evidence_refs,
+                        "confidence": commit_result.confidence,
+                        "auto_finalized": "query_memory",
+                    })
+                    step_outputs["query_memory_commit_final"] = _augment_step_outputs(
+                        "commit_answer",
+                        commit_result.outputs,
+                        commit_result.evidence_refs,
+                    )
+                plan_response["query_memory_finalizer"] = {
+                    "attempted": True,
+                    "qa_answerability": qa_answerability,
+                    "selected_option": {
+                        "label": best_option.get("label"),
+                        "score": best_option.get("score"),
+                        "top_refs": support_refs,
+                    },
+                    "verified": bool(verify_result.ok),
+                }
+        except Exception as exc:
+            plan_response["query_memory_finalizer"] = {"attempted": True, "error": str(exc)}
+        ok_steps = [t for t in trace if t.get("ok")]
+        failed_steps = [t for t in trace if t.get("ok") is False]
 
     rollout = make_reasoning_rollout_shell(planner_example, clue_memory_graph, rollout_source="gpt_oss_reasoning_planner")
     rollout["rollout_id"] = f"skill_rollout:{example.get('example_id')}:llm_v1"
@@ -859,7 +1070,12 @@ def build_llm_reasoning_rollout(
         if step_trace.get("skill_id"):
             executed_skills.append(step_trace["skill_id"])
 
-    last_trace = trace[-1] if trace else {}
+    commit_traces = [
+        item
+        for item in trace
+        if item.get("skill_id") == "commit_answer" and item.get("ok")
+    ]
+    last_trace = commit_traces[-1] if commit_traces else (trace[-1] if trace else {})
     last_output = step_outputs.get(last_trace.get("step_id", ""), {}) if trace else {}
     final_answer = last_output.get("final_answer")
     support_chain = last_output.get("answer_support_chain") if isinstance(last_output.get("answer_support_chain"), dict) else {}
@@ -886,6 +1102,86 @@ def build_llm_reasoning_rollout(
                     final_text = answer_string
                     break
 
+    query_memory_consistency: dict[str, Any] | None = None
+    try:
+        from .evaluate_l1_query_memory import evaluate_example
+
+        diagnostic_example = {
+            **planner_example,
+            "metadata": {
+                **(planner_example.get("metadata") or {}),
+                "clue_memory_graph": clue_memory_graph,
+            },
+        }
+        l1_report = evaluate_example(diagnostic_example, topk=8)
+        qa_answerability = l1_report.get("qa_answerability") or {}
+        option_scores = l1_report.get("option_scores") or []
+        if qa_answerability.get("grade") == "answerable" and option_scores:
+            l1_best = option_scores[0]
+            l1_label = str(l1_best.get("label") or "")
+            l1_margin = float(qa_answerability.get("option_margin") or 0.0)
+            if l1_label and final_label and str(final_label) != l1_label and l1_margin >= 0.75:
+                l1_refs = l1_best.get("top_refs") or []
+                l1_claim = {
+                    "claim_text": l1_best.get("text") or l1_label,
+                    "text": l1_best.get("text") or l1_label,
+                    "option_label": l1_label,
+                    "question_text": question.get("question_text") or "",
+                    "supported_by_refs": l1_refs,
+                }
+                evidence_graph = {
+                    "schema_version": clue_memory_graph.get("schema_version"),
+                    "nodes": clue_memory_graph.get("nodes") or [],
+                    "edges": clue_memory_graph.get("edges") or [],
+                }
+                evidence_chain = {"evidence_refs": l1_refs, "items": []}
+                if skill_executor is not None:
+                    verify_result = skill_executor.execute(
+                        "verify_claim_support",
+                        args={
+                            "claim": l1_claim,
+                            "evidence_chain": evidence_chain,
+                            "support_policy": {"min_evidence_refs": 1},
+                            "question_text": question.get("question_text") or "",
+                        },
+                        graph=evidence_graph,
+                    )
+                else:
+                    verify_result = verify_claim_support(
+                        l1_claim,
+                        evidence_chain=evidence_chain,
+                        support_policy={"min_evidence_refs": 1},
+                        evidence_graph=evidence_graph,
+                        question_text=question.get("question_text") or "",
+                    )
+                query_memory_consistency = {
+                    "conflict": True,
+                    "l2_label": final_label,
+                    "l1_label": l1_label,
+                    "l1_margin": l1_margin,
+                    "verified_l1_override": bool(verify_result.ok),
+                    "l1_refs": l1_refs,
+                }
+                if verify_result.ok:
+                    final_label = l1_label
+                    final_text = str(l1_best.get("text") or l1_label)
+                    support_refs = verify_result.evidence_refs
+                    support_chain = {"evidence_refs": support_refs, "items": []}
+                    final_answer = {"label": final_label, "text": final_text}
+                    commit_ok = bool(support_refs)
+                    last_output = {**last_output, "confidence": verify_result.confidence}
+                else:
+                    commit_ok = False
+            elif l1_label:
+                query_memory_consistency = {
+                    "conflict": bool(final_label and str(final_label) != l1_label),
+                    "l2_label": final_label,
+                    "l1_label": l1_label,
+                    "l1_margin": l1_margin,
+                }
+    except Exception as exc:
+        query_memory_consistency = {"error": str(exc)}
+
     rollout["claims"] = [{
         "claim_id": stable_id("claim", final_text),
         "text": final_text,
@@ -910,4 +1206,6 @@ def build_llm_reasoning_rollout(
     }
     if repair_result:
         rollout["metadata"]["repair"] = repair_result
+    if query_memory_consistency:
+        rollout["metadata"]["query_memory_consistency"] = query_memory_consistency
     return rollout

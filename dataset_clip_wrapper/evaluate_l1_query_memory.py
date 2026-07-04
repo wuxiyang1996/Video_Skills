@@ -377,6 +377,7 @@ def evaluate_example(example: dict[str, Any], *, topk: int) -> dict[str, Any]:
     l2_final = l2.get("final_answer") or {}
     gold_text = ((question.get("answer") or {}).get("text") or "").strip()
     l2_text = str(l2_final.get("text") or "").strip()
+    visible_option_texts = {str(option.get("text") or "").strip() for option in options}
 
     return {
         "example_id": example.get("example_id"),
@@ -407,7 +408,7 @@ def evaluate_example(example: dict[str, Any], *, topk: int) -> dict[str, Any]:
         "correct_eval_only": bool(predicted and gold and predicted == gold),
         "l2_rollout_source": l2.get("rollout_source"),
         "l2_final_answer": l2_final,
-        "l2_uses_gold_text_warning": bool(gold_text and l2_text == gold_text),
+        "l2_uses_gold_text_warning": bool(gold_text and l2_text == gold_text and l2_text not in visible_option_texts),
         "l1_graph_quality": _l1_graph_quality(example),
         "qa_answerability": _qa_answerability(example, top, option_rows),
     }

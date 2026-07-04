@@ -156,6 +156,10 @@ def resolve_step_reference(path: str, step_outputs: dict[str, Any]) -> Any:
         if isinstance(current, dict):
             if part in current:
                 current = current[part]
+            elif part == "claim" and ("claim_text" in current or "text" in current):
+                current = current
+            elif part == "support_evidence":
+                current = current.get("support_refs") or current.get("evidence_refs") or current.get("supported_by_refs")
             elif part.isdigit() and isinstance(current.get("evidence_refs"), list):
                 current = current["evidence_refs"][int(part)]
             else:

@@ -30,7 +30,10 @@ class FakeVerifierLlmClient:
     model = "fake-gpt-oss-verifier"
 
     def reason(self, prompt: str, *, max_tokens: int = 512) -> dict[str, object]:
-        supported = "Claim: 'White'" in prompt and "white RV vehicle" in prompt
+        supported = (
+            ("Claim: 'White'" in prompt and "white RV vehicle" in prompt)
+            or ("original position" in prompt and "iron fence" in prompt)
+        )
         return {
             "supported": supported,
             "target_aligned": supported,
@@ -139,6 +142,41 @@ def main() -> int:
         {"step_id": "r6", "skill_id": "verify_temporal_social_consistency", "args": {"evidence_chain": "$step.r3.multi_hop_chain", "hypothesis": "$step.r1.hypotheses.1"}, "depends_on": ["r3"]},
     ]
     trace, _ = execute_reasoning_plan(reasoning_plan=planned, clue_memory_graph=graph, question=question)
+    verifier_executor = SkillExecutor(
+        llm_client=FakeVerifierLlmClient(),  # type: ignore[arg-type]
+        config=SkillBackendConfig(default_mode=SkillBackendMode.RULE, llm_skills={"verify_claim_support"}),
+    )
+    contract_plan = [
+        {"step_id": "r1", "skill_id": "generate_answer_hypotheses", "args": {"question_text": "$bindings.question_text", "options": "$bindings.options"}, "depends_on": []},
+        {"step_id": "r2", "skill_id": "retrieve_by_event", "args": {"hypothesis": "$step.r1.hypotheses.1"}, "depends_on": ["r1"]},
+        {
+            "step_id": "r3",
+            "skill_id": "verify_claim_support",
+            "args": {
+                "claim": "$step.r1.hypotheses.1",
+                "evidence_chain": {"evidence_refs": "$step.r2.evidence_refs"},
+                "support_policy": {"min_evidence_refs": 1},
+            },
+            "depends_on": ["r2"],
+        },
+        {
+            "step_id": "r4",
+            "skill_id": "commit_answer",
+            "args": {
+                "verified_claim": "$step.r3.verified_claim",
+                "options": "$bindings.options",
+                "answer_format": "$bindings.question.answer_format",
+                "support_chain": {"evidence_refs": "$step.r3.evidence_chain"},
+            },
+            "depends_on": ["r3"],
+        },
+    ]
+    contract_trace, contract_outputs = execute_reasoning_plan(
+        reasoning_plan=contract_plan,
+        clue_memory_graph=graph,
+        question=question,
+        skill_executor=verifier_executor,
+    )
 
     required = {
         "generate_answer_hypotheses",
@@ -170,6 +208,11 @@ def main() -> int:
     executor_failures = [item for item in trace if item.get("failure_code") in {"unknown_skill_id", "invalid_skill_args"}]
     if executor_failures:
         errors.append(f"planner executor failures: {executor_failures}")
+    contract_failures = [item for item in contract_trace if item.get("ok") is False]
+    if contract_failures:
+        errors.append(f"planner contract failures: {contract_failures}")
+    if (contract_outputs.get("r4") or {}).get("final_answer") != "E":
+        errors.append(f"commit_answer did not map verified claim to option E: {contract_outputs.get('r4')}")
 
     report = {
         "passed": not errors,
@@ -182,6 +225,8 @@ def main() -> int:
         "gray_verify_score": gray_verify.outputs.get("verification_score"),
         "llm_verify_backend": llm_white_verify.outputs.get("backend"),
         "planner_trace": trace,
+        "contract_trace": contract_trace,
+        "contract_final_answer": (contract_outputs.get("r4") or {}).get("final_answer"),
     }
     print(json.dumps(report, indent=2))
     return 0 if not errors else 2
