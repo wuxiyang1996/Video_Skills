@@ -144,7 +144,11 @@
             "episodic_text",
             "semantic_text",
             "face",
-            "voice"
+            "voice",
+            "question_requirement",
+            "required_modality",
+            "answerability_gap",
+            "visual_social_cue"
           ]
         },
         "video_id": {"type": ["string", "null"]},
@@ -200,7 +204,11 @@
             "face_voice_equivalence",
             "derived_from",
             "supports",
-            "retrieval_score"
+            "retrieval_score",
+            "requires_evidence",
+            "limits_answerability",
+            "weak_visual_context",
+            "partially_supports_requirement"
           ]
         },
         "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},

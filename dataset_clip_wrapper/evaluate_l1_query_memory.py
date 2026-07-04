@@ -55,8 +55,18 @@ _STOPWORDS = {
     "her",
     "video",
 }
-_SEMANTIC_NODE_TYPES = {"observation", "entity_mention", "entity", "event", "state", "dialogue_span", "clue"}
+_SEMANTIC_NODE_TYPES = {
+    "observation",
+    "entity_mention",
+    "entity",
+    "event",
+    "state",
+    "dialogue_span",
+    "clue",
+    "visual_social_cue",
+}
 _REFERENCE_NODE_TYPES = {"clip"}
+_DIAGNOSTIC_NODE_TYPES = {"question_requirement", "required_modality", "answerability_gap"}
 _TOKEN_SYNONYMS = {
     "back": {"return", "returns", "returned", "previously", "earlier"},
     "echoes": {"repeats", "returns", "reappears", "same"},
@@ -219,11 +229,16 @@ def _top_items(query: str, items: list[MemoryItem], *, topk: int) -> list[tuple[
 
 def _option_scores(question_text: str, options: list[dict[str, Any]], items: list[MemoryItem], *, topk: int) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    answer_evidence_items = [
+        item
+        for item in items
+        if item.node_type not in _DIAGNOSTIC_NODE_TYPES and not item.node_id.startswith("diagnostic.answerability_gap:")
+    ]
     for option in options:
         label = str(option.get("label") or "")
         text = str(option.get("text") or "")
         query = f"{question_text} {text}".strip()
-        hits = _top_items(query, items, topk=topk)
+        hits = _top_items(query, answer_evidence_items, topk=topk)
         rows.append(
             {
                 "label": label,
@@ -376,7 +391,14 @@ def evaluate_example(example: dict[str, Any], *, topk: int) -> dict[str, Any]:
     coarse_fine = ((example.get("metadata") or {}).get("coarse_fine_graph") or {})
     top = _top_items(question_text, items, topk=topk)
     option_rows = _option_scores(question_text, options, items, topk=topk) if options else []
-    predicted = option_rows[0]["label"] if option_rows else None
+    qa_answerability = _qa_answerability(example, top, option_rows)
+    raw_predicted = option_rows[0]["label"] if option_rows else None
+    prediction_suppressed_reason = None
+    if qa_answerability.get("missing_requirements"):
+        prediction_suppressed_reason = "answerability_gap_missing_requirements"
+    elif qa_answerability.get("grade") in {"insufficient", "weak"}:
+        prediction_suppressed_reason = f"qa_answerability_{qa_answerability.get('grade')}"
+    predicted = None if prediction_suppressed_reason else raw_predicted
     gold = _gold_label(example)
     l2 = ((example.get("metadata") or {}).get("reasoning_rollout") or {})
     l2_final = l2.get("final_answer") or {}
@@ -409,13 +431,15 @@ def evaluate_example(example: dict[str, Any], *, topk: int) -> dict[str, Any]:
         ],
         "option_scores": option_rows,
         "predicted_label_by_l1_memory": predicted,
+        "raw_predicted_label_by_l1_memory": raw_predicted,
+        "prediction_suppressed_reason": prediction_suppressed_reason,
         "gold_label_eval_only": gold,
         "correct_eval_only": bool(predicted and gold and predicted == gold),
         "l2_rollout_source": l2.get("rollout_source"),
         "l2_final_answer": l2_final,
         "l2_uses_gold_text_warning": bool(gold_text and l2_text == gold_text and l2_text not in visible_option_texts),
         "l1_graph_quality": _l1_graph_quality(example),
-        "qa_answerability": _qa_answerability(example, top, option_rows),
+        "qa_answerability": qa_answerability,
     }
 
 

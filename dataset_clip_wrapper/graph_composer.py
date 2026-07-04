@@ -377,6 +377,7 @@ class GraphComposer:
             "objects": objects[:6],
             "entities": _strings(schema.get("entity_mentions"), key="surface_form", limit=6),
             "events": _strings(schema.get("events"), key="description", limit=4),
+            "visual_social_cues": _strings(schema.get("visual_social_cues"), key="description", limit=4),
             "dialogue": _strings(schema.get("dialogue_spans"), key="text", limit=4),
             "searchable_phrases": _strings(schema.get("searchable_phrases"), limit=6),
             "uncertainty": str(schema.get("uncertainty") or "")[:160],
@@ -389,7 +390,7 @@ class GraphComposer:
         scene = str(digest.get("scene") or "").strip()
         if scene:
             parts.append(scene)
-        for key in ("facts", "objects", "entities", "events", "dialogue", "searchable_phrases"):
+        for key in ("facts", "objects", "entities", "events", "visual_social_cues", "dialogue", "searchable_phrases"):
             for value in digest.get(key) or []:
                 text = str(value).strip()
                 if text and text not in parts:

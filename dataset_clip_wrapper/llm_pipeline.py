@@ -113,7 +113,15 @@ def _schema_text(schema: dict[str, Any]) -> str:
         value = schema.get(key)
         if isinstance(value, str) and value.strip():
             parts.append(value.strip())
-    for key in ("observable_facts", "dialogue_spans", "entity_mentions", "events", "salient_objects", "cross_clip_cues"):
+    for key in (
+        "observable_facts",
+        "dialogue_spans",
+        "entity_mentions",
+        "events",
+        "salient_objects",
+        "visual_social_cues",
+        "cross_clip_cues",
+    ):
         value = schema.get(key)
         if not isinstance(value, list):
             continue
@@ -183,6 +191,54 @@ _QUESTION_REQUIREMENT_TERMS = {
     "causal_explanation": ("why", "because", "reason", "motive", "cause", "causes"),
 }
 
+_VISUAL_SOCIAL_CONTEXT_TERMS = (
+    "person",
+    "people",
+    "woman",
+    "women",
+    "man",
+    "men",
+    "girl",
+    "boy",
+    "friend",
+    "group",
+    "together",
+    "pose",
+    "posing",
+    "stand",
+    "standing",
+    "gesture",
+    "look",
+    "looking",
+    "face",
+    "expression",
+    "body",
+    "posture",
+    "turn",
+    "approach",
+    "avoid",
+)
+
+_VISUAL_AFFECT_TERMS = (
+    "hesitant",
+    "reluctant",
+    "nervous",
+    "afraid",
+    "fear",
+    "embarrassed",
+    "upset",
+    "angry",
+    "confused",
+    "worried",
+    "tense",
+    "uncomfortable",
+    "uncertain",
+    "avoid",
+    "avoids",
+    "avert",
+    "hesitates",
+)
+
 
 def _question_requirements(question_text: str) -> list[str]:
     lowered = question_text.lower()
@@ -233,10 +289,53 @@ def _gap_policy(missing: list[str]) -> dict[str, Any]:
     }
 
 
+def _visual_social_cue_candidates(
+    *,
+    clip_schemas: list[dict[str, Any]],
+    question_text: str,
+) -> list[dict[str, Any]]:
+    """Find visible social cues without treating them as dialogue evidence."""
+    if not clip_schemas:
+        return []
+    question_lower = question_text.lower()
+    question_is_social = any(
+        term in question_lower
+        for term in (
+            _QUESTION_REQUIREMENT_TERMS["social_intent_or_affect"]
+            + _QUESTION_REQUIREMENT_TERMS["causal_explanation"]
+        )
+    )
+    if not question_is_social:
+        return []
+
+    candidates: list[dict[str, Any]] = []
+    for schema in clip_schemas:
+        if not isinstance(schema, dict) or schema.get("model_error"):
+            continue
+        text = _schema_text(schema)
+        lowered = text.lower()
+        context_hits = [term for term in _VISUAL_SOCIAL_CONTEXT_TERMS if term in lowered]
+        affect_hits = [term for term in _VISUAL_AFFECT_TERMS if term in lowered]
+        if not context_hits and not affect_hits:
+            continue
+        candidates.append(
+            {
+                "clip_id": schema.get("clip_id"),
+                "time_span": schema.get("time_span"),
+                "text": text[:600],
+                "cue_strength": "affect_signal" if affect_hits else "weak_social_context",
+                "context_terms": sorted(set(context_hits))[:8],
+                "affect_terms": sorted(set(affect_hits))[:8],
+            }
+        )
+    return candidates
+
+
 def _observed_modalities(
     *,
     clip_schemas: list[dict[str, Any]],
     visible_segments: list[dict[str, Any]],
+    question_text: str = "",
 ) -> set[str]:
     observed = {"visual_context"} if clip_schemas else set()
     if visible_segments:
@@ -253,6 +352,11 @@ def _observed_modalities(
             observed.add("social_intent_or_affect")
         if any(term in text for term in ("because", "therefore", "so that", "causes", "reason")):
             observed.add("causal_explanation")
+    social_cues = _visual_social_cue_candidates(clip_schemas=clip_schemas, question_text=question_text)
+    if social_cues:
+        observed.add("visual_social_context")
+    if any(cue.get("cue_strength") == "affect_signal" for cue in social_cues):
+        observed.add("social_intent_or_affect")
     return observed
 
 
@@ -276,9 +380,14 @@ def _answerability_diagnostic_graph(
         return {"nodes": [], "edges": [], "summary": {"requirements": [], "missing_requirements": []}}
 
     requirements = _question_requirements(question_text)
-    observed = _observed_modalities(clip_schemas=clip_schemas, visible_segments=visible_segments)
+    observed = _observed_modalities(
+        clip_schemas=clip_schemas,
+        visible_segments=visible_segments,
+        question_text=question_text,
+    )
     missing = [requirement for requirement in requirements if requirement not in observed]
     gap_policy = _gap_policy(missing)
+    visual_social_cues = _visual_social_cue_candidates(clip_schemas=clip_schemas, question_text=question_text)
     suffix = _stable_short_hash(f"{example.get('example_id')}:{question_text}")
     question_node_id = f"diagnostic.question_requirement:{suffix}"
     nodes: list[dict[str, Any]] = [
@@ -325,6 +434,40 @@ def _answerability_diagnostic_graph(
             }
         )
 
+    for i, cue in enumerate(visual_social_cues[:5], start=1):
+        cue_id = f"diagnostic.visual_social_cue:{suffix}:{i:02d}"
+        strength = cue.get("cue_strength") or "weak_social_context"
+        prefix = (
+            "Visible social/affect cue that may weakly support social-intent reasoning: "
+            if strength == "affect_signal"
+            else "Visible social context, but not enough to infer private motive by itself: "
+        )
+        nodes.append(
+            {
+                "node_id": cue_id,
+                "node_type": "visual_social_cue",
+                "source_type": "answerability_diagnostic",
+                "text": prefix + str(cue.get("text") or ""),
+                "time_span": cue.get("time_span"),
+                "clip_id": cue.get("clip_id"),
+                "cue_strength": strength,
+                "context_terms": cue.get("context_terms") or [],
+                "affect_terms": cue.get("affect_terms") or [],
+                "trust_level": "weak",
+                "producer": "dataset_clip_wrapper.answerability_diagnostic",
+                "visibility": {"hidden_supervision": False, "mode": "video_only"},
+            }
+        )
+        edges.append(
+            {
+                "edge_id": f"edge:{cue_id}->{question_node_id}:weak_visual_context",
+                "src": cue_id,
+                "dst": question_node_id,
+                "edge_type": "weak_visual_context",
+                "confidence": 0.45 if strength == "affect_signal" else 0.25,
+            }
+        )
+
     if missing:
         gap_id = f"diagnostic.answerability_gap:{suffix}"
         nodes.append(
@@ -338,6 +481,8 @@ def _answerability_diagnostic_graph(
                     + " evidence. Treat answer generation as unsupported until that modality is recovered."
                 ),
                 "missing_modalities": missing,
+                "partial_visual_social_support": bool(visual_social_cues),
+                "visual_social_cue_count": len(visual_social_cues),
                 **gap_policy,
                 "producer": "dataset_clip_wrapper.answerability_diagnostic",
                 "visibility": {"hidden_supervision": False, "mode": "video_only"},
@@ -380,6 +525,9 @@ def _answerability_diagnostic_graph(
             "requirements": requirements,
             "observed_modalities": sorted(observed),
             "missing_requirements": missing,
+            "partial_visual_social_support": bool(visual_social_cues),
+            "visual_social_cue_count": len(visual_social_cues),
+            "visual_social_cue_strengths": sorted({str(cue.get("cue_strength")) for cue in visual_social_cues}),
             "has_answerability_gap": bool(missing),
             **gap_policy,
         },

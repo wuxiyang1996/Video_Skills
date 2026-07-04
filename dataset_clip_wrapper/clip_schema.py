@@ -33,6 +33,13 @@ Return JSON only with this shape:
   "events": [
     {"description": "timestamped event", "time_span": {"start_s": number, "end_s": number}}
   ],
+  "visual_social_cues": [
+    {
+      "description": "visible gesture/expression/posture/social interaction",
+      "cue_type": "expression|gesture|posture|interaction|uncertain",
+      "strength": "weak|medium|strong"
+    }
+  ],
   "cross_clip_cues": [
     {"cue_type": "same_object|same_place|reappears|before_after|unknown", "description": "reusable clue phrase"}
   ],
@@ -47,8 +54,11 @@ Rules:
    repeated-looking props, screen text, spoken clues, temporal changes.
 4. Include alternate names for visually salient items when grounded (for example
    "iron fence", "metal gate", "white vehicle", "same-looking doorway").
-5. Keep lists short and precise.
-6. If nothing is visible, return empty lists and a cautious scene_description.
+5. For social questions, record only visible social cues: facial expression,
+   gaze direction, hesitation-like motion, distance, posture, gesture, or group
+   interaction. Do not infer private motives unless the visual evidence is clear.
+6. Keep lists short and precise.
+7. If nothing is visible, return empty lists and a cautious scene_description.
 """
 
 COMPACT_CLIP_SCHEMA_PROMPT = """Return compact JSON only for one video clip:
@@ -60,6 +70,7 @@ COMPACT_CLIP_SCHEMA_PROMPT = """Return compact JSON only for one video clip:
   "salient_objects": [{"surface_form": "object", "attributes": ["short"], "searchable_phrases": ["short phrase"]}],
   "place": {"description": "short setting", "searchable_phrases": ["short phrase"]},
   "events": [{"description": "short event", "time_span": {"start_s": number, "end_s": number}}],
+  "visual_social_cues": [{"description": "visible social cue", "cue_type": "expression|gesture|posture|interaction|uncertain", "strength": "weak|medium|strong"}],
   "cross_clip_cues": [],
   "searchable_phrases": ["short phrase"],
   "uncertainty": "short note"
@@ -107,6 +118,7 @@ def _clip_schema_response_schema() -> dict[str, Any]:
                     "salient_objects": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
                     "place": {"type": "object", "additionalProperties": True},
                     "events": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+                    "visual_social_cues": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
                     "cross_clip_cues": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
                     "searchable_phrases": {"type": "array", "items": {"type": "string"}},
                     "uncertainty": {"type": "string"},
@@ -119,6 +131,7 @@ def _clip_schema_response_schema() -> dict[str, Any]:
                     "salient_objects",
                     "place",
                     "events",
+                    "visual_social_cues",
                     "cross_clip_cues",
                     "searchable_phrases",
                     "uncertainty",
