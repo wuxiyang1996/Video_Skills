@@ -475,6 +475,58 @@ from gated L1 refs, option scores, snippets, and uncertainty, then ask L2 to
 reason over that pack only. This keeps L2 grounded in retrieved evidence and
 avoids a second large-JSON failure mode.
 
+### Long-video retrieval repair
+
+Long-video failures must separate L1 graph structure from L1 target coverage.
+A graph can have high node/edge density while still missing the exact clip
+needed by the question. CG-Bench sample `cg_bench:14` showed this failure mode:
+the local repair pass produced many visual nodes, but those nodes described a
+Christmas gift scene and repeatedly said that no animated vehicle was visible.
+That is an `l1_target_coverage_failure`, not an L2 reasoning failure.
+
+VRBench can fail differently. The graph may cover the right visual context,
+such as ruins, documents, cameras, and group attention, but the answer asks for
+motivation or social/causal intent. With audio/subtitle excluded, such examples
+should be marked `l1_context_partial_l2_bridge_needed` or
+`visual_only_benchmark_limitation` unless the visual evidence strongly anchors
+the bridge.
+
+Use the repair runner for these cases:
+
+```bash
+python dataset_clip_wrapper/run_repair_protocol.py \
+  --quality-report dataset_clip_wrapper/output/rerun5_quality_report.json \
+  --stage-dir dataset_clip_wrapper/output/repair_long_reroute \
+  --output dataset_clip_wrapper/output/repair_long_reroute_report.json \
+  --datasets cg_bench vrbench \
+  --repair-mode reroute \
+  --keys-py /fs/gamma-projects/vlm-robot/keys.py \
+  --clip-schema-model qwen/qwen3.5-9b \
+  --verifier-model openai/gpt-oss-120b
+```
+
+`--repair-mode local` expands around previously selected coarse windows.
+`--repair-mode reroute` re-ranks the full coarse summary index with multiple
+retrieval roles:
+
+- `target_retrieval`
+- `attribute_retrieval`
+- `temporal_context_retrieval`
+- `visual_disambiguation_retrieval` for discriminative visual gaps
+- `social_causal_bridge_retrieval` for motive/intent gaps
+
+`--repair-mode auto` switches to full reroute when cached repair schemas contain
+negative target evidence, such as "no vehicle", "no animation", or "cannot
+determine". The output report records `failure_type`,
+`negative_coarse_indices`, `selected_coarse_indices`, and
+`retrieval_round_count`.
+
+This is inspired by M3-style iterative retrieval/control, but it is not a
+multi-agent voting setup. The retrieval roles only produce complementary
+evidence packs. The final L2 answer still must pass `verify_claim_support`;
+commonsense bridge text and negative evidence cannot become final support by
+themselves.
+
 When rerunning from cached stages:
 
 - `--rebuild-from-stages` ignores `final_example.json` and rebuilds L1/L2 from

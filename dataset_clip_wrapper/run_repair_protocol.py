@@ -23,7 +23,8 @@ try:
     from atomic_skills.skill_backends import SkillBackendConfig, SkillBackendMode
     from atomic_skills.skill_executor import SkillExecutor
     from atomic_skills.skill_model_client import SkillModelClient
-    from .clip_policy import segment_perception_clips
+    from .clip_policy import segment_coarse_index, segment_perception_clips
+    from .clip_retrieval import retrieve_coarse_clips
     from .clip_schema import QwenClipSchemaProducer
     from .openrouter_client import OpenRouterClient, load_openrouter_api_key
     from .schemas import ClipPolicyConfig, ClipSchemaConfig, ClipSpan, VideoRegime
@@ -33,7 +34,8 @@ except ImportError:  # pragma: no cover - direct script execution
     from atomic_skills.skill_backends import SkillBackendConfig, SkillBackendMode
     from atomic_skills.skill_executor import SkillExecutor
     from atomic_skills.skill_model_client import SkillModelClient
-    from dataset_clip_wrapper.clip_policy import segment_perception_clips
+    from dataset_clip_wrapper.clip_policy import segment_coarse_index, segment_perception_clips
+    from dataset_clip_wrapper.clip_retrieval import retrieve_coarse_clips
     from dataset_clip_wrapper.clip_schema import QwenClipSchemaProducer
     from dataset_clip_wrapper.openrouter_client import OpenRouterClient, load_openrouter_api_key
     from dataset_clip_wrapper.schemas import ClipPolicyConfig, ClipSchemaConfig, ClipSpan, VideoRegime
@@ -135,6 +137,160 @@ def _repair_query(example: dict[str, Any], row: dict[str, Any], gaps: list[str])
     )
 
 
+def _coarse_schema_segments(example: dict[str, Any]) -> list[dict[str, Any]]:
+    segments: list[dict[str, Any]] = []
+    for idx, schema in enumerate(((example.get("metadata") or {}).get("coarse_clip_schemas") or [])):
+        if not isinstance(schema, dict):
+            continue
+        text_items = _text_items(schema)
+        if not text_items:
+            continue
+        time_span = schema.get("time_span") or {}
+        segments.append(
+            {
+                "segment_id": f"repair.coarse_schema:{idx:04d}",
+                "source_type": "coarse_visual_summary",
+                "time_span": time_span,
+                "text": " ".join(text_items),
+            }
+        )
+    return segments
+
+
+def _query_variants(example: dict[str, Any], row: dict[str, Any], gaps: list[str]) -> list[dict[str, str]]:
+    question = example.get("question") or {}
+    question_text = str(question.get("question_text") or "")
+    option_text = " ".join(str(opt.get("text") or "") for opt in question.get("options") or [])
+    commonsense = ((row.get("repair_hints") or {}).get("commonsense_repair") or {})
+    top_hypotheses = " ".join(str(h.get("text") or "") for h in (commonsense.get("top_hypotheses") or [])[:4])
+    variants = [
+        {"role": "target_retrieval", "query": question_text},
+        {"role": "attribute_retrieval", "query": f"{question_text} {option_text}"},
+        {"role": "temporal_context_retrieval", "query": f"before after context event setup payoff {question_text}"},
+    ]
+    if {"social_intent_or_affect", "causal_explanation"} & set(gaps):
+        variants.append(
+            {
+                "role": "social_causal_bridge_retrieval",
+                "query": f"{question_text} intention motive reason social affect causal context {top_hypotheses}",
+            }
+        )
+    if "discriminative_visual_evidence" in gaps:
+        variants.append(
+            {
+                "role": "visual_disambiguation_retrieval",
+                "query": f"{question_text} discriminative visual attribute color object moving direction animation {option_text}",
+            }
+        )
+    return [variant for variant in variants if variant["query"].strip()]
+
+
+def _negative_parent_indices_from_schemas(example: dict[str, Any], schemas: list[dict[str, Any]]) -> list[int]:
+    duration_s = float((example.get("video") or {}).get("duration_s") or 0.0)
+    policy = ClipPolicyConfig.for_regime(VideoRegime.LONG, duration_s=duration_s)
+    coarse = segment_coarse_index(duration_s, policy, regime=VideoRegime.LONG)
+    negative_indices: list[int] = []
+    for schema in schemas:
+        text = " ".join(_text_items(schema)).lower()
+        if not text or not _has_negative_target_evidence(text):
+            continue
+        span = schema.get("time_span") or {}
+        try:
+            midpoint = (float(span.get("start_s")) + float(span.get("end_s"))) / 2.0
+        except (TypeError, ValueError):
+            continue
+        for idx, coarse_span in enumerate(coarse):
+            if coarse_span.start_s <= midpoint <= coarse_span.end_s:
+                negative_indices.append(idx)
+                break
+    return list(dict.fromkeys(negative_indices))
+
+
+def _select_rerouted_repair_spans(
+    example: dict[str, Any],
+    row: dict[str, Any],
+    *,
+    gaps: list[str],
+    prior_schemas: list[dict[str, Any]],
+    max_repair_clips: int,
+    reroute_topk: int,
+    reroute_topk_per_query: int,
+) -> tuple[list[ClipSpan], dict[str, Any]]:
+    duration_s = float((example.get("video") or {}).get("duration_s") or 0.0)
+    policy = ClipPolicyConfig.for_regime(VideoRegime.LONG, duration_s=duration_s)
+    coarse = segment_coarse_index(duration_s, policy, regime=VideoRegime.LONG)
+    segments = _coarse_schema_segments(example)
+    negative_indices = set(_negative_parent_indices_from_schemas(example, prior_schemas))
+    rounds: list[dict[str, Any]] = []
+    combined_scores: dict[int, float] = {}
+
+    for variant in _query_variants(example, row, gaps):
+        retrieval = retrieve_coarse_clips(
+            coarse_spans=coarse,
+            query_text=variant["query"],
+            segments=segments,
+            topk=max(reroute_topk_per_query + len(negative_indices), reroute_topk_per_query),
+            threshold=0.0,
+            mode="lexical",
+        )
+        kept_scores: list[dict[str, Any]] = []
+        for score_row in retrieval.get("scores") or []:
+            idx = int(score_row["coarse_index"])
+            if idx in negative_indices:
+                continue
+            score = float(score_row.get("score") or 0.0)
+            kept_scores.append(score_row)
+            combined_scores[idx] = combined_scores.get(idx, 0.0) + score + 0.05
+            if len(kept_scores) >= reroute_topk_per_query:
+                break
+        rounds.append(
+            {
+                "role": variant["role"],
+                "query": variant["query"],
+                "fallback_reason": retrieval.get("fallback_reason"),
+                "selected_before_exclusion": retrieval.get("selected_coarse_indices") or [],
+                "selected_after_exclusion": [int(row["coarse_index"]) for row in kept_scores],
+                "scores": kept_scores,
+            }
+        )
+
+    ranked = sorted(combined_scores.items(), key=lambda item: item[1], reverse=True)
+    selected = [idx for idx, _ in ranked[:reroute_topk]]
+    if not selected:
+        selected = [idx for idx in range(min(reroute_topk, len(coarse))) if idx not in negative_indices]
+
+    spans = segment_perception_clips(
+        duration_s,
+        policy,
+        regime=VideoRegime.LONG,
+        selected_coarse_indices=selected,
+    )
+    fine_spans = [span for span in spans if span.granularity == "fine"]
+    existing_ids = {
+        str(schema.get("clip_id"))
+        for schema in ((example.get("metadata") or {}).get("clip_schemas") or [])
+        if isinstance(schema, dict) and schema.get("clip_id")
+    }
+    video_id = (example.get("video") or {}).get("video_id")
+    fresh = [
+        span
+        for span in fine_spans
+        if f"clip:{video_id}:fine:{span.clip_index:04d}" not in existing_ids
+    ]
+    chosen = (fresh or fine_spans or spans)[:max_repair_clips]
+    return chosen, {
+        "mode": "reroute",
+        "duration_s": duration_s,
+        "negative_coarse_indices": sorted(negative_indices),
+        "selected_coarse_indices": selected,
+        "candidate_span_count": len(spans),
+        "candidate_fine_span_count": len(fine_spans),
+        "fresh_span_count": len(fresh),
+        "chosen_span_count": len(chosen),
+        "retrieval_rounds": rounds,
+    }
+
+
 def _select_repair_spans(
     example: dict[str, Any],
     row: dict[str, Any],
@@ -170,6 +326,7 @@ def _select_repair_spans(
     ]
     chosen = (fresh or fine_spans or spans)[:max_repair_clips]
     return chosen, {
+        "mode": "local",
         "duration_s": duration_s,
         "selected_coarse_indices": selected,
         "expanded_coarse_indices": expanded,
@@ -252,7 +409,8 @@ def _text_items(schema: dict[str, Any]) -> list[str]:
     return [item.strip() for item in items if item and item.strip()]
 
 
-def _negative_target_count(patch: dict[str, Any]) -> int:
+def _has_negative_target_evidence(text: str) -> bool:
+    lowered = text.lower()
     negative_terms = (
         "no vehicle",
         "no animated vehicle",
@@ -262,12 +420,16 @@ def _negative_target_count(patch: dict[str, Any]) -> int:
         "does not provide enough information",
         "no visible",
     )
+    return any(term in lowered for term in negative_terms)
+
+
+def _negative_target_count(patch: dict[str, Any]) -> int:
     count = 0
     for node in patch.get("nodes") or []:
         if node.get("node_type") in {"l2_repair_reminder", "answerability_gap"}:
             continue
         text = str(node.get("text") or "").lower()
-        if any(term in text for term in negative_terms):
+        if _has_negative_target_evidence(text):
             count += 1
     return count
 
@@ -455,21 +617,34 @@ def _verify_options(
 def _build_report(plan: dict[str, Any], patch: dict[str, Any], l2: dict[str, Any]) -> dict[str, Any]:
     strong = l2.get("repair_status") == "resolved_strong"
     negative_count = _negative_target_count(patch)
+    span_selection = plan.get("span_selection") or {}
+    missing = set(plan.get("gap_types") or [])
     if strong:
         next_action = "commit repaired evidence pack"
-    elif negative_count:
+        failure_type = "resolved"
+    elif negative_count or span_selection.get("negative_coarse_indices"):
         next_action = "reroute coarse retrieval because repair clips contain negative target evidence"
+        failure_type = "l1_target_coverage_failure"
+    elif {"social_intent_or_affect", "causal_explanation"} & missing:
+        next_action = "keep visual-only boundary and try bridge verification with more target-aligned context"
+        failure_type = "l1_context_partial_l2_bridge_needed"
     else:
         next_action = "expand another fine-pass around visually relevant context"
+        failure_type = "l1_attribute_or_evidence_resolution_failure"
     return {
         "example_id": plan.get("example_id"),
         "dataset": plan.get("dataset"),
         "strategy": plan.get("strategy"),
+        "repair_mode": span_selection.get("mode"),
         "gap_types": plan.get("gap_types") or [],
+        "failure_type": failure_type,
         "repair_status": l2.get("repair_status"),
         "best_option": l2.get("best_option"),
         "patch_counts": patch.get("counts") or {},
         "negative_target_evidence_nodes": negative_count,
+        "negative_coarse_indices": span_selection.get("negative_coarse_indices") or [],
+        "selected_coarse_indices": span_selection.get("selected_coarse_indices") or [],
+        "retrieval_round_count": len(span_selection.get("retrieval_rounds") or []),
         "verifier_backend": l2.get("backend"),
         "repair_needed_after_round": not strong,
         "verifier_reason": "strong repair evidence verified" if strong else "repair evidence remains weak or insufficient",
@@ -489,12 +664,29 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
     l2_path = out_dir / "repair_04_l2_verifier.json"
     report_path = out_dir / "repair_05_report.json"
 
-    spans, span_meta = _select_repair_spans(
-        example,
-        row,
-        radius=args.coarse_radius,
-        max_repair_clips=args.max_repair_clips,
+    prior_schemas = _read_jsonl(schemas_path) if schemas_path.exists() else []
+    prior_negative_count = sum(1 for schema in prior_schemas if _has_negative_target_evidence(" ".join(_text_items(schema))))
+    use_reroute = args.repair_mode == "reroute" or (
+        args.repair_mode == "auto" and prior_negative_count >= args.negative_reroute_threshold
     )
+    if use_reroute:
+        spans, span_meta = _select_rerouted_repair_spans(
+            example,
+            row,
+            gaps=gaps,
+            prior_schemas=prior_schemas,
+            max_repair_clips=args.max_repair_clips,
+            reroute_topk=args.reroute_topk,
+            reroute_topk_per_query=args.reroute_topk_per_query,
+        )
+    else:
+        spans, span_meta = _select_repair_spans(
+            example,
+            row,
+            radius=args.coarse_radius,
+            max_repair_clips=args.max_repair_clips,
+        )
+        span_meta["prior_negative_schema_count"] = prior_negative_count
     query = _repair_query(example, row, gaps)
     plan = {
         "schema_version": "video-skills-relaunch/repair-plan-v0.1",
@@ -502,6 +694,7 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
         "dataset": example.get("dataset"),
         "source_path": row.get("source_path"),
         "strategy": strategy,
+        "repair_mode": span_meta.get("mode"),
         "gap_types": gaps,
         "repair_query": query,
         "span_selection": span_meta,
@@ -574,8 +767,21 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--clip-schema-reasoning-effort", default="none")
     parser.add_argument("--verifier-max-tokens", type=int, default=512)
     parser.add_argument("--verifier-timeout-s", type=int, default=120)
+    parser.add_argument(
+        "--repair-mode",
+        default="local",
+        choices=["local", "reroute", "auto"],
+        help=(
+            "local expands around prior coarse hits; reroute re-ranks the full coarse "
+            "index with multiple query roles; auto reroutes when cached repair schemas "
+            "contain enough negative target evidence."
+        ),
+    )
     parser.add_argument("--coarse-radius", type=int, default=1)
     parser.add_argument("--max-repair-clips", type=int, default=12)
+    parser.add_argument("--reroute-topk", type=int, default=6)
+    parser.add_argument("--reroute-topk-per-query", type=int, default=3)
+    parser.add_argument("--negative-reroute-threshold", type=int, default=2)
     parser.add_argument("--max-verify-refs", type=int, default=8)
     parser.add_argument("--min-verify-refs", type=int, default=2)
     parser.add_argument("--skip-gptoss-verifier", action="store_true")

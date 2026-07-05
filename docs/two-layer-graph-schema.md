@@ -153,6 +153,40 @@ Layer 2 = reasoning program + verification trace
 Runtime verifier = hard acceptance gates over both layers
 ```
 
+Long-video repair follows the same boundary. It is a controller protocol over
+the existing two layers, not a third graph:
+
+```text
+coarse visual index
+  -> multi-role retrieval reroute
+  -> retrieved fine clips
+  -> L1 repair patch
+  -> L2 hypothesis / bridge
+  -> verify_claim_support
+```
+
+The retrieval roles are target, attribute, temporal-context, visual
+disambiguation, and social/causal bridge retrieval. They are specialized
+retrieval actions, not independent answer agents. Their outputs are candidate
+evidence packs and negative-window diagnostics. Final answer commit still
+requires the L2 verifier to ground the claim in non-diagnostic visual evidence.
+
+This matters for long-video QA because `L1 graph_quality=high` only means the
+observed clips were converted into a dense graph; it does not prove that the
+graph covers the question target. The repair report records `failure_type`
+values such as:
+
+- `l1_target_coverage_failure`: retrieved clips do not contain the target event
+  or object.
+- `l1_attribute_or_evidence_resolution_failure`: target context exists but the
+  attribute or support is not resolved.
+- `l1_context_partial_l2_bridge_needed`: visual context exists, but answer
+  selection requires social, causal, or commonsense bridging.
+- `visual_only_benchmark_limitation`: the gold answer appears to require
+  audio/subtitle/hidden context outside the video-only scope.
+- `l2_verifier_rejects_unsupported`: L2 proposed an answer but verifier rejected
+  the evidence pack.
+
 ### Modes
 
 | Mode | Layer-2 supervision |
