@@ -325,7 +325,7 @@ class QwenClipSchemaProducer:
             ("compact_retry", compact_content, _clip_schema_response_schema()),
             ("compact_json_object_retry", compact_content, None),
         )
-        for attempt, content, response_format in attempts:
+        for attempt_index, (attempt, content, response_format) in enumerate(attempts):
             try:
                 payload = self.client.chat_json(
                     [
@@ -341,6 +341,13 @@ class QwenClipSchemaProducer:
                     model=self.config.model,
                     attempt=attempt,
                 )
+                payload["llm_usage"] = {
+                    **(self.client.last_response_metadata or {}),
+                    "attempt": attempt,
+                    "attempt_index": attempt_index,
+                    "compact_retry_count": attempt_index,
+                    "sampled_frame_count": len(sampled_frames),
+                }
                 break
             except Exception as exc:
                 last_error = exc
@@ -360,5 +367,11 @@ class QwenClipSchemaProducer:
                 "searchable_phrases": [],
                 "uncertainty": "clip schema generation failed",
                 "model_error": str(last_error),
+                "llm_usage": {
+                    **(self.client.last_response_metadata or {}),
+                    "attempt": "failed",
+                    "compact_retry_count": 2,
+                    "sampled_frame_count": len(sampled_frames),
+                },
             }
         return payload

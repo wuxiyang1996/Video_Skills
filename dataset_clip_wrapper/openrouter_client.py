@@ -104,6 +104,41 @@ class OpenRouterClient:
         self.max_tokens = max_tokens
         self.reasoning = reasoning
         self.timeout_s = timeout_s
+        self.last_response_metadata: dict[str, Any] = {}
+
+    @staticmethod
+    def _message_text_chars(messages: list[dict[str, Any]]) -> int:
+        total = 0
+        for message in messages:
+            content = message.get("content")
+            if isinstance(content, str):
+                total += len(content)
+            elif isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get("type") == "text":
+                            total += len(str(item.get("text") or ""))
+                        elif item.get("type") == "image_url":
+                            total += len(str(((item.get("image_url") or {}).get("url")) or ""))
+                    else:
+                        total += len(str(item))
+            elif content is not None:
+                total += len(str(content))
+        return total
+
+    def _base_request_metadata(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        prompt_chars = self._message_text_chars(messages)
+        return {
+            "model": self.model,
+            "prompt_chars": prompt_chars,
+            "prompt_approx_tokens": int(round(prompt_chars / 4.0)),
+            "max_tokens": self.max_tokens,
+            "timeout_s": self.timeout_s,
+            "malformed_json": 0,
+            "timeout_count": 0,
+            "compact_retry_count": 0,
+            "cache_hit": False,
+        }
 
     def chat(self, messages: list[dict[str, Any]], *, response_format: dict[str, Any] | None = None) -> str:
         payload: dict[str, Any] = {
@@ -117,20 +152,35 @@ class OpenRouterClient:
             payload["reasoning"] = self.reasoning
         if response_format is not None:
             payload["response_format"] = response_format
-        with _total_timeout(self.timeout_s):
-            response = requests.post(
-                self.api_base,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=self.timeout_s,
-            )
-            response.raise_for_status()
-            response_payload = response.json()
+        self.last_response_metadata = self._base_request_metadata(messages)
+        try:
+            with _total_timeout(self.timeout_s):
+                response = requests.post(
+                    self.api_base,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=self.timeout_s,
+                )
+                response.raise_for_status()
+                response_payload = response.json()
+        except TimeoutError:
+            self.last_response_metadata["timeout_count"] = 1
+            raise
         message = response_payload["choices"][0]["message"]
         content = message.get("content")
+        usage = response_payload.get("usage") or {}
+        self.last_response_metadata.update(
+            {
+                "finish_reason": response_payload["choices"][0].get("finish_reason"),
+                "prompt_tokens": usage.get("prompt_tokens"),
+                "completion_tokens": usage.get("completion_tokens"),
+                "total_tokens": usage.get("total_tokens"),
+                "output_chars": len(content.strip()) if isinstance(content, str) else 0,
+            }
+        )
         if content is None:
             raise ValueError(
                 "OpenRouter response did not include assistant content; "
@@ -146,4 +196,9 @@ class OpenRouterClient:
         response_format: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         payload_format = response_format or {"type": "json_object"}
-        return parse_json_response(self.chat(messages, response_format=payload_format))
+        text = self.chat(messages, response_format=payload_format)
+        try:
+            return parse_json_response(text)
+        except Exception:
+            self.last_response_metadata["malformed_json"] = 1
+            raise

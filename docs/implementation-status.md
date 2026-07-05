@@ -225,11 +225,16 @@ Takeaway:
 
 Current remaining risks:
 
-- Short/streaming VideoMME and OVO runs still show some cached
-  `video_tool_perception_backend` fallback clip schemas from interrupted or
-  failed Qwen calls; these are not the desired final perception path and should
-  be retried with Qwen for strict no-heuristic reporting using
-  `--retry-non-backbone-clip-schemas`.
+- Strict Qwen-only perception is now clean on the five one-video API check:
+  `strict_vlm_perception_all=true`, `fallback_clip_schema_total=0`, and
+  `model_error_clip_schema_total=0`. The main remaining perception risk is
+  output budget, not fallback logic: failed Qwen rows can be caused by
+  `finish_reason=length`, so failed-only retries may need a higher
+  `--clip-schema-max-tokens`.
+- Prompt/output length must stay visible in reports. The current final report
+  records clip-schema and graph-compose prompt chars, approximate tokens,
+  output chars, malformed JSON count, timeout count, compact retry count, and
+  cache hit/miss counts.
 - Baseline long-video L1 uses full coarse coverage plus selected fine
   neighborhoods; final answer support must come from verified fine evidence or
   explicit objective bridge verification, not retrieval scores.
@@ -334,10 +339,25 @@ The current final acceptance report can be regenerated with:
 
 ```bash
 python dataset_clip_wrapper/report_final_acceptance.py \
-  --quality-report dataset_clip_wrapper/output/rerun5_quality_report.json \
+  --quality-report dataset_clip_wrapper/output/rerun5_quality_report_strict_qwen.json \
   --repair-report dataset_clip_wrapper/output/repair_long_objective_bridge_api_v7_cg_rebuild_report.json \
   --repair-report dataset_clip_wrapper/output/repair_long_objective_bridge_api_v7_vr_rebuild_report.json \
   --output dataset_clip_wrapper/output/rerun5_final_acceptance_report.json
+```
+
+Current strict final acceptance summary:
+
+```text
+examples=5
+high_l1_all=true
+accepted_all=true
+strict_vlm_perception_all=true
+fallback_clip_schema_total=0
+model_error_clip_schema_total=0
+final_l2_status_counts={accepted_strong: 4, accepted_bridge: 1}
+repair_needed_after_final=0
+graph_compose_cache_hits=205
+graph_compose_cache_misses=105
 ```
 
 Long-video defaults (`ClipPolicyConfig.for_regime(LONG)`):

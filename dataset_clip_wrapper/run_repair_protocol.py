@@ -73,6 +73,21 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     tmp.replace(path)
 
 
+def _llm_usage_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    usages = [row.get("llm_usage") or {} for row in rows if isinstance(row, dict)]
+    return {
+        "calls": len(usages),
+        "prompt_chars": sum(int(usage.get("prompt_chars") or 0) for usage in usages),
+        "prompt_approx_tokens": sum(int(usage.get("prompt_approx_tokens") or 0) for usage in usages),
+        "output_chars": sum(int(usage.get("output_chars") or 0) for usage in usages),
+        "malformed_json_count": sum(int(usage.get("malformed_json") or 0) for usage in usages),
+        "timeout_count": sum(int(usage.get("timeout_count") or 0) for usage in usages),
+        "compact_retry_count": sum(int(usage.get("compact_retry_count") or 0) for usage in usages),
+        "cache_hits": sum(1 for usage in usages if usage.get("cache_hit")),
+        "cache_misses": sum(1 for usage in usages if usage and not usage.get("cache_hit")),
+    }
+
+
 def _safe_name(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", text)[:180]
 
@@ -376,6 +391,7 @@ def _build_clue_need_spec(
             return fallback
         raise RuntimeError(f"LLM clue planner returned invalid clue_need_spec: {json.dumps(spec, ensure_ascii=False)[:800]}")
     spec["planner_backend"] = args.clue_planner_model
+    spec["llm_usage"] = client.last_response_metadata
     spec.setdefault("forbidden_modalities", ["audio", "asr", "subtitle", "dialogue"])
     return spec
 
@@ -536,6 +552,7 @@ def _llm_select_coarse_indices(
             messages,
             response_format=_coarse_selector_response_schema(),
         )
+        payload["llm_usage"] = client.last_response_metadata
     except Exception as exc:
         compact_prompt = dict(prompt)
         compact_prompt["rules"] = list(prompt["rules"]) + [
@@ -564,6 +581,9 @@ def _llm_select_coarse_indices(
                 ],
                 response_format=_coarse_selector_compact_response_schema(),
             )
+            usage = dict(compact_client.last_response_metadata or {})
+            usage["compact_retry_count"] = int(usage.get("compact_retry_count") or 0) + 1
+            payload["llm_usage"] = usage
             payload["selection_rounds"] = [
                 {
                     "role": "model_clue_selector_compact_retry",
@@ -603,6 +623,7 @@ def _llm_select_coarse_indices(
             if isinstance(row, dict):
                 row["selector_backend"] = args.clue_planner_model
                 row.setdefault("selection_mode", payload.get("selection_mode") or "direct_visual")
+                row.setdefault("llm_usage", payload.get("llm_usage") or {})
     else:
         rounds = [
             {
@@ -615,6 +636,7 @@ def _llm_select_coarse_indices(
                 "background_bridge_possible": bool(payload.get("background_bridge_possible")),
                 "selector_backend": args.clue_planner_model,
                 "selector_abstained": not bool(selected),
+                "llm_usage": payload.get("llm_usage") or {},
             }
         ]
     if not selected and not args.disable_exploratory_selector_retry:
@@ -655,6 +677,8 @@ def _llm_select_coarse_indices(
                 ],
                 response_format=_coarse_selector_compact_response_schema(),
             )
+            forced_usage = dict(forced_client.last_response_metadata or {})
+            forced_usage["compact_retry_count"] = int(forced_usage.get("compact_retry_count") or 0) + 1
             for item in forced.get("selected_coarse_indices") or []:
                 try:
                     idx = int(item)
@@ -675,6 +699,7 @@ def _llm_select_coarse_indices(
                     "background_bridge_possible": bool(forced.get("background_bridge_possible")),
                     "selector_backend": args.clue_planner_model,
                     "selector_abstained": not bool(selected),
+                    "llm_usage": forced_usage,
                 }
             )
         except Exception as exc:
@@ -918,6 +943,12 @@ def _schema_for_span(
     )
 
 
+def _clip_id_for_span(example: dict[str, Any], span: ClipSpan) -> str:
+    video = example.get("video") or {}
+    video_id = str(video.get("video_id") or "video")
+    return f"clip:{video_id}:fine:{span.clip_index:04d}"
+
+
 def _schema_worker_args(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "clip_schema_model": args.clip_schema_model,
@@ -985,14 +1016,22 @@ def _produce_repair_schemas(
 ) -> list[dict[str, Any]]:
     if not spans:
         return []
+    prior = _read_jsonl(schemas_path)
+    by_clip_id = {
+        str(row.get("clip_id")): row
+        for row in prior
+        if isinstance(row, dict) and row.get("clip_id") and not row.get("model_error")
+    }
+    pending_spans = [span for span in spans if _clip_id_for_span(example, span) not in by_clip_id]
+    if not pending_spans:
+        return [by_clip_id[_clip_id_for_span(example, span)] for span in spans if _clip_id_for_span(example, span) in by_clip_id]
     if args.repair_clip_schema_workers <= 1 or len(spans) <= 1:
         producer = _build_producer(args, api_key)
-        schemas: list[dict[str, Any]] = []
-        for span in spans:
+        for span in pending_spans:
             schema = _schema_for_span(producer, example=example, span=span, repair_query=repair_query)
-            schemas.append(schema)
-            _write_jsonl(schemas_path, schemas)
-        return schemas
+            by_clip_id[str(schema.get("clip_id"))] = schema
+            _write_jsonl(schemas_path, [by_clip_id[_clip_id_for_span(example, item)] for item in spans if _clip_id_for_span(example, item) in by_clip_id])
+        return [by_clip_id[_clip_id_for_span(example, span)] for span in spans if _clip_id_for_span(example, span) in by_clip_id]
 
     worker_args = _schema_worker_args(args)
     jobs = [
@@ -1009,7 +1048,7 @@ def _produce_repair_schemas(
             "api_key": api_key,
             "args": worker_args,
         }
-        for span in spans
+        for span in pending_spans
     ]
     indexed: list[tuple[int, dict[str, Any]]] = []
     with ProcessPoolExecutor(max_workers=min(args.repair_clip_schema_workers, len(jobs))) as executor:
@@ -1019,7 +1058,7 @@ def _produce_repair_schemas(
             try:
                 schema = future.result()
             except Exception as exc:
-                span = spans[idx]
+                span = pending_spans[idx]
                 video = example.get("video") or {}
                 video_id = str(video.get("video_id") or "video")
                 schema = {
@@ -1032,8 +1071,12 @@ def _produce_repair_schemas(
                     "schema_attempt": "repair_parallel_future_error",
                 }
             indexed.append((idx, schema))
-            _write_jsonl(schemas_path, [row for _, row in sorted(indexed, key=lambda item: item[0])])
-    return [row for _, row in sorted(indexed, key=lambda item: item[0])]
+            if not schema.get("model_error"):
+                by_clip_id[str(schema.get("clip_id"))] = schema
+            else:
+                by_clip_id.setdefault(str(schema.get("clip_id")), schema)
+            _write_jsonl(schemas_path, [by_clip_id[_clip_id_for_span(example, item)] for item in spans if _clip_id_for_span(example, item) in by_clip_id])
+    return [by_clip_id[_clip_id_for_span(example, span)] for span in spans if _clip_id_for_span(example, span) in by_clip_id]
 
 
 def _audio_or_subtitle_like(text: str) -> bool:
@@ -1213,7 +1256,7 @@ def _bridge_response_schema() -> dict[str, Any]:
                     "objective_background_facts": {"type": "array", "items": {"type": "string"}},
                     "bridge_claim": {"type": "string"},
                     "not_direct_visual_evidence": {"type": "boolean"},
-                    "reason": {"type": "string"},
+                    "reason_short": {"type": "string"},
                 },
                 "required": [
                     "bridge_status",
@@ -1223,7 +1266,7 @@ def _bridge_response_schema() -> dict[str, Any]:
                     "objective_background_facts",
                     "bridge_claim",
                     "not_direct_visual_evidence",
-                    "reason",
+                    "reason_short",
                 ],
             },
         },
@@ -1318,6 +1361,7 @@ def _attempt_objective_bridge(
             "Accept accepted_bridge only when the visual anchors identify the relevant situation/context and the background facts are stable, objective, and sufficient to choose one option.",
             "Reject bridge claims based on subjective intention, emotion, social stereotypes, audio/dialogue/subtitles, hidden labels, or private dataset knowledge.",
             "If multiple options remain plausible, return bridge_insufficient.",
+            "Keep visual_anchor_summary to at most 4 short strings and reason_short to one sentence.",
         ],
         "question": {
             "question_text": question_text,
@@ -1351,6 +1395,7 @@ def _attempt_objective_bridge(
             ],
             response_format=_bridge_response_schema(),
         )
+        payload["llm_usage"] = client.last_response_metadata
     except Exception as exc:
         return {
             "bridge_status": "bridge_insufficient",
@@ -1360,8 +1405,9 @@ def _attempt_objective_bridge(
             "objective_background_facts": clue_spec.get("objective_background_facts") or [],
             "bridge_claim": "",
             "not_direct_visual_evidence": True,
-            "reason": f"bridge verifier failed: {exc}",
+            "reason_short": f"bridge verifier failed: {exc}",
             "bridge_backend": args.bridge_model,
+            "llm_usage": client.last_response_metadata,
         }
     visual_refs = [str(ref) for ref in payload.get("visual_anchor_refs") or [] if str(ref) in refs]
     best = payload.get("best_option") if isinstance(payload.get("best_option"), dict) else {}
@@ -1524,6 +1570,11 @@ def _verify_options(
                     "text": best_bridge.get("text"),
                     "confidence": best_bridge.get("confidence"),
                 }
+    budget_rows = []
+    bridge_payload = l2.get("background_bridge_verification")
+    if isinstance(bridge_payload, dict):
+        budget_rows.append(bridge_payload)
+    l2["llm_budget_summary"] = _llm_usage_summary(budget_rows)
     return l2
 
 
@@ -1591,9 +1642,34 @@ def _build_report(plan: dict[str, Any], patch: dict[str, Any], l2: dict[str, Any
             )
         ),
         "background_bridge_verification": l2.get("background_bridge_verification"),
+        "llm_budget_summary": {
+            "repair_plan": plan.get("llm_budget_summary") or {},
+            "l2_verifier": l2.get("llm_budget_summary") or {},
+        },
         "recommended_next_action": next_action,
         "artifact_paths": plan.get("artifact_paths") or {},
     }
+
+
+def _spans_from_cached_plan(plan: dict[str, Any]) -> list[ClipSpan]:
+    spans: list[ClipSpan] = []
+    for row in plan.get("spans") or []:
+        if not isinstance(row, dict):
+            continue
+        payload = row.get("time_span") if isinstance(row.get("time_span"), dict) else row
+        try:
+            spans.append(
+                ClipSpan(
+                    start_s=float(payload.get("start_s")),
+                    end_s=float(payload.get("end_s")),
+                    granularity=str(payload.get("granularity") or row.get("granularity") or "fine"),
+                    parent_index=payload.get("parent_index", row.get("parent_index")),
+                    clip_index=int(payload.get("clip_index", row.get("clip_index") or 0)),
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+    return spans
 
 
 def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | None) -> dict[str, Any]:
@@ -1607,7 +1683,7 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
     l2_path = out_dir / "repair_04_l2_verifier.json"
     report_path = out_dir / "repair_05_report.json"
 
-    cached_plan = _read_json(plan_path) if args.skip_api and plan_path.exists() else None
+    cached_plan = _read_json(plan_path) if plan_path.exists() and not args.force_repair_stages else None
     prior_schemas = _read_jsonl(schemas_path) if schemas_path.exists() else []
     prior_negative_count = sum(1 for schema in prior_schemas if _has_negative_target_evidence(" ".join(_text_items(schema))))
     if cached_plan and isinstance(cached_plan.get("clue_need_spec"), dict):
@@ -1626,7 +1702,7 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
     )
     if cached_plan and isinstance(cached_plan.get("span_selection"), dict):
         span_meta = cached_plan["span_selection"]
-        spans = []
+        spans = _spans_from_cached_plan(cached_plan)
     elif use_reroute:
         spans, span_meta = _select_rerouted_repair_spans(
             example,
@@ -1677,6 +1753,9 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
             "report": str(report_path),
         },
     }
+    plan["llm_budget_summary"] = _llm_usage_summary(
+        [clue_spec] + [row for row in span_meta.get("retrieval_rounds") or [] if isinstance(row, dict)]
+    )
     _write_json(plan_path, plan)
 
     if args.dry_run:
@@ -1709,14 +1788,20 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
     if schemas and not schemas_path.exists():
         _write_jsonl(schemas_path, schemas)
 
-    patch = _build_l1_patch(example, row, schemas, gaps)
-    _write_json(patch_path, patch)
+    if patch_path.exists() and not args.force_repair_stages:
+        patch = _read_json(patch_path)
+    else:
+        patch = _build_l1_patch(example, row, schemas, gaps)
+        _write_json(patch_path, patch)
     repaired_graph = _merge_patch_graph(example, patch)
-    l2 = _verify_options(example, repaired_graph, clue_spec=clue_spec, gaps=gaps, api_key=api_key, args=args)
-    if not spans and span_meta.get("selector_abstained") and l2.get("repair_status") not in {"resolved_strong", "accepted_bridge"}:
-        l2["backend"] = f"{l2.get('backend')}+selector_abstained"
-        l2["missing_clue_diagnosis"] = (span_meta.get("retrieval_rounds") or [{}])[0].get("reason", "")
-    _write_json(l2_path, l2)
+    if l2_path.exists() and not args.force_repair_stages:
+        l2 = _read_json(l2_path)
+    else:
+        l2 = _verify_options(example, repaired_graph, clue_spec=clue_spec, gaps=gaps, api_key=api_key, args=args)
+        if not spans and span_meta.get("selector_abstained") and l2.get("repair_status") not in {"resolved_strong", "accepted_bridge"}:
+            l2["backend"] = f"{l2.get('backend')}+selector_abstained"
+            l2["missing_clue_diagnosis"] = (span_meta.get("retrieval_rounds") or [{}])[0].get("reason", "")
+        _write_json(l2_path, l2)
     report = _build_report(plan, patch, l2)
     _write_json(report_path, report)
     return report
@@ -1777,6 +1862,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable-background-bridge", action="store_true")
     parser.add_argument("--skip-api", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--force-repair-stages",
+        action="store_true",
+        help="Ignore cached repair plan/patch/L2 stages and recompute them.",
+    )
     return parser
 
 

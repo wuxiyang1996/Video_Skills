@@ -581,17 +581,27 @@ reports:
 
 ```bash
 python dataset_clip_wrapper/report_final_acceptance.py \
-  --quality-report dataset_clip_wrapper/output/rerun5_quality_report.json \
+  --quality-report dataset_clip_wrapper/output/rerun5_quality_report_strict_qwen.json \
   --repair-report dataset_clip_wrapper/output/repair_long_objective_bridge_api_v7_cg_rebuild_report.json \
   --repair-report dataset_clip_wrapper/output/repair_long_objective_bridge_api_v7_vr_rebuild_report.json \
   --output dataset_clip_wrapper/output/rerun5_final_acceptance_report.json
 ```
 
-The current one-video-per-dataset API check reports five high-quality L1 graphs,
-four `accepted_strong` L2 results, one `accepted_bridge` result, and zero
-remaining repair-needed examples. The report also records
-`strict_vlm_perception_all`; if cached local `video_tools` clip schemas remain,
-rerun the staged pipeline with:
+The current strict one-video-per-dataset API check reports:
+
+- `high_l1_all=true`
+- `accepted_all=true`
+- `strict_vlm_perception_all=true`
+- `fallback_clip_schema_total=0`
+- `model_error_clip_schema_total=0`
+- final L2 status: four `accepted_strong`, one `accepted_bridge`
+
+The strict report also records prompt/output budget and cache statistics for
+clip-schema and graph-compose calls (`prompt_chars`, approximate tokens,
+`output_chars`, malformed JSON, timeout, compact retry, cache hit/miss counts).
+
+If cached local `video_tools` clip schemas remain, or if Qwen returned
+`model_error` rows, rerun the staged pipeline with both retry flags:
 
 ```bash
 python -m dataset_clip_wrapper.run_staged_llm_pipeline \
@@ -600,12 +610,15 @@ python -m dataset_clip_wrapper.run_staged_llm_pipeline \
   --mode video_only \
   --rebuild-from-stages \
   --retry-non-backbone-clip-schemas \
+  --retry-failed-clip-schemas \
   --clip-schema-backend qwen \
   --clip-schema-workers 8
 ```
 
 Use the same pattern for OVO/CG/VR cached stages when strict Qwen-only
-perception is required.
+perception is required. If a failed clip schema shows `finish_reason=length`,
+raise `--clip-schema-max-tokens` for the failed-only retry instead of accepting
+a fallback schema.
 
 Staged runs also cache neighbor-local GPT-OSS graph composition per clip in
 `03_neighbor_vlm_l1_clip_results.jsonl`. If a long short-video/streaming run is
@@ -613,6 +626,15 @@ interrupted during graph compose, rerun with `--rebuild-from-stages`; cached
 clip-level graph outputs are reused and only missing clips are sent back to
 GPT-OSS. This keeps long prompts and long outputs bounded to one local
 clip-neighborhood at a time.
+
+Observed strict resume checks:
+
+- VideoMME strict rerun resumed from 76 cached GPT-OSS neighbor results and
+  completed the remaining 39 (`neighbor_cache_hits=76`, misses `39`).
+- OVO strict rerun resumed from 93 cached neighbor results and completed the
+  remaining 22 (`neighbor_cache_hits=93`, misses `22`).
+- CG strict rerun reused 36 cached neighbor results and only recomposed 4
+  missing clip-neighborhoods.
 
 When rerunning from cached stages:
 
@@ -622,6 +644,9 @@ When rerunning from cached stages:
   missing clips; useful after interrupted retries.
 - `--retry-failed-clip-schemas` should be reserved for perception-quality repair,
   because it will call Qwen for failed clips.
+- JSONL outputs are append-only unless `--force` is used or the output file is
+  removed. For final strict reports, keep one row per dataset output file to
+  avoid mixing stale and fresh examples.
 
 VRBench video-only graph-quality probe:
 

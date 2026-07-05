@@ -52,6 +52,33 @@ def _clip_schema_stats(example: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def _llm_usage_summary(rows: list[dict[str, Any]]) -> dict[str, int]:
+    usages = [row.get("llm_usage") or {} for row in rows if isinstance(row, dict)]
+    return {
+        "calls": len(usages),
+        "prompt_chars": sum(int(usage.get("prompt_chars") or 0) for usage in usages),
+        "prompt_approx_tokens": sum(int(usage.get("prompt_approx_tokens") or 0) for usage in usages),
+        "output_chars": sum(int(usage.get("output_chars") or 0) for usage in usages),
+        "malformed_json_count": sum(int(usage.get("malformed_json") or 0) for usage in usages),
+        "timeout_count": sum(int(usage.get("timeout_count") or 0) for usage in usages),
+        "compact_retry_count": sum(int(usage.get("compact_retry_count") or 0) for usage in usages),
+        "cache_hits": sum(1 for usage in usages if usage.get("cache_hit")),
+        "cache_misses": sum(1 for usage in usages if usage and not usage.get("cache_hit")),
+    }
+
+
+def _budget_report(example: dict[str, Any]) -> dict[str, Any]:
+    metadata = example.get("metadata") or {}
+    fine = [row for row in metadata.get("clip_schemas") or [] if isinstance(row, dict)]
+    coarse = [row for row in metadata.get("coarse_clip_schemas") or [] if isinstance(row, dict)]
+    graph_plan = (metadata.get("graph_compose") or {}).get("skill_plan") or {}
+    graph_budget = graph_plan.get("llm_budget_summary") if isinstance(graph_plan, dict) else {}
+    return {
+        "clip_schema": _llm_usage_summary(fine + coarse),
+        "graph_compose": graph_budget or {},
+    }
+
+
 def _repair_needed(
     *,
     l1_quality: dict[str, Any],
@@ -127,6 +154,7 @@ def summarize_example(example: dict[str, Any], *, source_path: str, topk: int) -
             "trace_fail": (rollout.get("metadata") or {}).get("llm_trace_fail"),
         },
         "verifier_reason": verifier_reason,
+        "llm_budget_report": _budget_report(example),
         "repair_needed": repair_needed,
         "repair_hints": {
             "qa_answerability_grade": qa_answerability.get("grade"),

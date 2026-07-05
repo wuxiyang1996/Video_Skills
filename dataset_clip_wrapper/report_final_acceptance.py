@@ -88,8 +88,47 @@ def _merge_report(base_report: dict[str, Any], repair_by_id: dict[str, dict[str,
         "selection_mode": repair.get("selection_mode"),
         "patch_counts": repair.get("patch_counts") or {},
         "not_direct_visual_evidence": bool(repair.get("not_direct_visual_evidence")),
+        "llm_budget_summary": repair.get("llm_budget_summary") or {},
     }
     return merged
+
+
+def _sum_usage(items: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "calls": sum(int(item.get("calls") or 0) for item in items),
+        "prompt_chars": sum(int(item.get("prompt_chars") or 0) for item in items),
+        "prompt_approx_tokens": sum(int(item.get("prompt_approx_tokens") or 0) for item in items),
+        "output_chars": sum(int(item.get("output_chars") or 0) for item in items),
+        "malformed_json_count": sum(int(item.get("malformed_json_count") or 0) for item in items),
+        "timeout_count": sum(int(item.get("timeout_count") or 0) for item in items),
+        "compact_retry_count": sum(int(item.get("compact_retry_count") or 0) for item in items),
+        "cache_hits": sum(int(item.get("cache_hits") or 0) for item in items),
+        "cache_misses": sum(int(item.get("cache_misses") or 0) for item in items),
+    }
+
+
+def _budget_summary(reports: list[dict[str, Any]]) -> dict[str, Any]:
+    clip_schema = []
+    graph_compose = []
+    repair_plan = []
+    repair_l2 = []
+    for row in reports:
+        budget = row.get("llm_budget_report") or {}
+        if isinstance(budget.get("clip_schema"), dict):
+            clip_schema.append(budget["clip_schema"])
+        if isinstance(budget.get("graph_compose"), dict):
+            graph_compose.append(budget["graph_compose"])
+        repair_budget = ((row.get("repair_report") or {}).get("llm_budget_summary") or {})
+        if isinstance(repair_budget.get("repair_plan"), dict):
+            repair_plan.append(repair_budget["repair_plan"])
+        if isinstance(repair_budget.get("l2_verifier"), dict):
+            repair_l2.append(repair_budget["l2_verifier"])
+    return {
+        "clip_schema": _sum_usage(clip_schema),
+        "graph_compose": _sum_usage(graph_compose),
+        "repair_plan": _sum_usage(repair_plan),
+        "repair_l2_verifier": _sum_usage(repair_l2),
+    }
 
 
 def main() -> int:
@@ -134,6 +173,7 @@ def main() -> int:
         "model_error_clip_schema_total": sum(
             int((row.get("strict_vlm_perception") or {}).get("model_error_clip_schema_count") or 0) for row in reports
         ),
+        "llm_budget_summary": _budget_summary(reports),
     }
     payload = {"summary": summary, "reports": reports}
     text = json.dumps(payload, ensure_ascii=False, indent=2)

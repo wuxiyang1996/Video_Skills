@@ -105,6 +105,21 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
     tmp.replace(path)
 
+
+def _summarize_llm_usage(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    usages = [row.get("llm_usage") or {} for row in rows if isinstance(row, dict)]
+    return {
+        "calls": len(usages),
+        "prompt_chars": sum(int(usage.get("prompt_chars") or 0) for usage in usages),
+        "prompt_approx_tokens": sum(int(usage.get("prompt_approx_tokens") or 0) for usage in usages),
+        "output_chars": sum(int(usage.get("output_chars") or 0) for usage in usages),
+        "malformed_json_count": sum(int(usage.get("malformed_json") or 0) for usage in usages),
+        "timeout_count": sum(int(usage.get("timeout_count") or 0) for usage in usages),
+        "compact_retry_count": sum(int(usage.get("compact_retry_count") or 0) for usage in usages),
+        "cache_hits": sum(1 for usage in usages if usage.get("cache_hit")),
+        "cache_misses": sum(1 for usage in usages if not usage.get("cache_hit")),
+    }
+
 GRAPH_COMPOSE_PROMPT = f"""You compose a clue-memory / perception graph using ONLY the executable
 Evidence Graph Construction atomic skills listed in allowed_skill_ids.
 
@@ -180,7 +195,7 @@ Return JSON only:
       "text": "short grounded reason"
     }
   ],
-  "notes": "short quality note"
+  "reason_short": "one short quality note"
 }
 
 Rules:
@@ -232,6 +247,7 @@ Rules:
 6. If the relationship is weak or generic, omit the edge.
 7. Do not use answer labels, gold answers, hidden clues, or dataset supervision.
 8. Do not output chain-of-thought.
+9. Keep every text/reason field under 120 characters.
 """
 
 
@@ -328,9 +344,9 @@ def build_neighbor_vlm_l1_response_schema() -> dict[str, Any]:
                             "required": ["src_clip_id", "dst_clip_id", "edge_type"],
                         },
                     },
-                    "notes": {"type": "string"},
+                    "reason_short": {"type": "string"},
                 },
-                "required": ["target_nodes", "neighbor_edges", "notes"],
+                "required": ["target_nodes", "neighbor_edges"],
             },
         },
     }
@@ -342,6 +358,7 @@ def _neighbor_vlm_l1_worker(job: dict[str, Any]) -> dict[str, Any]:
     response["model"] = job["client_kwargs"]["model"]
     response["composer"] = "neighbor_vlm_l1_graph_composer"
     response["target_clip_id"] = job["target_clip_id"]
+    response["llm_usage"] = client.last_response_metadata
     return response
 
 
@@ -635,6 +652,7 @@ class GraphComposer:
         response["model"] = self.config.model
         response["composer"] = "neighbor_vlm_l1_graph_composer"
         response["target_clip_id"] = target_schema.get("clip_id")
+        response["llm_usage"] = getattr(self.client, "last_response_metadata", {})
         return response
 
     def _neighbor_vlm_l1_request(
@@ -715,10 +733,15 @@ class GraphComposer:
             response = {
                 "target_nodes": [],
                 "neighbor_edges": [],
-                "notes": "neighbor VLM L1 clip compose failed",
+                "reason_short": "neighbor VLM L1 clip compose failed",
                 "composer": "neighbor_vlm_l1_graph_composer",
                 "target_clip_id": target_clip_id,
                 "planner_error": str(exc),
+                "llm_usage": {
+                    "timeout_count": int(isinstance(exc, TimeoutError)),
+                    "malformed_json": 0,
+                    "cache_hit": False,
+                },
             }
             return index, response, {
                 "skill_id": "neighbor_vlm_l1_clip_failed",
@@ -752,7 +775,11 @@ class GraphComposer:
             target_clip_id = str(schema.get("clip_id"))
             cached = cached_by_clip.get(target_clip_id)
             if cached:
-                indexed_responses.append((index, dict(cached.get("response") or {}), None))
+                response = dict(cached.get("response") or {})
+                usage = dict(response.get("llm_usage") or {})
+                usage["cache_hit"] = True
+                response["llm_usage"] = usage
+                indexed_responses.append((index, response, None))
             else:
                 pending_jobs.append(job)
 
@@ -951,6 +978,7 @@ class GraphComposer:
             "neighbor_cache_path": self.config.neighbor_cache_path,
             "neighbor_cache_hits": cache_hit_count,
             "neighbor_cache_misses": len(pending_jobs),
+            "llm_budget_summary": _summarize_llm_usage(responses),
             "clip_results": responses,
             "notes": "local target-clip graph construction with neighbor semantic edges",
         }
