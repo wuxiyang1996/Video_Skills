@@ -23,9 +23,11 @@ DATASET_TASK_FAMILY: dict[DatasetName, str] = {
 }
 
 SHORT_MULTI_HOP_DATASETS: tuple[DatasetName, ...] = ("video_holmes", "videomme", "ovo_bench")
+LONG_COARSE_FINE_DATASETS: tuple[DatasetName, ...] = ("cg_bench", "vrbench")
 
 PROFILE_TASK_FAMILY: dict[BenchmarkProfile, str] = {
     BenchmarkProfile.SHORT_MULTI_HOP: "short_video_multi_hop_qa",
+    BenchmarkProfile.LONG_COARSE_FINE: "long_video_coarse_to_fine_qa",
 }
 
 # Hidden supervision fields available per dataset (expert_demo only).
@@ -80,6 +82,8 @@ def default_regime_for_dataset(dataset: DatasetName) -> VideoRegime:
 def regime_for_dataset(dataset: DatasetName, profile: BenchmarkProfile = BenchmarkProfile.DEFAULT) -> VideoRegime:
     if profile == BenchmarkProfile.SHORT_MULTI_HOP and dataset in SHORT_MULTI_HOP_DATASETS:
         return VideoRegime.SHORT
+    if profile == BenchmarkProfile.LONG_COARSE_FINE and dataset in LONG_COARSE_FINE_DATASETS:
+        return VideoRegime.LONG
     return default_regime_for_dataset(dataset)
 
 
@@ -92,6 +96,8 @@ def task_family_for(
 ) -> str:
     if profile == BenchmarkProfile.SHORT_MULTI_HOP and dataset in SHORT_MULTI_HOP_DATASETS and regime == VideoRegime.SHORT:
         return PROFILE_TASK_FAMILY[BenchmarkProfile.SHORT_MULTI_HOP]
+    if profile == BenchmarkProfile.LONG_COARSE_FINE and dataset in LONG_COARSE_FINE_DATASETS and regime == VideoRegime.LONG:
+        return PROFILE_TASK_FAMILY[BenchmarkProfile.LONG_COARSE_FINE]
     return adapter_task_family or DATASET_TASK_FAMILY[dataset]
 
 
@@ -141,3 +147,31 @@ def retrieval_for(regime: VideoRegime) -> ClipRetrievalConfig:
     if regime == VideoRegime.SHORT:
         return ClipRetrievalConfig(enabled=False, topk=1)
     return ClipRetrievalConfig(enabled=True, topk=2, mode="lexical")
+
+
+def apply_profile_defaults(
+    *,
+    dataset: DatasetName,
+    regime: VideoRegime,
+    profile: BenchmarkProfile,
+    clip_policy: ClipPolicyConfig,
+    retrieval: ClipRetrievalConfig,
+) -> None:
+    """Apply benchmark-profile defaults while preserving explicit CLI overrides.
+
+    The long coarse→fine profile is optimized for CG/VR-style long videos:
+    full coarse coverage for reference, then small retrieved fine neighborhoods
+    for expensive VLM/GPT-OSS graph construction.
+    """
+    if profile == BenchmarkProfile.LONG_COARSE_FINE and dataset in LONG_COARSE_FINE_DATASETS and regime == VideoRegime.LONG:
+        clip_policy.strategy = "hierarchical"
+        clip_policy.coarse_window_s = 30.0
+        clip_policy.fine_window_s = 8.0
+        clip_policy.overlap_s = 2.0
+        clip_policy.index_fine_expansion = "retrieval_gated"
+        clip_policy.online = False
+        retrieval.enabled = True
+        retrieval.topk = max(retrieval.topk, 3)
+        retrieval.mode = "lexical"
+        retrieval.query_in_video_only = True
+        retrieval.expand_time_anchors = True

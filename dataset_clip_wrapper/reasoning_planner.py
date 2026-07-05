@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -130,9 +131,99 @@ def _augment_step_outputs(skill_id: str, outputs: dict[str, Any], evidence_refs:
     if skill_id == "verify_claim_support":
         augmented.setdefault("claim", outputs.get("verified_claim"))
         augmented.setdefault("evidence_chain", _chain_from_value(evidence_refs))
+    if skill_id == "compare_hypotheses" and isinstance(outputs.get("best_hypothesis"), dict):
+        best = outputs["best_hypothesis"]
+        augmented.setdefault("claim", best)
+        augmented.setdefault("verified_claim", best)
+        augmented.setdefault("evidence_chain", _chain_from_value(best.get("support_refs") or evidence_refs))
     if skill_id == "score_hypothesis_support" and "scored_hypothesis" in outputs:
         augmented.setdefault("scored_hypotheses", [outputs["scored_hypothesis"]])
     return augmented
+
+
+def _repair_tokens(text: str) -> set[str]:
+    return {tok.lower() for tok in re.findall(r"[a-z0-9]+", text) if len(tok) > 2}
+
+
+def _build_commonsense_repair_pack(
+    *,
+    question: dict[str, Any],
+    clue_memory_graph: dict[str, Any],
+    support_refs: list[str],
+    answerability_diagnostic: dict[str, Any],
+    final_label: Any,
+) -> dict[str, Any]:
+    """Build an explicit non-committing social/common-sense repair pack.
+
+    This pack is deliberately separated from verified evidence. It may guide a
+    repair/retrieval pass, but it must not make an unsupported answer accepted.
+    """
+    nodes = {
+        node.get("node_id"): node
+        for node in clue_memory_graph.get("nodes") or []
+        if isinstance(node, dict) and node.get("node_id")
+    }
+    diagnostic_types = {"question_requirement", "required_modality", "answerability_gap", "l2_repair_reminder"}
+    visual_refs = [
+        ref for ref in support_refs
+        if ref in nodes and nodes[ref].get("node_type") not in diagnostic_types
+    ]
+    if not visual_refs:
+        for node in clue_memory_graph.get("nodes") or []:
+            if not isinstance(node, dict) or node.get("node_type") in diagnostic_types:
+                continue
+            text = str(node.get("text") or node.get("event_description") or "")
+            if text.strip():
+                visual_refs.append(str(node.get("node_id")))
+            if len(visual_refs) >= 6:
+                break
+
+    question_text = str(question.get("question_text") or "")
+    q_tokens = _repair_tokens(question_text)
+    options = [option for option in question.get("options") or [] if isinstance(option, dict)]
+    option_rows = []
+    for option in options:
+        text = str(option.get("text") or "")
+        tokens = _repair_tokens(text)
+        social_terms = tokens & {
+            "because", "interested", "curiosity", "desire", "explore", "history",
+            "cultural", "understand", "feel", "adventure", "seeking", "protect",
+            "fear", "confidential", "misunderstandings", "thrill",
+        }
+        overlap = len(tokens & q_tokens)
+        option_rows.append(
+            {
+                "label": option.get("label"),
+                "text": text,
+                "commonsense_score": round(overlap + 0.5 * len(social_terms), 4),
+                "bridge": (
+                    "This option can be considered as a social/common-sense explanation, "
+                    "but it needs visual-context support before commit."
+                ),
+            }
+        )
+    option_rows.sort(key=lambda row: row["commonsense_score"], reverse=True)
+
+    missing = answerability_diagnostic.get("missing_requirements") or []
+    if not missing and option_rows:
+        missing = ["discriminative_visual_evidence"]
+    return {
+        "status": "repair_candidate",
+        "trust_level": "commonsense_hypothesis_not_visual_evidence",
+        "trigger": "l2_rejected_or_weak_evidence",
+        "missing_requirements": missing,
+        "visual_context_refs": list(dict.fromkeys(visual_refs))[:8],
+        "commonsense_hypotheses": option_rows[:5],
+        "candidate_label_before_repair": final_label,
+        "cannot_commit_reason": (
+            "Common-sense/social inference is not accepted unless verified by "
+            "concrete non-diagnostic video evidence refs."
+        ),
+        "recommended_next_action": (
+            "expand/retrieve adjacent fine clips for the top commonsense hypotheses, "
+            "then rerun verify_claim_support before commit."
+        ),
+    }
 
 _REASONING_SKILL_CONTRACTS = {
     "parse_question_target": "args: question_text, options -> parsed_target object",
@@ -589,6 +680,11 @@ def execute_reasoning_plan(
         if skill_id == "verify_claim_support":
             augmented.setdefault("claim", outputs.get("verified_claim"))
             augmented.setdefault("evidence_chain", _chain(evidence_refs))
+        if skill_id == "compare_hypotheses" and isinstance(outputs.get("best_hypothesis"), dict):
+            best = outputs["best_hypothesis"]
+            augmented.setdefault("claim", best)
+            augmented.setdefault("verified_claim", best)
+            augmented.setdefault("evidence_chain", _chain(best.get("support_refs") or evidence_refs))
         if skill_id == "score_hypothesis_support" and "scored_hypothesis" in outputs:
             augmented.setdefault("scored_hypotheses", [outputs["scored_hypothesis"]])
         return augmented
@@ -634,6 +730,25 @@ def execute_reasoning_plan(
                 evidence_chain = _chain(resolved_args["claim"])
             resolved_args["evidence_chain"] = evidence_chain
             resolved_args.setdefault("question_text", resolved_args["claim"].get("question_text") or question_text)
+        elif skill_id == "score_hypothesis_support":
+            if resolved_args.get("hypothesis") in (None, [], {}):
+                resolved_args["hypothesis"] = _lookup_recent_hypotheses()
+            counter = resolved_args.get("counterevidence")
+            if counter is None:
+                resolved_args["counterevidence"] = []
+        elif skill_id == "compose_evidence_chain":
+            if not resolved_args.get("dependency_template"):
+                resolved_args["dependency_template"] = "support_chain"
+            labeled = resolved_args.get("role_labeled_evidence")
+            if isinstance(labeled, dict):
+                resolved_args["role_labeled_evidence"] = [labeled]
+        elif skill_id == "retrieve_by_time":
+            anchor = resolved_args.get("anchor_event_or_time")
+            if isinstance(anchor, (int, float)):
+                value = float(anchor)
+                resolved_args["anchor_event_or_time"] = {"start_s": value, "end_s": value}
+            resolved_args["window_before"] = float(resolved_args.get("window_before") or 0.0)
+            resolved_args["window_after"] = float(resolved_args.get("window_after") or 0.0)
 
         # --- LLM/VLM dispatch via SkillExecutor ---
         if skill_executor is not None:
@@ -1173,6 +1288,18 @@ def build_llm_reasoning_rollout(
         rollout["metadata"]["llm_trace"] = trace
         rollout["metadata"]["fallback_suppressed"] = True
         rollout["metadata"]["fallback_reason"] = "too_many_failures"
+        trace_refs: list[str] = []
+        for item in reversed(trace):
+            trace_refs.extend(str(ref) for ref in item.get("evidence_refs") or [] if ref)
+            if trace_refs:
+                break
+        rollout["metadata"]["commonsense_repair_pack"] = _build_commonsense_repair_pack(
+            question=question,
+            clue_memory_graph=clue_memory_graph,
+            support_refs=list(dict.fromkeys(trace_refs)),
+            answerability_diagnostic=(planner_example.get("metadata") or {}).get("answerability_diagnostic") or {},
+            final_label=None,
+        )
         rollout["failure_reasons"] = ["planner_execution_failed"]
         if repair_result:
             rollout["metadata"]["repair"] = repair_result
@@ -1426,11 +1553,68 @@ def build_llm_reasoning_rollout(
     except Exception as exc:
         query_memory_consistency = {"error": str(exc)}
 
+    unique_support_refs = list(dict.fromkeys(str(ref) for ref in support_refs if ref))
+    video_regime = (planner_example.get("metadata") or {}).get("video_regime") or rollout.get("video_regime")
+    is_multiple_choice = bool(question.get("options"))
+    answerability_diagnostic = (planner_example.get("metadata") or {}).get("answerability_diagnostic") or {}
+    missing_requirements = answerability_diagnostic.get("missing_requirements") or []
+    min_support_refs = 2 if video_regime == "long" and is_multiple_choice else 1
+    acceptance_failures: list[str] = []
+    if commit_ok and len(unique_support_refs) < min_support_refs:
+        commit_ok = False
+        acceptance_failures.append("insufficient_support_refs")
+    if commit_ok and video_regime == "long" and len(failed_steps) > len(ok_steps):
+        commit_ok = False
+        acceptance_failures.append("unstable_l2_trace")
+
+    strong_min_refs = 4 if video_regime == "long" else 3
+    trace_total = len(ok_steps) + len(failed_steps)
+    trace_fail_ratio = (len(failed_steps) / trace_total) if trace_total else 0.0
+    strong_trace_ok = trace_fail_ratio <= 0.2
+    strong_accept = (
+        commit_ok
+        and len(unique_support_refs) >= strong_min_refs
+        and strong_trace_ok
+        and not missing_requirements
+    )
+    acceptance_status = "accepted_strong" if strong_accept else ("accepted_weak" if commit_ok else "rejected")
+    verifier_reason = (
+        "strong_verified_evidence_pack"
+        if strong_accept
+        else ("weak_verified_evidence_pack" if commit_ok else (acceptance_failures[0] if acceptance_failures else ("no_supported_final_answer" if final_answer else "no_final_answer")))
+    )
+    verified_evidence_pack = {
+        "claim_text": final_text,
+        "final_label": final_label,
+        "support_refs": unique_support_refs if commit_ok else [],
+        "support_ref_count": len(unique_support_refs) if commit_ok else 0,
+        "min_support_refs": min_support_refs,
+        "strong_min_refs": strong_min_refs,
+        "trace_ok": len(ok_steps),
+        "trace_fail": len(failed_steps),
+        "missing_requirements": missing_requirements,
+        "verifier_reason": verifier_reason,
+    }
+    commonsense_repair_pack = None
+    if (not strong_accept) and (not commit_ok or missing_requirements or video_regime == "long"):
+        trace_refs: list[str] = []
+        for item in reversed(trace):
+            trace_refs.extend(str(ref) for ref in item.get("evidence_refs") or [] if ref)
+            if trace_refs:
+                break
+        commonsense_repair_pack = _build_commonsense_repair_pack(
+            question=question,
+            clue_memory_graph=clue_memory_graph,
+            support_refs=unique_support_refs or list(dict.fromkeys(trace_refs)),
+            answerability_diagnostic=answerability_diagnostic,
+            final_label=final_label,
+        )
+
     rollout["claims"] = [{
         "claim_id": stable_id("claim", final_text),
         "text": final_text,
         "claim_status": "verified" if commit_ok else "insufficient",
-        "supported_by_refs": support_refs if commit_ok else [],
+        "supported_by_refs": unique_support_refs if commit_ok else [],
     }]
     rollout["answer_support_chain"] = [support_chain] if commit_ok else []
     rollout["final_answer"] = {
@@ -1438,8 +1622,11 @@ def build_llm_reasoning_rollout(
         "text": final_text,
         "confidence": last_output.get("confidence", 0.0) if commit_ok else 0.0,
     }
-    rollout["acceptance_status"] = "accepted_weak" if commit_ok else "rejected"
-    rollout["failure_reasons"] = [] if commit_ok else ["no_supported_final_answer" if final_answer else "no_final_answer"]
+    rollout["acceptance_status"] = acceptance_status
+    rollout["failure_reasons"] = [] if commit_ok else (
+        acceptance_failures or ["no_supported_final_answer" if final_answer else "no_final_answer"]
+    )
+    rollout["verified_evidence_pack"] = verified_evidence_pack
     rollout["metadata"] = {
         "executed_skill_ids": list(dict.fromkeys(executed_skills)),
         "executed_skill_count": len(set(executed_skills)),
@@ -1447,9 +1634,18 @@ def build_llm_reasoning_rollout(
         "llm_plan": plan_response,
         "llm_trace_ok": len(ok_steps),
         "llm_trace_fail": len(failed_steps),
+        "acceptance_status_detail": {
+            "status": acceptance_status,
+            "reason": verifier_reason,
+            "strong_trace_ok": strong_trace_ok,
+            "trace_fail_ratio": round(trace_fail_ratio, 4),
+            "strong_min_refs": strong_min_refs,
+        },
     }
     if repair_result:
         rollout["metadata"]["repair"] = repair_result
     if query_memory_consistency:
         rollout["metadata"]["query_memory_consistency"] = query_memory_consistency
+    if commonsense_repair_pack:
+        rollout["metadata"]["commonsense_repair_pack"] = commonsense_repair_pack
     return rollout

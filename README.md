@@ -85,9 +85,19 @@ video reasoning datasets:
 - `Video-Holmes`: complex short-video social, causal, temporal reasoning.
 - `CG-Bench`: clue-grounded long-video evidence retrieval.
 - `VRBench`: long-video timestamped multi-step reasoning.
-- `SIV-Bench`: short social-interaction reasoning with weak evidence alignment.
+- `SIV-Bench`: short social-interaction reasoning with weak evidence alignment;
+  under the current no-audio video-only scope it is treated as an answerability
+  gap / repair stress test rather than a primary success metric.
 
 M3-Bench is intentionally deferred until its memory graph reader is ready.
+
+For the current video-only benchmark track, the primary set is
+`Video-Holmes`, `VideoMME`, `OVO-Bench`, `CG-Bench`, and `VRBench`. SIV-Bench
+remains useful for testing whether the graph can honestly mark social/common-
+sense gaps: many SIV questions depend on dialogue, confidential information,
+or interpersonal intent that is not visible without audio/ASR. In this setting,
+L2 may form a commonsense repair hypothesis, but it must not commit an answer
+unless concrete video evidence verifies it.
 
 ## Documents
 

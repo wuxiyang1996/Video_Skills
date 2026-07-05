@@ -37,6 +37,25 @@ def _subtitle_context_for_clip(segments: list[dict[str, Any]], clip_span: dict[s
     return " | ".join(texts)
 
 
+def _question_retrieval_query(question: dict[str, Any]) -> str:
+    """Build the visible query used for long-video coarse→fine retrieval."""
+    parts: list[str] = []
+    question_text = question.get("question_text")
+    if isinstance(question_text, str) and question_text.strip():
+        parts.append(question_text.strip())
+    options = question.get("options")
+    if isinstance(options, list):
+        for option in options:
+            if not isinstance(option, dict):
+                continue
+            label = option.get("label")
+            text = option.get("text")
+            option_text = " ".join(str(part).strip() for part in (label, text) if part)
+            if option_text:
+                parts.append(option_text)
+    return " ".join(parts)
+
+
 def _derived_clips_for_spans(
     *,
     video_id: str,
@@ -1013,7 +1032,7 @@ def build_llm_enriched_example(
     duration_s = float(example["video"].get("duration_s") or 0.0)
     clip_policy = config.resolved_clip_policy(duration_s)
     visible_segments = example["video"]["segments"]
-    question_text = item.question.get("question_text") or ""
+    question_text = _question_retrieval_query(item.question)
 
     perception_spans, perception_meta = _resolve_perception_spans(
         duration_s=duration_s,

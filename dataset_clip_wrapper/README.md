@@ -327,6 +327,29 @@ L2 answer commit is blocked. A future specialized L2 module may only try
 visual social-intent or causal-motive verification; it must not use audio,
 ASR, or subtitles as evidence in this scope.
 
+### SIV-Bench under no-audio video-only
+
+SIV-Bench should not be interpreted like the current primary five-dataset
+video-only track (`video_holmes`, `videomme`, `ovo_bench`, `cg_bench`,
+`vrbench`). It is valuable, but for a different purpose. Many SIV questions ask
+why someone is hesitant, hiding information, protecting another person, or
+avoiding misunderstanding. Those answers often depend on dialogue or social
+context that is outside the current no-audio scope.
+
+The expected behavior is therefore:
+
+- build the L1 visual graph if video is available;
+- mark missing `dialogue_or_asr`, `social_intent_or_affect`, or
+  `causal_explanation` requirements explicitly;
+- create a `commonsense_repair_pack` only as a low-trust bridge hypothesis;
+- keep `audio_repair_allowed=false`;
+- block final L2 commit unless non-diagnostic video evidence verifies the
+  claim.
+
+This makes SIV a stress test for answerability-gap detection and repair
+protocols, not a benchmark where video-only L2 should be expected to answer
+every item.
+
 ## Staged Outputs and Resume
 
 `run_staged_llm_pipeline.py` is the recommended API runner for slow videos. It
@@ -375,13 +398,38 @@ python -m dataset_clip_wrapper.run_staged_llm_pipeline \
 For long videos, prefer acceleration by reducing work before increasing
 parallelism:
 
+- use `--benchmark-profile long_coarse_fine` for CG-Bench/VRBench full-coarse +
+  retrieved-fine graph building;
 - keep `index_fine_expansion=retrieval_gated`;
-- use `--query-time-retrieval` and timestamp anchors to select fine clips;
+- keep the coarse summary index enabled so video-only retrieval has visual text
+  to search; without coarse summaries the retriever falls back to uniform probe;
+- use visible question + answer options and timestamp anchors to select fine clips;
 - keep `--retrieval-topk` small for the first pass;
 - use `--clip-schema-frames 1` and lower `--clip-schema-max-tokens`;
 - run L1 gate passes with `--graph-deterministic --skip-l2-planner`;
 - disable skill-level API calls with `--disable-llm-skills --disable-vlm-skills`;
 - retry only failed or relevant clips from the staged cache.
+
+Recommended long-video staged pass:
+
+```bash
+python -m dataset_clip_wrapper.run_staged_llm_pipeline \
+  --dataset cg_bench \
+  --benchmark-profile long_coarse_fine \
+  --mode video_only \
+  --limit 1 \
+  --clip-schema-model qwen/qwen3.5-9b \
+  --clip-schema-frames 1 \
+  --clip-schema-workers 8 \
+  --clip-schema-max-tokens 600 \
+  --retry-failed-clip-schemas \
+  --graph-model openai/gpt-oss-120b \
+  --graph-neighbor-workers 8 \
+  --skill-model openai/gpt-oss-120b \
+  --llm-skill-scope verifier \
+  --stage-dir dataset_clip_wrapper/output/staged_long_coarse_fine_cg \
+  --output dataset_clip_wrapper/output/long_coarse_fine_cg.jsonl
+```
 
 ## L1 Gate Before GPT-OSS L2
 

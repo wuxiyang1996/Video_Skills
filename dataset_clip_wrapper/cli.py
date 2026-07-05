@@ -7,7 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .dataset_graph_presets import regime_for_dataset
+from .dataset_graph_presets import apply_profile_defaults, clip_policy_for, regime_for_dataset, retrieval_for
 from .pipeline import iter_canonical_examples
 from .schemas import BenchmarkProfile, BackboneConfig, ClipPolicyConfig, ClipRetrievalConfig, RuntimeMode, VideoRegime, WrapperConfig
 
@@ -34,8 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--benchmark-profile",
         default="default",
-        choices=["default", "short_multi_hop"],
-        help="Benchmark profile override; short_multi_hop uses Video-Holmes/VideoMME/OVO as offline short-video multi-hop QA.",
+        choices=["default", "short_multi_hop", "long_coarse_fine"],
+        help="Benchmark profile override; long_coarse_fine uses full coarse coverage + retrieved fine graph for CG/VR.",
     )
     parser.add_argument("--mode", default="expert_demo", choices=["expert_demo", "video_only"])
     parser.add_argument("--limit", type=int, default=1)
@@ -82,7 +82,15 @@ def main(argv: list[str] | None = None) -> int:
     regime = VideoRegime(args.regime) if args.regime else None
     dataset_regime = regime or regime_for_dataset(args.dataset, benchmark_profile)
 
-    clip_policy = ClipPolicyConfig.dataset_default(args.dataset, dataset_regime)
+    clip_policy = clip_policy_for(args.dataset, dataset_regime)
+    retrieval = retrieval_for(dataset_regime)
+    apply_profile_defaults(
+        dataset=args.dataset,
+        regime=dataset_regime,
+        profile=benchmark_profile,
+        clip_policy=clip_policy,
+        retrieval=retrieval,
+    )
     if args.clip_strategy:
         clip_policy.strategy = args.clip_strategy
     if args.window_s is not None:
@@ -98,7 +106,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.index_fine_expansion:
         clip_policy.index_fine_expansion = args.index_fine_expansion  # type: ignore[assignment]
 
-    retrieval = ClipRetrievalConfig()
     if args.no_retrieval:
         retrieval.enabled = False
     if args.retrieval_topk is not None:

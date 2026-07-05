@@ -23,11 +23,12 @@ from .llm_pipeline import (
     _coarse_fine_context_for_evidence_index,
     _derived_clips_for_spans,
     _parse_time_anchors_s,
+    _question_retrieval_query,
     _resolve_perception_spans,
     _subtitle_context_for_clip,
 )
 from .clip_policy import segment_coarse_index
-from .dataset_graph_presets import regime_for_dataset
+from .dataset_graph_presets import apply_profile_defaults, clip_policy_for, regime_for_dataset, retrieval_for
 from .openrouter_client import OpenRouterClient, load_openrouter_api_key
 from .pipeline import build_canonical_example
 from .reasoning_rollout import build_reasoning_rollout
@@ -100,8 +101,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--benchmark-profile",
         default="default",
-        choices=["default", "short_multi_hop"],
-        help="Benchmark profile override; short_multi_hop uses Video-Holmes/VideoMME/OVO as offline short-video multi-hop QA.",
+        choices=["default", "short_multi_hop", "long_coarse_fine"],
+        help="Benchmark profile override; long_coarse_fine uses full coarse coverage + retrieved fine graph for CG/VR.",
     )
     parser.add_argument("--mode", default="video_only", choices=["expert_demo", "video_only"])
     parser.add_argument("--limit", type=int, default=1)
@@ -170,7 +171,15 @@ def _config_from_args(args: argparse.Namespace) -> WrapperConfig:
     regime = VideoRegime(args.regime) if args.regime else None
     dataset_regime = regime or regime_for_dataset(args.dataset, benchmark_profile)
 
-    clip_policy = ClipPolicyConfig.dataset_default(args.dataset, dataset_regime)
+    clip_policy = clip_policy_for(args.dataset, dataset_regime)
+    retrieval = retrieval_for(dataset_regime)
+    apply_profile_defaults(
+        dataset=args.dataset,
+        regime=dataset_regime,
+        profile=benchmark_profile,
+        clip_policy=clip_policy,
+        retrieval=retrieval,
+    )
     if args.index_fine_expansion:
         clip_policy.index_fine_expansion = args.index_fine_expansion  # type: ignore[assignment]
 
@@ -182,10 +191,12 @@ def _config_from_args(args: argparse.Namespace) -> WrapperConfig:
         mode=RuntimeMode(args.mode),
         clip_policy=clip_policy,
         retrieval=ClipRetrievalConfig(
-            topk=args.retrieval_topk,
-            mode=args.retrieval_mode,  # type: ignore[arg-type]
-            query_in_video_only=args.query_time_retrieval,
-            expand_time_anchors=not args.no_time_anchor_expansion,
+            enabled=retrieval.enabled,
+            topk=max(args.retrieval_topk, retrieval.topk),
+            threshold=retrieval.threshold,
+            mode=args.retrieval_mode or retrieval.mode,  # type: ignore[arg-type]
+            query_in_video_only=args.query_time_retrieval or retrieval.query_in_video_only,
+            expand_time_anchors=retrieval.expand_time_anchors and not args.no_time_anchor_expansion,
         ),
         backbone=BackboneConfig(keys_py_path=args.keys_py),
         clip_schema=ClipSchemaConfig(
@@ -609,7 +620,7 @@ def _run_item(
         clip_policy=clip_policy,
         regime=config.regime,
         retrieval_config=config.retrieval,
-        question_text=item.question.get("question_text") or "",
+        question_text=_question_retrieval_query(item.question),
         visible_segments=retrieval_segments,
         mode=config.mode,
     )
@@ -638,7 +649,7 @@ def _run_item(
         anchor_spans, anchor_derived, anchors_s = _anchor_repass_spans(
             spans=perception_spans,
             derived_clips=derived,
-            question_text=item.question.get("question_text") or "",
+            question_text=_question_retrieval_query(item.question),
             window_s=anchor_repass_window_s,
         )
         anchor_schemas = _produce_or_resume_anchor_repass(

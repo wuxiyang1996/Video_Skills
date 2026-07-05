@@ -23,6 +23,7 @@ class RuntimeMode(str, Enum):
 class BenchmarkProfile(str, Enum):
     DEFAULT = "default"
     SHORT_MULTI_HOP = "short_multi_hop"
+    LONG_COARSE_FINE = "long_coarse_fine"
 
 
 DatasetName = Literal["video_holmes", "cg_bench", "vrbench", "siv_bench", "ovo_bench", "videomme"]
