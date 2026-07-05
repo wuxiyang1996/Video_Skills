@@ -1,0 +1,621 @@
+#!/usr/bin/env python3
+"""Run targeted L1/L2 repair for examples flagged by the quality report.
+
+The repair protocol is deliberately narrow:
+1. read the L1/L2 quality report,
+2. expand the coarse windows around the reported failure,
+3. ask the VLM for focused repair clip schemas,
+4. write a non-destructive graph patch, and
+5. verify answer claims with the existing atomic verifier.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+try:
+    from atomic_skills.common import stable_id
+    from atomic_skills.skill_backends import SkillBackendConfig, SkillBackendMode
+    from atomic_skills.skill_executor import SkillExecutor
+    from atomic_skills.skill_model_client import SkillModelClient
+    from .clip_policy import segment_perception_clips
+    from .clip_schema import QwenClipSchemaProducer
+    from .openrouter_client import OpenRouterClient, load_openrouter_api_key
+    from .schemas import ClipPolicyConfig, ClipSchemaConfig, ClipSpan, VideoRegime
+except ImportError:  # pragma: no cover - direct script execution
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from atomic_skills.common import stable_id
+    from atomic_skills.skill_backends import SkillBackendConfig, SkillBackendMode
+    from atomic_skills.skill_executor import SkillExecutor
+    from atomic_skills.skill_model_client import SkillModelClient
+    from dataset_clip_wrapper.clip_policy import segment_perception_clips
+    from dataset_clip_wrapper.clip_schema import QwenClipSchemaProducer
+    from dataset_clip_wrapper.openrouter_client import OpenRouterClient, load_openrouter_api_key
+    from dataset_clip_wrapper.schemas import ClipPolicyConfig, ClipSchemaConfig, ClipSpan, VideoRegime
+
+
+def _read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not path.exists():
+        return rows
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                rows.append(json.loads(line))
+    return rows
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    tmp.replace(path)
+
+
+def _safe_name(text: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", text)[:180]
+
+
+def _load_source_example(row: dict[str, Any]) -> dict[str, Any]:
+    path = Path(str(row["source_path"]))
+    example_id = row.get("example_id")
+    for example in _read_jsonl(path):
+        if example.get("example_id") == example_id:
+            return example
+    raise ValueError(f"Could not find example_id={example_id} in {path}")
+
+
+def _option_text(question: dict[str, Any]) -> str:
+    options = question.get("options") or []
+    return "\n".join(f"{opt.get('label')}. {opt.get('text')}" for opt in options)
+
+
+def _gap_types(row: dict[str, Any]) -> list[str]:
+    hints = row.get("repair_hints") or {}
+    gaps: list[str] = []
+    gaps.extend(str(item) for item in hints.get("missing_requirements") or [])
+    commonsense = hints.get("commonsense_repair") or {}
+    gaps.extend(str(item) for item in commonsense.get("missing_requirements") or [])
+    if not gaps and row.get("verifier_reason"):
+        gaps.append(str(row.get("verifier_reason")))
+    return list(dict.fromkeys(gaps))
+
+
+def _strategy_for_gaps(gaps: list[str]) -> str:
+    if "discriminative_visual_evidence" in gaps:
+        return "visual_disambiguation_retrieval"
+    if {"social_intent_or_affect", "causal_explanation"} & set(gaps):
+        return "social_causal_commonsense_bridge"
+    return "evidence_sufficiency_retrieval"
+
+
+def _expanded_indices(selected: list[int], coarse_count: int, *, radius: int) -> list[int]:
+    out: list[int] = []
+    for idx in selected:
+        for j in range(idx - radius, idx + radius + 1):
+            if 0 <= j < coarse_count:
+                out.append(j)
+    return list(dict.fromkeys(out))
+
+
+def _repair_query(example: dict[str, Any], row: dict[str, Any], gaps: list[str]) -> str:
+    question = example.get("question") or {}
+    commonsense = ((row.get("repair_hints") or {}).get("commonsense_repair") or {})
+    hypotheses = commonsense.get("top_hypotheses") or []
+    hyp_text = "\n".join(
+        f"- {h.get('label')}: {h.get('text')} (commonsense_score={h.get('commonsense_score')})"
+        for h in hypotheses[:4]
+    )
+    return (
+        "Visible QA repair context. Do not use hidden answer labels.\n"
+        f"Question: {question.get('question_text')}\n"
+        f"Options:\n{_option_text(question)}\n"
+        f"Current missing requirements: {', '.join(gaps) or 'evidence_sufficiency'}\n"
+        f"Candidate commonsense hypotheses to check against visual evidence:\n{hyp_text}\n"
+        "Focus on observable visual clues, discriminative details, social affect, "
+        "actions, setting, and causal context. Mark uncertainty explicitly."
+    )
+
+
+def _select_repair_spans(
+    example: dict[str, Any],
+    row: dict[str, Any],
+    *,
+    radius: int,
+    max_repair_clips: int,
+) -> tuple[list[ClipSpan], dict[str, Any]]:
+    duration_s = float((example.get("video") or {}).get("duration_s") or 0.0)
+    policy = ClipPolicyConfig.for_regime(VideoRegime.LONG, duration_s=duration_s)
+    cf_graph = ((example.get("metadata") or {}).get("coarse_fine_graph") or {})
+    coarse_count = int(((cf_graph.get("counts") or {}).get("coarse_nodes")) or 0)
+    selected = [int(i) for i in ((row.get("L1_quality") or {}).get("selected_coarse_indices") or [])]
+    if not selected:
+        selected = list(range(min(coarse_count, 3)))
+    expanded = _expanded_indices(selected, coarse_count or max(selected, default=0) + 1, radius=radius)
+    spans = segment_perception_clips(
+        duration_s,
+        policy,
+        regime=VideoRegime.LONG,
+        selected_coarse_indices=expanded,
+    )
+    fine_spans = [span for span in spans if span.granularity == "fine"]
+
+    existing_ids = {
+        str(schema.get("clip_id"))
+        for schema in ((example.get("metadata") or {}).get("clip_schemas") or [])
+        if isinstance(schema, dict) and schema.get("clip_id")
+    }
+    fresh = [
+        span
+        for span in fine_spans
+        if f"clip:{(example.get('video') or {}).get('video_id')}:fine:{span.clip_index:04d}" not in existing_ids
+    ]
+    chosen = (fresh or fine_spans or spans)[:max_repair_clips]
+    return chosen, {
+        "duration_s": duration_s,
+        "selected_coarse_indices": selected,
+        "expanded_coarse_indices": expanded,
+        "candidate_span_count": len(spans),
+        "candidate_fine_span_count": len(fine_spans),
+        "fresh_span_count": len(fresh),
+        "chosen_span_count": len(chosen),
+    }
+
+
+def _build_producer(args: argparse.Namespace, api_key: str) -> QwenClipSchemaProducer:
+    reasoning = None if args.clip_schema_reasoning_effort in {"", "none", "off"} else {"effort": args.clip_schema_reasoning_effort}
+    if args.clip_schema_reasoning_effort == "none":
+        reasoning = {"effort": "none", "exclude": True}
+    client = OpenRouterClient(
+        model=args.clip_schema_model,
+        api_key=api_key,
+        temperature=0.0,
+        max_tokens=args.clip_schema_max_tokens,
+        reasoning=reasoning,
+        timeout_s=args.clip_schema_timeout_s,
+    )
+    cfg = ClipSchemaConfig(
+        model=args.clip_schema_model,
+        keys_py_path=str(args.keys_py) if args.keys_py else None,
+        request_frames=args.request_frames,
+        max_tokens=args.clip_schema_max_tokens,
+        timeout_s=args.clip_schema_timeout_s,
+    )
+    return QwenClipSchemaProducer(cfg, client)
+
+
+def _schema_for_span(
+    producer: QwenClipSchemaProducer,
+    *,
+    example: dict[str, Any],
+    span: ClipSpan,
+    repair_query: str,
+) -> dict[str, Any]:
+    video = example.get("video") or {}
+    video_id = str(video.get("video_id") or "video")
+    clip_id = f"clip:{video_id}:fine:{span.clip_index:04d}"
+    return producer.build_clip_schema(
+        clip_id=clip_id,
+        clip=span,
+        video_path=Path(str(video.get("primary_path"))) if video.get("primary_path") else None,
+        subtitle_context=None,
+        question_context=repair_query,
+    )
+
+
+def _audio_or_subtitle_like(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        token in lowered
+        for token in ("'modality': 'audio'", '"modality": "audio"', "'modality': 'subtitle'", '"modality": "subtitle"')
+    )
+
+
+def _text_items(schema: dict[str, Any]) -> list[str]:
+    items: list[str] = []
+    for key in ("scene_description", "uncertainty"):
+        text = str(schema.get(key) or "").strip()
+        if text and not _audio_or_subtitle_like(text):
+            items.append(text)
+    for key in ("observable_facts", "events", "visual_social_cues", "cross_clip_cues", "searchable_phrases"):
+        value = schema.get(key)
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, str):
+                    if not _audio_or_subtitle_like(item):
+                        items.append(item)
+                elif isinstance(item, dict):
+                    modality = str(item.get("modality") or "visual").lower()
+                    if modality in {"audio", "subtitle", "asr"}:
+                        continue
+                    text = item.get("text") or item.get("event_description") or item.get("description") or item.get("cue")
+                    if text and not _audio_or_subtitle_like(str(text)):
+                        items.append(str(text))
+    return [item.strip() for item in items if item and item.strip()]
+
+
+def _negative_target_count(patch: dict[str, Any]) -> int:
+    negative_terms = (
+        "no vehicle",
+        "no animated vehicle",
+        "no animation",
+        "not visible",
+        "cannot determine",
+        "does not provide enough information",
+        "no visible",
+    )
+    count = 0
+    for node in patch.get("nodes") or []:
+        if node.get("node_type") in {"l2_repair_reminder", "answerability_gap"}:
+            continue
+        text = str(node.get("text") or "").lower()
+        if any(term in text for term in negative_terms):
+            count += 1
+    return count
+
+
+def _build_l1_patch(example: dict[str, Any], row: dict[str, Any], schemas: list[dict[str, Any]], gaps: list[str]) -> dict[str, Any]:
+    video_id = str((example.get("video") or {}).get("video_id") or "")
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+    gap_id = stable_id("repair.gap", example.get("example_id"), gaps)
+    nodes.append(
+        {
+            "node_id": gap_id,
+            "node_type": "l2_repair_reminder",
+            "text": f"Repair needed: {', '.join(gaps) or row.get('verifier_reason')}",
+            "source_type": "quality_report",
+            "producer": "run_repair_protocol",
+            "visibility": {"mode": "video_only", "hidden_supervision": False},
+        }
+    )
+    for schema in schemas:
+        if schema.get("model_error"):
+            continue
+        clip_id = str(schema.get("clip_id") or "")
+        time_span = schema.get("time_span") or {}
+        for text in _text_items(schema)[:10]:
+            node_type = "visual_social_cue" if any(gap in {"social_intent_or_affect", "causal_explanation"} for gap in gaps) else "observation"
+            node_id = stable_id("repair.obs", example.get("example_id"), clip_id, text)
+            nodes.append(
+                {
+                    "node_id": node_id,
+                    "node_type": node_type,
+                    "text": text,
+                    "modality": "visual",
+                    "confidence": 0.72,
+                    "clip_id": clip_id,
+                    "time_span": time_span,
+                    "source_type": "repair_clip_schema",
+                    "producer": "qwen_repair_clip_schema",
+                    "video_id": video_id,
+                    "visibility": {"mode": "video_only", "hidden_supervision": False},
+                    "provenance": {"created_by": "dataset_clip_wrapper.run_repair_protocol"},
+                }
+            )
+            edges.append(
+                {
+                    "edge_id": stable_id("repair.edge", gap_id, node_id),
+                    "src": node_id,
+                    "dst": gap_id,
+                    "edge_type": "repair_candidate_for",
+                    "text": "Repair candidate evidence for the reported L2/L1 gap.",
+                    "confidence": 0.6,
+                    "evidence_refs": [node_id, gap_id],
+                    "producer": "run_repair_protocol",
+                    "visibility": {"mode": "video_only", "hidden_supervision": False},
+                }
+            )
+    return {
+        "schema_version": "video-skills-relaunch/repair-v0.1",
+        "example_id": example.get("example_id"),
+        "dataset": example.get("dataset"),
+        "strategy": _strategy_for_gaps(gaps),
+        "gap_types": gaps,
+        "nodes": nodes,
+        "edges": edges,
+        "counts": {"nodes": len(nodes), "edges": len(edges), "repair_observation_nodes": max(0, len(nodes) - 1)},
+    }
+
+
+def _merge_patch_graph(example: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    base = ((example.get("metadata") or {}).get("clue_memory_graph") or {"nodes": [], "edges": []})
+    graph = dict(base)
+    graph["nodes"] = list(base.get("nodes") or []) + list(patch.get("nodes") or [])
+    graph["edges"] = list(base.get("edges") or []) + list(patch.get("edges") or [])
+    graph.setdefault("metadata", {})
+    graph["metadata"] = dict(graph.get("metadata") or {})
+    graph["metadata"]["repair_patch_schema_version"] = patch.get("schema_version")
+    graph["metadata"]["repair_gap_types"] = patch.get("gap_types") or []
+    return graph
+
+
+def _candidate_refs_for_option(graph: dict[str, Any], option: dict[str, Any], question_text: str, *, limit: int) -> list[str]:
+    query_words = set(re.findall(r"[a-zA-Z0-9]+", f"{question_text} {option.get('text', '')}".lower()))
+    scored: list[tuple[float, str]] = []
+    for node in graph.get("nodes") or []:
+        node_id = node.get("node_id")
+        if not node_id or node.get("node_type") in {"l2_repair_reminder", "answerability_gap", "question_requirement"}:
+            continue
+        if node.get("source_type") not in {"repair_clip_schema", "observation"} and node.get("producer") != "qwen_repair_clip_schema":
+            continue
+        text = str(node.get("text") or "")
+        words = set(re.findall(r"[a-zA-Z0-9]+", text.lower()))
+        overlap = len(query_words & words)
+        bonus = 2 if node.get("source_type") == "repair_clip_schema" else 0
+        if overlap or bonus:
+            scored.append((overlap + bonus, str(node_id)))
+    scored.sort(reverse=True)
+    return [ref for _, ref in scored[:limit]]
+
+
+def _verify_options(
+    example: dict[str, Any],
+    graph: dict[str, Any],
+    *,
+    api_key: str | None,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    question = example.get("question") or {}
+    question_text = str(question.get("question_text") or "")
+    options = question.get("options") or []
+    executor: SkillExecutor
+    if api_key and not args.skip_gptoss_verifier:
+        llm_client = SkillModelClient(
+            model=args.verifier_model,
+            api_key=api_key,
+            max_tokens=args.verifier_max_tokens,
+            temperature=0.0,
+            timeout_s=args.verifier_timeout_s,
+        )
+        executor = SkillExecutor(
+            llm_client=llm_client,
+            config=SkillBackendConfig(default_mode=SkillBackendMode.RULE, llm_skills={"verify_claim_support"}),
+        )
+        backend = "gptoss_verifier"
+    else:
+        executor = SkillExecutor(config=SkillBackendConfig(default_mode=SkillBackendMode.RULE))
+        backend = "rule_verifier"
+
+    verifications: list[dict[str, Any]] = []
+    for opt in options:
+        refs = _candidate_refs_for_option(graph, opt, question_text, limit=args.max_verify_refs)
+        claim = {
+            "claim_text": f"{opt.get('label')}: {opt.get('text')}",
+            "option_label": opt.get("label"),
+            "question_text": question_text,
+        }
+        result = executor.execute(
+            "verify_claim_support",
+            args={
+                "claim": claim,
+                "question_text": question_text,
+                "evidence_chain": {"evidence_refs": refs},
+                "support_policy": {
+                    "min_evidence_refs": args.min_verify_refs,
+                    "min_claim_score": 0.05,
+                    "min_target_score": 0.05,
+                },
+            },
+            graph=graph,
+        )
+        verifications.append(
+            {
+                "option_label": opt.get("label"),
+                "option_text": opt.get("text"),
+                "evidence_refs": refs,
+                "ok": bool(result.ok),
+                "failure_code": result.failure_code,
+                "confidence": result.confidence,
+                "outputs": result.outputs,
+            }
+        )
+
+    passed = [row for row in verifications if row["ok"]]
+    if passed:
+        passed.sort(key=lambda row: float(row.get("confidence") or 0.0), reverse=True)
+        status = "resolved_strong" if len(passed[0].get("evidence_refs") or []) >= args.min_verify_refs else "resolved_weak"
+        best = passed[0]
+    else:
+        status = "needs_more_evidence"
+        best = max(verifications, key=lambda row: float(row.get("confidence") or 0.0), default={})
+    return {
+        "schema_version": "video-skills-relaunch/repair-l2-v0.1",
+        "example_id": example.get("example_id"),
+        "dataset": example.get("dataset"),
+        "backend": backend,
+        "repair_status": status,
+        "best_option": {
+            "label": best.get("option_label"),
+            "text": best.get("option_text"),
+            "confidence": best.get("confidence"),
+        },
+        "option_verifications": verifications,
+    }
+
+
+def _build_report(plan: dict[str, Any], patch: dict[str, Any], l2: dict[str, Any]) -> dict[str, Any]:
+    strong = l2.get("repair_status") == "resolved_strong"
+    negative_count = _negative_target_count(patch)
+    if strong:
+        next_action = "commit repaired evidence pack"
+    elif negative_count:
+        next_action = "reroute coarse retrieval because repair clips contain negative target evidence"
+    else:
+        next_action = "expand another fine-pass around visually relevant context"
+    return {
+        "example_id": plan.get("example_id"),
+        "dataset": plan.get("dataset"),
+        "strategy": plan.get("strategy"),
+        "gap_types": plan.get("gap_types") or [],
+        "repair_status": l2.get("repair_status"),
+        "best_option": l2.get("best_option"),
+        "patch_counts": patch.get("counts") or {},
+        "negative_target_evidence_nodes": negative_count,
+        "verifier_backend": l2.get("backend"),
+        "repair_needed_after_round": not strong,
+        "verifier_reason": "strong repair evidence verified" if strong else "repair evidence remains weak or insufficient",
+        "recommended_next_action": next_action,
+        "artifact_paths": plan.get("artifact_paths") or {},
+    }
+
+
+def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | None) -> dict[str, Any]:
+    example = _load_source_example(row)
+    gaps = _gap_types(row)
+    strategy = _strategy_for_gaps(gaps)
+    out_dir = args.stage_dir / _safe_name(f"{row.get('dataset')}_{row.get('example_id')}")
+    plan_path = out_dir / "repair_01_plan.json"
+    schemas_path = out_dir / "repair_02_clip_schemas.jsonl"
+    patch_path = out_dir / "repair_03_l1_patch.json"
+    l2_path = out_dir / "repair_04_l2_verifier.json"
+    report_path = out_dir / "repair_05_report.json"
+
+    spans, span_meta = _select_repair_spans(
+        example,
+        row,
+        radius=args.coarse_radius,
+        max_repair_clips=args.max_repair_clips,
+    )
+    query = _repair_query(example, row, gaps)
+    plan = {
+        "schema_version": "video-skills-relaunch/repair-plan-v0.1",
+        "example_id": example.get("example_id"),
+        "dataset": example.get("dataset"),
+        "source_path": row.get("source_path"),
+        "strategy": strategy,
+        "gap_types": gaps,
+        "repair_query": query,
+        "span_selection": span_meta,
+        "spans": [
+            {"clip_index": span.clip_index, "parent_index": span.parent_index, "time_span": span.to_dict(), "granularity": span.granularity}
+            for span in spans
+        ],
+        "acceptance_rule": (
+            "Repair may only become resolved_strong when verify_claim_support passes "
+            "with non-diagnostic visual evidence refs; commonsense hypotheses are reminders, not final evidence."
+        ),
+        "artifact_paths": {
+            "plan": str(plan_path),
+            "clip_schemas": str(schemas_path),
+            "l1_patch": str(patch_path),
+            "l2_verifier": str(l2_path),
+            "report": str(report_path),
+        },
+    }
+    _write_json(plan_path, plan)
+
+    if args.dry_run:
+        patch = _build_l1_patch(example, row, [], gaps)
+        l2 = {"repair_status": "dry_run", "backend": "none", "best_option": {}}
+        _write_json(patch_path, patch)
+        _write_json(l2_path, l2)
+        report = _build_report(plan, patch, l2)
+        _write_json(report_path, report)
+        return report
+
+    schemas: list[dict[str, Any]]
+    if args.skip_api and schemas_path.exists():
+        schemas = _read_jsonl(schemas_path)
+    elif args.skip_api:
+        schemas = []
+    else:
+        if not api_key:
+            raise RuntimeError("OpenRouter API key is required unless --dry-run or --skip-api is used")
+        producer = _build_producer(args, api_key)
+        schemas = []
+        for span in spans:
+            schema = _schema_for_span(producer, example=example, span=span, repair_query=query)
+            schemas.append(schema)
+            _write_jsonl(schemas_path, schemas)
+    if schemas and not schemas_path.exists():
+        _write_jsonl(schemas_path, schemas)
+
+    patch = _build_l1_patch(example, row, schemas, gaps)
+    _write_json(patch_path, patch)
+    repaired_graph = _merge_patch_graph(example, patch)
+    l2 = _verify_options(example, repaired_graph, api_key=api_key, args=args)
+    _write_json(l2_path, l2)
+    report = _build_report(plan, patch, l2)
+    _write_json(report_path, report)
+    return report
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run targeted graph repair for L1/L2 quality failures.")
+    parser.add_argument("--quality-report", type=Path, required=True)
+    parser.add_argument("--stage-dir", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--datasets", nargs="+", default=["cg_bench", "vrbench"])
+    parser.add_argument("--keys-py", type=Path)
+    parser.add_argument("--clip-schema-model", default="qwen/qwen3.5-9b")
+    parser.add_argument("--verifier-model", default="openai/gpt-oss-120b")
+    parser.add_argument("--request-frames", type=int, default=4)
+    parser.add_argument("--clip-schema-max-tokens", type=int, default=1200)
+    parser.add_argument("--clip-schema-timeout-s", type=int, default=180)
+    parser.add_argument("--clip-schema-reasoning-effort", default="none")
+    parser.add_argument("--verifier-max-tokens", type=int, default=512)
+    parser.add_argument("--verifier-timeout-s", type=int, default=120)
+    parser.add_argument("--coarse-radius", type=int, default=1)
+    parser.add_argument("--max-repair-clips", type=int, default=12)
+    parser.add_argument("--max-verify-refs", type=int, default=8)
+    parser.add_argument("--min-verify-refs", type=int, default=2)
+    parser.add_argument("--skip-gptoss-verifier", action="store_true")
+    parser.add_argument("--skip-api", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    return parser
+
+
+def main() -> int:
+    args = _build_parser().parse_args()
+    payload = _read_json(args.quality_report)
+    reports = payload.get("reports") if isinstance(payload, dict) else payload
+    wanted = set(args.datasets)
+    rows = [
+        row
+        for row in reports
+        if row.get("dataset") in wanted and row.get("repair_needed") and str(row.get("video_regime")) == "long"
+    ]
+
+    api_key = None
+    if not args.dry_run and not args.skip_api:
+        api_key = load_openrouter_api_key(keys_py_path=str(args.keys_py) if args.keys_py else None)
+    elif not args.dry_run and not args.skip_gptoss_verifier:
+        api_key = load_openrouter_api_key(keys_py_path=str(args.keys_py) if args.keys_py else None)
+
+    out_reports = [_process_row(row, args, api_key) for row in rows]
+    summary = {
+        "examples": len(out_reports),
+        "datasets": sorted({str(row.get("dataset")) for row in out_reports}),
+        "repair_status_counts": {},
+        "repair_needed_after_round": sum(1 for row in out_reports if row.get("repair_needed_after_round")),
+    }
+    for row in out_reports:
+        status = str(row.get("repair_status"))
+        summary["repair_status_counts"][status] = summary["repair_status_counts"].get(status, 0) + 1
+    final = {"summary": summary, "reports": out_reports}
+    _write_json(args.output, final)
+    print(json.dumps(final, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
