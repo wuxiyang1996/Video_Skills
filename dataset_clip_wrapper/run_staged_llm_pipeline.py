@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -26,10 +27,12 @@ from .llm_pipeline import (
     _subtitle_context_for_clip,
 )
 from .clip_policy import segment_coarse_index
+from .dataset_graph_presets import regime_for_dataset
 from .openrouter_client import OpenRouterClient, load_openrouter_api_key
 from .pipeline import build_canonical_example
 from .reasoning_rollout import build_reasoning_rollout
 from .schemas import (
+    BenchmarkProfile,
     BackboneConfig,
     ClipPolicyConfig,
     ClipRetrievalConfig,
@@ -94,6 +97,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset-root", default="/fs/gamma-projects/vlm-robot/datasets")
     parser.add_argument("--split", default="train", choices=["train", "test"])
     parser.add_argument("--regime", default=None, choices=["short", "long", "streaming"])
+    parser.add_argument(
+        "--benchmark-profile",
+        default="default",
+        choices=["default", "short_multi_hop"],
+        help="Benchmark profile override; short_multi_hop uses Video-Holmes/VideoMME/OVO as offline short-video multi-hop QA.",
+    )
     parser.add_argument("--mode", default="video_only", choices=["expert_demo", "video_only"])
     parser.add_argument("--limit", type=int, default=1)
     parser.add_argument("--output", default="dataset_clip_wrapper/output/staged_llm_pipeline.jsonl")
@@ -122,6 +131,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--clip-schema-frames", type=int, default=1)
     parser.add_argument("--clip-schema-max-tokens", type=int, default=700)
     parser.add_argument("--clip-schema-timeout-s", type=int, default=45)
+    parser.add_argument("--clip-schema-workers", type=int, default=1, help="Parallel workers for missing clip-schema API calls.")
     parser.add_argument(
         "--no-coarse-summary-index",
         action="store_true",
@@ -156,15 +166,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _config_from_args(args: argparse.Namespace) -> WrapperConfig:
+    benchmark_profile = BenchmarkProfile(args.benchmark_profile)
     regime = VideoRegime(args.regime) if args.regime else None
-    dataset_regime = regime or {
-        "video_holmes": VideoRegime.SHORT,
-        "siv_bench": VideoRegime.SHORT,
-        "cg_bench": VideoRegime.LONG,
-        "vrbench": VideoRegime.LONG,
-        "ovo_bench": VideoRegime.STREAMING,
-        "videomme": VideoRegime.SHORT,
-    }[args.dataset]
+    dataset_regime = regime or regime_for_dataset(args.dataset, benchmark_profile)
 
     clip_policy = ClipPolicyConfig.dataset_default(args.dataset, dataset_regime)
     if args.index_fine_expansion:
@@ -174,6 +178,7 @@ def _config_from_args(args: argparse.Namespace) -> WrapperConfig:
         dataset_root=args.dataset_root,
         dataset=args.dataset,
         regime=dataset_regime,
+        benchmark_profile=benchmark_profile,
         mode=RuntimeMode(args.mode),
         clip_policy=clip_policy,
         retrieval=ClipRetrievalConfig(
@@ -245,6 +250,7 @@ def _produce_or_resume_clip_schemas(
     force: bool,
     retry_failed: bool,
     fill_missing: bool,
+    workers: int = 1,
 ) -> list[dict[str, Any]]:
     if force and stage_path.exists():
         stage_path.unlink()
@@ -254,8 +260,8 @@ def _produce_or_resume_clip_schemas(
         cached = [row for row in cached if not row.get("model_error")]
         _write_jsonl(stage_path, cached)
     by_clip_id = {row.get("clip_id"): row for row in cached if row.get("clip_id")}
-    producer = _clip_schema_producer(config)
     budget = config.clip_schema.max_clips
+    targets: list[tuple[Any, dict[str, Any]]] = []
 
     for index, (span, derived) in enumerate(zip(spans, derived_clips)):
         if budget is not None and index >= budget:
@@ -265,15 +271,53 @@ def _produce_or_resume_clip_schemas(
             continue
         if not fill_missing:
             continue
-        schema = producer.build_clip_schema(
-            clip_id=clip_id,
+        targets.append((span, derived))
+
+    def _build_one(span: Any, derived: dict[str, Any]) -> dict[str, Any]:
+        producer = _clip_schema_producer(config)
+        return producer.build_clip_schema(
+            clip_id=derived["clip_id"],
             clip=span,
             video_path=item.video_path,
             subtitle_context=_subtitle_context_for_clip(visible_segments, span.to_dict()),
             question_context=item.question.get("question_text") if config.mode == RuntimeMode.EXPERT_DEMO else None,
         )
-        _append_jsonl(stage_path, schema)
-        by_clip_id[clip_id] = schema
+
+    def _checkpoint() -> None:
+        ordered_rows = [
+            by_clip_id[derived["clip_id"]]
+            for index, derived in enumerate(derived_clips)
+            if (budget is None or index < budget) and derived["clip_id"] in by_clip_id
+        ]
+        _write_jsonl(stage_path, ordered_rows)
+
+    if targets and max(1, workers) == 1:
+        producer = _clip_schema_producer(config)
+        for span, derived in targets:
+            schema = producer.build_clip_schema(
+                clip_id=derived["clip_id"],
+                clip=span,
+                video_path=item.video_path,
+                subtitle_context=_subtitle_context_for_clip(visible_segments, span.to_dict()),
+                question_context=item.question.get("question_text") if config.mode == RuntimeMode.EXPERT_DEMO else None,
+            )
+            by_clip_id[derived["clip_id"]] = schema
+            _checkpoint()
+    elif targets:
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+            futures = {pool.submit(_build_one, span, derived): derived["clip_id"] for span, derived in targets}
+            for future in as_completed(futures):
+                clip_id = futures[future]
+                try:
+                    by_clip_id[clip_id] = future.result()
+                except Exception as exc:
+                    by_clip_id[clip_id] = {
+                        "clip_id": clip_id,
+                        "model_error": str(exc),
+                        "schema_attempt": "parallel_worker_error",
+                        "producer": config.clip_schema.backend,
+                    }
+                _checkpoint()
 
     return [by_clip_id[derived["clip_id"]] for derived in derived_clips if derived["clip_id"] in by_clip_id]
 
@@ -299,6 +343,7 @@ def _produce_or_resume_coarse_summaries(
     force: bool,
     retry_failed: bool,
     fill_missing: bool,
+    workers: int = 1,
 ) -> list[dict[str, Any]]:
     derived = _derived_clips_for_spans(video_id=item.video_id, primary_path=primary_path, spans=coarse_spans)
     return _produce_or_resume_clip_schemas(
@@ -311,6 +356,7 @@ def _produce_or_resume_coarse_summaries(
         force=force,
         retry_failed=retry_failed,
         fill_missing=fill_missing,
+        workers=workers,
     )
 
 
@@ -517,6 +563,7 @@ def _run_item(
     retry_failed_clip_schemas: bool,
     fill_missing_clip_schemas: bool,
     build_coarse_summary_index: bool,
+    clip_schema_workers: int,
     anchor_repass_frames: int,
     anchor_repass_window_s: float,
     anchor_repass_enabled: bool,
@@ -547,6 +594,7 @@ def _run_item(
             force=force,
             retry_failed=retry_failed_clip_schemas,
             fill_missing=fill_missing_clip_schemas,
+            workers=clip_schema_workers,
         )
         retrieval_segments = visible_segments + _coarse_schema_segments(coarse_schemas)
         example["metadata"]["coarse_clip_schemas"] = coarse_schemas
@@ -583,6 +631,7 @@ def _run_item(
         force=force,
         retry_failed=retry_failed_clip_schemas,
         fill_missing=fill_missing_clip_schemas,
+        workers=clip_schema_workers,
     )
     anchor_schemas: list[dict[str, Any]] = []
     if anchor_repass_enabled and config.mode == RuntimeMode.VIDEO_ONLY and anchor_repass_frames > config.clip_schema.request_frames:
@@ -677,6 +726,7 @@ def main(argv: list[str] | None = None) -> int:
             retry_failed_clip_schemas=args.retry_failed_clip_schemas,
             fill_missing_clip_schemas=not args.no_fill_missing_clip_schemas,
             build_coarse_summary_index=_coarse_summary_index_enabled(args, config),
+            clip_schema_workers=args.clip_schema_workers,
             anchor_repass_frames=args.anchor_repass_frames,
             anchor_repass_window_s=args.anchor_repass_window_s,
             anchor_repass_enabled=not args.no_anchor_repass,

@@ -76,6 +76,64 @@ REASONING_SKILL_EXECUTORS = {
 
 REASONING_SKILL_IDS = sorted(REASONING_SKILL_EXECUTORS.keys())
 
+
+def _refs_from_value(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        for key in ("evidence_refs", "support_refs", "clue_refs", "counterevidence_refs", "supporting_evidence"):
+            if key in value:
+                return _refs_from_value(value.get(key))
+        if "multi_hop_chain" in value:
+            return _refs_from_value(value.get("multi_hop_chain"))
+        node_id = value.get("node_id") or value.get("evidence_ref")
+        return [str(node_id)] if node_id else []
+    if isinstance(value, list):
+        refs: list[str] = []
+        for item in value:
+            refs.extend(_refs_from_value(item))
+        return list(dict.fromkeys(refs))
+    return []
+
+
+def _chain_from_value(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        if "evidence_refs" in value or "items" in value:
+            return {
+                **value,
+                "evidence_refs": _refs_from_value(value),
+                "items": value.get("items") or [],
+            }
+        if "role_labeled_evidence" in value:
+            item = value["role_labeled_evidence"]
+            return {
+                "items": [item] if isinstance(item, dict) else [],
+                "evidence_refs": _refs_from_value(item),
+            }
+        if "multi_hop_chain" in value:
+            return _chain_from_value(value["multi_hop_chain"])
+    return {"evidence_refs": _refs_from_value(value), "items": []}
+
+
+def _augment_step_outputs(skill_id: str, outputs: dict[str, Any], evidence_refs: list[str]) -> dict[str, Any]:
+    augmented = {**outputs, "evidence_refs": evidence_refs}
+    if skill_id == "parse_question_target":
+        augmented.setdefault("parsed_target", outputs)
+    if skill_id in ("retrieve_by_event", "localize_clue"):
+        augmented.setdefault("support_refs", evidence_refs)
+    if skill_id == "assign_evidence_role":
+        augmented.setdefault("evidence_chain", _chain_from_value(outputs))
+    if skill_id == "bridge_evidence_hops":
+        augmented.setdefault("evidence_chain", _chain_from_value(outputs.get("multi_hop_chain")))
+    if skill_id == "verify_claim_support":
+        augmented.setdefault("claim", outputs.get("verified_claim"))
+        augmented.setdefault("evidence_chain", _chain_from_value(evidence_refs))
+    if skill_id == "score_hypothesis_support" and "scored_hypothesis" in outputs:
+        augmented.setdefault("scored_hypotheses", [outputs["scored_hypothesis"]])
+    return augmented
+
 _REASONING_SKILL_CONTRACTS = {
     "parse_question_target": "args: question_text, options -> parsed_target object",
     "propose_evidence_roles": "args: question_text, parsed_target, task_family -> role_constraints",
@@ -134,7 +192,11 @@ Skill execution rules:
 6. Use localize_clue and extract_claim to ground claims in evidence.
 7. Use assign_evidence_role + compose_evidence_chain to build the support structure.
 8. Use infer_* skills for temporal, causal, state-change, or social reasoning as needed.
-9. Always end with verify_claim_support then commit_answer.
+9. For ordinary answerable graphs, end with verify_claim_support then commit_answer.
+   If the graph contains l2_repair_reminder / answerability_gap nodes or missing
+   requirements, treat the run as repair-only: reason over weak visual context,
+   keep out-of-scope modalities out of the claim, and do not commit an answer
+   unless verify_claim_support returns concrete non-diagnostic evidence refs.
 10. Keep plans between 8-18 steps. Do not over-plan.
 11. Do not output chain-of-thought.
 
@@ -185,8 +247,29 @@ def _build_reasoning_plan_schema(allowed_skill_ids: list[str]) -> dict[str, Any]
 def _summarize_clue_graph(clue_memory_graph: dict[str, Any], max_nodes: int = 20) -> dict[str, Any]:
     """Compact summary of L1 graph for the reasoning planner prompt."""
     nodes = clue_memory_graph.get("nodes") or []
+    priority = {
+        "clue": 0,
+        "event": 1,
+        "observation": 2,
+        "state": 3,
+        "entity_mention": 4,
+        "entity": 5,
+        "dialogue_span": 6,
+        "ocr": 7,
+        "object": 8,
+        "question_requirement": 20,
+        "answerability_gap": 21,
+        "clip": 50,
+    }
+    ordered_nodes = sorted(
+        nodes,
+        key=lambda node: (
+            priority.get(str(node.get("node_type") or ""), 10),
+            float((node.get("time_span") or {}).get("start_s") or 0.0),
+        ),
+    )
     summary_nodes = []
-    for node in nodes[:max_nodes]:
+    for node in ordered_nodes[:max_nodes]:
         summary_nodes.append({
             "node_id": node.get("node_id"),
             "node_type": node.get("node_type"),
@@ -199,6 +282,100 @@ def _summarize_clue_graph(clue_memory_graph: dict[str, Any], max_nodes: int = 20
         "node_types": list({n.get("node_type") for n in nodes if n.get("node_type")}),
         "edge_count": len(clue_memory_graph.get("edges") or []),
     }
+
+
+def _default_multi_hop_mcq_plan() -> list[dict[str, Any]]:
+    """Conservative fallback plan for short/offline multiple-choice reasoning."""
+    return [
+        {
+            "step_id": "r1",
+            "skill_id": "parse_question_target",
+            "args": {"question_text": "$bindings.question_text", "options": "$bindings.options"},
+            "depends_on": [],
+        },
+        {
+            "step_id": "r2",
+            "skill_id": "propose_evidence_roles",
+            "args": {
+                "question_text": "$bindings.question_text",
+                "parsed_target": "$step.r1.parsed_target",
+                "task_family": "$bindings.task_family",
+            },
+            "depends_on": ["r1"],
+        },
+        {
+            "step_id": "r3",
+            "skill_id": "generate_answer_hypotheses",
+            "args": {
+                "question_text": "$bindings.question_text",
+                "options": "$bindings.options",
+                "parsed_target": "$step.r1.parsed_target",
+            },
+            "depends_on": ["r1"],
+        },
+        {
+            "step_id": "r4",
+            "skill_id": "retrieve_evidence_for_hypothesis",
+            "args": {"hypothesis": "$step.r3.hypotheses", "max_refs": 6},
+            "depends_on": ["r3"],
+        },
+        {
+            "step_id": "r5",
+            "skill_id": "score_hypothesis_support",
+            "args": {
+                "hypothesis": "$step.r3.hypotheses",
+                "support_evidence": "$step.r4",
+                "counterevidence": [],
+            },
+            "depends_on": ["r4"],
+        },
+        {
+            "step_id": "r6",
+            "skill_id": "compare_hypotheses",
+            "args": {"scored_hypotheses": "$step.r5.scored_hypotheses"},
+            "depends_on": ["r5"],
+        },
+        {
+            "step_id": "r7",
+            "skill_id": "bridge_evidence_hops",
+            "args": {
+                "source_evidence": "$step.r6.best_hypothesis.support_refs",
+                "target_hypothesis": "$step.r6.best_hypothesis",
+                "max_hops": 2,
+            },
+            "depends_on": ["r6"],
+        },
+        {
+            "step_id": "r8",
+            "skill_id": "verify_temporal_social_consistency",
+            "args": {
+                "evidence_chain": "$step.r7.multi_hop_chain",
+                "hypothesis": "$step.r6.best_hypothesis",
+            },
+            "depends_on": ["r7", "r6"],
+        },
+        {
+            "step_id": "r9",
+            "skill_id": "verify_claim_support",
+            "args": {
+                "claim": "$step.r6.best_hypothesis",
+                "evidence_chain": "$step.r7.multi_hop_chain",
+                "support_policy": {"min_evidence_refs": 1},
+            },
+            "depends_on": ["r6", "r7", "r8"],
+        },
+        {
+            "step_id": "r10",
+            "skill_id": "commit_answer",
+            "args": {
+                "verified_claim": "$step.r9.verified_claim",
+                "options": "$bindings.options",
+                "answer_format": "multiple_choice",
+                "support_chain": "$step.r9.evidence_chain",
+            },
+            "depends_on": ["r9"],
+        },
+    ]
 
 
 def plan_reasoning_skills(
@@ -282,6 +459,7 @@ def execute_reasoning_plan(
     bindings = {
         "question_text": question_text,
         "options": options,
+        "answer_format": question.get("answer_format") or ("multiple_choice" if options else "free_text"),
         "question": {
             "question_text": question_text,
             "options": options,
@@ -381,6 +559,14 @@ def execute_reasoning_plan(
                 return scored
         return None
 
+    def _lookup_recent_hypotheses() -> list[Any]:
+        for outputs in reversed(list(step_outputs.values())):
+            hypotheses = outputs.get("hypotheses") if isinstance(outputs, dict) else None
+            if isinstance(hypotheses, list) and hypotheses:
+                return hypotheses
+        best = _lookup_recent_best_hypothesis()
+        return [best] if best else []
+
     def _lookup_recent_evidence_refs() -> list[str]:
         for outputs in reversed(list(step_outputs.values())):
             refs = _refs(outputs) if isinstance(outputs, dict) else []
@@ -453,12 +639,18 @@ def execute_reasoning_plan(
         if skill_executor is not None:
             from atomic_skills.skill_backends import SkillBackendMode
             mode = skill_executor.config.mode_for(skill_id)
+            backend_safe = True
+            if skill_id == "score_hypothesis_support" and len(_hypothesis_list(resolved_args.get("hypothesis"))) > 1:
+                # The LLM scorer prompt is a single-hypothesis contract. Let the
+                # deterministic branch split and aggregate option scores, then
+                # keep the LLM verifier for the final support check.
+                backend_safe = False
             if mode in (SkillBackendMode.LLM, SkillBackendMode.VLM):
                 has_client = (
                     (mode == SkillBackendMode.LLM and skill_executor.llm_client)
                     or (mode == SkillBackendMode.VLM and skill_executor.vlm_client)
                 )
-                if has_client:
+                if has_client and backend_safe:
                     try:
                         result = skill_executor.execute(skill_id, args=resolved_args, graph=graph)
                         trace.append({
@@ -583,6 +775,8 @@ def execute_reasoning_plan(
                         hypothesis=hypotheses[0],
                         max_refs=int(resolved_args.get("max_refs") or 6),
                     )
+                    if isinstance(result.outputs, dict):
+                        result.outputs.setdefault("hypothesis", hypotheses[0])
                 else:
                     support_by_hypothesis = []
                     all_refs: list[str] = []
@@ -611,17 +805,37 @@ def execute_reasoning_plan(
                 counter = resolved_args.get("counterevidence") or []
                 if isinstance(counter, dict):
                     counter = counter.get("counterevidence_refs") or counter.get("evidence_refs") or []
+                if resolved_args.get("hypothesis") in (None, [], {}):
+                    resolved_args["hypothesis"] = _lookup_recent_hypotheses()
                 hypotheses = _hypothesis_list(resolved_args.get("hypothesis"))
                 support_arg = resolved_args.get("support_evidence") or []
                 support_by_hypothesis = support_arg.get("support_by_hypothesis") if isinstance(support_arg, dict) else None
+                llm_score_each = False
+                if skill_executor is not None:
+                    from atomic_skills.skill_backends import SkillBackendMode
+                    llm_score_each = (
+                        skill_executor.config.mode_for("score_hypothesis_support") == SkillBackendMode.LLM
+                        and bool(skill_executor.llm_client)
+                    )
                 if len(hypotheses) == 1:
                     support = support_arg if isinstance(support_arg, dict) else _refs(support_arg)
-                    result = executor(
-                        hypotheses[0],
-                        support_evidence=support,
-                        counterevidence=_refs(counter),
-                        evidence_graph=graph,
-                    )
+                    if llm_score_each:
+                        result = skill_executor.execute(
+                            "score_hypothesis_support",
+                            args={
+                                "hypothesis": hypotheses[0],
+                                "support_evidence": support,
+                                "counterevidence": _refs(counter),
+                            },
+                            graph=graph,
+                        )
+                    else:
+                        result = executor(
+                            hypotheses[0],
+                            support_evidence=support,
+                            counterevidence=_refs(counter),
+                            evidence_graph=graph,
+                        )
                 else:
                     scored = []
                     refs: list[str] = []
@@ -633,12 +847,23 @@ def execute_reasoning_plan(
                             support = support_arg.get("support_refs") or support_arg.get("evidence_refs") or []
                         else:
                             support = _refs(support_arg)
-                        partial = executor(
-                            hypothesis,
-                            support_evidence=support,
-                            counterevidence=_refs(counter),
-                            evidence_graph=graph,
-                        )
+                        if llm_score_each:
+                            partial = skill_executor.execute(
+                                "score_hypothesis_support",
+                                args={
+                                    "hypothesis": hypothesis,
+                                    "support_evidence": support,
+                                    "counterevidence": _refs(counter),
+                                },
+                                graph=graph,
+                            )
+                        else:
+                            partial = executor(
+                                hypothesis,
+                                support_evidence=support,
+                                counterevidence=_refs(counter),
+                                evidence_graph=graph,
+                            )
                         scored.append(partial.outputs.get("scored_hypothesis") or {})
                         refs.extend(partial.evidence_refs)
                     refs = list(dict.fromkeys(refs))
@@ -895,16 +1120,23 @@ def build_llm_reasoning_rollout(
         )
         reasoning_plan = plan_response.get("reasoning_plan") or []
     except Exception as exc:
-        plan_response = {"reasoning_plan": [], "notes": f"planner failed: {exc}", "planner_error": str(exc)}
-        reasoning_plan = []
+        reasoning_plan = _default_multi_hop_mcq_plan()
+        plan_response = {
+            "reasoning_plan": reasoning_plan,
+            "notes": "planner failed; using deterministic short-video multi-hop MCQ fallback",
+            "planner_error": str(exc),
+            "planner": "deterministic_multi_hop_fallback",
+            "fallback_reason": "planner_failed",
+        }
 
     if not reasoning_plan:
-        rollout = make_reasoning_rollout_shell(planner_example, clue_memory_graph, rollout_source="gpt_oss_planner_failed")
-        rollout.setdefault("metadata", {})
-        rollout["metadata"]["llm_plan"] = plan_response
-        rollout["metadata"]["fallback_suppressed"] = True
-        rollout["failure_reasons"] = ["planner_failed_no_reasoning_plan"]
-        return rollout
+        reasoning_plan = _default_multi_hop_mcq_plan()
+        plan_response = {
+            **plan_response,
+            "reasoning_plan": reasoning_plan,
+            "planner": plan_response.get("planner") or "deterministic_multi_hop_fallback",
+            "fallback_reason": plan_response.get("fallback_reason") or "empty_reasoning_plan",
+        }
 
     trace, step_outputs = execute_reasoning_plan(
         reasoning_plan=reasoning_plan,
@@ -916,6 +1148,9 @@ def build_llm_reasoning_rollout(
     failed_steps = [t for t in trace if t.get("ok") is False]
     ok_steps = [t for t in trace if t.get("ok")]
     crash_steps = [t for t in failed_steps if t.get("failure_code") in ("unknown_skill_id", "invalid_skill_args")]
+    has_successful_commit = any(
+        item.get("skill_id") == "commit_answer" and item.get("ok") for item in trace
+    )
 
     # --- Fault localization + repair attempt ---
     repair_result = None
@@ -931,7 +1166,7 @@ def build_llm_reasoning_rollout(
             ok_steps = [t for t in trace if t.get("ok")]
             failed_steps = [t for t in trace if t.get("ok") is False]
 
-    if crash_steps or (not ok_steps and len(failed_steps) > 3):
+    if not has_successful_commit and (crash_steps or (not ok_steps and len(failed_steps) > 3)):
         rollout = make_reasoning_rollout_shell(planner_example, clue_memory_graph, rollout_source="gpt_oss_execution_failed")
         rollout.setdefault("metadata", {})
         rollout["metadata"]["llm_plan"] = plan_response
@@ -943,7 +1178,11 @@ def build_llm_reasoning_rollout(
             rollout["metadata"]["repair"] = repair_result
         return rollout
 
-    if not any(item.get("skill_id") == "commit_answer" and item.get("ok") for item in trace):
+    answerability_diagnostic = (planner_example.get("metadata") or {}).get("answerability_diagnostic") or {}
+    l2_route = answerability_diagnostic.get("l2_route")
+    query_memory_commit_allowed = l2_route not in {"repair_only", "abstain_only"}
+
+    if query_memory_commit_allowed and not any(item.get("skill_id") == "commit_answer" and item.get("ok") for item in trace):
         try:
             from .evaluate_l1_query_memory import evaluate_example
 
@@ -1042,6 +1281,11 @@ def build_llm_reasoning_rollout(
             plan_response["query_memory_finalizer"] = {"attempted": True, "error": str(exc)}
         ok_steps = [t for t in trace if t.get("ok")]
         failed_steps = [t for t in trace if t.get("ok") is False]
+    elif not query_memory_commit_allowed:
+        plan_response["query_memory_finalizer"] = {
+            "attempted": False,
+            "suppressed_by_l2_route": l2_route,
+        }
 
     rollout = make_reasoning_rollout_shell(planner_example, clue_memory_graph, rollout_source="gpt_oss_reasoning_planner")
     rollout["rollout_id"] = f"skill_rollout:{example.get('example_id')}:llm_v1"

@@ -7,8 +7,10 @@ import argparse
 import json
 from pathlib import Path
 
+from .dataset_graph_presets import regime_for_dataset
 from .llm_pipeline import iter_llm_enriched_examples
 from .schemas import (
+    BenchmarkProfile,
     BackboneConfig,
     ClipPolicyConfig,
     ClipRetrievalConfig,
@@ -33,6 +35,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset-root", default="/fs/gamma-projects/vlm-robot/datasets")
     parser.add_argument("--split", default="train", choices=["train", "test"])
     parser.add_argument("--regime", default=None, choices=["short", "long", "streaming"])
+    parser.add_argument(
+        "--benchmark-profile",
+        default="default",
+        choices=["default", "short_multi_hop"],
+        help="Benchmark profile override; short_multi_hop uses Video-Holmes/VideoMME/OVO as offline short-video multi-hop QA.",
+    )
     parser.add_argument("--mode", default="expert_demo", choices=["expert_demo", "video_only"])
     parser.add_argument("--limit", type=int, default=1)
     parser.add_argument("--output", default="dataset_clip_wrapper/output/llm_pipeline.jsonl")
@@ -90,15 +98,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    benchmark_profile = BenchmarkProfile(args.benchmark_profile)
     regime = VideoRegime(args.regime) if args.regime else None
-    dataset_regime = regime or {
-        "video_holmes": VideoRegime.SHORT,
-        "siv_bench": VideoRegime.SHORT,
-        "cg_bench": VideoRegime.LONG,
-        "vrbench": VideoRegime.LONG,
-        "ovo_bench": VideoRegime.STREAMING,
-        "videomme": VideoRegime.SHORT,
-    }[args.dataset]
+    dataset_regime = regime or regime_for_dataset(args.dataset, benchmark_profile)
 
     clip_policy = ClipPolicyConfig.dataset_default(args.dataset, dataset_regime)
     if args.observation_end_s is not None:
@@ -110,6 +112,7 @@ def main(argv: list[str] | None = None) -> int:
         dataset_root=args.dataset_root,
         dataset=args.dataset,
         regime=dataset_regime,
+        benchmark_profile=benchmark_profile,
         mode=RuntimeMode(args.mode),
         clip_policy=clip_policy,
         retrieval=ClipRetrievalConfig(
@@ -166,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
             {
                 "dataset": args.dataset,
                 "regime": dataset_regime.value,
+                "benchmark_profile": benchmark_profile.value,
                 "clip_schema_model": config.clip_schema.model
                 if config.clip_schema.backend == "qwen"
                 else "local-video-tools",

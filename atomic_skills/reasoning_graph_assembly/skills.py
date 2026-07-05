@@ -10,10 +10,12 @@ from ..common import find_nodes, lexical_score, make_result, normalize_time_span
 
 def _evidence_text(graph: dict[str, Any], refs: list[str]) -> str:
     by_id = {node.get("node_id"): node for node in graph.get("nodes", [])}
+    diagnostic_types = {"question_requirement", "required_modality", "answerability_gap", "l2_repair_reminder"}
     return " ".join(
         str(by_id[ref].get("text") or by_id[ref].get("event_description") or by_id[ref].get("state_value") or "")
         for ref in refs
         if ref in by_id
+        and by_id[ref].get("node_type") not in diagnostic_types
     )
 
 
@@ -48,6 +50,7 @@ _QUESTION_STOPWORDS = {
     "there",
     "this",
     "to",
+    "type",
     "was",
     "what",
     "when",
@@ -61,21 +64,75 @@ _QUESTION_STOPWORDS = {
 _TOKEN_SYNONYMS = {
     "automobile": {"car", "vehicle"},
     "back": {"return", "returns", "returned", "previously", "earlier"},
+    "broadcast": {"telecast", "tv", "program"},
     "car": {"automobile", "vehicle"},
+    "chef": {"cook", "cooking", "kitchen"},
+    "cooking": {"cook", "preparing", "food", "kitchen", "meal", "dish"},
     "echoes": {"repeats", "returns", "reappears", "same"},
     "earlier": {"previously", "before", "original"},
+    "food": {"meal", "dish", "pasta", "cooking", "preparing"},
+    "instrument": {"guitar", "piano", "drum", "violin", "music", "musical"},
+    "kitchen": {"cooking", "cook", "food", "chef"},
     "location": {"place", "position"},
+    "meal": {"food", "dish", "cooking"},
+    "musical": {"music", "instrument"},
     "original": {"previously", "earlier", "place", "position"},
+    "pasta": {"food", "dish", "meal", "cooking"},
     "place": {"location", "position"},
     "position": {"place", "location", "original"},
+    "preparing": {"cooking", "cook", "food", "kitchen", "meal", "dish"},
     "previously": {"earlier", "before", "original"},
     "reappears": {"returns", "again", "same"},
+    "reading": {"book", "read"},
     "repeated": {"same", "again", "reappears"},
     "returns": {"back", "returned", "reappears", "original"},
     "rv": {"vehicle", "van"},
+    "sport": {"sports", "game", "match", "broadcast"},
+    "sports": {"sport", "game", "match", "broadcast"},
     "van": {"vehicle", "rv"},
     "vehicle": {"automobile", "car", "rv", "truck", "van"},
     "walked": {"moved", "went", "returns"},
+}
+
+_SEMANTIC_GROUPS = {
+    "cooking_food": {
+        "claim": {"cook", "cooking", "preparing", "prepare", "food", "meal", "dish"},
+        "evidence": {
+            "chef",
+            "cook",
+            "cooking",
+            "food",
+            "kitchen",
+            "meal",
+            "dish",
+            "pasta",
+            "lemon",
+            "lemons",
+            "bowl",
+            "pot",
+            "strainer",
+            "tongs",
+            "stove",
+            "countertop",
+            "parsley",
+        },
+    },
+    "driving_vehicle": {
+        "claim": {"driving", "drive", "vehicle", "car", "truck", "van"},
+        "evidence": {"driving", "drive", "vehicle", "car", "truck", "van", "road", "steering", "wheel"},
+    },
+    "music_instrument": {
+        "claim": {"playing", "musical", "music", "instrument", "guitar", "piano", "drum", "violin"},
+        "evidence": {"musical", "music", "instrument", "guitar", "piano", "drum", "violin", "microphone", "stage"},
+    },
+    "reading_book": {
+        "claim": {"reading", "read", "book", "page", "pages"},
+        "evidence": {"reading", "read", "book", "page", "pages", "library"},
+    },
+    "sports_broadcast": {
+        "claim": {"sport", "sports", "broadcast", "game", "match"},
+        "evidence": {"sport", "sports", "broadcast", "game", "match", "scoreboard", "field", "court", "team", "athlete"},
+    },
 }
 
 
@@ -96,7 +153,36 @@ def _target_alignment_score(question_text: str, evidence_text: str) -> float:
     evidence_tokens = _expanded_tokens(evidence_text)
     if not question_tokens or not evidence_tokens:
         return 0.0
+    generic_targets = {"doing", "moment", "scene", "shown", "happening", "person", "people"}
+    if question_tokens <= generic_targets:
+        return 1.0
     return len(question_tokens & evidence_tokens) / max(1, len(question_tokens))
+
+
+def _semantic_group_score(claim_text: str, evidence_text: str) -> float:
+    claim_tokens = _expanded_tokens(claim_text)
+    evidence_tokens = _expanded_tokens(evidence_text)
+    if not claim_tokens or not evidence_tokens:
+        return 0.0
+    best = 0.0
+    for group in _SEMANTIC_GROUPS.values():
+        claim_hit = bool(claim_tokens & group["claim"])
+        evidence_hits = len(evidence_tokens & group["evidence"])
+        if claim_hit and evidence_hits:
+            best = max(best, min(1.0, 0.35 + 0.15 * evidence_hits))
+    return best
+
+
+def _content_lexical_score(query: str, text: str) -> float:
+    q = _expanded_tokens(query)
+    t = _expanded_tokens(text)
+    if not q or not t:
+        return 0.0
+    return len(q & t) / max(1, len(q))
+
+
+def _support_score(claim_text: str, evidence_text: str) -> float:
+    return max(_content_lexical_score(claim_text, evidence_text), _semantic_group_score(claim_text, evidence_text))
 
 
 def parse_question_target(question_text: str, options: list[dict[str, Any]] | None = None) -> Any:
@@ -410,8 +496,8 @@ def score_hypothesis_support(
     claim_text = hypothesis if isinstance(hypothesis, str) else hypothesis.get("claim_text") or hypothesis.get("text") or ""
     if evidence_graph is not None and support_refs:
         evidence_text = _evidence_text(evidence_graph, support_refs)
-        lexical_support = lexical_score(claim_text, evidence_text)
-        coverage_support = min(1.0, 0.15 * len(support_refs))
+        lexical_support = _support_score(claim_text, evidence_text)
+        coverage_support = min(0.25, 0.05 * len(support_refs)) if lexical_support > 0 else 0.0
         support_score = min(1.0, lexical_support + coverage_support)
     else:
         support_score = min(1.0, 0.25 * len(support_refs))
@@ -720,7 +806,7 @@ def verify_claim_support(
     option_label = None if isinstance(claim, str) else claim.get("option_label") or nested.get("option_label")
     question_context = question_text or (None if isinstance(claim, str) else claim.get("question_text") or nested.get("question_text"))
     evidence_text = _evidence_text(evidence_graph or {}, refs) if evidence_graph is not None else ""
-    claim_score = lexical_score(text, evidence_text) if evidence_text else (1.0 if refs else 0.0)
+    claim_score = _support_score(text, evidence_text) if evidence_text else (1.0 if refs else 0.0)
     target_score = _target_alignment_score(str(question_context or ""), evidence_text) if question_context and evidence_text else 1.0
     min_claim_score = float(policy.get("min_claim_score", 0.05 if evidence_graph is not None else 0.0))
     min_target_score = float(policy.get("min_target_score", 0.05 if question_context and evidence_graph is not None else 0.0))

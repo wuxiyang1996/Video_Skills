@@ -471,7 +471,7 @@ class SkillExecutor:
             kwargs["question"] = args.get("question_text") or (claim.get("question_text") if isinstance(claim, dict) else "")
         elif skill_id == "score_hypothesis_support":
             h = args.get("hypothesis", "")
-            kwargs["hypothesis"] = h if isinstance(h, str) else h.get("claim_text") or str(h)
+            kwargs["hypothesis"] = h if isinstance(h, str) else ((h or {}).get("claim_text") if isinstance(h, dict) else str(h or ""))
             kwargs["support"] = args.get("support_evidence", [])
             kwargs["counter"] = args.get("counterevidence", [])
         elif skill_id == "compare_hypotheses":
@@ -552,13 +552,33 @@ class SkillExecutor:
             chain = args.get("evidence_chain")
             if isinstance(chain, dict):
                 refs = chain.get("evidence_refs") or []
+            rule_result = self._execute_rule(skill_id, args=args, graph=graph) if graph and refs else None
+            if rule_result is not None:
+                rule_score = float(rule_result.outputs.get("verification_score", 0.0))
+                rule_claim_score = float(rule_result.outputs.get("claim_support_score", 0.0))
+                rule_target_score = float(rule_result.outputs.get("target_alignment_score", 0.0))
+                if not rule_result.ok:
+                    ok = False
+                    score = min(score, rule_score)
+                elif ok:
+                    score = max(score, rule_score)
+                if rule_claim_score < 0.05 or rule_target_score < 0.05:
+                    ok = False
             return make_result(skill_id, {
                 "verification_score": score,
                 "passed": ok,
                 "failure_code": None if ok else "insufficient_evidence",
                 "messages": [response.get("reasoning", "")],
-                "claim_support_score": score,
-                "target_alignment_score": score if response.get("target_aligned", ok) else 0.0,
+                "claim_support_score": (
+                    rule_result.outputs.get("claim_support_score")
+                    if rule_result is not None
+                    else score
+                ),
+                "target_alignment_score": (
+                    rule_result.outputs.get("target_alignment_score")
+                    if rule_result is not None
+                    else (score if response.get("target_aligned", ok) else 0.0)
+                ),
                 "verified_claim": {
                     "claim_text": claim_text,
                     "text": claim_text,
@@ -580,11 +600,21 @@ class SkillExecutor:
                 support_refs = support_arg if isinstance(support_arg, list) else []
             counter_refs = args.get("counterevidence") or []
             hypothesis = args.get("hypothesis")
+            claim_text = hypothesis.get("claim_text") if isinstance(hypothesis, dict) else str(hypothesis or "")
+            option_label = hypothesis.get("option_label") if isinstance(hypothesis, dict) else None
+            rule_result = self._execute_rule(skill_id, args=args, graph=graph) if graph and support_refs else None
+            if rule_result is not None:
+                rule_scored = rule_result.outputs.get("scored_hypothesis") or {}
+                rule_support = float(rule_scored.get("support_score", 0.0))
+                if rule_support < 0.05:
+                    support_score = min(support_score, 0.05)
+                else:
+                    support_score = max(support_score, rule_support)
             return make_result(skill_id, {
                 "scored_hypothesis": {
                     "hypothesis": hypothesis,
-                    "claim_text": hypothesis.get("claim_text") if isinstance(hypothesis, dict) else str(hypothesis or ""),
-                    "option_label": hypothesis.get("option_label") if isinstance(hypothesis, dict) else None,
+                    "claim_text": claim_text,
+                    "option_label": option_label,
                     "support_score": support_score,
                     "contradiction_score": contradiction_score,
                     "overall_score": max(0, support_score - contradiction_score),

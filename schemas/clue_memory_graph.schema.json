@@ -148,7 +148,8 @@
             "question_requirement",
             "required_modality",
             "answerability_gap",
-            "visual_social_cue"
+            "visual_social_cue",
+            "l2_repair_reminder"
           ]
         },
         "video_id": {"type": ["string", "null"]},
@@ -208,7 +209,8 @@
             "requires_evidence",
             "limits_answerability",
             "weak_visual_context",
-            "partially_supports_requirement"
+            "partially_supports_requirement",
+            "repair_reminder_for"
           ]
         },
         "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},

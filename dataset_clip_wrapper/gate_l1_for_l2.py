@@ -51,7 +51,15 @@ def gate_report(
     }
     qa_answerability = report.get("qa_answerability") or {}
     checks["no_uniform_probe_fallback"] = qa_answerability.get("retrieval_fallback_reason") != "uniform_probe_no_lexical_match"
-    checks["no_missing_required_modalities"] = not qa_answerability.get("missing_requirements")
+    missing_requirements = qa_answerability.get("missing_requirements") or []
+    allowed_repair_l2 = qa_answerability.get("allowed_repair_l2") or []
+    l2_route = "answer_then_verify_or_repair"
+    if missing_requirements and allowed_repair_l2:
+        l2_route = "repair_only"
+    elif missing_requirements:
+        l2_route = "abstain_only"
+    checks["no_missing_required_modalities"] = not missing_requirements
+    checks["repair_route_allowed"] = l2_route == "answer_then_verify_or_repair" or bool(allowed_repair_l2)
     checks["option_refs_discriminative"] = (
         float(qa_answerability.get("top2_shared_ref_ratio") or 0.0) < 0.75
         or option_margin >= 0.75
@@ -67,10 +75,21 @@ def gate_report(
     if option_scores:
         checks["option_margin"] = option_margin >= min_option_margin
 
-    passed = all(checks.values())
+    answer_then_repair_pass = all(value for key, value in checks.items() if key != "repair_route_allowed")
+    repair_pass = (
+        l2_route == "repair_only"
+        and checks["graph_nodes"]
+        and checks["memory_items"]
+        and checks["no_hidden_memory_items"]
+        and checks["repair_route_allowed"]
+    )
+    passed = answer_then_repair_pass or repair_pass
     report.update(
         {
             "gate_pass": passed,
+            "l2_route": l2_route,
+            "answer_then_repair_gate_pass": answer_then_repair_pass,
+            "repair_gate_pass": repair_pass,
             "gate_checks": checks,
             "gate_scores": {
                 "top_question_score": round(top_score, 4),

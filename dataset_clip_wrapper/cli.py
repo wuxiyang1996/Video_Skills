@@ -7,8 +7,9 @@ import argparse
 import json
 from pathlib import Path
 
+from .dataset_graph_presets import regime_for_dataset
 from .pipeline import iter_canonical_examples
-from .schemas import BackboneConfig, ClipPolicyConfig, ClipRetrievalConfig, RuntimeMode, VideoRegime, WrapperConfig
+from .schemas import BenchmarkProfile, BackboneConfig, ClipPolicyConfig, ClipRetrievalConfig, RuntimeMode, VideoRegime, WrapperConfig
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,6 +30,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         choices=["short", "long", "streaming"],
         help="Video regime; defaults per dataset if omitted",
+    )
+    parser.add_argument(
+        "--benchmark-profile",
+        default="default",
+        choices=["default", "short_multi_hop"],
+        help="Benchmark profile override; short_multi_hop uses Video-Holmes/VideoMME/OVO as offline short-video multi-hop QA.",
     )
     parser.add_argument("--mode", default="expert_demo", choices=["expert_demo", "video_only"])
     parser.add_argument("--limit", type=int, default=1)
@@ -71,15 +78,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    benchmark_profile = BenchmarkProfile(args.benchmark_profile)
     regime = VideoRegime(args.regime) if args.regime else None
-    dataset_regime = regime or {
-        "video_holmes": VideoRegime.SHORT,
-        "siv_bench": VideoRegime.SHORT,
-        "cg_bench": VideoRegime.LONG,
-        "vrbench": VideoRegime.LONG,
-        "ovo_bench": VideoRegime.STREAMING,
-        "videomme": VideoRegime.SHORT,
-    }[args.dataset]
+    dataset_regime = regime or regime_for_dataset(args.dataset, benchmark_profile)
 
     clip_policy = ClipPolicyConfig.dataset_default(args.dataset, dataset_regime)
     if args.clip_strategy:
@@ -109,6 +110,7 @@ def main(argv: list[str] | None = None) -> int:
         dataset_root=args.dataset_root,
         dataset=args.dataset,
         regime=dataset_regime,
+        benchmark_profile=benchmark_profile,
         mode=RuntimeMode(args.mode),
         clip_policy=clip_policy,
         retrieval=retrieval,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .schemas import ClipPolicyConfig, ClipRetrievalConfig, DatasetName, VideoRegime
+from .schemas import BenchmarkProfile, ClipPolicyConfig, ClipRetrievalConfig, DatasetName, VideoRegime
 
 DATASET_DEFAULT_REGIME: dict[DatasetName, VideoRegime] = {
     "video_holmes": VideoRegime.SHORT,
@@ -19,7 +19,13 @@ DATASET_TASK_FAMILY: dict[DatasetName, str] = {
     "cg_bench": "long_video_clue_grounding_qa",
     "vrbench": "long_video_temporal_chain_qa",
     "ovo_bench": "streaming_video_realtime_qa",
-    "videomme": "streaming_video_whole_video_qa",
+    "videomme": "short_video_whole_video_qa",
+}
+
+SHORT_MULTI_HOP_DATASETS: tuple[DatasetName, ...] = ("video_holmes", "videomme", "ovo_bench")
+
+PROFILE_TASK_FAMILY: dict[BenchmarkProfile, str] = {
+    BenchmarkProfile.SHORT_MULTI_HOP: "short_video_multi_hop_qa",
 }
 
 # Hidden supervision fields available per dataset (expert_demo only).
@@ -69,6 +75,24 @@ DATASET_LAYER1_PROFILE: dict[DatasetName, dict[str, str]] = {
 
 def default_regime_for_dataset(dataset: DatasetName) -> VideoRegime:
     return DATASET_DEFAULT_REGIME[dataset]
+
+
+def regime_for_dataset(dataset: DatasetName, profile: BenchmarkProfile = BenchmarkProfile.DEFAULT) -> VideoRegime:
+    if profile == BenchmarkProfile.SHORT_MULTI_HOP and dataset in SHORT_MULTI_HOP_DATASETS:
+        return VideoRegime.SHORT
+    return default_regime_for_dataset(dataset)
+
+
+def task_family_for(
+    dataset: DatasetName,
+    *,
+    regime: VideoRegime,
+    profile: BenchmarkProfile = BenchmarkProfile.DEFAULT,
+    adapter_task_family: str | None = None,
+) -> str:
+    if profile == BenchmarkProfile.SHORT_MULTI_HOP and dataset in SHORT_MULTI_HOP_DATASETS and regime == VideoRegime.SHORT:
+        return PROFILE_TASK_FAMILY[BenchmarkProfile.SHORT_MULTI_HOP]
+    return adapter_task_family or DATASET_TASK_FAMILY[dataset]
 
 
 def clip_policy_for(dataset: DatasetName, regime: VideoRegime, *, duration_s: float | None = None) -> ClipPolicyConfig:

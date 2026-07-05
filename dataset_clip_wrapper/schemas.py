@@ -20,6 +20,11 @@ class RuntimeMode(str, Enum):
     VIDEO_ONLY = "video_only"
 
 
+class BenchmarkProfile(str, Enum):
+    DEFAULT = "default"
+    SHORT_MULTI_HOP = "short_multi_hop"
+
+
 DatasetName = Literal["video_holmes", "cg_bench", "vrbench", "siv_bench", "ovo_bench", "videomme"]
 
 
@@ -276,6 +281,7 @@ class WrapperConfig:
     dataset_root: str
     dataset: DatasetName
     regime: VideoRegime = VideoRegime.SHORT
+    benchmark_profile: BenchmarkProfile = BenchmarkProfile.DEFAULT
     mode: RuntimeMode = RuntimeMode.EXPERT_DEMO
     clip_policy: ClipPolicyConfig | None = None
     retrieval: ClipRetrievalConfig = field(default_factory=ClipRetrievalConfig)

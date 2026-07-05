@@ -10,6 +10,7 @@ from .adapters import get_adapter
 from .backbone import PerceptionBackbone, build_backbone
 from .clip_policy import FineExpansion, segment_video
 from .clue_memory import extract_clue_memory_graph
+from .dataset_graph_presets import task_family_for
 from .reasoning_rollout import build_reasoning_rollout
 from .schemas import (
     BackboneConfig,
@@ -212,7 +213,12 @@ def build_canonical_example(
     example = make_canonical_shell(
         example_id=item.example_id,
         dataset=item.dataset,
-        task_family=item.task_family,
+        task_family=task_family_for(
+            item.dataset,
+            regime=config.regime,
+            profile=config.benchmark_profile,
+            adapter_task_family=item.task_family,
+        ),
         split=item.split,
         video={
             "video_id": item.video_id,

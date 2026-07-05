@@ -276,7 +276,7 @@ def _gap_policy(missing: list[str]) -> dict[str, Any]:
         out_of_scope = []
     else:
         category = "none"
-        policy = "standard_l2_allowed"
+        policy = "answer_then_verify_or_repair"
         allowed_l2 = []
         out_of_scope = []
     return {
@@ -470,6 +470,7 @@ def _answerability_diagnostic_graph(
 
     if missing:
         gap_id = f"diagnostic.answerability_gap:{suffix}"
+        l2_reminder_id = f"diagnostic.l2_repair_reminder:{suffix}"
         nodes.append(
             {
                 "node_id": gap_id,
@@ -488,10 +489,50 @@ def _answerability_diagnostic_graph(
                 "visibility": {"hidden_supervision": False, "mode": "video_only"},
             }
         )
+        nodes.append(
+            {
+                "node_id": l2_reminder_id,
+                "node_type": "l2_repair_reminder",
+                "source_type": "answerability_diagnostic",
+                "text": (
+                    "L2 repair reminder: do not treat the L1 option score as an answer. "
+                    "Use visible visual-social cues as weak context, reason over missing "
+                    + ", ".join(missing)
+                    + " requirements, keep audio/dialogue out of scope, and abstain if the graph cannot support a claim."
+                ),
+                "repair_targets": missing,
+                "allowed_repair_l2": gap_policy["allowed_repair_l2"],
+                "l2_repair_policy": gap_policy["l2_repair_policy"],
+                "out_of_scope_modalities": gap_policy["out_of_scope_modalities"],
+                "audio_repair_allowed": gap_policy["audio_repair_allowed"],
+                "partial_visual_social_support": bool(visual_social_cues),
+                "visual_social_cue_count": len(visual_social_cues),
+                "ordinary_l2_should_answer": gap_policy["ordinary_l2_should_answer"],
+                "l2_route": "repair_only" if gap_policy["allowed_repair_l2"] else "abstain_only",
+                "producer": "dataset_clip_wrapper.answerability_diagnostic",
+                "visibility": {"hidden_supervision": False, "mode": "video_only"},
+            }
+        )
         edges.append(
             {
                 "edge_id": f"edge:{gap_id}->{question_node_id}:limits_answerability",
                 "src": gap_id,
+                "dst": question_node_id,
+                "edge_type": "limits_answerability",
+            }
+        )
+        edges.append(
+            {
+                "edge_id": f"edge:{l2_reminder_id}->{gap_id}:repair_reminder_for",
+                "src": l2_reminder_id,
+                "dst": gap_id,
+                "edge_type": "repair_reminder_for",
+            }
+        )
+        edges.append(
+            {
+                "edge_id": f"edge:{l2_reminder_id}->{question_node_id}:limits_answerability",
+                "src": l2_reminder_id,
                 "dst": question_node_id,
                 "edge_type": "limits_answerability",
             }
@@ -528,6 +569,9 @@ def _answerability_diagnostic_graph(
             "partial_visual_social_support": bool(visual_social_cues),
             "visual_social_cue_count": len(visual_social_cues),
             "visual_social_cue_strengths": sorted({str(cue.get("cue_strength")) for cue in visual_social_cues}),
+            "l2_route": "answer_then_verify_or_repair" if not missing else ("repair_only" if gap_policy["allowed_repair_l2"] else "abstain_only"),
+            "l2_repair_reminder": bool(missing),
+            "l2_should_attempt_gap_repair": bool(missing and gap_policy["allowed_repair_l2"]),
             "has_answerability_gap": bool(missing),
             **gap_policy,
         },
