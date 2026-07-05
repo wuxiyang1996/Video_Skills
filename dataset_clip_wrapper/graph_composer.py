@@ -85,6 +85,26 @@ SHORT_RECURRENCE_GROUPS = {
     },
 }
 
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not path.exists():
+        return rows
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                rows.append(json.loads(line))
+    return rows
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    tmp.replace(path)
+
 GRAPH_COMPOSE_PROMPT = f"""You compose a clue-memory / perception graph using ONLY the executable
 Evidence Graph Construction atomic skills listed in allowed_skill_ids.
 
@@ -669,6 +689,28 @@ class GraphComposer:
             neighbors = visible_schemas[max(0, index - 2) : index] + visible_schemas[index + 1 : index + 3]
             indexed_jobs.append((index, schema, neighbors))
 
+        cache_path = Path(self.config.neighbor_cache_path) if self.config.neighbor_cache_path else None
+        cached_rows = _read_jsonl(cache_path) if cache_path else []
+        cached_by_clip = {
+            str(row.get("target_clip_id")): row
+            for row in cached_rows
+            if isinstance(row, dict)
+            and row.get("target_clip_id")
+            and row.get("model") == self.config.model
+            and row.get("response")
+        }
+
+        def _checkpoint_cache(new_rows: list[dict[str, Any]]) -> None:
+            if not cache_path:
+                return
+            merged = dict(cached_by_clip)
+            for row in new_rows:
+                if row.get("target_clip_id"):
+                    merged[str(row["target_clip_id"])] = row
+            _write_jsonl(cache_path, list(merged.values()))
+            cached_by_clip.clear()
+            cached_by_clip.update(merged)
+
         def _error_response(index: int, target_clip_id: str, exc: Exception) -> tuple[int, dict[str, Any], dict[str, Any]]:
             response = {
                 "target_nodes": [],
@@ -703,10 +745,36 @@ class GraphComposer:
 
         indexed_responses: list[tuple[int, dict[str, Any], dict[str, Any] | None]]
         workers = max(1, int(self.config.neighbor_workers or 1))
-        if workers == 1 or len(indexed_jobs) <= 1:
-            indexed_responses = [_run_job(job) for job in indexed_jobs]
+        indexed_responses = []
+        pending_jobs = []
+        for job in indexed_jobs:
+            index, schema, _neighbors = job
+            target_clip_id = str(schema.get("clip_id"))
+            cached = cached_by_clip.get(target_clip_id)
+            if cached:
+                indexed_responses.append((index, dict(cached.get("response") or {}), None))
+            else:
+                pending_jobs.append(job)
+
+        cache_hit_count = len(indexed_responses)
+        if workers == 1 or len(pending_jobs) <= 1:
+            cache_updates: list[dict[str, Any]] = []
+            for job in pending_jobs:
+                index, schema, _neighbors = job
+                target_clip_id = str(schema.get("clip_id"))
+                result = _run_job(job)
+                indexed_responses.append(result)
+                _idx, response, error_trace = result
+                if not error_trace:
+                    cache_updates.append(
+                        {
+                            "target_clip_id": target_clip_id,
+                            "model": self.config.model,
+                            "response": response,
+                        }
+                    )
+                    _checkpoint_cache(cache_updates)
         else:
-            indexed_responses = []
             client_kwargs = {
                 "model": self.client.model,
                 "api_key": self.client.api_key,
@@ -716,9 +784,10 @@ class GraphComposer:
                 "reasoning": self.client.reasoning,
                 "timeout_s": self.client.timeout_s,
             }
-            with ProcessPoolExecutor(max_workers=min(workers, len(indexed_jobs))) as executor:
+            cache_updates: list[dict[str, Any]] = []
+            with ProcessPoolExecutor(max_workers=min(workers, len(pending_jobs))) as executor:
                 future_to_job = {}
-                for index, schema, neighbors in indexed_jobs:
+                for index, schema, neighbors in pending_jobs:
                     messages, response_format = self._neighbor_vlm_l1_request(
                         example_id=example_id,
                         video_id=video_id,
@@ -740,10 +809,19 @@ class GraphComposer:
                     index, schema = future_to_job[future]
                     target_clip_id = str(schema.get("clip_id"))
                     try:
-                        indexed_responses.append((index, future.result(), None))
+                        response = future.result()
+                        indexed_responses.append((index, response, None))
+                        cache_updates.append(
+                            {
+                                "target_clip_id": target_clip_id,
+                                "model": self.config.model,
+                                "response": response,
+                            }
+                        )
+                        _checkpoint_cache(cache_updates)
                     except Exception as exc:
                         indexed_responses.append(_error_response(index, target_clip_id, exc))
-            indexed_responses.sort(key=lambda item: item[0])
+        indexed_responses.sort(key=lambda item: item[0])
 
         for index, response, error_trace in indexed_responses:
             schema = visible_schemas[index]
@@ -870,6 +948,9 @@ class GraphComposer:
             "composer": "neighbor_vlm_l1_graph_composer",
             "model": self.config.model,
             "neighbor_workers": workers,
+            "neighbor_cache_path": self.config.neighbor_cache_path,
+            "neighbor_cache_hits": cache_hit_count,
+            "neighbor_cache_misses": len(pending_jobs),
             "clip_results": responses,
             "notes": "local target-clip graph construction with neighbor semantic edges",
         }

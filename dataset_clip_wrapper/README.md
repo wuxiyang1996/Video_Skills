@@ -560,6 +560,60 @@ The practical status levels are:
 - `visual_only_benchmark_limitation`: the missing clue appears outside the
   video-only scope, such as audio/subtitle/hidden context.
 
+Repair clip schemas can be parallelized with process workers:
+
+```bash
+python dataset_clip_wrapper/run_repair_protocol.py \
+  --quality-report dataset_clip_wrapper/output/rerun5_quality_report.json \
+  --stage-dir dataset_clip_wrapper/output/repair_long_objective_bridge_api \
+  --output dataset_clip_wrapper/output/repair_long_objective_bridge_api_report.json \
+  --datasets cg_bench vrbench \
+  --repair-mode reroute \
+  --repair-clip-schema-workers 4 \
+  --keys-py /fs/gamma-projects/vlm-robot/keys.py
+```
+
+The process-worker path keeps per-clip OpenRouter total timeouts effective and
+checkpoints partial `repair_02_clip_schemas.jsonl` results for resume.
+
+To merge the base five-dataset L1/L2 quality report with long-video repair
+reports:
+
+```bash
+python dataset_clip_wrapper/report_final_acceptance.py \
+  --quality-report dataset_clip_wrapper/output/rerun5_quality_report.json \
+  --repair-report dataset_clip_wrapper/output/repair_long_objective_bridge_api_v7_cg_rebuild_report.json \
+  --repair-report dataset_clip_wrapper/output/repair_long_objective_bridge_api_v7_vr_rebuild_report.json \
+  --output dataset_clip_wrapper/output/rerun5_final_acceptance_report.json
+```
+
+The current one-video-per-dataset API check reports five high-quality L1 graphs,
+four `accepted_strong` L2 results, one `accepted_bridge` result, and zero
+remaining repair-needed examples. The report also records
+`strict_vlm_perception_all`; if cached local `video_tools` clip schemas remain,
+rerun the staged pipeline with:
+
+```bash
+python -m dataset_clip_wrapper.run_staged_llm_pipeline \
+  --dataset videomme \
+  --benchmark-profile short_multi_hop \
+  --mode video_only \
+  --rebuild-from-stages \
+  --retry-non-backbone-clip-schemas \
+  --clip-schema-backend qwen \
+  --clip-schema-workers 8
+```
+
+Use the same pattern for OVO/CG/VR cached stages when strict Qwen-only
+perception is required.
+
+Staged runs also cache neighbor-local GPT-OSS graph composition per clip in
+`03_neighbor_vlm_l1_clip_results.jsonl`. If a long short-video/streaming run is
+interrupted during graph compose, rerun with `--rebuild-from-stages`; cached
+clip-level graph outputs are reused and only missing clips are sent back to
+GPT-OSS. This keeps long prompts and long outputs bounded to one local
+clip-neighborhood at a time.
+
 When rerunning from cached stages:
 
 - `--rebuild-from-stages` ignores `final_example.json` and rebuilds L1/L2 from

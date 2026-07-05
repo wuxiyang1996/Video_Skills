@@ -15,6 +15,7 @@ import argparse
 import json
 import re
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -917,6 +918,124 @@ def _schema_for_span(
     )
 
 
+def _schema_worker_args(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "clip_schema_model": args.clip_schema_model,
+        "keys_py_path": str(args.keys_py) if args.keys_py else None,
+        "request_frames": args.request_frames,
+        "clip_schema_max_tokens": args.clip_schema_max_tokens,
+        "clip_schema_reasoning_effort": args.clip_schema_reasoning_effort,
+        "clip_schema_timeout_s": args.clip_schema_timeout_s,
+    }
+
+
+def _repair_clip_schema_worker(job: dict[str, Any]) -> dict[str, Any]:
+    args = job["args"]
+    span_payload = job["span"]
+    span = ClipSpan(
+        start_s=float(span_payload["start_s"]),
+        end_s=float(span_payload["end_s"]),
+        granularity=span_payload.get("granularity", "fine"),
+        parent_index=span_payload.get("parent_index"),
+        clip_index=int(span_payload.get("clip_index") or 0),
+    )
+    reasoning = None if args["clip_schema_reasoning_effort"] in {"", "none", "off"} else {"effort": args["clip_schema_reasoning_effort"]}
+    if args["clip_schema_reasoning_effort"] == "none":
+        reasoning = {"effort": "none", "exclude": True}
+    client = OpenRouterClient(
+        model=args["clip_schema_model"],
+        api_key=job["api_key"],
+        temperature=0.0,
+        max_tokens=int(args["clip_schema_max_tokens"]),
+        reasoning=reasoning,
+        timeout_s=int(args["clip_schema_timeout_s"]),
+    )
+    cfg = ClipSchemaConfig(
+        model=args["clip_schema_model"],
+        keys_py_path=args.get("keys_py_path"),
+        request_frames=int(args["request_frames"]),
+        max_tokens=int(args["clip_schema_max_tokens"]),
+        timeout_s=int(args["clip_schema_timeout_s"]),
+    )
+    producer = QwenClipSchemaProducer(cfg, client)
+    try:
+        return _schema_for_span(producer, example=job["example"], span=span, repair_query=job["repair_query"])
+    except Exception as exc:
+        video = job["example"].get("video") or {}
+        video_id = str(video.get("video_id") or "video")
+        return {
+            "clip_id": f"clip:{video_id}:fine:{span.clip_index:04d}",
+            "time_span": span.to_dict(),
+            "granularity": span.granularity,
+            "producer": "qwen_repair_clip_schema",
+            "model": args["clip_schema_model"],
+            "model_error": str(exc),
+            "schema_attempt": "repair_parallel_worker_error",
+        }
+
+
+def _produce_repair_schemas(
+    *,
+    example: dict[str, Any],
+    spans: list[ClipSpan],
+    repair_query: str,
+    api_key: str,
+    args: argparse.Namespace,
+    schemas_path: Path,
+) -> list[dict[str, Any]]:
+    if not spans:
+        return []
+    if args.repair_clip_schema_workers <= 1 or len(spans) <= 1:
+        producer = _build_producer(args, api_key)
+        schemas: list[dict[str, Any]] = []
+        for span in spans:
+            schema = _schema_for_span(producer, example=example, span=span, repair_query=repair_query)
+            schemas.append(schema)
+            _write_jsonl(schemas_path, schemas)
+        return schemas
+
+    worker_args = _schema_worker_args(args)
+    jobs = [
+        {
+            "example": example,
+            "span": {
+                "start_s": span.start_s,
+                "end_s": span.end_s,
+                "granularity": span.granularity,
+                "parent_index": span.parent_index,
+                "clip_index": span.clip_index,
+            },
+            "repair_query": repair_query,
+            "api_key": api_key,
+            "args": worker_args,
+        }
+        for span in spans
+    ]
+    indexed: list[tuple[int, dict[str, Any]]] = []
+    with ProcessPoolExecutor(max_workers=min(args.repair_clip_schema_workers, len(jobs))) as executor:
+        future_to_index = {executor.submit(_repair_clip_schema_worker, job): idx for idx, job in enumerate(jobs)}
+        for future in as_completed(future_to_index):
+            idx = future_to_index[future]
+            try:
+                schema = future.result()
+            except Exception as exc:
+                span = spans[idx]
+                video = example.get("video") or {}
+                video_id = str(video.get("video_id") or "video")
+                schema = {
+                    "clip_id": f"clip:{video_id}:fine:{span.clip_index:04d}",
+                    "time_span": span.to_dict(),
+                    "granularity": span.granularity,
+                    "producer": "qwen_repair_clip_schema",
+                    "model": args.clip_schema_model,
+                    "model_error": str(exc),
+                    "schema_attempt": "repair_parallel_future_error",
+                }
+            indexed.append((idx, schema))
+            _write_jsonl(schemas_path, [row for _, row in sorted(indexed, key=lambda item: item[0])])
+    return [row for _, row in sorted(indexed, key=lambda item: item[0])]
+
+
 def _audio_or_subtitle_like(text: str) -> bool:
     lowered = text.lower()
     return any(
@@ -1579,12 +1698,14 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
     else:
         if not api_key:
             raise RuntimeError("OpenRouter API key is required unless --dry-run or --skip-api is used")
-        producer = _build_producer(args, api_key)
-        schemas = []
-        for span in spans:
-            schema = _schema_for_span(producer, example=example, span=span, repair_query=query)
-            schemas.append(schema)
-            _write_jsonl(schemas_path, schemas)
+        schemas = _produce_repair_schemas(
+            example=example,
+            spans=spans,
+            repair_query=query,
+            api_key=api_key,
+            args=args,
+            schemas_path=schemas_path,
+        )
     if schemas and not schemas_path.exists():
         _write_jsonl(schemas_path, schemas)
 
@@ -1626,6 +1747,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Allow heuristic lexical fallback when the LLM clue planner/selector fails. Off by default for API runs.",
     )
     parser.add_argument("--request-frames", type=int, default=4)
+    parser.add_argument("--repair-clip-schema-workers", type=int, default=1)
     parser.add_argument("--clip-schema-max-tokens", type=int, default=1200)
     parser.add_argument("--clip-schema-timeout-s", type=int, default=180)
     parser.add_argument("--clip-schema-reasoning-effort", default="none")

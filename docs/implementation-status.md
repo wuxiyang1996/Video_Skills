@@ -214,21 +214,27 @@ Takeaway:
 - The current path is feasible: Qwen clip schemas and GPT-OSS neighbor-local L1
   can produce graph nodes and, on some examples, useful semantic edges such as
   `same_entity`, `same_place`, `supports_observation`, and `temporal_next`.
-- The current path is not yet a stable high-quality setting. L2 can override a
-  correct L1 option-memory signal, and weak L1 gates can still produce
-  plausible-looking L2 answers.
-- Long or dense clips expose a throughput issue because `neighbor_vlm_l1`
-  currently calls GPT-OSS serially per target clip.
+- The current five-dataset one-video API check is stable enough for the current
+  protocol: all five examples have high L1 quality; final L2 status is four
+  `accepted_strong` and one `accepted_bridge` after long-video repair.
+- Long-video L2 now distinguishes direct evidence (`resolved_strong`) from
+  visual-anchor-plus-objective-background inference (`accepted_bridge`).
+- Throughput is improved by process workers for `neighbor_vlm_l1` graph
+  composition, per-clip staged cache/resume for neighbor graph outputs, and
+  optional process workers for repair clip-schema generation.
 
-Next fixes:
+Current remaining risks:
 
-- Add per-clip GPT-OSS timeout and parallel workers for `neighbor_vlm_l1`.
-- Run L2 only from a gated evidence pack: top evidence refs, option score table,
-  local snippets, and uncertainty notes.
-- Skip L2 or return insufficient evidence when the L1 gate fails.
-- Strengthen the L1 prompt/schema so every target node is encouraged to emit
-  searchable cross-clip edges when evidence exists, instead of allowing
-  node-only graphs.
+- Short/streaming VideoMME and OVO runs still show some cached
+  `video_tool_perception_backend` fallback clip schemas from interrupted or
+  failed Qwen calls; these are not the desired final perception path and should
+  be retried with Qwen for strict no-heuristic reporting using
+  `--retry-non-backbone-clip-schemas`.
+- Baseline long-video L1 uses full coarse coverage plus selected fine
+  neighborhoods; final answer support must come from verified fine evidence or
+  explicit objective bridge verification, not retrieval scores.
+- L2 should continue to run only from gated evidence packs; weak direct support
+  should become repair/bridge, not `accepted_weak`.
 
 ### 4.2 Smoke Tests (no API key)
 
@@ -290,9 +296,8 @@ python dataset_clip_wrapper/evaluate_vrbench_video_only_graph.py \
 ```
 
 `smoke_test_video_only_takein.py` is the all-dataset contract test for
-`video_only`: Video-Holmes, CG-Bench, VRBench, and SIV-Bench must each load a
-real video, produce local `video_tools` clip schemas, craft a clue-memory graph,
-and avoid hidden-supervision leakage.
+`video_only`: each adapter must load a real video, produce clip schemas, craft
+a clue-memory graph, and avoid hidden-supervision leakage.
 
 `smoke_test_coarse_fine_graph_crafting.py` is the hierarchical contract test:
 long-video datasets build a full-video coarse graph first, expand fine graph
@@ -300,12 +305,15 @@ nodes only inside retrieved coarse neighborhoods, and connect fine clips back to
 their parent coarse clips with `refines` links. Short-video datasets validate
 the fine graph directly.
 
-For all-four-dataset "entire video" checks, use this coarse/fine contract rather
+For five-dataset "entire video" checks, use this coarse/fine contract rather
 than full fine-grained scanning. The expected behavior is:
 
 ```text
-Video-Holmes / SIV-Bench:
+Video-Holmes / VideoMME:
   full short-video fine graph
+
+OVO-Bench:
+  streaming/short profile with causal observation handles
 
 CG-Bench / VRBench:
   full-video coarse graph
@@ -321,6 +329,16 @@ graph now includes `coarse_summary` nodes so query-memory experiments can search
 full-video handles even when fine perception has only been expanded in selected
 neighborhoods. Final answer support should still come from discovered fine
 evidence rather than a coarse retrieval score alone.
+
+The current final acceptance report can be regenerated with:
+
+```bash
+python dataset_clip_wrapper/report_final_acceptance.py \
+  --quality-report dataset_clip_wrapper/output/rerun5_quality_report.json \
+  --repair-report dataset_clip_wrapper/output/repair_long_objective_bridge_api_v7_cg_rebuild_report.json \
+  --repair-report dataset_clip_wrapper/output/repair_long_objective_bridge_api_v7_vr_rebuild_report.json \
+  --output dataset_clip_wrapper/output/rerun5_final_acceptance_report.json
+```
 
 Long-video defaults (`ClipPolicyConfig.for_regime(LONG)`):
 

@@ -125,6 +125,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Reuse good cached clip schemas but discard cached model_error rows and retry those clips.",
     )
+    parser.add_argument(
+        "--retry-non-backbone-clip-schemas",
+        action="store_true",
+        help="Discard cached clip schemas not produced by the selected clip-schema backend and retry them.",
+    )
 
     parser.add_argument("--clip-schema-model", default="qwen/qwen3.5-9b")
     parser.add_argument("--clip-schema-backend", default="qwen", choices=["qwen", "video_tools"])
@@ -260,6 +265,7 @@ def _produce_or_resume_clip_schemas(
     stage_path: Path,
     force: bool,
     retry_failed: bool,
+    retry_non_backbone: bool,
     fill_missing: bool,
     workers: int = 1,
 ) -> list[dict[str, Any]]:
@@ -269,6 +275,10 @@ def _produce_or_resume_clip_schemas(
     cached = _read_jsonl(stage_path)
     if retry_failed and cached:
         cached = [row for row in cached if not row.get("model_error")]
+        _write_jsonl(stage_path, cached)
+    if retry_non_backbone and cached:
+        expected_producer = "qwen_clip_schema" if config.clip_schema.backend == "qwen" else "video_tool_perception_backend"
+        cached = [row for row in cached if row.get("producer") == expected_producer]
         _write_jsonl(stage_path, cached)
     by_clip_id = {row.get("clip_id"): row for row in cached if row.get("clip_id")}
     budget = config.clip_schema.max_clips
@@ -353,6 +363,7 @@ def _produce_or_resume_coarse_summaries(
     stage_path: Path,
     force: bool,
     retry_failed: bool,
+    retry_non_backbone: bool,
     fill_missing: bool,
     workers: int = 1,
 ) -> list[dict[str, Any]]:
@@ -366,6 +377,7 @@ def _produce_or_resume_coarse_summaries(
         stage_path=stage_path,
         force=force,
         retry_failed=retry_failed,
+        retry_non_backbone=retry_non_backbone,
         fill_missing=fill_missing,
         workers=workers,
     )
@@ -460,6 +472,7 @@ def _compose_l1_and_l2(
     clip_schemas: list[dict[str, Any]],
     visible_segments: list[dict[str, Any]],
     duration_s: float,
+    neighbor_cache_path: Path | None = None,
 ) -> dict[str, Any]:
     api_key: str | None = None
     if config.graph_composer.use_llm_planner or config.run_l2_llm_planner:
@@ -477,7 +490,12 @@ def _compose_l1_and_l2(
     else:
         client = OpenRouterClient(model="offline", api_key="offline")
 
-    composer = GraphComposer(config.graph_composer, client)
+    graph_config = (
+        replace(config.graph_composer, neighbor_cache_path=str(neighbor_cache_path))
+        if neighbor_cache_path and config.graph_composer.composer_mode == "neighbor_vlm_l1"
+        else config.graph_composer
+    )
+    composer = GraphComposer(graph_config, client)
     composed = composer.compose_from_clip_schemas(
         example_id=example["example_id"],
         video_id=item.video_id,
@@ -572,6 +590,7 @@ def _run_item(
     force: bool,
     rebuild_from_stages: bool,
     retry_failed_clip_schemas: bool,
+    retry_non_backbone_clip_schemas: bool,
     fill_missing_clip_schemas: bool,
     build_coarse_summary_index: bool,
     clip_schema_workers: int,
@@ -604,6 +623,7 @@ def _run_item(
             stage_path=example_stage_dir / "00b_coarse_clip_schemas.jsonl",
             force=force,
             retry_failed=retry_failed_clip_schemas,
+            retry_non_backbone=retry_non_backbone_clip_schemas,
             fill_missing=fill_missing_clip_schemas,
             workers=clip_schema_workers,
         )
@@ -641,6 +661,7 @@ def _run_item(
         stage_path=example_stage_dir / "02_clip_schemas.jsonl",
         force=force,
         retry_failed=retry_failed_clip_schemas,
+        retry_non_backbone=retry_non_backbone_clip_schemas,
         fill_missing=fill_missing_clip_schemas,
         workers=clip_schema_workers,
     )
@@ -704,6 +725,7 @@ def _run_item(
         clip_schemas=clip_schemas,
         visible_segments=visible_segments,
         duration_s=duration_s,
+        neighbor_cache_path=example_stage_dir / "03_neighbor_vlm_l1_clip_results.jsonl",
     )
     _write_json(example_stage_dir / "04_l1_example.json", {**example, "metadata": {**example["metadata"], "reasoning_rollout": None}})
     _write_json(example_stage_dir / "05_l2_rollout.json", example["metadata"].get("reasoning_rollout"))
@@ -735,6 +757,7 @@ def main(argv: list[str] | None = None) -> int:
             force=args.force,
             rebuild_from_stages=args.rebuild_from_stages,
             retry_failed_clip_schemas=args.retry_failed_clip_schemas,
+            retry_non_backbone_clip_schemas=args.retry_non_backbone_clip_schemas,
             fill_missing_clip_schemas=not args.no_fill_missing_clip_schemas,
             build_coarse_summary_index=_coarse_summary_index_enabled(args, config),
             clip_schema_workers=args.clip_schema_workers,

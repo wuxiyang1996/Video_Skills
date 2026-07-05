@@ -210,6 +210,7 @@ class GraphComposerConfig:
     reasoning_effort: str | None = "minimal"
     timeout_s: int = 180
     neighbor_workers: int = 1
+    neighbor_cache_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -224,6 +225,7 @@ class GraphComposerConfig:
             "reasoning_effort": self.reasoning_effort,
             "timeout_s": self.timeout_s,
             "neighbor_workers": self.neighbor_workers,
+            "neighbor_cache_path": self.neighbor_cache_path,
         }
 
 
