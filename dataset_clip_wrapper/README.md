@@ -506,14 +506,22 @@ python dataset_clip_wrapper/run_repair_protocol.py \
 ```
 
 `--repair-mode local` expands around previously selected coarse windows.
-`--repair-mode reroute` re-ranks the full coarse summary index with multiple
-retrieval roles:
+`--repair-mode reroute` asks GPT-OSS to build a `clue_need_spec` first, then
+uses that spec to select coarse windows from the full coarse summary index. The
+model-planned spec records:
 
-- `target_retrieval`
-- `attribute_retrieval`
-- `temporal_context_retrieval`
-- `visual_disambiguation_retrieval` for discriminative visual gaps
-- `social_causal_bridge_retrieval` for motive/intent gaps
+- visual target and event/action to find;
+- visual attributes to resolve;
+- positive evidence criteria;
+- negative evidence to exclude;
+- forbidden modalities (`audio`, `asr`, `subtitle`, `dialogue`);
+- clip inspection instructions for Qwen.
+
+GPT-OSS also acts as the default coarse-window selector in API runs. Lexical
+query variants are only a fallback for dry-run/no-api mode or when
+`--disable-llm-reroute-selector` is set. This keeps the normal repair path
+prompt-driven: the mechanism asks the model what clue must be found and where
+to inspect, instead of relying on hand-written retrieval heuristics.
 
 `--repair-mode auto` switches to full reroute when cached repair schemas contain
 negative target evidence, such as "no vehicle", "no animation", or "cannot
@@ -522,10 +530,10 @@ determine". The output report records `failure_type`,
 `retrieval_round_count`.
 
 This is inspired by M3-style iterative retrieval/control, but it is not a
-multi-agent voting setup. The retrieval roles only produce complementary
-evidence packs. The final L2 answer still must pass `verify_claim_support`;
-commonsense bridge text and negative evidence cannot become final support by
-themselves.
+multi-agent voting setup. The clue planner and coarse selector only produce
+evidence-seeking instructions and candidate evidence packs. The final L2 answer
+still must pass `verify_claim_support`; commonsense bridge text and negative
+evidence cannot become final support by themselves.
 
 When rerunning from cached stages:
 

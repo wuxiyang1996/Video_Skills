@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 PKG_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = PKG_ROOT.parent
@@ -70,10 +71,27 @@ def main() -> int:
         example,
         row,
         gaps=["discriminative_visual_evidence"],
+        clue_spec={
+            "planner_backend": "smoke",
+            "visual_target": "white vehicle driving from the left in animation",
+            "coarse_search_queries": [
+                {"role": "target_retrieval", "query": "white vehicle driving from left animation"}
+            ],
+        },
         prior_schemas=prior_schemas,
         max_repair_clips=6,
         reroute_topk=3,
         reroute_topk_per_query=2,
+        api_key=None,
+        args=SimpleNamespace(
+            dry_run=True,
+            disable_llm_reroute_selector=True,
+            clue_planner_model="openai/gpt-oss-120b",
+            clue_selector_max_tokens=1600,
+            clue_planner_timeout_s=180,
+            coarse_summary_prompt_chars=260,
+            reroute_topk=3,
+        ),
     )
     report = {
         "mode": meta.get("mode"),

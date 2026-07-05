@@ -158,18 +158,23 @@ the existing two layers, not a third graph:
 
 ```text
 coarse visual index
-  -> multi-role retrieval reroute
+  -> GPT-OSS clue_need_spec planner
+  -> GPT-OSS coarse-window selector
   -> retrieved fine clips
   -> L1 repair patch
   -> L2 hypothesis / bridge
   -> verify_claim_support
 ```
 
-The retrieval roles are target, attribute, temporal-context, visual
-disambiguation, and social/causal bridge retrieval. They are specialized
-retrieval actions, not independent answer agents. Their outputs are candidate
-evidence packs and negative-window diagnostics. Final answer commit still
-requires the L2 verifier to ground the claim in non-diagnostic visual evidence.
+The clue planner produces a structured `clue_need_spec`: visual target,
+attributes to resolve, positive evidence criteria, negative evidence to exclude,
+forbidden modalities, and Qwen clip-inspection instructions. The coarse-window
+selector then reads the full coarse visual summary index and chooses candidate
+windows to inspect. Lexical retrieval is only a dry-run/no-api fallback. These
+are specialized evidence-seeking actions, not independent answer agents. Their
+outputs are candidate evidence packs and negative-window diagnostics. Final
+answer commit still requires the L2 verifier to ground the claim in
+non-diagnostic visual evidence.
 
 This matters for long-video QA because `L1 graph_quality=high` only means the
 observed clips were converted into a dense graph; it does not prove that the

@@ -118,7 +118,7 @@ def _expanded_indices(selected: list[int], coarse_count: int, *, radius: int) ->
     return list(dict.fromkeys(out))
 
 
-def _repair_query(example: dict[str, Any], row: dict[str, Any], gaps: list[str]) -> str:
+def _repair_query(example: dict[str, Any], row: dict[str, Any], gaps: list[str], clue_spec: dict[str, Any] | None = None) -> str:
     question = example.get("question") or {}
     commonsense = ((row.get("repair_hints") or {}).get("commonsense_repair") or {})
     hypotheses = commonsense.get("top_hypotheses") or []
@@ -126,15 +126,127 @@ def _repair_query(example: dict[str, Any], row: dict[str, Any], gaps: list[str])
         f"- {h.get('label')}: {h.get('text')} (commonsense_score={h.get('commonsense_score')})"
         for h in hypotheses[:4]
     )
+    clue_text = json.dumps(clue_spec or {}, ensure_ascii=False, indent=2)
     return (
         "Visible QA repair context. Do not use hidden answer labels.\n"
+        "STRICT VIDEO-ONLY RULES:\n"
+        "- Use visual frames only. Ignore audio, ASR, subtitle, narration, and the wording of this prompt as evidence.\n"
+        "- Do not copy the question or options into observable_facts.\n"
+        "- If the requested target/clue is not visible in the clip, explicitly say visual evidence insufficient.\n"
+        "- Negative evidence such as no visible target is useful and should be recorded as visual uncertainty.\n"
         f"Question: {question.get('question_text')}\n"
         f"Options:\n{_option_text(question)}\n"
         f"Current missing requirements: {', '.join(gaps) or 'evidence_sufficiency'}\n"
         f"Candidate commonsense hypotheses to check against visual evidence:\n{hyp_text}\n"
-        "Focus on observable visual clues, discriminative details, social affect, "
-        "actions, setting, and causal context. Mark uncertainty explicitly."
+        f"Clue need spec:\n{clue_text}\n"
+        "Inspect the clip only for the visual targets, attributes, actions, and exclusion criteria in the clue need spec. "
+        "Return grounded visual observations or a clear visual-insufficient note."
     )
+
+
+def _prior_negative_notes(schemas: list[dict[str, Any]], *, limit: int = 8) -> list[dict[str, Any]]:
+    notes: list[dict[str, Any]] = []
+    for schema in schemas:
+        text = " ".join(_text_items(schema))
+        if not text or not _has_negative_target_evidence(text):
+            continue
+        notes.append(
+            {
+                "clip_id": schema.get("clip_id"),
+                "time_span": schema.get("time_span"),
+                "negative_visual_note": text[:500],
+            }
+        )
+        if len(notes) >= limit:
+            break
+    return notes
+
+
+def _fallback_clue_need_spec(example: dict[str, Any], row: dict[str, Any], gaps: list[str]) -> dict[str, Any]:
+    question = example.get("question") or {}
+    options = question.get("options") or []
+    return {
+        "planner_backend": "fallback_no_api",
+        "visual_target": question.get("question_text") or "",
+        "must_find_visual_evidence": [question.get("question_text") or ""],
+        "visual_attributes_to_resolve": [str(opt.get("text") or "") for opt in options],
+        "forbidden_modalities": ["audio", "asr", "subtitle", "dialogue"],
+        "positive_evidence_criteria": [
+            "The target object/event/action is visible in the frames.",
+            "The answer attribute is directly visible or explicitly absent.",
+        ],
+        "insufficient_evidence_rule": "If the target or attribute is not visible, mark visual evidence insufficient.",
+        "coarse_search_queries": _query_variants(example, row, gaps, clue_spec=None),
+    }
+
+
+def _build_clue_need_spec(
+    example: dict[str, Any],
+    row: dict[str, Any],
+    gaps: list[str],
+    *,
+    prior_schemas: list[dict[str, Any]],
+    api_key: str | None,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    fallback = _fallback_clue_need_spec(example, row, gaps)
+    if not api_key or args.disable_llm_clue_planner or args.dry_run:
+        return fallback
+
+    question = example.get("question") or {}
+    prompt = {
+        "task": "Create a video-only clue seeking specification for long-video repair.",
+        "rules": [
+            "Use only the visible question/options and prior negative visual notes.",
+            "Do not use hidden answer labels or dataset annotations.",
+            "The downstream VLM may only use frames; audio, ASR, subtitles, narration, and dialogue are forbidden evidence.",
+            "Describe what visual clue must be found and what would count as insufficient evidence.",
+            "Generate concrete search queries for coarse visual summaries.",
+        ],
+        "question": {
+            "question_text": question.get("question_text"),
+            "options": question.get("options") or [],
+            "answer_format": question.get("answer_format"),
+        },
+        "gap_types": gaps,
+        "repair_hints": row.get("repair_hints") or {},
+        "prior_negative_visual_notes": _prior_negative_notes(prior_schemas),
+        "required_json_shape": {
+            "visual_target": "string",
+            "must_find_visual_evidence": ["string"],
+            "visual_attributes_to_resolve": ["string"],
+            "temporal_or_action_cues": ["string"],
+            "negative_evidence_to_exclude": ["string"],
+            "forbidden_modalities": ["audio", "asr", "subtitle", "dialogue"],
+            "positive_evidence_criteria": ["string"],
+            "insufficient_evidence_rule": "string",
+            "coarse_search_queries": [{"role": "string", "query": "string"}],
+            "clip_inspection_instruction": "string",
+        },
+    }
+    client = OpenRouterClient(
+        model=args.clue_planner_model,
+        api_key=api_key,
+        temperature=0.0,
+        max_tokens=args.clue_planner_max_tokens,
+        reasoning={"effort": "medium"},
+        timeout_s=args.clue_planner_timeout_s,
+    )
+    try:
+        spec = client.chat_json(
+            [
+                {"role": "system", "content": "You plan grounded visual clue searches for video-only QA repair."},
+                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+            ]
+        )
+    except Exception as exc:
+        fallback["planner_error"] = str(exc)
+        return fallback
+    if not isinstance(spec, dict):
+        return fallback
+    spec["planner_backend"] = args.clue_planner_model
+    spec.setdefault("forbidden_modalities", ["audio", "asr", "subtitle", "dialogue"])
+    return spec
 
 
 def _coarse_schema_segments(example: dict[str, Any]) -> list[dict[str, Any]]:
@@ -157,7 +269,19 @@ def _coarse_schema_segments(example: dict[str, Any]) -> list[dict[str, Any]]:
     return segments
 
 
-def _query_variants(example: dict[str, Any], row: dict[str, Any], gaps: list[str]) -> list[dict[str, str]]:
+def _query_variants(
+    example: dict[str, Any],
+    row: dict[str, Any],
+    gaps: list[str],
+    clue_spec: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    if clue_spec:
+        planned = []
+        for item in clue_spec.get("coarse_search_queries") or []:
+            if isinstance(item, dict) and item.get("query"):
+                planned.append({"role": str(item.get("role") or "planned_clue_retrieval"), "query": str(item["query"])})
+        if planned:
+            return planned
     question = example.get("question") or {}
     question_text = str(question.get("question_text") or "")
     option_text = " ".join(str(opt.get("text") or "") for opt in question.get("options") or [])
@@ -206,15 +330,126 @@ def _negative_parent_indices_from_schemas(example: dict[str, Any], schemas: list
     return list(dict.fromkeys(negative_indices))
 
 
+def _coarse_summaries_for_prompt(example: dict[str, Any], *, max_chars: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for idx, schema in enumerate(((example.get("metadata") or {}).get("coarse_clip_schemas") or [])):
+        if not isinstance(schema, dict):
+            continue
+        text = " ".join(_text_items(schema))
+        rows.append(
+            {
+                "coarse_index": idx,
+                "time_span": schema.get("time_span") or {},
+                "visual_summary": text[:max_chars],
+            }
+        )
+    return rows
+
+
+def _llm_select_coarse_indices(
+    example: dict[str, Any],
+    *,
+    clue_spec: dict[str, Any],
+    negative_indices: set[int],
+    api_key: str | None,
+    args: argparse.Namespace,
+) -> tuple[list[int], list[dict[str, Any]]]:
+    if not api_key or args.disable_llm_reroute_selector or args.dry_run:
+        return [], []
+    question = example.get("question") or {}
+    coarse_rows = _coarse_summaries_for_prompt(example, max_chars=args.coarse_summary_prompt_chars)
+    if not coarse_rows:
+        return [], []
+    prompt = {
+        "task": "Select coarse video windows to inspect for the needed visual clue.",
+        "rules": [
+            "Use only the coarse visual summaries as search evidence.",
+            "Do not infer from audio, subtitles, hidden labels, or the gold answer.",
+            "Do not select excluded coarse indices unless every other window is worse.",
+            "Prefer windows likely to contain positive visible evidence, not windows that merely mention the target is absent.",
+            "If no summary appears to contain the target, return low confidence and explain the missing clue.",
+        ],
+        "question": {
+            "question_text": question.get("question_text"),
+            "options": question.get("options") or [],
+        },
+        "clue_need_spec": clue_spec,
+        "excluded_negative_coarse_indices": sorted(negative_indices),
+        "max_indices": args.reroute_topk,
+        "coarse_summaries": coarse_rows,
+        "required_json_shape": {
+            "selected_coarse_indices": [0],
+            "selection_rounds": [
+                {
+                    "role": "model_clue_selector",
+                    "query_or_need": "string",
+                    "selected_after_exclusion": [0],
+                    "reason": "string",
+                    "confidence": 0.0,
+                }
+            ],
+            "missing_clue_diagnosis": "string",
+        },
+    }
+    client = OpenRouterClient(
+        model=args.clue_planner_model,
+        api_key=api_key,
+        temperature=0.0,
+        max_tokens=args.clue_selector_max_tokens,
+        reasoning={"effort": "medium"},
+        timeout_s=args.clue_planner_timeout_s,
+    )
+    try:
+        payload = client.chat_json(
+            [
+                {"role": "system", "content": "You select long-video coarse windows for visual clue discovery."},
+                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+            ]
+        )
+    except Exception:
+        return [], []
+    selected: list[int] = []
+    max_index = len(coarse_rows) - 1
+    for item in payload.get("selected_coarse_indices") or []:
+        try:
+            idx = int(item)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= idx <= max_index and idx not in negative_indices and idx not in selected:
+            selected.append(idx)
+        if len(selected) >= args.reroute_topk:
+            break
+    rounds = payload.get("selection_rounds") if isinstance(payload.get("selection_rounds"), list) else []
+    if rounds:
+        for row in rounds:
+            if isinstance(row, dict):
+                row["selector_backend"] = args.clue_planner_model
+    else:
+        rounds = [
+            {
+                "role": "model_clue_selector",
+                "query_or_need": clue_spec.get("visual_target"),
+                "selected_after_exclusion": selected,
+                "reason": payload.get("missing_clue_diagnosis") or "",
+                "confidence": 0.0,
+                "selector_backend": args.clue_planner_model,
+            }
+        ]
+    return selected, rounds
+
+
 def _select_rerouted_repair_spans(
     example: dict[str, Any],
     row: dict[str, Any],
     *,
     gaps: list[str],
+    clue_spec: dict[str, Any],
     prior_schemas: list[dict[str, Any]],
     max_repair_clips: int,
     reroute_topk: int,
     reroute_topk_per_query: int,
+    api_key: str | None,
+    args: argparse.Namespace,
 ) -> tuple[list[ClipSpan], dict[str, Any]]:
     duration_s = float((example.get("video") or {}).get("duration_s") or 0.0)
     policy = ClipPolicyConfig.for_regime(VideoRegime.LONG, duration_s=duration_s)
@@ -224,7 +459,17 @@ def _select_rerouted_repair_spans(
     rounds: list[dict[str, Any]] = []
     combined_scores: dict[int, float] = {}
 
-    for variant in _query_variants(example, row, gaps):
+    selected, llm_rounds = _llm_select_coarse_indices(
+        example,
+        clue_spec=clue_spec,
+        negative_indices=negative_indices,
+        api_key=api_key,
+        args=args,
+    )
+    if selected:
+        rounds.extend(llm_rounds)
+
+    for variant in ([] if selected else _query_variants(example, row, gaps, clue_spec=clue_spec)):
         retrieval = retrieve_coarse_clips(
             coarse_spans=coarse,
             query_text=variant["query"],
@@ -254,8 +499,9 @@ def _select_rerouted_repair_spans(
             }
         )
 
-    ranked = sorted(combined_scores.items(), key=lambda item: item[1], reverse=True)
-    selected = [idx for idx, _ in ranked[:reroute_topk]]
+    if not selected:
+        ranked = sorted(combined_scores.items(), key=lambda item: item[1], reverse=True)
+        selected = [idx for idx, _ in ranked[:reroute_topk]]
     if not selected:
         selected = [idx for idx in range(min(reroute_topk, len(coarse))) if idx not in negative_indices]
 
@@ -288,6 +534,8 @@ def _select_rerouted_repair_spans(
         "fresh_span_count": len(fresh),
         "chosen_span_count": len(chosen),
         "retrieval_rounds": rounds,
+        "clue_planner_backend": clue_spec.get("planner_backend"),
+        "reroute_selector_backend": args.clue_planner_model if rounds and rounds[0].get("selector_backend") else "lexical_fallback",
     }
 
 
@@ -666,6 +914,14 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
 
     prior_schemas = _read_jsonl(schemas_path) if schemas_path.exists() else []
     prior_negative_count = sum(1 for schema in prior_schemas if _has_negative_target_evidence(" ".join(_text_items(schema))))
+    clue_spec = _build_clue_need_spec(
+        example,
+        row,
+        gaps,
+        prior_schemas=prior_schemas,
+        api_key=api_key,
+        args=args,
+    )
     use_reroute = args.repair_mode == "reroute" or (
         args.repair_mode == "auto" and prior_negative_count >= args.negative_reroute_threshold
     )
@@ -674,10 +930,13 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
             example,
             row,
             gaps=gaps,
+            clue_spec=clue_spec,
             prior_schemas=prior_schemas,
             max_repair_clips=args.max_repair_clips,
             reroute_topk=args.reroute_topk,
             reroute_topk_per_query=args.reroute_topk_per_query,
+            api_key=api_key,
+            args=args,
         )
     else:
         spans, span_meta = _select_repair_spans(
@@ -687,7 +946,7 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
             max_repair_clips=args.max_repair_clips,
         )
         span_meta["prior_negative_schema_count"] = prior_negative_count
-    query = _repair_query(example, row, gaps)
+    query = _repair_query(example, row, gaps, clue_spec=clue_spec)
     plan = {
         "schema_version": "video-skills-relaunch/repair-plan-v0.1",
         "example_id": example.get("example_id"),
@@ -696,6 +955,7 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
         "strategy": strategy,
         "repair_mode": span_meta.get("mode"),
         "gap_types": gaps,
+        "clue_need_spec": clue_spec,
         "repair_query": query,
         "span_selection": span_meta,
         "spans": [
@@ -761,6 +1021,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--keys-py", type=Path)
     parser.add_argument("--clip-schema-model", default="qwen/qwen3.5-9b")
     parser.add_argument("--verifier-model", default="openai/gpt-oss-120b")
+    parser.add_argument("--clue-planner-model", default="openai/gpt-oss-120b")
+    parser.add_argument("--clue-planner-max-tokens", type=int, default=1200)
+    parser.add_argument("--clue-selector-max-tokens", type=int, default=1600)
+    parser.add_argument("--clue-planner-timeout-s", type=int, default=180)
+    parser.add_argument("--coarse-summary-prompt-chars", type=int, default=260)
+    parser.add_argument("--disable-llm-clue-planner", action="store_true")
+    parser.add_argument("--disable-llm-reroute-selector", action="store_true")
     parser.add_argument("--request-frames", type=int, default=4)
     parser.add_argument("--clip-schema-max-tokens", type=int, default=1200)
     parser.add_argument("--clip-schema-timeout-s", type=int, default=180)
