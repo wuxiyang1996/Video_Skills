@@ -175,6 +175,12 @@ def _fallback_clue_need_spec(example: dict[str, Any], row: dict[str, Any], gaps:
             "The target object/event/action is visible in the frames.",
             "The answer attribute is directly visible or explicitly absent.",
         ],
+        "objective_background_facts": [],
+        "bridge_evidence_criteria": [
+            "Visible anchors identify the situation, place, objects, or actions needed for an objective background bridge.",
+            "Background facts may explain the answer but must not be counted as visual evidence.",
+        ],
+        "answer_mode_hint": "direct_visual",
         "insufficient_evidence_rule": "If the target or attribute is not visible, mark visual evidence insufficient.",
         "coarse_search_queries": _query_variants(example, row, gaps, clue_spec=None),
     }
@@ -197,6 +203,9 @@ def _clue_need_spec_response_schema() -> dict[str, Any]:
                     "negative_evidence_to_exclude": {"type": "array", "items": {"type": "string"}},
                     "forbidden_modalities": {"type": "array", "items": {"type": "string"}},
                     "positive_evidence_criteria": {"type": "array", "items": {"type": "string"}},
+                    "objective_background_facts": {"type": "array", "items": {"type": "string"}},
+                    "bridge_evidence_criteria": {"type": "array", "items": {"type": "string"}},
+                    "answer_mode_hint": {"type": "string"},
                     "insufficient_evidence_rule": {"type": "string"},
                     "coarse_search_queries": {
                         "type": "array",
@@ -218,6 +227,9 @@ def _clue_need_spec_response_schema() -> dict[str, Any]:
                     "visual_attributes_to_resolve",
                     "forbidden_modalities",
                     "positive_evidence_criteria",
+                    "objective_background_facts",
+                    "bridge_evidence_criteria",
+                    "answer_mode_hint",
                     "insufficient_evidence_rule",
                     "coarse_search_queries",
                     "clip_inspection_instruction",
@@ -238,6 +250,8 @@ def _coarse_selector_response_schema() -> dict[str, Any]:
                 "additionalProperties": True,
                 "properties": {
                     "selected_coarse_indices": {"type": "array", "items": {"type": "integer"}},
+                    "selection_mode": {"type": "string"},
+                    "background_bridge_possible": {"type": "boolean"},
                     "selection_rounds": {
                         "type": "array",
                         "items": {
@@ -255,6 +269,27 @@ def _coarse_selector_response_schema() -> dict[str, Any]:
                     "missing_clue_diagnosis": {"type": "string"},
                 },
                 "required": ["selected_coarse_indices", "selection_rounds", "missing_clue_diagnosis"],
+            },
+        },
+    }
+
+
+def _coarse_selector_compact_response_schema() -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "coarse_window_selection_compact",
+            "strict": False,
+            "schema": {
+                "type": "object",
+                "additionalProperties": True,
+                "properties": {
+                    "selected_coarse_indices": {"type": "array", "items": {"type": "integer"}},
+                    "selection_mode": {"type": "string"},
+                    "background_bridge_possible": {"type": "boolean"},
+                    "missing_clue_diagnosis": {"type": "string"},
+                },
+                "required": ["selected_coarse_indices", "selection_mode", "missing_clue_diagnosis"],
             },
         },
     }
@@ -291,6 +326,9 @@ def _build_clue_need_spec(
             "Do not use hidden answer labels or dataset annotations.",
             "The downstream VLM may only use frames; audio, ASR, subtitles, narration, and dialogue are forbidden evidence.",
             "Describe what visual clue must be found and what would count as insufficient evidence.",
+            "If direct visual proof is unlikely but objective background knowledge can bridge from visible anchors, mark answer_mode_hint=visual_context_plus_background.",
+            "List only stable objective background facts, not subjective guesses, stereotypes, private intentions, or dataset-specific answer leakage.",
+            "Keep objective background facts separate from visual evidence; they may guide L2 bridge verification but cannot become L1 evidence.",
             "Generate concrete search queries for coarse visual summaries.",
         ],
         "question": {
@@ -459,7 +497,10 @@ def _llm_select_coarse_indices(
             "Do not infer from audio, subtitles, hidden labels, or the gold answer.",
             "Do not select excluded coarse indices unless every other window is worse.",
             "Prefer windows likely to contain positive visible evidence, not windows that merely mention the target is absent.",
-            "If no summary appears to contain the target, return low confidence and explain the missing clue.",
+            "If direct proof is absent but a summary contains visible anchors for an objective background bridge, select it with selection_mode=bridge_context.",
+            "Coarse summaries are lossy. If the target is a short event or small object that may be omitted, select exploratory_probe windows likely to contain the surrounding scene/action instead of abstaining.",
+            "Use selection_mode=exploratory_probe when the question is visually answerable but the coarse summaries do not explicitly name the needed clue.",
+            "Only abstain when the question appears outside video-only scope or the summaries give no plausible direct, bridge, or exploratory visual window.",
         ],
         "question": {
             "question_text": question.get("question_text"),
@@ -479,24 +520,71 @@ def _llm_select_coarse_indices(
         reasoning={"effort": "medium", "exclude": True},
         timeout_s=args.clue_planner_timeout_s,
     )
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You output JSON only. Select long-video coarse windows for visual clue discovery. "
+                "Do not include analysis, markdown, or prose outside JSON."
+            ),
+        },
+        {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+    ]
     try:
         payload = client.chat_json(
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "You output JSON only. Select long-video coarse windows for visual clue discovery. "
-                        "Do not include analysis, markdown, or prose outside JSON."
-                    ),
-                },
-                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
-            ],
+            messages,
             response_format=_coarse_selector_response_schema(),
         )
     except Exception as exc:
-        if args.allow_lexical_fallback:
-            return [], [{"role": "model_clue_selector_error", "reason": str(exc), "selected_after_exclusion": []}]
-        raise RuntimeError(f"LLM reroute selector failed and heuristic fallback is disabled: {exc}") from exc
+        compact_prompt = dict(prompt)
+        compact_prompt["rules"] = list(prompt["rules"]) + [
+            "Retry in compact JSON. Do not include selection_rounds.",
+            "missing_clue_diagnosis must be one short sentence with no newline.",
+        ]
+        compact_prompt["required_json_shape"] = _coarse_selector_compact_response_schema()["json_schema"]["schema"]["properties"]
+        compact_client = OpenRouterClient(
+            model=args.clue_planner_model,
+            api_key=api_key,
+            temperature=0.0,
+            max_tokens=min(args.clue_selector_max_tokens, 900),
+            reasoning={"effort": "medium", "exclude": True},
+            timeout_s=args.clue_planner_timeout_s,
+        )
+        try:
+            payload = compact_client.chat_json(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You output compact valid JSON only. No markdown, no prose, no newlines inside strings."
+                        ),
+                    },
+                    {"role": "user", "content": json.dumps(compact_prompt, ensure_ascii=False)},
+                ],
+                response_format=_coarse_selector_compact_response_schema(),
+            )
+            payload["selection_rounds"] = [
+                {
+                    "role": "model_clue_selector_compact_retry",
+                    "query_or_need": clue_spec.get("visual_target"),
+                    "selected_after_exclusion": payload.get("selected_coarse_indices") or [],
+                    "reason": payload.get("missing_clue_diagnosis") or f"compact retry after selector JSON error: {exc}",
+                    "confidence": 0.0,
+                    "selection_mode": payload.get("selection_mode") or "direct_visual",
+                }
+            ]
+        except Exception as retry_exc:
+            if args.allow_lexical_fallback:
+                return [], [
+                    {
+                        "role": "model_clue_selector_error",
+                        "reason": f"{exc}; compact retry failed: {retry_exc}",
+                        "selected_after_exclusion": [],
+                    }
+                ]
+            raise RuntimeError(
+                f"LLM reroute selector failed and heuristic fallback is disabled: {exc}; compact retry failed: {retry_exc}"
+            ) from retry_exc
     selected: list[int] = []
     max_index = len(coarse_rows) - 1
     for item in payload.get("selected_coarse_indices") or []:
@@ -513,6 +601,7 @@ def _llm_select_coarse_indices(
         for row in rounds:
             if isinstance(row, dict):
                 row["selector_backend"] = args.clue_planner_model
+                row.setdefault("selection_mode", payload.get("selection_mode") or "direct_visual")
     else:
         rounds = [
             {
@@ -521,10 +610,85 @@ def _llm_select_coarse_indices(
                 "selected_after_exclusion": selected,
                 "reason": payload.get("missing_clue_diagnosis") or "",
                 "confidence": 0.0,
+                "selection_mode": payload.get("selection_mode") or ("direct_visual" if selected else "abstain"),
+                "background_bridge_possible": bool(payload.get("background_bridge_possible")),
                 "selector_backend": args.clue_planner_model,
                 "selector_abstained": not bool(selected),
             }
         ]
+    if not selected and not args.disable_exploratory_selector_retry:
+        forced_prompt = {
+            "task": "Select exploratory coarse windows from full-video coverage after an abstaining selector.",
+            "rules": [
+                "The previous selector found no explicit target mention, but coarse summaries are lossy.",
+                "Use only the coarse visual summaries, question, and clue_need_spec.",
+                "Do not use hidden labels, audio, subtitles, or the gold answer.",
+                "You must select 1 to max_indices coarse windows unless every summary is empty.",
+                "Choose windows where a small, short, or omitted visual clue could plausibly occur based on surrounding scene, temporal setup, objects, or action.",
+                "Use selection_mode=exploratory_probe.",
+                "missing_clue_diagnosis must be one short sentence with no newline.",
+            ],
+            "question": prompt["question"],
+            "clue_need_spec": clue_spec,
+            "excluded_negative_coarse_indices": sorted(negative_indices),
+            "max_indices": args.reroute_topk,
+            "coarse_summaries": coarse_rows,
+            "required_json_shape": _coarse_selector_compact_response_schema()["json_schema"]["schema"]["properties"],
+        }
+        forced_client = OpenRouterClient(
+            model=args.clue_planner_model,
+            api_key=api_key,
+            temperature=0.0,
+            max_tokens=min(args.clue_selector_max_tokens, 900),
+            reasoning={"effort": "medium", "exclude": True},
+            timeout_s=args.clue_planner_timeout_s,
+        )
+        try:
+            forced = forced_client.chat_json(
+                [
+                    {
+                        "role": "system",
+                        "content": "You output compact valid JSON only. No markdown, no prose, no newlines inside strings.",
+                    },
+                    {"role": "user", "content": json.dumps(forced_prompt, ensure_ascii=False)},
+                ],
+                response_format=_coarse_selector_compact_response_schema(),
+            )
+            for item in forced.get("selected_coarse_indices") or []:
+                try:
+                    idx = int(item)
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= idx <= max_index and idx not in negative_indices and idx not in selected:
+                    selected.append(idx)
+                if len(selected) >= args.reroute_topk:
+                    break
+            rounds.append(
+                {
+                    "role": "model_clue_selector_forced_exploratory_retry",
+                    "query_or_need": clue_spec.get("visual_target"),
+                    "selected_after_exclusion": selected,
+                    "reason": forced.get("missing_clue_diagnosis") or "",
+                    "confidence": 0.0,
+                    "selection_mode": forced.get("selection_mode") or "exploratory_probe",
+                    "background_bridge_possible": bool(forced.get("background_bridge_possible")),
+                    "selector_backend": args.clue_planner_model,
+                    "selector_abstained": not bool(selected),
+                }
+            )
+        except Exception as exc:
+            rounds.append(
+                {
+                    "role": "model_clue_selector_forced_exploratory_error",
+                    "query_or_need": clue_spec.get("visual_target"),
+                    "selected_after_exclusion": [],
+                    "reason": str(exc),
+                    "confidence": 0.0,
+                    "selection_mode": "abstain",
+                    "selector_backend": args.clue_planner_model,
+                    "selector_abstained": True,
+                }
+            )
     return selected, rounds
 
 
@@ -556,8 +720,7 @@ def _select_rerouted_repair_spans(
         api_key=api_key,
         args=args,
     )
-    if selected:
-        rounds.extend(llm_rounds)
+    rounds.extend(llm_rounds)
 
     selector_abstained = bool(
         api_key
@@ -615,6 +778,7 @@ def _select_rerouted_repair_spans(
                 "clue_planner_backend": clue_spec.get("planner_backend"),
                 "reroute_selector_backend": args.clue_planner_model,
                 "selector_abstained": True,
+                "selection_mode": "abstain",
             }
         selected = [idx for idx in range(min(reroute_topk, len(coarse))) if idx not in negative_indices]
 
@@ -637,6 +801,18 @@ def _select_rerouted_repair_spans(
         if f"clip:{video_id}:fine:{span.clip_index:04d}" not in existing_ids
     ]
     chosen = (fresh or fine_spans or spans)[:max_repair_clips]
+    successful_rounds = [
+        round_row
+        for round_row in rounds
+        if isinstance(round_row, dict)
+        and round_row.get("selected_after_exclusion")
+        and not round_row.get("selector_abstained")
+    ]
+    selection_mode = (
+        successful_rounds[-1].get("selection_mode")
+        if successful_rounds
+        else (rounds[0].get("selection_mode") if rounds and isinstance(rounds[0], dict) else None)
+    )
     return chosen, {
         "mode": "reroute",
         "duration_s": duration_s,
@@ -650,6 +826,7 @@ def _select_rerouted_repair_spans(
         "clue_planner_backend": clue_spec.get("planner_backend"),
         "reroute_selector_backend": args.clue_planner_model if rounds and rounds[0].get("selector_backend") else "lexical_fallback",
         "selector_abstained": False,
+        "selection_mode": selection_mode or "direct_visual",
     }
 
 
@@ -891,10 +1068,207 @@ def _candidate_refs_for_option(graph: dict[str, Any], option: dict[str, Any], qu
     return [ref for _, ref in scored[:limit]]
 
 
+def _bridge_response_schema() -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "objective_background_bridge_verification",
+            "strict": False,
+            "schema": {
+                "type": "object",
+                "additionalProperties": True,
+                "properties": {
+                    "bridge_status": {"type": "string"},
+                    "best_option": {
+                        "type": "object",
+                        "additionalProperties": True,
+                        "properties": {
+                            "label": {"type": "string"},
+                            "text": {"type": "string"},
+                            "confidence": {"type": "number"},
+                        },
+                        "required": ["label", "text", "confidence"],
+                    },
+                    "visual_anchor_refs": {"type": "array", "items": {"type": "string"}},
+                    "visual_anchor_summary": {"type": "array", "items": {"type": "string"}},
+                    "objective_background_facts": {"type": "array", "items": {"type": "string"}},
+                    "bridge_claim": {"type": "string"},
+                    "not_direct_visual_evidence": {"type": "boolean"},
+                    "reason": {"type": "string"},
+                },
+                "required": [
+                    "bridge_status",
+                    "best_option",
+                    "visual_anchor_refs",
+                    "visual_anchor_summary",
+                    "objective_background_facts",
+                    "bridge_claim",
+                    "not_direct_visual_evidence",
+                    "reason",
+                ],
+            },
+        },
+    }
+
+
+def _node_text_by_id(graph: dict[str, Any]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for node in graph.get("nodes") or []:
+        node_id = node.get("node_id")
+        if not node_id:
+            continue
+        text = str(node.get("text") or node.get("summary") or node.get("label") or "")
+        if text:
+            out[str(node_id)] = text
+    return out
+
+
+def _bridge_context_refs(
+    graph: dict[str, Any],
+    question_text: str,
+    options: list[dict[str, Any]],
+    clue_spec: dict[str, Any],
+    *,
+    limit: int,
+) -> list[str]:
+    query_parts = [question_text, str(clue_spec.get("visual_target") or "")]
+    query_parts.extend(str(item) for item in clue_spec.get("must_find_visual_evidence") or [])
+    query_parts.extend(str(item) for item in clue_spec.get("bridge_evidence_criteria") or [])
+    query_parts.extend(str(opt.get("text") or "") for opt in options)
+    query_words = set(re.findall(r"[a-zA-Z0-9]+", " ".join(query_parts).lower()))
+    scored: list[tuple[float, str]] = []
+    for node in graph.get("nodes") or []:
+        node_id = node.get("node_id")
+        if not node_id or node.get("node_type") in {"l2_repair_reminder", "answerability_gap", "question_requirement"}:
+            continue
+        if node.get("source_type") not in {"repair_clip_schema", "observation"} and node.get("producer") != "qwen_repair_clip_schema":
+            continue
+        text = str(node.get("text") or node.get("summary") or node.get("label") or "")
+        words = set(re.findall(r"[a-zA-Z0-9]+", text.lower()))
+        overlap = len(query_words & words)
+        bonus = 2 if node.get("source_type") == "repair_clip_schema" else 0
+        if overlap or bonus:
+            scored.append((overlap + bonus, str(node_id)))
+    scored.sort(reverse=True)
+    return [ref for _, ref in scored[:limit]]
+
+
+def _can_attempt_bridge(gaps: list[str], clue_spec: dict[str, Any]) -> bool:
+    mode = str(clue_spec.get("answer_mode_hint") or "")
+    if mode == "visual_context_plus_background":
+        return True
+    if clue_spec.get("objective_background_facts"):
+        return True
+    return bool({"social_intent_or_affect", "causal_explanation", "commonsense_bridge"} & set(gaps))
+
+
+def _option_by_label(options: list[dict[str, Any]], label: Any) -> dict[str, Any]:
+    for opt in options:
+        if str(opt.get("label")) == str(label):
+            return opt
+    return {}
+
+
+def _attempt_objective_bridge(
+    example: dict[str, Any],
+    graph: dict[str, Any],
+    *,
+    clue_spec: dict[str, Any],
+    gaps: list[str],
+    api_key: str | None,
+    args: argparse.Namespace,
+) -> dict[str, Any] | None:
+    if not api_key or args.disable_background_bridge or not _can_attempt_bridge(gaps, clue_spec):
+        return None
+    question = example.get("question") or {}
+    question_text = str(question.get("question_text") or "")
+    options = [opt for opt in question.get("options") or [] if isinstance(opt, dict)]
+    option_labels = {str(opt.get("label")) for opt in options if opt.get("label") is not None}
+    refs = _bridge_context_refs(graph, question_text, options, clue_spec, limit=args.max_bridge_refs)
+    if not refs:
+        return None
+    text_by_id = _node_text_by_id(graph)
+    evidence_pack = [{"ref": ref, "text": text_by_id.get(ref, "")[:500]} for ref in refs if text_by_id.get(ref)]
+    if not evidence_pack:
+        return None
+    prompt = {
+        "task": "Verify whether a video-only answer can be accepted via objective background bridge.",
+        "rules": [
+            "Visual anchors must come only from the provided evidence_pack refs.",
+            "Objective background facts may be used only as bridge knowledge, never as direct visual evidence.",
+            "Accept accepted_bridge only when the visual anchors identify the relevant situation/context and the background facts are stable, objective, and sufficient to choose one option.",
+            "Reject bridge claims based on subjective intention, emotion, social stereotypes, audio/dialogue/subtitles, hidden labels, or private dataset knowledge.",
+            "If multiple options remain plausible, return bridge_insufficient.",
+        ],
+        "question": {
+            "question_text": question_text,
+            "options": options,
+        },
+        "gap_types": gaps,
+        "clue_need_spec": clue_spec,
+        "allowed_visual_anchor_refs": refs,
+        "evidence_pack": evidence_pack,
+        "required_json_shape": _bridge_response_schema()["json_schema"]["schema"]["properties"],
+    }
+    client = OpenRouterClient(
+        model=args.bridge_model,
+        api_key=api_key,
+        temperature=0.0,
+        max_tokens=args.bridge_max_tokens,
+        reasoning={"effort": "medium", "exclude": True},
+        timeout_s=args.verifier_timeout_s,
+    )
+    try:
+        payload = client.chat_json(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You output JSON only. You are a strict verifier for objective background bridges. "
+                        "Do not include analysis, markdown, or prose outside JSON."
+                    ),
+                },
+                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+            ],
+            response_format=_bridge_response_schema(),
+        )
+    except Exception as exc:
+        return {
+            "bridge_status": "bridge_insufficient",
+            "best_option": {"label": None, "text": "", "confidence": 0.0},
+            "visual_anchor_refs": refs[: args.max_bridge_refs],
+            "visual_anchor_summary": [row["text"] for row in evidence_pack[: args.max_bridge_refs]],
+            "objective_background_facts": clue_spec.get("objective_background_facts") or [],
+            "bridge_claim": "",
+            "not_direct_visual_evidence": True,
+            "reason": f"bridge verifier failed: {exc}",
+            "bridge_backend": args.bridge_model,
+        }
+    visual_refs = [str(ref) for ref in payload.get("visual_anchor_refs") or [] if str(ref) in refs]
+    best = payload.get("best_option") if isinstance(payload.get("best_option"), dict) else {}
+    confidence = float(best.get("confidence") or 0.0)
+    if (
+        payload.get("bridge_status") == "accepted_bridge"
+        and str(best.get("label")) in option_labels
+        and len(visual_refs) >= args.min_bridge_refs
+        and confidence >= args.min_bridge_confidence
+        and payload.get("objective_background_facts")
+    ):
+        payload["visual_anchor_refs"] = visual_refs[: args.max_bridge_refs]
+        payload["bridge_backend"] = args.bridge_model
+        return payload
+    payload["bridge_status"] = "bridge_insufficient"
+    payload["visual_anchor_refs"] = visual_refs[: args.max_bridge_refs]
+    payload["bridge_backend"] = args.bridge_model
+    return payload
+
+
 def _verify_options(
     example: dict[str, Any],
     graph: dict[str, Any],
     *,
+    clue_spec: dict[str, Any] | None = None,
+    gaps: list[str] | None = None,
     api_key: str | None,
     args: argparse.Namespace,
 ) -> dict[str, Any]:
@@ -961,7 +1335,7 @@ def _verify_options(
     else:
         status = "needs_more_evidence"
         best = max(verifications, key=lambda row: float(row.get("confidence") or 0.0), default={})
-    return {
+    l2 = {
         "schema_version": "video-skills-relaunch/repair-l2-v0.1",
         "example_id": example.get("example_id"),
         "dataset": example.get("dataset"),
@@ -974,16 +1348,89 @@ def _verify_options(
         },
         "option_verifications": verifications,
     }
+    if status != "resolved_strong":
+        bridge = _attempt_objective_bridge(
+            example,
+            graph,
+            clue_spec=clue_spec or {},
+            gaps=gaps or [],
+            api_key=api_key,
+            args=args,
+        )
+        if bridge:
+            l2["background_bridge_verification"] = bridge
+            if bridge.get("bridge_status") == "accepted_bridge":
+                best_bridge = bridge.get("best_option") if isinstance(bridge.get("best_option"), dict) else {}
+                bridge_refs = [str(ref) for ref in bridge.get("visual_anchor_refs") or []]
+                direct_bridge = bridge.get("not_direct_visual_evidence") is False
+                if direct_bridge and len(bridge_refs) >= args.min_verify_refs:
+                    bridge_opt = _option_by_label(options, best_bridge.get("label"))
+                    bridge_claim = {
+                        "claim_text": f"{bridge_opt.get('label')}: {bridge_opt.get('text')}",
+                        "option_label": bridge_opt.get("label"),
+                        "question_text": question_text,
+                    }
+                    bridge_check = executor.execute(
+                        "verify_claim_support",
+                        args={
+                            "claim": bridge_claim,
+                            "question_text": question_text,
+                            "evidence_chain": {"evidence_refs": bridge_refs},
+                            "support_policy": {
+                                "min_evidence_refs": args.min_verify_refs,
+                                "min_claim_score": 0.05,
+                                "min_target_score": 0.05,
+                            },
+                        },
+                        graph=graph,
+                    )
+                    l2["bridge_ref_verification"] = {
+                        "evidence_refs": bridge_refs,
+                        "ok": bool(bridge_check.ok),
+                        "failure_code": bridge_check.failure_code,
+                        "confidence": bridge_check.confidence,
+                        "outputs": bridge_check.outputs,
+                    }
+                    if bridge_check.ok:
+                        l2["repair_status"] = "resolved_strong"
+                        l2["backend"] = f"{backend}+bridge_ref_verify"
+                    else:
+                        l2["repair_status"] = "accepted_bridge"
+                        l2["backend"] = f"{backend}+objective_bridge"
+                else:
+                    l2["repair_status"] = "accepted_bridge"
+                    l2["backend"] = f"{backend}+objective_bridge"
+                l2["best_option"] = {
+                    "label": best_bridge.get("label"),
+                    "text": best_bridge.get("text"),
+                    "confidence": best_bridge.get("confidence"),
+                }
+    return l2
 
 
 def _build_report(plan: dict[str, Any], patch: dict[str, Any], l2: dict[str, Any]) -> dict[str, Any]:
     strong = l2.get("repair_status") == "resolved_strong"
+    bridge = l2.get("repair_status") == "accepted_bridge"
     negative_count = _negative_target_count(patch)
     span_selection = plan.get("span_selection") or {}
+    reported_selection_mode = span_selection.get("selection_mode")
+    if reported_selection_mode in {None, "", "none", "abstain"}:
+        for round_row in reversed(span_selection.get("retrieval_rounds") or []):
+            if (
+                isinstance(round_row, dict)
+                and round_row.get("selected_after_exclusion")
+                and not round_row.get("selector_abstained")
+                and round_row.get("selection_mode")
+            ):
+                reported_selection_mode = round_row.get("selection_mode")
+                break
     missing = set(plan.get("gap_types") or [])
     if strong:
         next_action = "commit repaired evidence pack"
         failure_type = "resolved"
+    elif bridge:
+        next_action = "commit bridge answer with explicit non-visual background facts kept outside L1 evidence"
+        failure_type = "resolved_with_objective_background_bridge"
     elif span_selection.get("selector_abstained"):
         next_action = "mark visual-only evidence missing; do not use heuristic fallback"
         failure_type = "visual_only_benchmark_limitation"
@@ -1011,9 +1458,20 @@ def _build_report(plan: dict[str, Any], patch: dict[str, Any], l2: dict[str, Any
         "selected_coarse_indices": span_selection.get("selected_coarse_indices") or [],
         "retrieval_round_count": len(span_selection.get("retrieval_rounds") or []),
         "selector_abstained": bool(span_selection.get("selector_abstained")),
+        "selection_mode": reported_selection_mode,
         "verifier_backend": l2.get("backend"),
-        "repair_needed_after_round": not strong,
-        "verifier_reason": "strong repair evidence verified" if strong else "repair evidence remains weak or insufficient",
+        "not_direct_visual_evidence": bridge,
+        "repair_needed_after_round": not (strong or bridge),
+        "verifier_reason": (
+            "strong repair evidence verified"
+            if strong
+            else (
+                "accepted via visual anchors plus objective background bridge"
+                if bridge
+                else "repair evidence remains weak or insufficient"
+            )
+        ),
+        "background_bridge_verification": l2.get("background_bridge_verification"),
         "recommended_next_action": next_action,
         "artifact_paths": plan.get("artifact_paths") or {},
     }
@@ -1030,20 +1488,27 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
     l2_path = out_dir / "repair_04_l2_verifier.json"
     report_path = out_dir / "repair_05_report.json"
 
+    cached_plan = _read_json(plan_path) if args.skip_api and plan_path.exists() else None
     prior_schemas = _read_jsonl(schemas_path) if schemas_path.exists() else []
     prior_negative_count = sum(1 for schema in prior_schemas if _has_negative_target_evidence(" ".join(_text_items(schema))))
-    clue_spec = _build_clue_need_spec(
-        example,
-        row,
-        gaps,
-        prior_schemas=prior_schemas,
-        api_key=api_key,
-        args=args,
-    )
+    if cached_plan and isinstance(cached_plan.get("clue_need_spec"), dict):
+        clue_spec = cached_plan["clue_need_spec"]
+    else:
+        clue_spec = _build_clue_need_spec(
+            example,
+            row,
+            gaps,
+            prior_schemas=prior_schemas,
+            api_key=api_key,
+            args=args,
+        )
     use_reroute = args.repair_mode == "reroute" or (
         args.repair_mode == "auto" and prior_negative_count >= args.negative_reroute_threshold
     )
-    if use_reroute:
+    if cached_plan and isinstance(cached_plan.get("span_selection"), dict):
+        span_meta = cached_plan["span_selection"]
+        spans = []
+    elif use_reroute:
         spans, span_meta = _select_rerouted_repair_spans(
             example,
             row,
@@ -1081,8 +1546,9 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
             for span in spans
         ],
         "acceptance_rule": (
-            "Repair may only become resolved_strong when verify_claim_support passes "
-            "with non-diagnostic visual evidence refs; commonsense hypotheses are reminders, not final evidence."
+            "Repair becomes resolved_strong only when verify_claim_support passes with non-diagnostic visual evidence refs. "
+            "It may become accepted_bridge when visual anchors plus stable objective background facts support one option; "
+            "background facts are L2 bridge context, not L1 evidence."
         ),
         "artifact_paths": {
             "plan": str(plan_path),
@@ -1124,20 +1590,11 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
 
     patch = _build_l1_patch(example, row, schemas, gaps)
     _write_json(patch_path, patch)
-    if not spans and span_meta.get("selector_abstained"):
-        l2 = {
-            "schema_version": "video-skills-relaunch/repair-l2-v0.1",
-            "example_id": example.get("example_id"),
-            "dataset": example.get("dataset"),
-            "backend": "selector_abstained",
-            "repair_status": "needs_more_evidence",
-            "best_option": {"label": None, "text": "", "confidence": 0.0},
-            "option_verifications": [],
-            "missing_clue_diagnosis": (span_meta.get("retrieval_rounds") or [{}])[0].get("reason", ""),
-        }
-    else:
-        repaired_graph = _merge_patch_graph(example, patch)
-        l2 = _verify_options(example, repaired_graph, api_key=api_key, args=args)
+    repaired_graph = _merge_patch_graph(example, patch)
+    l2 = _verify_options(example, repaired_graph, clue_spec=clue_spec, gaps=gaps, api_key=api_key, args=args)
+    if not spans and span_meta.get("selector_abstained") and l2.get("repair_status") not in {"resolved_strong", "accepted_bridge"}:
+        l2["backend"] = f"{l2.get('backend')}+selector_abstained"
+        l2["missing_clue_diagnosis"] = (span_meta.get("retrieval_rounds") or [{}])[0].get("reason", "")
     _write_json(l2_path, l2)
     report = _build_report(plan, patch, l2)
     _write_json(report_path, report)
@@ -1154,12 +1611,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--clip-schema-model", default="qwen/qwen3.5-9b")
     parser.add_argument("--verifier-model", default="openai/gpt-oss-120b")
     parser.add_argument("--clue-planner-model", default="openai/gpt-oss-120b")
+    parser.add_argument("--bridge-model", default="openai/gpt-oss-120b")
     parser.add_argument("--clue-planner-max-tokens", type=int, default=1200)
     parser.add_argument("--clue-selector-max-tokens", type=int, default=1600)
+    parser.add_argument("--bridge-max-tokens", type=int, default=1600)
     parser.add_argument("--clue-planner-timeout-s", type=int, default=180)
     parser.add_argument("--coarse-summary-prompt-chars", type=int, default=260)
     parser.add_argument("--disable-llm-clue-planner", action="store_true")
     parser.add_argument("--disable-llm-reroute-selector", action="store_true")
+    parser.add_argument("--disable-exploratory-selector-retry", action="store_true")
     parser.add_argument(
         "--allow-lexical-fallback",
         action="store_true",
@@ -1188,7 +1648,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--negative-reroute-threshold", type=int, default=2)
     parser.add_argument("--max-verify-refs", type=int, default=8)
     parser.add_argument("--min-verify-refs", type=int, default=2)
+    parser.add_argument("--max-bridge-refs", type=int, default=10)
+    parser.add_argument("--min-bridge-refs", type=int, default=1)
+    parser.add_argument("--min-bridge-confidence", type=float, default=0.55)
     parser.add_argument("--skip-gptoss-verifier", action="store_true")
+    parser.add_argument("--disable-background-bridge", action="store_true")
     parser.add_argument("--skip-api", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser

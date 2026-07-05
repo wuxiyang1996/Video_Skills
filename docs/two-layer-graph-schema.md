@@ -168,13 +168,23 @@ coarse visual index
 
 The clue planner produces a structured `clue_need_spec`: visual target,
 attributes to resolve, positive evidence criteria, negative evidence to exclude,
-forbidden modalities, and Qwen clip-inspection instructions. The coarse-window
-selector then reads the full coarse visual summary index and chooses candidate
-windows to inspect. Lexical retrieval is only a dry-run/no-api fallback. These
+objective background facts, bridge evidence criteria, forbidden modalities, and
+Qwen clip-inspection instructions. The coarse-window selector then reads the
+full coarse visual summary index and chooses candidate windows to inspect in
+`direct_visual`, `bridge_context`, or `exploratory_probe` mode. The
+`exploratory_probe` retry is used when the model sees that coarse summaries are
+too lossy to mention a short event or small object, but the question remains
+visually answerable. Lexical retrieval is only a dry-run/no-api fallback. These
 are specialized evidence-seeking actions, not independent answer agents. Their
-outputs are candidate evidence packs and negative-window diagnostics. Final
-answer commit still requires the L2 verifier to ground the claim in
-non-diagnostic visual evidence.
+outputs are candidate evidence packs and negative-window diagnostics.
+
+Final answer commit has two acceptance levels. `resolved_strong` requires
+`verify_claim_support` to ground the claim in non-diagnostic visual evidence.
+`accepted_bridge` is weaker but useful for social, causal, or background-heavy
+benchmarks: it requires real visual anchor refs plus stable objective
+background facts that disambiguate one option. Those background facts are L2
+bridge context, not L1 evidence nodes, and the report must mark
+`not_direct_visual_evidence=true`.
 
 This matters for long-video QA because `L1 graph_quality=high` only means the
 observed clips were converted into a dense graph; it does not prove that the
@@ -187,6 +197,8 @@ values such as:
   attribute or support is not resolved.
 - `l1_context_partial_l2_bridge_needed`: visual context exists, but answer
   selection requires social, causal, or commonsense bridging.
+- `resolved_with_objective_background_bridge`: visual anchors plus stable
+  background facts support one option, but the answer is not directly visible.
 - `visual_only_benchmark_limitation`: the gold answer appears to require
   audio/subtitle/hidden context outside the video-only scope.
 - `l2_verifier_rejects_unsupported`: L2 proposed an answer but verifier rejected

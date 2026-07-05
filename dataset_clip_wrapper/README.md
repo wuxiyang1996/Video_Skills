@@ -489,7 +489,11 @@ such as ruins, documents, cameras, and group attention, but the answer asks for
 motivation or social/causal intent. With audio/subtitle excluded, such examples
 should be marked `l1_context_partial_l2_bridge_needed` or
 `visual_only_benchmark_limitation` unless the visual evidence strongly anchors
-the bridge.
+the bridge. When the visible anchors identify an objective situation and a
+stable background fact disambiguates the answer, the repair runner may return
+`accepted_bridge`. That status is intentionally separate from
+`resolved_strong`: it says the answer is supported by visual anchors plus
+objective background knowledge, not by direct visual evidence alone.
 
 Use the repair runner for these cases:
 
@@ -514,6 +518,8 @@ model-planned spec records:
 - visual attributes to resolve;
 - positive evidence criteria;
 - negative evidence to exclude;
+- objective background facts that may be used only by L2 bridge verification;
+- bridge evidence criteria for selecting visual context windows;
 - forbidden modalities (`audio`, `asr`, `subtitle`, `dialogue`);
 - clip inspection instructions for Qwen.
 
@@ -521,7 +527,14 @@ GPT-OSS also acts as the default coarse-window selector in API runs. Lexical
 query variants are only a fallback for dry-run/no-api mode or when
 `--disable-llm-reroute-selector` is set. This keeps the normal repair path
 prompt-driven: the mechanism asks the model what clue must be found and where
-to inspect, instead of relying on hand-written retrieval heuristics.
+to inspect, instead of relying on hand-written retrieval heuristics. The
+selector can choose windows in `direct_visual` mode or `bridge_context` mode.
+It should abstain only when the coarse summaries contain neither direct visual
+evidence nor useful visual anchors for an objective bridge. Because coarse
+summaries are lossy, an abstaining selector is retried once in
+`exploratory_probe` mode: GPT-OSS must choose a small set of plausible windows
+from the full coarse index for Qwen inspection, without using lexical fallback
+or hidden labels.
 
 `--repair-mode auto` switches to full reroute when cached repair schemas contain
 negative target evidence, such as "no vehicle", "no animation", or "cannot
@@ -532,8 +545,20 @@ determine". The output report records `failure_type`,
 This is inspired by M3-style iterative retrieval/control, but it is not a
 multi-agent voting setup. The clue planner and coarse selector only produce
 evidence-seeking instructions and candidate evidence packs. The final L2 answer
-still must pass `verify_claim_support`; commonsense bridge text and negative
-evidence cannot become final support by themselves.
+first tries `verify_claim_support` for `resolved_strong`. If that fails, a
+strict objective-background bridge verifier can return `accepted_bridge` only
+when real visual refs anchor the situation and stable background facts
+disambiguate one option. Commonsense bridge text, negative evidence, and
+background facts cannot become L1 evidence nodes by themselves.
+
+The practical status levels are:
+
+- `resolved_strong`: direct visual evidence refs pass `verify_claim_support`.
+- `accepted_bridge`: visual anchors plus objective background facts support one
+  option; report includes `not_direct_visual_evidence=true`.
+- `needs_more_evidence`: neither direct evidence nor bridge evidence is enough.
+- `visual_only_benchmark_limitation`: the missing clue appears outside the
+  video-only scope, such as audio/subtitle/hidden context.
 
 When rerunning from cached stages:
 
