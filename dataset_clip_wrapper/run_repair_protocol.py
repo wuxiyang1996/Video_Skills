@@ -180,6 +180,96 @@ def _fallback_clue_need_spec(example: dict[str, Any], row: dict[str, Any], gaps:
     }
 
 
+def _clue_need_spec_response_schema() -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "clue_need_spec",
+            "strict": False,
+            "schema": {
+                "type": "object",
+                "additionalProperties": True,
+                "properties": {
+                    "visual_target": {"type": "string"},
+                    "must_find_visual_evidence": {"type": "array", "items": {"type": "string"}},
+                    "visual_attributes_to_resolve": {"type": "array", "items": {"type": "string"}},
+                    "temporal_or_action_cues": {"type": "array", "items": {"type": "string"}},
+                    "negative_evidence_to_exclude": {"type": "array", "items": {"type": "string"}},
+                    "forbidden_modalities": {"type": "array", "items": {"type": "string"}},
+                    "positive_evidence_criteria": {"type": "array", "items": {"type": "string"}},
+                    "insufficient_evidence_rule": {"type": "string"},
+                    "coarse_search_queries": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": True,
+                            "properties": {
+                                "role": {"type": "string"},
+                                "query": {"type": "string"},
+                            },
+                            "required": ["role", "query"],
+                        },
+                    },
+                    "clip_inspection_instruction": {"type": "string"},
+                },
+                "required": [
+                    "visual_target",
+                    "must_find_visual_evidence",
+                    "visual_attributes_to_resolve",
+                    "forbidden_modalities",
+                    "positive_evidence_criteria",
+                    "insufficient_evidence_rule",
+                    "coarse_search_queries",
+                    "clip_inspection_instruction",
+                ],
+            },
+        },
+    }
+
+
+def _coarse_selector_response_schema() -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "coarse_window_selection",
+            "strict": False,
+            "schema": {
+                "type": "object",
+                "additionalProperties": True,
+                "properties": {
+                    "selected_coarse_indices": {"type": "array", "items": {"type": "integer"}},
+                    "selection_rounds": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": True,
+                            "properties": {
+                                "role": {"type": "string"},
+                                "query_or_need": {"type": "string"},
+                                "selected_after_exclusion": {"type": "array", "items": {"type": "integer"}},
+                                "reason": {"type": "string"},
+                                "confidence": {"type": "number"},
+                            },
+                        },
+                    },
+                    "missing_clue_diagnosis": {"type": "string"},
+                },
+                "required": ["selected_coarse_indices", "selection_rounds", "missing_clue_diagnosis"],
+            },
+        },
+    }
+
+
+def _valid_clue_need_spec(spec: dict[str, Any]) -> bool:
+    return bool(
+        isinstance(spec, dict)
+        and spec.get("visual_target")
+        and isinstance(spec.get("coarse_search_queries"), list)
+        and any(isinstance(item, dict) and item.get("query") for item in spec.get("coarse_search_queries") or [])
+        and spec.get("clip_inspection_instruction")
+    )
+
+
 def _build_clue_need_spec(
     example: dict[str, Any],
     row: dict[str, Any],
@@ -211,39 +301,41 @@ def _build_clue_need_spec(
         "gap_types": gaps,
         "repair_hints": row.get("repair_hints") or {},
         "prior_negative_visual_notes": _prior_negative_notes(prior_schemas),
-        "required_json_shape": {
-            "visual_target": "string",
-            "must_find_visual_evidence": ["string"],
-            "visual_attributes_to_resolve": ["string"],
-            "temporal_or_action_cues": ["string"],
-            "negative_evidence_to_exclude": ["string"],
-            "forbidden_modalities": ["audio", "asr", "subtitle", "dialogue"],
-            "positive_evidence_criteria": ["string"],
-            "insufficient_evidence_rule": "string",
-            "coarse_search_queries": [{"role": "string", "query": "string"}],
-            "clip_inspection_instruction": "string",
-        },
+        "required_json_shape": _clue_need_spec_response_schema()["json_schema"]["schema"]["properties"],
     }
     client = OpenRouterClient(
         model=args.clue_planner_model,
         api_key=api_key,
         temperature=0.0,
         max_tokens=args.clue_planner_max_tokens,
-        reasoning={"effort": "medium"},
+        reasoning={"effort": "medium", "exclude": True},
         timeout_s=args.clue_planner_timeout_s,
     )
     try:
         spec = client.chat_json(
             [
-                {"role": "system", "content": "You plan grounded visual clue searches for video-only QA repair."},
+                {
+                    "role": "system",
+                    "content": (
+                        "You output JSON only. Plan grounded visual clue searches for video-only QA repair. "
+                        "Do not include analysis, markdown, or prose outside JSON."
+                    ),
+                },
                 {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
-            ]
+            ],
+            response_format=_clue_need_spec_response_schema(),
         )
     except Exception as exc:
-        fallback["planner_error"] = str(exc)
-        return fallback
-    if not isinstance(spec, dict):
-        return fallback
+        if args.allow_lexical_fallback:
+            fallback["planner_error"] = str(exc)
+            return fallback
+        raise RuntimeError(f"LLM clue planner failed and heuristic fallback is disabled: {exc}") from exc
+    if not _valid_clue_need_spec(spec):
+        if args.allow_lexical_fallback:
+            fallback["planner_error"] = "invalid clue_need_spec"
+            fallback["invalid_planner_payload"] = spec
+            return fallback
+        raise RuntimeError(f"LLM clue planner returned invalid clue_need_spec: {json.dumps(spec, ensure_ascii=False)[:800]}")
     spec["planner_backend"] = args.clue_planner_model
     spec.setdefault("forbidden_modalities", ["audio", "asr", "subtitle", "dialogue"])
     return spec
@@ -377,37 +469,34 @@ def _llm_select_coarse_indices(
         "excluded_negative_coarse_indices": sorted(negative_indices),
         "max_indices": args.reroute_topk,
         "coarse_summaries": coarse_rows,
-        "required_json_shape": {
-            "selected_coarse_indices": [0],
-            "selection_rounds": [
-                {
-                    "role": "model_clue_selector",
-                    "query_or_need": "string",
-                    "selected_after_exclusion": [0],
-                    "reason": "string",
-                    "confidence": 0.0,
-                }
-            ],
-            "missing_clue_diagnosis": "string",
-        },
+        "required_json_shape": _coarse_selector_response_schema()["json_schema"]["schema"]["properties"],
     }
     client = OpenRouterClient(
         model=args.clue_planner_model,
         api_key=api_key,
         temperature=0.0,
         max_tokens=args.clue_selector_max_tokens,
-        reasoning={"effort": "medium"},
+        reasoning={"effort": "medium", "exclude": True},
         timeout_s=args.clue_planner_timeout_s,
     )
     try:
         payload = client.chat_json(
             [
-                {"role": "system", "content": "You select long-video coarse windows for visual clue discovery."},
+                {
+                    "role": "system",
+                    "content": (
+                        "You output JSON only. Select long-video coarse windows for visual clue discovery. "
+                        "Do not include analysis, markdown, or prose outside JSON."
+                    ),
+                },
                 {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
-            ]
+            ],
+            response_format=_coarse_selector_response_schema(),
         )
-    except Exception:
-        return [], []
+    except Exception as exc:
+        if args.allow_lexical_fallback:
+            return [], [{"role": "model_clue_selector_error", "reason": str(exc), "selected_after_exclusion": []}]
+        raise RuntimeError(f"LLM reroute selector failed and heuristic fallback is disabled: {exc}") from exc
     selected: list[int] = []
     max_index = len(coarse_rows) - 1
     for item in payload.get("selected_coarse_indices") or []:
@@ -433,6 +522,7 @@ def _llm_select_coarse_indices(
                 "reason": payload.get("missing_clue_diagnosis") or "",
                 "confidence": 0.0,
                 "selector_backend": args.clue_planner_model,
+                "selector_abstained": not bool(selected),
             }
         ]
     return selected, rounds
@@ -469,7 +559,15 @@ def _select_rerouted_repair_spans(
     if selected:
         rounds.extend(llm_rounds)
 
-    for variant in ([] if selected else _query_variants(example, row, gaps, clue_spec=clue_spec)):
+    selector_abstained = bool(
+        api_key
+        and not selected
+        and not args.allow_lexical_fallback
+        and not args.disable_llm_reroute_selector
+        and not args.dry_run
+    )
+
+    for variant in ([] if selected or selector_abstained else _query_variants(example, row, gaps, clue_spec=clue_spec)):
         retrieval = retrieve_coarse_clips(
             coarse_spans=coarse,
             query_text=variant["query"],
@@ -503,6 +601,21 @@ def _select_rerouted_repair_spans(
         ranked = sorted(combined_scores.items(), key=lambda item: item[1], reverse=True)
         selected = [idx for idx, _ in ranked[:reroute_topk]]
     if not selected:
+        if selector_abstained:
+            return [], {
+                "mode": "reroute",
+                "duration_s": duration_s,
+                "negative_coarse_indices": sorted(negative_indices),
+                "selected_coarse_indices": [],
+                "candidate_span_count": 0,
+                "candidate_fine_span_count": 0,
+                "fresh_span_count": 0,
+                "chosen_span_count": 0,
+                "retrieval_rounds": rounds,
+                "clue_planner_backend": clue_spec.get("planner_backend"),
+                "reroute_selector_backend": args.clue_planner_model,
+                "selector_abstained": True,
+            }
         selected = [idx for idx in range(min(reroute_topk, len(coarse))) if idx not in negative_indices]
 
     spans = segment_perception_clips(
@@ -536,6 +649,7 @@ def _select_rerouted_repair_spans(
         "retrieval_rounds": rounds,
         "clue_planner_backend": clue_spec.get("planner_backend"),
         "reroute_selector_backend": args.clue_planner_model if rounds and rounds[0].get("selector_backend") else "lexical_fallback",
+        "selector_abstained": False,
     }
 
 
@@ -870,6 +984,9 @@ def _build_report(plan: dict[str, Any], patch: dict[str, Any], l2: dict[str, Any
     if strong:
         next_action = "commit repaired evidence pack"
         failure_type = "resolved"
+    elif span_selection.get("selector_abstained"):
+        next_action = "mark visual-only evidence missing; do not use heuristic fallback"
+        failure_type = "visual_only_benchmark_limitation"
     elif negative_count or span_selection.get("negative_coarse_indices"):
         next_action = "reroute coarse retrieval because repair clips contain negative target evidence"
         failure_type = "l1_target_coverage_failure"
@@ -893,6 +1010,7 @@ def _build_report(plan: dict[str, Any], patch: dict[str, Any], l2: dict[str, Any
         "negative_coarse_indices": span_selection.get("negative_coarse_indices") or [],
         "selected_coarse_indices": span_selection.get("selected_coarse_indices") or [],
         "retrieval_round_count": len(span_selection.get("retrieval_rounds") or []),
+        "selector_abstained": bool(span_selection.get("selector_abstained")),
         "verifier_backend": l2.get("backend"),
         "repair_needed_after_round": not strong,
         "verifier_reason": "strong repair evidence verified" if strong else "repair evidence remains weak or insufficient",
@@ -986,7 +1104,9 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
         return report
 
     schemas: list[dict[str, Any]]
-    if args.skip_api and schemas_path.exists():
+    if not spans and span_meta.get("selector_abstained"):
+        schemas = []
+    elif args.skip_api and schemas_path.exists():
         schemas = _read_jsonl(schemas_path)
     elif args.skip_api:
         schemas = []
@@ -1004,8 +1124,20 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
 
     patch = _build_l1_patch(example, row, schemas, gaps)
     _write_json(patch_path, patch)
-    repaired_graph = _merge_patch_graph(example, patch)
-    l2 = _verify_options(example, repaired_graph, api_key=api_key, args=args)
+    if not spans and span_meta.get("selector_abstained"):
+        l2 = {
+            "schema_version": "video-skills-relaunch/repair-l2-v0.1",
+            "example_id": example.get("example_id"),
+            "dataset": example.get("dataset"),
+            "backend": "selector_abstained",
+            "repair_status": "needs_more_evidence",
+            "best_option": {"label": None, "text": "", "confidence": 0.0},
+            "option_verifications": [],
+            "missing_clue_diagnosis": (span_meta.get("retrieval_rounds") or [{}])[0].get("reason", ""),
+        }
+    else:
+        repaired_graph = _merge_patch_graph(example, patch)
+        l2 = _verify_options(example, repaired_graph, api_key=api_key, args=args)
     _write_json(l2_path, l2)
     report = _build_report(plan, patch, l2)
     _write_json(report_path, report)
@@ -1028,6 +1160,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--coarse-summary-prompt-chars", type=int, default=260)
     parser.add_argument("--disable-llm-clue-planner", action="store_true")
     parser.add_argument("--disable-llm-reroute-selector", action="store_true")
+    parser.add_argument(
+        "--allow-lexical-fallback",
+        action="store_true",
+        help="Allow heuristic lexical fallback when the LLM clue planner/selector fails. Off by default for API runs.",
+    )
     parser.add_argument("--request-frames", type=int, default=4)
     parser.add_argument("--clip-schema-max-tokens", type=int, default=1200)
     parser.add_argument("--clip-schema-timeout-s", type=int, default=180)

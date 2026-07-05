@@ -86,6 +86,7 @@ def main() -> int:
         args=SimpleNamespace(
             dry_run=True,
             disable_llm_reroute_selector=True,
+            allow_lexical_fallback=True,
             clue_planner_model="openai/gpt-oss-120b",
             clue_selector_max_tokens=1600,
             clue_planner_timeout_s=180,
