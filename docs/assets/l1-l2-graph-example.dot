@@ -1,0 +1,190 @@
+digraph L1L2GraphExample {
+  graph [
+    rankdir=LR,
+    bgcolor="white",
+    pad="0.35",
+    nodesep="0.45",
+    ranksep="0.85",
+    splines=true,
+    fontname="Helvetica",
+    label="Two-layer video skill graph example: Video-Holmes oZ4pa_5R0nY q1",
+    labelloc=t,
+    fontsize=22,
+    fontcolor="#22313f"
+  ];
+
+  node [
+    shape=rect,
+    style="rounded,filled",
+    fontname="Helvetica",
+    fontsize=12,
+    color="#52606d",
+    penwidth=1.2,
+    margin="0.12,0.08"
+  ];
+
+  edge [
+    fontname="Helvetica",
+    fontsize=10,
+    color="#59636f",
+    arrowsize=0.75
+  ];
+
+  subgraph cluster_l1 {
+    label="Layer 1: Clue-memory graph\nquestion-blind video evidence/index";
+    labelloc=t;
+    fontsize=16;
+    fontcolor="#14505c";
+    color="#8fc8d2";
+    penwidth=1.8;
+    style="rounded,filled";
+    fillcolor="#eef8fa";
+
+    l1_whole [
+      label="clip:oZ4pa_5R0nY:whole:0000\nwhole video clip\n0.0s-184.25s",
+      fillcolor="#ffffff"
+    ];
+    l1_fine [
+      label="fine clip sequence\n4s windows with temporal_next edges",
+      fillcolor="#ffffff"
+    ];
+    l1_fence [
+      label="vh_inf_003\nobservation @ 131-132s\niron bars reappear, similar to earlier exit",
+      fillcolor="#dff2f5",
+      color="#2d8fa0",
+      penwidth=1.8
+    ];
+    l1_threshold [
+      label="vh_seg_003\nobservation @ 113-152s\nnote, threshold, return/fall pattern",
+      fillcolor="#dff2f5",
+      color="#2d8fa0",
+      penwidth=1.8
+    ];
+    l1_earlier [
+      label="vh_seg_002\nobservation @ 64-113s\nman leaves through railing / outside area",
+      fillcolor="#f7fbfc"
+    ];
+
+    l1_whole -> l1_fine [
+      label="temporal index",
+      color="#6c9aa3"
+    ];
+    l1_earlier -> l1_threshold [
+      label="temporal_next",
+      color="#6c9aa3"
+    ];
+    l1_threshold -> l1_fence [
+      label="contains clue",
+      color="#6c9aa3"
+    ];
+  }
+
+  subgraph cluster_l2 {
+    label="Layer 2: SkillGraphRollout\nquestion-conditioned reasoning program";
+    labelloc=t;
+    fontsize=16;
+    fontcolor="#57410c";
+    color="#e3c15d";
+    penwidth=1.8;
+    style="rounded,filled";
+    fillcolor="#fff9e8";
+
+    q [
+      label="Question\nWhat does the reappearing iron fence imply?",
+      shape=note,
+      fillcolor="#ffffff",
+      color="#b58b16"
+    ];
+    s1 [
+      label="parse_question_target",
+      fillcolor="#fffdf5"
+    ];
+    s2 [
+      label="propose_evidence_roles\nquestion_anchor + supporting_evidence",
+      fillcolor="#fffdf5"
+    ];
+    s3 [
+      label="retrieve_by_event",
+      fillcolor="#fff3c4",
+      color="#c49317"
+    ];
+    s4 [
+      label="localize_clue",
+      fillcolor="#fff3c4",
+      color="#c49317"
+    ];
+    s5 [
+      label="extract_claim",
+      fillcolor="#fff3c4",
+      color="#c49317"
+    ];
+    s6 [
+      label="compose_evidence_chain",
+      fillcolor="#fff3c4",
+      color="#c49317"
+    ];
+    s7 [
+      label="verify_claim_support",
+      fillcolor="#ffe7a3",
+      color="#a56f00",
+      penwidth=1.8
+    ];
+    s8 [
+      label="commit_answer\nThe man walked back to his original position.",
+      fillcolor="#f7e0a1",
+      color="#8a620a",
+      penwidth=1.8
+    ];
+
+    legend [
+      label="Dashed blue arrows:\nL2 evidence_refs to L1 node ids",
+      shape=rect,
+      style="rounded,filled",
+      fillcolor="#e8f6f8",
+      color="#66b7c4",
+      fontsize=11,
+      fontcolor="#287888"
+    ];
+
+    q -> s1 -> s2 -> s3 -> s4 -> s5 -> s6 -> s7 -> s8 [
+      color="#9b7616",
+      penwidth=1.5
+    ];
+  }
+
+  answer [
+    label="Final answer\nlabel F / text answer in expert-demo mode",
+    shape=rect,
+    style="rounded,filled",
+    fillcolor="#eef4ff",
+    color="#4b6fae",
+    penwidth=1.8
+  ];
+
+  s8 -> answer [
+    label="final_answer",
+    color="#4b6fae",
+    penwidth=1.5
+  ];
+
+  s3 -> l1_fence [
+    style=dashed,
+    color="#2d8fa0",
+    constraint=false
+  ];
+  s4 -> l1_fence [
+    style=dashed,
+    color="#2d8fa0",
+    constraint=false
+  ];
+  s4 -> l1_threshold [
+    style=dashed,
+    color="#2d8fa0",
+    constraint=false
+  ];
+  s6 -> l1_threshold [
+    style=dashed,
+    color="#2d8fa0",
+    constraint=false
+  ];
+}
