@@ -67,10 +67,13 @@ multi-hop reasoning program over the clue-memory graph.
 - **Composed motifs can be mined.** Offline extraction may promote frequent
   verified atomic-skill subgraphs into reusable motif templates, but never into
   new primitive tools.
-- **Motif code is separate from old skill agents.** Future motif mining should
-  live under `dataset_clip_wrapper/motifs/` and operate on accepted L1/L2
-  rollout graphs. The older `skill_agents/` package remains legacy/reference
-  code, not the runtime motif system.
+- **Composed motifs are agent-managed.** Qwen3.5 proposes reusable motifs from
+  accepted L1/L2 rollouts, GPT-OSS curates approve/defer/veto decisions, and
+  deterministic mining remains a seed/fallback/audit path.
+- **Motif code stays in the L1/L2 stack.** Motif extraction and management lives
+  under `dataset_clip_wrapper/motifs/` and operates on accepted L1/L2 rollout
+  graphs. The older `skill_agents/` package remains legacy/reference code, not
+  the runtime motif system.
 - **Evidence indexes are retrieval substrates.** M3-style clip memory graphs can
   help the agent discover clues, but final answers must cite verifiable
   `EvidenceCandidate` records extracted from the index.
@@ -116,6 +119,7 @@ unless concrete video evidence verifies it.
 - [Expert demo rollouts from datasets](atomic-skill-decomposition-and-assembly/expert-demo-rollouts-from-datasets.md)
 - [Unified video skill schema](docs/unified-video-skill-schema.md)
 - [Clip processing policy](docs/clip-processing-policy.md) — short / long / streaming segmentation
+- [Three-agent architecture](docs/three-agent-architecture.md) — L1 graph crafter, L2 recursive answer agent, motif manager
 - [Repository bundle map](docs/repo-bundle-map.md) — L1/L2/verifier/tooling ownership boundaries
 - [Motif layer boundary](docs/motif-layer-boundary.md) — composed motifs vs legacy skill agents
 - [MDP formulation](docs/mdp-formulation.md) — atomic skill invocations as graph-state actions

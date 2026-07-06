@@ -19,6 +19,7 @@ Use it when adding new modules or deciding where a change belongs.
 | `cli.py` | Simple CLI wrapper around canonical-example export. |
 | `build_training_manifests.py` | Compatibility entrypoint for `manifests/build_training_manifests.py`. |
 | `export_reasoning_traces.py` | Compatibility entrypoint for `training/trace_adapter.py`. |
+| `build_motif_bank.py` | Compatibility entrypoint for `motifs/build_motif_bank.py`. |
 | `run_llm_pipeline.py` | Compatibility entrypoint for `runners/run_llm_pipeline.py`. |
 | `run_staged_llm_pipeline.py` | Compatibility entrypoint for `runners/run_staged_llm_pipeline.py`. |
 | `run_repair_protocol.py` | Compatibility entrypoint for `verification/run_repair_protocol.py`. |
@@ -134,6 +135,24 @@ maps verified expert-demo trajectories into canonical runtime/training formats.
 | `training/trace_adapter.py` | Converts compact L1/L2 expert demos into `video_skills.contracts.ReasoningTrace` JSONL and compact chat-SFT JSONL. |
 | `training/__init__.py` | Public exports for training adapters. |
 
+## `motifs/`
+
+Motif extraction and management. Deterministic bank/lifecycle mining lives
+alongside a Qwen3.5/GPT-OSS motif agent that proposes, curates, and stores
+expandable atomic graph templates rather than callable skill agents.
+
+| Path | Purpose |
+|------|---------|
+| `motifs/agent.py` | High-level Motif Agent orchestration with `hybrid`, `llm`, and `deterministic` modes. |
+| `motifs/llm_agent.py` | Qwen3.5/GPT-OSS propose-and-curate adapter for reusable L1/L2 motif candidates. |
+| `motifs/miner.py` | Deterministic L1/L2 graph miner used by the bank/lifecycle path. |
+| `motifs/instance_miner.py` | Agent-facing seed/fallback extractor for trajectory-round and repair-subgraph motif instances. |
+| `motifs/registry.py` | JSONL-backed motif bank with support, pass-rate, dataset/task coverage, agent metadata, and expansion templates. |
+| `motifs/promotion.py` | Support/pass-rate/dataset-coverage gates for promoting candidates. |
+| `motifs/expansion.py` | Converts promoted motifs into future planning-prior objects; motifs still expand before execution. |
+| `motifs/canonicalize.py` | Canonical signature helpers that remove surface labels from motif ids. |
+| `motifs/build_motif_bank.py` | CLI for building a motif bank from accepted L1/L2 artifacts; defaults to `--agent-mode hybrid`. |
+
 ## `runners/`
 
 End-to-end orchestration. Runners may connect adapters, perception, L1, L2, and
@@ -153,6 +172,7 @@ target specific contracts rather than full benchmark accuracy.
 | Path | Purpose |
 |------|---------|
 | `tests/smoke_test_module_bundles.py` | Ensures every wrapper module is classified in `module_bundles.py`. |
+| `tests/smoke_test_motif_agent.py` | Checks deterministic motif fallback plus mocked Qwen/GPT-OSS propose-curate output. |
 | `tests/smoke_test_l2_recursive_trace.py` | Checks trajectory and repair-subgraph encoding. |
 | `tests/smoke_test_two_layer_schema.py` | Validates L1/L2 schemas across datasets/regimes. |
 | `tests/smoke_test_graph_compose.py` | Checks deterministic graph composition. |
@@ -184,6 +204,7 @@ target specific contracts rather than full benchmark accuracy.
 - New training-data/demo export code goes in `expert_demos/`.
 - New controller-training trace/chat adapters go in `training/`.
 - New split or dataset manifest code goes in `manifests/`.
+- New motif mining, promotion, registry, or expansion code goes in `motifs/`.
 - New orchestration commands go in `runners/` plus a thin compatibility
   entrypoint at the package root only when an existing public command needs it.
 - New smoke tests go in `tests/` and should be added to `module_bundles.py`.
