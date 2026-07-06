@@ -43,9 +43,14 @@ Each canonical example now includes:
 - `metadata.reasoning_rollout_shell` — Layer 2 shell linked via `clue_memory_ref`
 
 See [two-layer graph schema](../docs/two-layer-graph-schema.md).
+See [repository bundle map](../docs/repo-bundle-map.md) for the current
+L1/L2/verifier/tooling ownership boundaries, and
+[file purposes](FILE_PURPOSES.md) for the module-by-module placement map. The
+machine-checkable registry is `dataset_clip_wrapper/module_bundles.py`.
 
 ```bash
-python dataset_clip_wrapper/smoke_test_two_layer_schema.py
+python -m dataset_clip_wrapper.tests.smoke_test_two_layer_schema
+python -m dataset_clip_wrapper.tests.smoke_test_module_bundles
 ```
 
 ## Hyperparameters
@@ -222,12 +227,12 @@ same clip-schema fields consumed by the atomic graph composer.
 Offline graph-compose smoke test:
 
 ```bash
-python dataset_clip_wrapper/smoke_test_graph_compose.py
-python dataset_clip_wrapper/smoke_test_neighbor_vlm_l1_graph_compose.py
-python dataset_clip_wrapper/smoke_test_vlm_l1_graph_compose.py
-python dataset_clip_wrapper/smoke_test_video_tools.py
-python dataset_clip_wrapper/smoke_test_video_only_takein.py
-python dataset_clip_wrapper/smoke_test_coarse_fine_graph_crafting.py
+python -m dataset_clip_wrapper.tests.smoke_test_graph_compose
+python -m dataset_clip_wrapper.tests.smoke_test_neighbor_vlm_l1_graph_compose
+python -m dataset_clip_wrapper.tests.smoke_test_vlm_l1_graph_compose
+python -m dataset_clip_wrapper.tests.smoke_test_video_tools
+python -m dataset_clip_wrapper.tests.smoke_test_video_only_takein
+python -m dataset_clip_wrapper.tests.smoke_test_coarse_fine_graph_crafting
 ```
 
 `smoke_test_video_only_takein.py` covers all supported current video datasets,
@@ -498,7 +503,7 @@ objective background knowledge, not by direct visual evidence alone.
 Use the repair runner for these cases:
 
 ```bash
-python dataset_clip_wrapper/run_repair_protocol.py \
+python -m dataset_clip_wrapper.run_repair_protocol \
   --quality-report dataset_clip_wrapper/output/rerun5_quality_report.json \
   --stage-dir dataset_clip_wrapper/output/repair_long_reroute \
   --output dataset_clip_wrapper/output/repair_long_reroute_report.json \
@@ -609,7 +614,7 @@ without allowing open-ended agent loops.
 Repair clip schemas for long videos can be parallelized with process workers:
 
 ```bash
-python dataset_clip_wrapper/run_repair_protocol.py \
+python -m dataset_clip_wrapper.run_repair_protocol \
   --quality-report dataset_clip_wrapper/output/batch3_quality_report_strict_qwen.json \
   --stage-dir dataset_clip_wrapper/output/repair_batch3_allregime_api \
   --output dataset_clip_wrapper/output/repair_batch3_allregime_api_report.json \
@@ -627,7 +632,7 @@ To merge the base five-dataset L1/L2 quality report with long-video repair
 reports:
 
 ```bash
-python dataset_clip_wrapper/report_final_acceptance.py \
+python -m dataset_clip_wrapper.report_final_acceptance \
   --quality-report dataset_clip_wrapper/output/rerun5_quality_report_strict_qwen.json \
   --repair-report dataset_clip_wrapper/output/repair_long_objective_bridge_api_v9_strict_report.json \
   --output dataset_clip_wrapper/output/rerun5_final_acceptance_report.json
@@ -795,7 +800,7 @@ python -m dataset_clip_wrapper.cli \
 ## Smoke Test
 
 ```bash
-python dataset_clip_wrapper/smoke_test.py
+python -m dataset_clip_wrapper.tests.smoke_test
 ```
 
 ## Python API

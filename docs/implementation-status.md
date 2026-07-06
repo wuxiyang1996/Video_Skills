@@ -6,7 +6,23 @@ This document tracks what is designed, what is implemented, and how to run the
 current code. It consolidates status from README, atomic skills v1, dataset
 rollout plans, and recent experiments.
 
-## 0. Latest L2 Recursive Trace Status
+## 0. Packaging / Bundle Cleanup Status
+
+`dataset_clip_wrapper/` has been split into physical bundle subpackages:
+
+- `perception/`: clip policy, Qwen/video-tools clip schemas, subtitles, video probes, OpenRouter client.
+- `l1_clue_graph/`: clue-memory graph extraction, graph compose, retrieval, L1 gating.
+- `l2_reasoning_graph/`: reasoning planner, reasoning rollout, recursive trace, local fault repair.
+- `verification/`: repair protocol, quality reports, final acceptance, runtime verifier.
+- `runners/`: staged and non-staged API pipelines.
+- `tests/`: smoke tests.
+
+The package root keeps core schema/config modules plus thin compatibility
+entrypoints such as `run_repair_protocol.py` and `run_staged_llm_pipeline.py`.
+Old import paths are aliased in `dataset_clip_wrapper/__init__.py`; new code
+should import from the bundle paths directly.
+
+## 0.1 Latest L2 Recursive Trace Status
 
 The L2 path now records bounded recursive repair as a first-class graph/trace
 artifact:
@@ -283,13 +299,13 @@ python experiments/smoke_test_atomic_skills.py
 Validates the 19 core deterministic L2 rollout skills:
 
 ```bash
-python dataset_clip_wrapper/smoke_test_reasoning_rollout.py
+python -m dataset_clip_wrapper.tests.smoke_test_reasoning_rollout
 ```
 
 Validates the 6 option-level multi-hop/social L2 extensions:
 
 ```bash
-python dataset_clip_wrapper/smoke_test_multi_hop_reasoning_skills.py
+python -m dataset_clip_wrapper.tests.smoke_test_multi_hop_reasoning_skills
 ```
 
 ### 4.3 Graph Crafting from Video-Holmes (no API key)
@@ -301,10 +317,10 @@ over dataset annotations.
 ### 4.4 Dataset Clip Wrapper (no API key by default)
 
 ```bash
-python dataset_clip_wrapper/smoke_test.py
-python dataset_clip_wrapper/smoke_test_retrieval.py
-python dataset_clip_wrapper/smoke_test_video_only_takein.py
-python dataset_clip_wrapper/smoke_test_coarse_fine_graph_crafting.py
+python -m dataset_clip_wrapper.tests.smoke_test
+python -m dataset_clip_wrapper.tests.smoke_test_retrieval
+python -m dataset_clip_wrapper.tests.smoke_test_video_only_takein
+python -m dataset_clip_wrapper.tests.smoke_test_coarse_fine_graph_crafting
 
 python -m dataset_clip_wrapper.cli \
   --dataset video_holmes --regime short --limit 5 \
@@ -367,7 +383,7 @@ evidence rather than a coarse retrieval score alone.
 The current final acceptance report can be regenerated with:
 
 ```bash
-python dataset_clip_wrapper/report_final_acceptance.py \
+python -m dataset_clip_wrapper.report_final_acceptance \
   --quality-report dataset_clip_wrapper/output/rerun5_quality_report_strict_qwen.json \
   --repair-report dataset_clip_wrapper/output/repair_long_objective_bridge_api_v7_cg_rebuild_report.json \
   --repair-report dataset_clip_wrapper/output/repair_long_objective_bridge_api_v7_vr_rebuild_report.json \

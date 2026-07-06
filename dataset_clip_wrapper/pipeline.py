@@ -175,7 +175,7 @@ def build_canonical_example(
                     "text": observation["text"],
                     "trust_level": observation.get("trust_level", "model_labeled"),
                     "provenance": {
-                        "created_by": "dataset_clip_wrapper.backbone",
+                        "created_by": "dataset_clip_wrapper.perception.backbone",
                         "backbone": config.backbone.to_dict(),
                     },
                     "discovery_status": observation.get("discovery_status", "discovered_runtime"),

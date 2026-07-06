@@ -18,7 +18,7 @@ JSON schemas:
 
 Code builders:
 
-- `dataset_clip_wrapper/clue_memory.py` — `extract_clue_memory_graph()`, `make_reasoning_rollout_shell()`
+- `dataset_clip_wrapper/l1_clue_graph/clue_memory.py` — `extract_clue_memory_graph()`, `make_reasoning_rollout_shell()`
 - `dataset_clip_wrapper/dataset_graph_presets.py` — per-dataset regime defaults
 - `dataset_clip_wrapper/pipeline.py` — attaches both layers to `metadata`
 
@@ -294,9 +294,9 @@ They are **stripped** from `extract_clue_memory_graph(..., mode=video_only)`.
 ## Validation
 
 ```bash
-python dataset_clip_wrapper/smoke_test_two_layer_schema.py
-python dataset_clip_wrapper/smoke_test_reasoning_rollout.py
-python dataset_clip_wrapper/smoke_test_multi_hop_reasoning_skills.py
+python -m dataset_clip_wrapper.tests.smoke_test_two_layer_schema
+python -m dataset_clip_wrapper.tests.smoke_test_reasoning_rollout
+python -m dataset_clip_wrapper.tests.smoke_test_multi_hop_reasoning_skills
 ```
 
 Checks:

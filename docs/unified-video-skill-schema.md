@@ -1354,7 +1354,7 @@ The right integration is:
 ```text
 M3-style memory graph = evidence_index
   -> coarse 30s clip index + retrieve top-k
-  -> fine windows inside candidates only (dataset_clip_wrapper/clip_retrieval.py)
+  -> fine windows inside candidates only (dataset_clip_wrapper/l1_clue_graph/clip_retrieval.py)
 atomic skills = operations over the evidence_index
 EvidenceCandidate = cited, verifiable evidence extracted from the index
 SkillGraphRollout = reasoning chain over extracted evidence

@@ -31,10 +31,10 @@ This produces **expert demonstration trajectories** that serve as:
 2. Offline RL dataset (state, action, reward tuples extracted post-hoc).
 3. Validation of the skill ontology and graph schema under real LLM outputs.
 
-The initial L2 planner lives in `dataset_clip_wrapper/reasoning_planner.py`.
+The initial L2 planner lives in `dataset_clip_wrapper/l2_reasoning_graph/reasoning_planner.py`.
 The repair protocol lives in `dataset_clip_wrapper/run_repair_protocol.py`.
 Both write `l2_trajectory` records using
-`dataset_clip_wrapper/l2_recursive_trace.py`.
+`dataset_clip_wrapper/l2_reasoning_graph/l2_recursive_trace.py`.
 
 The current process should be described as:
 

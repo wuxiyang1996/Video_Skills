@@ -107,6 +107,7 @@ unless concrete video evidence verifies it.
 - [Expert demo rollouts from datasets](atomic-skill-decomposition-and-assembly/expert-demo-rollouts-from-datasets.md)
 - [Unified video skill schema](docs/unified-video-skill-schema.md)
 - [Clip processing policy](docs/clip-processing-policy.md) — short / long / streaming segmentation
+- [Repository bundle map](docs/repo-bundle-map.md) — L1/L2/verifier/tooling ownership boundaries
 - [MDP formulation](docs/mdp-formulation.md) — atomic skill invocations as graph-state actions
 - [Implementation status](docs/implementation-status.md) — runnable code, datasets, gaps
 - [Dataset clip wrapper](dataset_clip_wrapper/README.md) — core + streaming benchmark canonical clip exporter
