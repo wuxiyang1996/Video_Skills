@@ -23,6 +23,7 @@ Use it when adding new modules or deciding where a change belongs.
 | `report_l1_l2_quality.py` | Compatibility entrypoint for `verification/report_l1_l2_quality.py`. |
 | `report_final_acceptance.py` | Compatibility entrypoint for `verification/report_final_acceptance.py`. |
 | `report_failure_taxonomy.py` | Compatibility entrypoint for `verification/report_failure_taxonomy.py`. |
+| `report_evidence_audit.py` | Compatibility entrypoint for `verification/report_evidence_audit.py`. |
 | `retrofit_l2_trajectory.py` | Compatibility entrypoint for `verification/retrofit_l2_trajectory.py`. |
 | `output/` | Generated API outputs, staged caches, repair artifacts, and reports. Only `.gitkeep` should be tracked. |
 
@@ -98,6 +99,7 @@ bridge, or abstain.
 | `verification/report_l1_l2_quality.py` | Batch L1/L2 quality report with trajectory completeness fields. |
 | `verification/report_final_acceptance.py` | Merges base quality and repair reports into final acceptance status. |
 | `verification/report_failure_taxonomy.py` | Classifies non-accepted examples by failure stage, missing evidence type, repairability, and dataset-fit risk. |
+| `verification/report_evidence_audit.py` | Uses GPT-OSS to audit non-accepted examples from packed L1/L2/repair evidence instead of heuristic labels. |
 | `verification/retrofit_l2_trajectory.py` | Adds latest L2 trajectory metadata to older JSONL artifacts without re-running perception. |
 
 ## `runners/`

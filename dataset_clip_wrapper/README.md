@@ -653,6 +653,33 @@ we can tell apart L1 graph gaps, long-video retrieval gaps, L2 planner failures,
 repair-selector abstentions, verifier rejections, and short-video examples that
 may require non-visual/background bridges.
 
+The latest 5-dataset x 3-sample API repair pass reuses
+`batch3_latest_trace_quality_report.json`, targets only the 11 repair-needed
+examples, and writes:
+
+- `dataset_clip_wrapper/output/batch3_latest_trace_repair_api_report.json`
+- `dataset_clip_wrapper/output/batch3_latest_trace_final_acceptance_api_report.json`
+- `dataset_clip_wrapper/output/batch3_latest_trace_failure_taxonomy_api_report.json`
+
+That run reports `accepted_strong=8`, `needs_more_evidence=7`,
+`l2_trajectory_complete_all=true`, `repair_subgraph_complete_for_repaired=true`,
+and `heuristic_final_acceptance_count=0`.
+
+For the remaining `needs_more_evidence` cases, run the GPT-OSS evidence audit
+instead of adding heuristic labels:
+
+```bash
+python -m dataset_clip_wrapper.report_evidence_audit \
+  --final-report dataset_clip_wrapper/output/batch3_latest_trace_final_acceptance_api_report.json \
+  --repair-report dataset_clip_wrapper/output/batch3_latest_trace_repair_api_report.json \
+  --output dataset_clip_wrapper/output/batch3_latest_trace_evidence_audit_api_report.json \
+  --keys-py /fs/gamma-projects/vlm-robot/keys.py
+```
+
+The latest audit reports one retrieval-missed clue, two cases needing
+discriminative L1 nodes, one verifier-calibration case, and no broad VLM
+perception rerun recommendation.
+
 The current strict one-video-per-dataset API check reports:
 
 - `high_l1_all=true`

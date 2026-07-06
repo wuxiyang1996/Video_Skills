@@ -127,6 +127,7 @@ Modules:
 ```text
 verification/evaluate_l1_query_memory.py
 verification/evaluate_vrbench_video_only_graph.py
+verification/report_evidence_audit.py
 verification/report_final_acceptance.py
 verification/report_failure_taxonomy.py
 verification/report_l1_l2_quality.py

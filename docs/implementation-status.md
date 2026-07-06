@@ -64,6 +64,82 @@ repair selector/verifier has not been API-exercised for this batch. The next API
 run should target only the 11 `repair_selector` failures, not rebuild all 15 L1
 graphs.
 
+The follow-up API-only repair run targeted those 11 failures without rebuilding
+L1:
+
+- `dataset_clip_wrapper/output/batch3_latest_trace_repair_api_report.json`
+- `dataset_clip_wrapper/output/batch3_latest_trace_final_acceptance_api_report.json`
+- `dataset_clip_wrapper/output/batch3_latest_trace_failure_taxonomy_api_report.json`
+
+The API repair selector/verifier improved final acceptance from 4/15 to 8/15:
+
+```text
+examples=15
+high_l1_all=true
+strict_vlm_perception_all=true
+l2_trajectory_complete_all=true
+repair_subgraph_complete_for_repaired=true
+heuristic_final_acceptance_count=0
+accepted_all=false
+final_l2_status_counts={accepted_strong: 8, needs_more_evidence: 7}
+repair_status_counts={resolved_strong: 4, needs_more_evidence: 7}
+```
+
+The remaining failures moved from selector-not-run to verifier-level evidence
+insufficiency:
+
+```text
+failure_stage_counts={repair_verifier: 7}
+missing_evidence_type_counts={
+  commonsense_bridge_without_discriminative_visual_anchor: 3,
+  discriminative_visual_evidence_gap: 1,
+  long_video_retrieval_or_fine_evidence_gap: 3
+}
+dataset_failure_counts={video_holmes: 2, videomme: 1, ovo_bench: 1, cg_bench: 2, vrbench: 1}
+```
+
+Two repair robustness fixes were needed during this run:
+
+- `--skip-api` no longer requires an OpenRouter key.
+- Malformed JSON from the reroute selector or option evidence selector is now
+  recorded as `selector_status=error` / `needs_more_evidence` instead of
+  aborting the whole batch. This preserves the strict no-heuristic-fallback
+  boundary while allowing batch completion.
+
+An additional GPT-OSS evidence audit was run over the 7 remaining
+`needs_more_evidence` cases:
+
+- `dataset_clip_wrapper/output/batch3_latest_trace_evidence_audit_api_report.json`
+
+This audit intentionally avoids heuristic case labels. The local code only
+packs question/options, repair clips, selected refs, missing requirements, and
+repair graph evidence; GPT-OSS emits the final failure class and next action.
+
+```text
+audited_failures=7
+primary_failure_class_counts={
+  benchmark_not_visually_answerable: 1,
+  insufficient_evidence_after_repair: 3,
+  l1_graph_lacks_discriminative_node: 2,
+  repair_retrieval_missed_clip: 1
+}
+visual_answerability_counts={
+  not_visually_answerable: 2,
+  unclear: 4,
+  visually_answerable: 1
+}
+rerun_retrieval_count=1
+rerun_vlm_perception_count=0
+adjust_verifier_count=1
+dataset_fit_risk_count=0
+```
+
+Interpretation: the next improvement should not be a broad VLM rerun. The
+highest-value targets are a second-pass retrieval repair for the one missed
+long-video clue, adding/repairing high-level discriminative L1 nodes for two
+cases, and one verifier calibration case where the visual evidence is present
+but not accepted.
+
 ## 0.2 Latest L2 Recursive Trace Status
 
 The L2 path now records bounded recursive repair as a first-class graph/trace

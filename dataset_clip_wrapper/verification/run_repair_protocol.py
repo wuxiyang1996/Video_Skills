@@ -679,17 +679,32 @@ def _llm_select_coarse_indices(
                 }
             ]
         except Exception as retry_exc:
+            reason = f"{exc}; compact retry failed: {retry_exc}"
             if args.allow_lexical_fallback:
                 return [], [
                     {
                         "role": "model_clue_selector_error",
-                        "reason": f"{exc}; compact retry failed: {retry_exc}",
+                        "reason": reason,
                         "selected_after_exclusion": [],
                     }
                 ]
-            raise RuntimeError(
-                f"LLM reroute selector failed and heuristic fallback is disabled: {exc}; compact retry failed: {retry_exc}"
-            ) from retry_exc
+            return [], [
+                {
+                    "role": "model_clue_selector_error",
+                    "query_or_need": clue_spec.get("visual_target"),
+                    "selected_after_exclusion": [],
+                    "reason": reason,
+                    "confidence": 0.0,
+                    "selection_mode": "abstain",
+                    "selector_backend": args.clue_planner_model,
+                    "selector_status": "error",
+                    "selector_abstained": True,
+                    "llm_usage": {
+                        "malformed_json_count": 1,
+                        "compact_retry_count": 1,
+                    },
+                }
+            ]
     selected: list[int] = []
     max_index = len(coarse_rows) - 1
     for item in payload.get("selected_coarse_indices") or []:
@@ -1559,7 +1574,16 @@ def _select_option_evidence_packs_with_llm(
                 "reason_short": "; ".join(errors)[-240:],
                 "llm_usage": (client.last_response_metadata if client is not None else {}),
             }
-        raise RuntimeError(f"LLM option evidence selector failed and heuristic fallback is disabled: {'; '.join(errors)}")
+        return {
+            "selector_status": "error",
+            "selector_backend": args.verifier_model,
+            "option_packs": [],
+            "reason_short": "; ".join(errors)[-240:],
+            "llm_usage": {
+                "malformed_json_count": len(errors),
+                "compact_retry_count": max(0, len(errors) - 1),
+            },
+        }
     allowed_refs = {row["ref"] for row in candidates}
     option_labels = {str(opt.get("label")) for opt in options if opt.get("label") is not None}
     packs: list[dict[str, Any]] = []
@@ -1852,6 +1876,11 @@ def _verify_options(
         if isinstance(pack, dict)
     }
     selector_uses_llm = bool(selector_payload and selector_payload.get("selector_backend"))
+    selector_failed_strict = bool(
+        selector_payload
+        and selector_payload.get("selector_status") in {"error", "no_candidates"}
+        and not args.allow_lexical_fallback
+    )
 
     verifications: list[dict[str, Any]] = []
     for opt in options:
@@ -1863,11 +1892,19 @@ def _verify_options(
             selector_reason = str(selected_pack.get("reason_short") or "")
             evidence_selector = "gptoss_option_evidence_selector"
         else:
-            refs = _candidate_refs_for_option(graph, opt, question_text, limit=args.max_verify_refs)
-            negative_refs = _negative_refs_for_option(graph, opt, question_text, limit=max(2, args.max_verify_refs // 2))
+            refs = [] if selector_failed_strict else _candidate_refs_for_option(graph, opt, question_text, limit=args.max_verify_refs)
+            negative_refs = (
+                []
+                if selector_failed_strict
+                else _negative_refs_for_option(graph, opt, question_text, limit=max(2, args.max_verify_refs // 2))
+            )
             missing_requirements = []
-            selector_reason = ""
-            evidence_selector = "heuristic_diagnostic_selector"
+            selector_reason = str((selector_payload or {}).get("reason_short") or "")
+            evidence_selector = (
+                "gptoss_option_evidence_selector_error"
+                if selector_failed_strict
+                else "heuristic_diagnostic_selector"
+            )
         claim = {
             "claim_text": f"{opt.get('label')}: {opt.get('text')}",
             "option_label": opt.get("label"),
@@ -2051,6 +2088,7 @@ def _build_report(plan: dict[str, Any], patch: dict[str, Any], l2: dict[str, Any
     negative_count = _negative_target_count(patch)
     span_selection = plan.get("span_selection") or {}
     reported_selection_mode = span_selection.get("selection_mode")
+    reported_selector_status = span_selection.get("selector_status")
     if reported_selection_mode in {None, "", "none", "abstain"}:
         for round_row in reversed(span_selection.get("retrieval_rounds") or []):
             if (
@@ -2060,6 +2098,11 @@ def _build_report(plan: dict[str, Any], patch: dict[str, Any], l2: dict[str, Any
                 and round_row.get("selection_mode")
             ):
                 reported_selection_mode = round_row.get("selection_mode")
+                break
+    if reported_selector_status in {None, "", "none"}:
+        for round_row in reversed(span_selection.get("retrieval_rounds") or []):
+            if isinstance(round_row, dict) and round_row.get("selector_status"):
+                reported_selector_status = round_row.get("selector_status")
                 break
     missing = set(plan.get("gap_types") or [])
     if strong:
@@ -2101,6 +2144,7 @@ def _build_report(plan: dict[str, Any], patch: dict[str, Any], l2: dict[str, Any
         "selected_coarse_indices": span_selection.get("selected_coarse_indices") or [],
         "retrieval_round_count": len(span_selection.get("retrieval_rounds") or []),
         "selector_abstained": bool(span_selection.get("selector_abstained")),
+        "selector_status": reported_selector_status,
         "selection_mode": reported_selection_mode,
         "verifier_backend": l2.get("backend"),
         "option_verifier_policy": l2.get("option_verifier_policy") or {},

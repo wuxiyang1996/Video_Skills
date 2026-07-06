@@ -42,6 +42,8 @@ def _missing_requirements(row: dict[str, Any]) -> list[str]:
 
 def _selector_status(row: dict[str, Any]) -> str:
     repair = row.get("repair_report") or {}
+    if repair.get("selector_status"):
+        return str(repair.get("selector_status"))
     selector = repair.get("option_evidence_selector") or {}
     return str(selector.get("selector_status") or selector.get("status") or "")
 
@@ -92,7 +94,9 @@ def classify_row(row: dict[str, Any]) -> dict[str, Any]:
         needs_dataset_replacement = False
         recommended_next_action = "rerun L1 graph composition with denser clip schemas and neighbor graph compose"
     elif repair_applied and repair_status in {"needs_more_evidence", "rejected", "missing"}:
-        if selector_status in {"abstained", "no_positive_refs_selected", "not_run"}:
+        if selector_status == "error":
+            failure_stage = "repair_selector_error"
+        elif selector_status in {"abstained", "no_positive_refs_selected", "not_run"}:
             failure_stage = "repair_selector"
         else:
             failure_stage = "repair_verifier"
