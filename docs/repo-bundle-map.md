@@ -1,6 +1,6 @@
 # Repository Bundle Map
 
-Last updated: 2026-07-05
+Last updated: 2026-07-06
 
 This map classifies the current physical package layout. The top-level
 `dataset_clip_wrapper` package keeps a few compatibility entrypoints, while
@@ -16,6 +16,8 @@ implementation code lives in bundle subpackages.
 | L1 clue graph | Question-agnostic clue-memory graph construction, retrieval, graph compose, L1 gating | `dataset_clip_wrapper/l1_clue_graph/` |
 | L2 reasoning graph | Question-conditioned reasoning rollout, GPT-OSS planner, recursive trace shell | `dataset_clip_wrapper/l2_reasoning_graph/` |
 | L2 repair / verifier | Evidence-gap repair, option evidence selection, verifier gates, final acceptance reports | `dataset_clip_wrapper/verification/` |
+| Expert demos / manifests | Verified expert-demo export plus split-aware manifests | `dataset_clip_wrapper/expert_demos/`, `dataset_clip_wrapper/manifests/` |
+| Future motif layer | Optional mining, promotion, registry, and atomic expansion for verified subgraph motifs | `dataset_clip_wrapper/motifs/` when implemented |
 | Pipeline runners | End-to-end orchestration commands | `dataset_clip_wrapper/runners/` |
 | Smoke tests | Small executable boundary checks | `dataset_clip_wrapper/tests/` |
 | Generated artifacts | API outputs, staged caches, repair outputs | `dataset_clip_wrapper/output/` |
@@ -153,11 +155,55 @@ Top-level modules with the same command names remain as compatibility
 entrypoints for `python -m dataset_clip_wrapper.run_repair_protocol`,
 `python -m dataset_clip_wrapper.run_staged_llm_pipeline`, and related commands.
 
+### Expert Demos And Manifests
+
+Purpose: export accepted/abstaining L1/L2/repair trajectories and build
+split-aware manifests without exposing hidden supervision to `video_only`
+inputs.
+
+Modules:
+
+```text
+expert_demos/export_expert_demos.py
+manifests/build_training_manifests.py
+```
+
+Compatibility entrypoints:
+
+```text
+dataset_clip_wrapper/export_expert_demos.py
+dataset_clip_wrapper/build_training_manifests.py
+```
+
+### Future Motif Layer
+
+Purpose: mine reusable verified subgraph motifs from accepted L2 rollouts and
+use promoted motifs as optional planning/repair priors.
+
+Planned modules:
+
+```text
+motifs/canonicalize.py
+motifs/miner.py
+motifs/registry.py
+motifs/promotion.py
+motifs/expansion.py
+```
+
+This package is intentionally not in `module_bundles.py` yet because no runtime
+implementation exists. When added, it must consume current `SkillGraphRollout`
+records and expand every motif back into frozen atomic skill nodes before
+execution.
+
 ## Cleanup Rules
 
 - Keep `dataset_clip_wrapper/output/` as generated artifacts. Only
   `.gitkeep` should be tracked.
 - Keep `__pycache__/`, `*.pyc`, and `.pytest_cache/` out of git.
+- Keep this clean base free of legacy top-level directories such as
+  `cold_start/`, `data_structure/`, `decision_agents/`, `dataset_examples/`,
+  `skill_agents/`, and `trainer/` unless they are intentionally reintroduced
+  with a documented migration plan.
 - Do not add benchmark-specific answer shortcuts to L1 graph construction or
   atomic skills.
 - Heuristic retrieval/scoring may remain diagnostic, but final acceptance must
@@ -165,6 +211,9 @@ entrypoints for `python -m dataset_clip_wrapper.run_repair_protocol`,
 - Prefer adding new modules to an existing bundle and updating
   `module_bundles.py`; create a new bundle only when the ownership boundary is
   genuinely new.
+- Do not use `skill_agents/` as the motif runtime. Treat it as an external
+  reference only; any useful GRPO, LoRA, reward, or promotion utility must be
+  ported explicitly before use.
 
 ## Compatibility Policy
 

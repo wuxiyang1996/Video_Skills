@@ -62,6 +62,9 @@ multi-hop reasoning program over the clue-memory graph.
 - **Composed motifs can be mined.** Offline extraction may promote frequent
   verified atomic-skill subgraphs into reusable motif templates, but never into
   new primitive tools.
+- **Motif code stays in the L1/L2 stack.** Future motif mining should live under
+  `dataset_clip_wrapper/motifs/` and operate on accepted L1/L2 rollout graphs.
+  Do not re-add the old `skill_agents/` package as the motif runtime.
 - **Evidence indexes are retrieval substrates.** M3-style clip memory graphs can
   help the agent discover clues, but final answers must cite verifiable
   `EvidenceCandidate` records extracted from the index.
@@ -108,6 +111,9 @@ unless concrete video evidence verifies it.
 - [Unified video skill schema](docs/unified-video-skill-schema.md)
 - [Clip processing policy](docs/clip-processing-policy.md) — short / long / streaming segmentation
 - [Repository bundle map](docs/repo-bundle-map.md) — L1/L2/verifier/tooling ownership boundaries
+- [Repository structure](REPO_STRUCTURE.md) — clean branch active path and excluded legacy directories
+- [Repository cleanup audit](docs/repo-cleanup-audit.md) — cleanup milestones and guardrails
+- [Motif layer boundary](docs/motif-layer-boundary.md) — composed motifs vs legacy skill agents
 - [MDP formulation](docs/mdp-formulation.md) — atomic skill invocations as graph-state actions
 - [Implementation status](docs/implementation-status.md) — runnable code, datasets, gaps
 - [Dataset clip wrapper](dataset_clip_wrapper/README.md) — core + streaming benchmark canonical clip exporter

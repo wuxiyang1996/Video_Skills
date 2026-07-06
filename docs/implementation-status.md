@@ -1,10 +1,15 @@
 # Implementation Status
 
-Last updated: 2026-07-05
+Last updated: 2026-07-06
 
 This document tracks what is designed, what is implemented, and how to run the
 current code. It consolidates status from README, atomic skills v1, dataset
 rollout plans, and recent experiments.
+
+Clean-base note: the active cleanup branch starts from
+`backup/pre-merge-l1l2-training-20260706`. It keeps the L1/L2 relaunch core and
+does not include the larger legacy game-agent, skill-bank, or trainer
+directories that were merged in later integration work.
 
 ## 0. Packaging / Bundle Cleanup Status
 

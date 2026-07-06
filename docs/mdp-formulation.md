@@ -375,6 +375,96 @@ Useful components:
 - retrieval / model / tool cost stays within budget;
 - `video_only` rollouts do not cite hidden supervision.
 
+### Progressive Reward From Hidden Ground Truth
+
+Most target benchmarks provide a final answer, but they do not provide equally
+dense evidence or reasoning supervision. The training/evaluation boundary is:
+
+```text
+policy-visible inputs:
+  video_only video/question/options + visible L1 evidence graph
+
+reward/evaluator-only inputs:
+  hidden answer, hidden clue intervals, hidden annotations,
+  hidden reasoning_process, and other dataset supervision
+```
+
+Ground truth may score a completed rollout, but it must not be injected into
+L1, L2 planning, repair selection, or verifier prompts as visible evidence.
+Any path that copies gold answers, clue intervals, official reasoning steps, or
+dataset annotations into `video_only` visible inputs is leakage and should get
+a hard rejection.
+
+Keep evaluation and training reward separate:
+
+```text
+evaluation metrics:
+  binary / exact / held-out checks such as answer_correct,
+  accepted_strong, evidence_valid, no_hidden_leakage
+
+training reward:
+  RLVR-style progressive reward from verifier/rule/GT checks
+```
+
+Evaluation should report hard 0/1 or True/False outcomes. Evidence recall,
+timestamp IoU, support-ref count, and repair progress may appear as diagnostics,
+but they should not replace final held-out correctness and acceptance metrics.
+
+Training can use progressive reward rather than only final-answer reward:
+
+```text
+R0 schema_reward:
+  valid L1/L2 schema, valid skill ids, valid JSON, resolved evidence refs
+
+R1 visibility_reward:
+  no hidden-supervision leakage, no answer-copy shortcut, legal timestamps
+
+R2 evidence_reward:
+  retrieved refs overlap clue intervals / reasoning timestamps when available,
+  selected coarse/fine neighborhoods contain target evidence,
+  evidence precision is not just broad lexical overlap
+
+R3 reasoning_chain_reward:
+  role coverage, temporal order, evidence-chain structure, bridge validity,
+  repair improves the evidence pack
+
+R4 verifier_reward:
+  verify_claim_support passes with non-diagnostic visual refs,
+  option evidence selector finds positive refs,
+  confidence/margin/support-count thresholds are met
+
+R5 answer_reward:
+  final answer matches hidden gold when the rollout commits,
+  wrong strong commits receive a large penalty,
+  abstention can be neutral or positive when evidence is genuinely insufficient
+```
+
+A reasonable first RLVR training reward shape is:
+
+```text
+R = 0.10 * R0_schema
+  + 0.15 * R1_visibility
+  + 0.25 * R2_evidence
+  + 0.20 * R3_reasoning_chain
+  + 0.20 * R4_verifier
+  + 0.10 * R5_answer
+  - cost_penalty
+```
+
+The weights should be dataset-aware:
+
+| Dataset | Final answer GT | Evidence/process GT | Reward emphasis |
+|---------|-----------------|---------------------|-----------------|
+| Video-Holmes | strong | segment descriptions, inference shots, relationships, explanations | evidence roles, social/causal support, verifier, answer |
+| CG-Bench | strong | clue intervals and clue clips | clue localization, retrieval neighborhood, evidence precision, answer |
+| VRBench | strong | timestamped reasoning_process and summaries | temporal chain, multi-step evidence order, answer |
+| SIV-Bench | strong | weak; mostly subtitles/video, no explicit clue intervals | final answer, verifier support, weak transcript/video alignment |
+
+For CG-Bench and VRBench, evidence/timestamp rewards can be weighted strongly.
+For Video-Holmes, evidence-role and verifier rewards should carry more weight.
+For SIV-Bench, dense evidence terms should be lower-confidence because explicit
+clue intervals are not provided.
+
 The logged `reward_proxy` is intentionally simple and diagnostic:
 
 - `1.0` for `accepted_strong` / `resolved_strong`;
