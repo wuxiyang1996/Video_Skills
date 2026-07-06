@@ -29,6 +29,11 @@ verification, repair, demo export, and controller-training data.
 | `tests/video_skills/` | Active tests | Runtime contract/harness/memory/verifier tests. |
 | `dataset_clip_wrapper/tests/` | Active tests | L1/L2 wrapper, graph, repair, manifest, and training-export smoke tests. |
 
+Future composed-motif work should live under `dataset_clip_wrapper/motifs/`
+once implementation starts. Motifs are optional verified subgraph priors that
+expand into frozen atomic skills; they are not new primitive tools and should
+not depend on `skill_agents/`.
+
 ## Active Commands
 
 Use these entrypoints for the current L1/L2 controller-training path:
@@ -95,6 +100,9 @@ default.
   `dataset_clip_wrapper/verification/`.
 - New expert-demo export code goes in `dataset_clip_wrapper/expert_demos/`.
 - New controller-training adapters go in `dataset_clip_wrapper/training/`.
+- New motif mining, promotion, registry, and expansion code goes in
+  `dataset_clip_wrapper/motifs/` after the first implementation starts. Motifs
+  must expand into existing atomic skill graph fragments before execution.
 - New runtime contracts, harness, memory, retriever, or verifier code goes in
   `video_skills/`.
 - New trainer code should either extend `trainer/` or add a clearly named
@@ -103,13 +111,18 @@ default.
   checked fixtures for tests.
 - Do not add new root-level Python packages without updating
   `scripts/check_repo_layout.py` and this document.
+- Do not wire `skill_agents/` into the L1/L2 critical path. It remains a
+  legacy/reference source for GRPO, LoRA, reward, and bank-maintenance ideas
+  until its useful pieces are explicitly ported.
 
 ## Next Cleanup Steps
 
-1. Add a real L1/L2 controller SFT trainer entrypoint under `trainer/`.
-2. Convert current compact demo bank into `ReasoningTrace` and SFT chat JSONL
+1. Add the first `dataset_clip_wrapper/motifs/` implementation only after the
+   accepted rollout graph format is stable enough to mine.
+2. Add a real L1/L2 controller SFT trainer entrypoint under `trainer/`.
+3. Convert current compact demo bank into `ReasoningTrace` and SFT chat JSONL
    using `dataset_clip_wrapper.export_reasoning_traces`.
-3. Decide whether `out/` snapshots should stay tracked as examples or move to
+4. Decide whether `out/` snapshots should stay tracked as examples or move to
    external artifacts.
-4. After the first SFT run works, move obsolete legacy script entrypoints behind
+5. After the first SFT run works, move obsolete legacy script entrypoints behind
    docs-only references or a `legacy/` namespace in a separate commit.

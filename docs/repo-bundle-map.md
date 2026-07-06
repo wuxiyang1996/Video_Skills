@@ -17,6 +17,7 @@ implementation code lives in bundle subpackages.
 | L2 reasoning graph | Question-conditioned reasoning rollout, GPT-OSS planner, recursive trace shell | `dataset_clip_wrapper/l2_reasoning_graph/` |
 | L2 repair / verifier | Evidence-gap repair, option evidence selection, verifier gates, final acceptance reports | `dataset_clip_wrapper/verification/` |
 | Expert demos / training export | Verified expert-demo export plus `ReasoningTrace` and SFT chat conversion | `dataset_clip_wrapper/expert_demos/`, `dataset_clip_wrapper/training/` |
+| Composed motif layer | Future optional mining, promotion, registry, and atomic expansion for verified subgraph motifs | `dataset_clip_wrapper/motifs/` when implemented |
 | Pipeline runners | End-to-end orchestration commands | `dataset_clip_wrapper/runners/` |
 | Smoke tests | Small executable boundary checks | `dataset_clip_wrapper/tests/` |
 | Generated artifacts | API outputs, staged caches, repair outputs | `dataset_clip_wrapper/output/` |
@@ -174,6 +175,26 @@ dataset_clip_wrapper/export_expert_demos.py
 dataset_clip_wrapper/export_reasoning_traces.py
 ```
 
+### Future Motif Layer
+
+Purpose: mine reusable verified subgraph motifs from accepted L2 rollouts and
+use promoted motifs as optional planning/repair priors.
+
+Planned modules:
+
+```text
+motifs/canonicalize.py
+motifs/miner.py
+motifs/registry.py
+motifs/promotion.py
+motifs/expansion.py
+```
+
+This package is intentionally not in `module_bundles.py` yet because no runtime
+implementation exists. When added, it must consume current
+`SkillGraphRollout`/`ReasoningTrace`-compatible records and expand every motif
+back into frozen atomic skill nodes before execution.
+
 ## Cleanup Rules
 
 - Keep `dataset_clip_wrapper/output/` as generated artifacts. Only
@@ -189,6 +210,9 @@ dataset_clip_wrapper/export_reasoning_traces.py
 - Prefer adding new modules to an existing bundle and updating
   `module_bundles.py`; create a new bundle only when the ownership boundary is
   genuinely new.
+- Do not use `skill_agents/` as the motif runtime. Treat it as legacy/reference
+  code for possible GRPO, LoRA, reward, or promotion utilities that must be
+  ported explicitly before use.
 
 ## Compatibility Policy
 

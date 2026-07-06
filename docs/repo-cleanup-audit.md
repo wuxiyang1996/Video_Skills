@@ -39,6 +39,9 @@ by classification first and deletion later.
 - Do not move `video_skills/`, `dataset_clip_wrapper/`, `atomic_skills/`, or
   `trainer/` until the first SFT-ready training export and dry-run trainer pass.
 - Do not delete `skill_agents/`; it contains reusable GRPO/LoRA/reward code.
+- Do not wire `skill_agents/` into `dataset_clip_wrapper/` for motif runtime.
+  The motif layer should be new code over accepted `SkillGraphRollout` objects,
+  with any useful `skill_agents/` ideas ported explicitly.
 - Do not delete `visual_grounding/`; it may still inform grounding-layer work.
 - Do not merge `README.md` and `readme.md` until the integration branch is ready
   for `main`.
@@ -65,6 +68,21 @@ Before any major physical refactor:
 - Run `dataset_clip_wrapper.export_reasoning_traces`.
 - Confirm SFT chat JSONL has no hidden/gold fields in the prompt.
 - Add an L1/L2 controller SFT trainer entrypoint.
+
+### P1.5: Motif Boundary Freeze
+
+Before implementing online motif extraction:
+
+- Keep motif code out of `skill_agents/`; add it under
+  `dataset_clip_wrapper/motifs/` when real implementation starts.
+- Define the motif record as an expandable atomic subgraph template, not a
+  callable agent or new atomic action.
+- Mine only accepted `SkillGraphRollout` graphs for positive candidates.
+- Require promotion gates for support, verifier pass rate, cross-dataset
+  coverage, confusion risk, expansion validity, and hidden-supervision leakage.
+- Keep evaluation binary at the task level while allowing RLVR/progressive
+  training rewards over schema validity, evidence binding, verifier success,
+  repair success, and final correctness.
 
 ### P2: Generated Artifact Cleanup
 

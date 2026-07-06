@@ -238,6 +238,10 @@ python -m dataset_clip_wrapper.export_reasoning_traces \
 - Scale P5 from 15 seed examples to split-controlled train/dev/test manifests.
 - Run compact demo export and trace/SFT export on the expanded training split.
 - Add a controller SFT trainer entrypoint and dry-run it on sanitized compact demos.
+- Implement dataset-aware training reward: evaluation remains hard 0/1
+  correctness/acceptance/leakage metrics, while training may use RLVR-style
+  progressive rewards weighted by supervision density. Hidden GT stays outside
+  `video_only` L1/L2 inputs in both cases.
 - Improve the three remaining `needs_more_evidence` cases with another bounded
   repair round or stronger discriminative visual anchors.
 - Add embedding-based coarse retrieval if lexical/sequential retrieval remains

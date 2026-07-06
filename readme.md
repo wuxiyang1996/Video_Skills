@@ -6,6 +6,11 @@
 > clue-graph, verification, repair, and training-export protocol. Start with
 > [`REPO_STRUCTURE.md`](REPO_STRUCTURE.md) for the active path, legacy paths, and
 > cleanup rules.
+>
+> Current cleanup boundary: future L1/L2 composed motifs should be implemented
+> as expandable atomic-subgraph templates under `dataset_clip_wrapper/motifs/`.
+> The older `skill_agents/` stack is legacy/reference code and is not the L1/L2
+> motif runtime.
 
 Video_Skills is a research codebase for long-horizon, evidence-grounded video understanding. The system answers questions about long, multi-character, perspective-bearing videos by:
 

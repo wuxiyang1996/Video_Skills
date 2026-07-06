@@ -1,5 +1,11 @@
 # skill_agents (GRPO Skill Bank Pipeline)
 
+> Cleanup boundary for `integration/l1l2-controller-training`: this package is
+> legacy/specialized reference code. It is not the current L1/L2 motif runtime
+> and should not be imported by new `dataset_clip_wrapper/` motif code. Port
+> small GRPO, LoRA, reward, or bank-maintenance utilities explicitly if they are
+> needed for the new L1/L2 path.
+
 Build and maintain a **Skill Bank** from long-horizon game trajectories: segment trajectories into skills, learn symbolic contracts (effects), and serve queries for the [decision_agents](../decision_agents/README.md) VLM agent. The pipeline supports **GRPO-trained LoRA adapters** that wrap existing LLM call points: each call produces G samples, is scored with CPU-only rewards, and the best sample is returned so the EM pipeline runs unchanged while adapters improve over time.
 
 **Model convention:** This project uses **Qwen3-8B** for all skill-bank components (vLLM serving, LoRA adapters, boundary/protocol/contract/curator calls). All configs and code references use Qwen3-8B.

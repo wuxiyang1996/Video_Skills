@@ -70,6 +70,60 @@ Path B: video/tool-derived graph seed
 | `TIR-Bench` | image QA | image assets | image fields, no video | not primary for video skill rollouts | low |
 | `VisualToolBench` | tool-use rubrics + golden answers | images in parquet | tool trajectories in parquet | useful for tool-use format ideas, not video memory | low |
 
+## Progressive Reward Supervision
+
+Use dataset ground truth only after a rollout is complete. It can score the
+rollout, but it must not be shown as `video_only` L1/L2 input.
+
+```text
+visible to policy:
+  video, question, options, visible clip schemas, visible L1 evidence
+
+hidden for reward/eval:
+  official answer, clue intervals, clue clips, annotations,
+  reasoning_process, explanations, official rationales
+```
+
+All four primary datasets provide final-answer supervision, but their dense
+evidence/process supervision differs:
+
+| Dataset | Final answer reward | Evidence/process reward | Suggested weight |
+|---------|---------------------|-------------------------|------------------|
+| `Video-Holmes` | answer label/text from QA | segment descriptions, inference shots, key relationships, explanation alignment | high evidence-role + verifier weight |
+| `CG-Bench` | `answer` / `right_answer` | `clue_intervals` and `cg_videos_clue/{qid}.mp4` | high clue-localization and retrieval weight |
+| `VRBench` | MCQ `answer` | timestamped `reasoning_process` and video summary | high temporal-chain/process weight |
+| `SIV-Bench` | answer / correct option index | weak subtitle/video alignment; no explicit clue intervals | lower dense-evidence weight, higher verifier/answer weight |
+
+Recommended progressive reward components:
+
+```text
+R0 schema validity
+R1 no hidden-supervision leakage
+R2 evidence retrieval / clue localization
+R3 reasoning-chain and evidence-role quality
+R4 verifier-supported answer or justified abstention
+R5 hidden final-answer correctness
+```
+
+Use these as **training** signals, not as the final evaluation metric.
+Evaluation should stay binary/exact:
+
+```text
+answer_correct: true / false
+accepted_strong_or_abstained_correctly: true / false
+evidence_refs_valid: true / false
+no_hidden_leakage: true / false
+```
+
+Progressive reward is for RLVR / policy optimization on training prompts. It
+may combine verifier/rule/GT checks so the controller can learn from partial
+progress. Held-out evaluation should report 0/1 metrics plus diagnostics, not a
+weighted shaped reward.
+
+`R5` alone is too sparse and can encourage answer shortcuts. `R2`/`R3` should
+be strongest on CG-Bench and VRBench, moderate on Video-Holmes, and weak on
+SIV-Bench unless additional span labels are produced by a trusted labeler.
+
 ## Recommended Rollout Sources
 
 ### Tier 1: Use first
