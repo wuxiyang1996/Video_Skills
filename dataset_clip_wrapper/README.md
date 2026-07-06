@@ -582,8 +582,7 @@ reports:
 ```bash
 python dataset_clip_wrapper/report_final_acceptance.py \
   --quality-report dataset_clip_wrapper/output/rerun5_quality_report_strict_qwen.json \
-  --repair-report dataset_clip_wrapper/output/repair_long_objective_bridge_api_v7_cg_rebuild_report.json \
-  --repair-report dataset_clip_wrapper/output/repair_long_objective_bridge_api_v7_vr_rebuild_report.json \
+  --repair-report dataset_clip_wrapper/output/repair_long_objective_bridge_api_v9_strict_report.json \
   --output dataset_clip_wrapper/output/rerun5_final_acceptance_report.json
 ```
 
@@ -599,6 +598,8 @@ The current strict one-video-per-dataset API check reports:
 The strict report also records prompt/output budget and cache statistics for
 clip-schema and graph-compose calls (`prompt_chars`, approximate tokens,
 `output_chars`, malformed JSON, timeout, compact retry, cache hit/miss counts).
+The latest strict repair report (`repair_long_objective_bridge_api_v9_strict`)
+adds the same telemetry for repair planning and bridge verification.
 
 If cached local `video_tools` clip schemas remain, or if Qwen returned
 `model_error` rows, rerun the staged pipeline with both retry flags:
@@ -635,6 +636,24 @@ Observed strict resume checks:
   remaining 22 (`neighbor_cache_hits=93`, misses `22`).
 - CG strict rerun reused 36 cached neighbor results and only recomposed 4
   missing clip-neighborhoods.
+
+Five-dataset x three-sample strict batch:
+
+```bash
+python -m dataset_clip_wrapper.report_l1_l2_quality \
+  dataset_clip_wrapper/output/batch3_video_holmes_strict_qwen.jsonl \
+  dataset_clip_wrapper/output/batch3_videomme_strict_qwen.jsonl \
+  dataset_clip_wrapper/output/batch3_ovo_strict_qwen.jsonl \
+  dataset_clip_wrapper/output/batch3_cg_strict_qwen.jsonl \
+  dataset_clip_wrapper/output/batch3_vr_strict_qwen.jsonl \
+  --topk 8 \
+  --output dataset_clip_wrapper/output/batch3_quality_report_strict_qwen.json
+```
+
+Current batch result: `high` L1 quality on 15/15 examples and strict Qwen-only
+perception on 15/15 examples, with zero fallback clip schemas and zero
+model-error clip schemas. L2 remains the bottleneck: 4 `accepted_strong`,
+8 `accepted_weak`, 3 `rejected`, and 11 examples marked repair-needed.
 
 When rerunning from cached stages:
 

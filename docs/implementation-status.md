@@ -358,7 +358,38 @@ final_l2_status_counts={accepted_strong: 4, accepted_bridge: 1}
 repair_needed_after_final=0
 graph_compose_cache_hits=205
 graph_compose_cache_misses=105
+repair_plan_calls=5
+repair_l2_verifier_calls=1
 ```
+
+The latest strict repair rerun is stored in
+`dataset_clip_wrapper/output/repair_long_objective_bridge_api_v9_strict_report.json`.
+It resolves CG-Bench with direct repaired evidence (`resolved_strong`) and
+VRBench with visual anchors plus objective background bridge (`accepted_bridge`).
+The repair report now includes planner/selector/bridge telemetry. Two concrete
+fixes were needed:
+
+- clue planner compact retry, because GPT-OSS can return malformed or truncated
+  JSON for long repair prompts;
+- option-aware repair verifier evidence retrieval, because negative repair
+  evidence can otherwise outrank the positive option-specific visual clue.
+
+Five-dataset x three-sample strict batch:
+
+```text
+examples=15
+strict_qwen_only=15/15
+high_l1=15/15
+fallback_clip_schema_total=0
+model_error_clip_schema_total=0
+l2_status_counts={accepted_strong: 4, accepted_weak: 8, rejected: 3}
+repair_needed=11/15
+```
+
+Interpretation: strict video-only perception and L1 clue graph construction now
+scale beyond the one-video demo. L2 acceptance does not yet scale without
+targeted repair: weak/rejected batch examples should be routed to repair rather
+than counted as accepted.
 
 Long-video defaults (`ClipPolicyConfig.for_regime(LONG)`):
 

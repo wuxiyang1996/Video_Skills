@@ -321,6 +321,65 @@ def _valid_clue_need_spec(spec: dict[str, Any]) -> bool:
     )
 
 
+def _compact_clue_need_retry(
+    *,
+    prompt: dict[str, Any],
+    api_key: str,
+    args: argparse.Namespace,
+    first_error: Exception | str,
+) -> dict[str, Any]:
+    compact_prompt = {
+        "task": "Return compact JSON for video-only clue seeking repair.",
+        "rules": [
+            "JSON only; no markdown or prose outside JSON.",
+            "Use visual frames only; forbid audio, ASR, subtitles, narration, and dialogue.",
+            "Keep every string under 120 characters.",
+            "Return at most 4 coarse_search_queries.",
+            "Use stable objective background facts only when visual anchors can bridge to them.",
+        ],
+        "question": prompt.get("question") or {},
+        "gap_types": prompt.get("gap_types") or [],
+        "prior_negative_visual_notes": (prompt.get("prior_negative_visual_notes") or [])[:4],
+        "required_fields": [
+            "visual_target",
+            "must_find_visual_evidence",
+            "visual_attributes_to_resolve",
+            "forbidden_modalities",
+            "positive_evidence_criteria",
+            "objective_background_facts",
+            "bridge_evidence_criteria",
+            "answer_mode_hint",
+            "insufficient_evidence_rule",
+            "coarse_search_queries",
+            "clip_inspection_instruction",
+        ],
+        "first_error": str(first_error)[:220],
+    }
+    compact_client = OpenRouterClient(
+        model=args.clue_planner_model,
+        api_key=api_key,
+        temperature=0.0,
+        max_tokens=min(args.clue_planner_max_tokens, 900),
+        reasoning={"effort": "medium", "exclude": True},
+        timeout_s=args.clue_planner_timeout_s,
+    )
+    spec = compact_client.chat_json(
+        [
+            {
+                "role": "system",
+                "content": "You output compact valid JSON only. No markdown, no prose, no newlines inside strings.",
+            },
+            {"role": "user", "content": json.dumps(compact_prompt, ensure_ascii=False)},
+        ],
+        response_format=_clue_need_spec_response_schema(),
+    )
+    usage = dict(compact_client.last_response_metadata or {})
+    usage["compact_retry_count"] = int(usage.get("compact_retry_count") or 0) + 1
+    spec["llm_usage"] = usage
+    spec["planner_retry"] = "compact_json"
+    return spec
+
+
 def _build_clue_need_spec(
     example: dict[str, Any],
     row: dict[str, Any],
@@ -380,18 +439,41 @@ def _build_clue_need_spec(
             response_format=_clue_need_spec_response_schema(),
         )
     except Exception as exc:
-        if args.allow_lexical_fallback:
-            fallback["planner_error"] = str(exc)
-            return fallback
-        raise RuntimeError(f"LLM clue planner failed and heuristic fallback is disabled: {exc}") from exc
+        try:
+            spec = _compact_clue_need_retry(prompt=prompt, api_key=api_key, args=args, first_error=exc)
+        except Exception as retry_exc:
+            if args.allow_lexical_fallback:
+                fallback["planner_error"] = f"{exc}; compact retry failed: {retry_exc}"
+                return fallback
+            raise RuntimeError(
+                "LLM clue planner failed and heuristic fallback is disabled: "
+                f"{exc}; compact retry failed: {retry_exc}"
+            ) from retry_exc
+    if not _valid_clue_need_spec(spec):
+        try:
+            spec = _compact_clue_need_retry(
+                prompt=prompt,
+                api_key=api_key,
+                args=args,
+                first_error="invalid clue_need_spec",
+            )
+        except Exception as retry_exc:
+            if args.allow_lexical_fallback:
+                fallback["planner_error"] = f"invalid clue_need_spec; compact retry failed: {retry_exc}"
+                fallback["invalid_planner_payload"] = spec
+                return fallback
+            raise RuntimeError(
+                "LLM clue planner returned invalid clue_need_spec and compact retry failed: "
+                f"{json.dumps(spec, ensure_ascii=False)[:800]}; retry_error={retry_exc}"
+            ) from retry_exc
     if not _valid_clue_need_spec(spec):
         if args.allow_lexical_fallback:
-            fallback["planner_error"] = "invalid clue_need_spec"
+            fallback["planner_error"] = "invalid clue_need_spec_after_compact_retry"
             fallback["invalid_planner_payload"] = spec
             return fallback
         raise RuntimeError(f"LLM clue planner returned invalid clue_need_spec: {json.dumps(spec, ensure_ascii=False)[:800]}")
     spec["planner_backend"] = args.clue_planner_model
-    spec["llm_usage"] = client.last_response_metadata
+    spec.setdefault("llm_usage", client.last_response_metadata)
     spec.setdefault("forbidden_modalities", ["audio", "asr", "subtitle", "dialogue"])
     return spec
 
@@ -662,7 +744,7 @@ def _llm_select_coarse_indices(
             model=args.clue_planner_model,
             api_key=api_key,
             temperature=0.0,
-            max_tokens=min(args.clue_selector_max_tokens, 900),
+            max_tokens=args.clue_selector_max_tokens,
             reasoning={"effort": "medium", "exclude": True},
             timeout_s=args.clue_planner_timeout_s,
         )
@@ -1213,19 +1295,32 @@ def _merge_patch_graph(example: dict[str, Any], patch: dict[str, Any]) -> dict[s
 
 def _candidate_refs_for_option(graph: dict[str, Any], option: dict[str, Any], question_text: str, *, limit: int) -> list[str]:
     query_words = set(re.findall(r"[a-zA-Z0-9]+", f"{question_text} {option.get('text', '')}".lower()))
+    option_words = set(re.findall(r"[a-zA-Z0-9]+", str(option.get("text") or "").lower()))
+    target_words = set(re.findall(r"[a-zA-Z0-9]+", question_text.lower()))
     scored: list[tuple[float, str]] = []
+    seen: set[str] = set()
     for node in graph.get("nodes") or []:
         node_id = node.get("node_id")
         if not node_id or node.get("node_type") in {"l2_repair_reminder", "answerability_gap", "question_requirement"}:
+            continue
+        node_id = str(node_id)
+        if node_id in seen:
             continue
         if node.get("source_type") not in {"repair_clip_schema", "observation"} and node.get("producer") != "qwen_repair_clip_schema":
             continue
         text = str(node.get("text") or "")
         words = set(re.findall(r"[a-zA-Z0-9]+", text.lower()))
         overlap = len(query_words & words)
+        option_overlap = len(option_words & words)
+        target_overlap = len(target_words & words)
         bonus = 2 if node.get("source_type") == "repair_clip_schema" else 0
-        if overlap or bonus:
-            scored.append((overlap + bonus, str(node_id)))
+        negative_penalty = 8 if _has_negative_target_evidence(text) else 0
+        positive_option_bonus = 10 if option_overlap and not negative_penalty else 0
+        target_bonus = min(target_overlap, 4)
+        score = overlap + bonus + positive_option_bonus + option_overlap * 4 + target_bonus - negative_penalty
+        if score > 0:
+            scored.append((score, node_id))
+            seen.add(node_id)
     scored.sort(reverse=True)
     return [ref for _, ref in scored[:limit]]
 
