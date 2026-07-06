@@ -241,6 +241,7 @@ pytest tests/video_skills -q   # Phase-1 runtime only (58 tests, ~0.1s)
 | Work on the grounding layer | [`infra_plans/01_grounding/`](infra_plans/01_grounding/README.md) |
 | Work on memory | [`infra_plans/02_memory/`](infra_plans/02_memory/README.md) |
 | Work on the 8B controller / retriever / verifier | [`infra_plans/03_controller/`](infra_plans/03_controller/README.md) |
+| Wire M3-Bench as a multi-turn tool-calling agent | [`infra_plans/03_controller/m3bench_tool_calling_plan.md`](infra_plans/03_controller/m3bench_tool_calling_plan.md) |
 | Work on the harness / execution runtime | [`infra_plans/04_harness/`](infra_plans/04_harness/README.md) |
 | Work on reasoning skills | [`infra_plans/05_skills/`](infra_plans/05_skills/README.md) |
 | Train the 8B controller | [`infra_plans/06_training/`](infra_plans/06_training/README.md) |
