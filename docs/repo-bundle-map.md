@@ -1,6 +1,6 @@
 # Repository Bundle Map
 
-Last updated: 2026-07-05
+Last updated: 2026-07-06
 
 This map classifies the current physical package layout. The top-level
 `dataset_clip_wrapper` package keeps a few compatibility entrypoints, while
@@ -20,6 +20,7 @@ implementation code lives in bundle subpackages.
 | Pipeline runners | End-to-end orchestration commands | `dataset_clip_wrapper/runners/` |
 | Smoke tests | Small executable boundary checks | `dataset_clip_wrapper/tests/` |
 | Generated artifacts | API outputs, staged caches, repair outputs | `dataset_clip_wrapper/output/` |
+| Historical docs | Expired status logs and superseded notes | `docs/legacy/` |
 
 ## Atomic Skills
 
@@ -177,6 +178,9 @@ dataset_clip_wrapper/export_reasoning_traces.py
 
 - Keep `dataset_clip_wrapper/output/` as generated artifacts. Only
   `.gitkeep` should be tracked.
+- Keep expired implementation notes under `docs/legacy/`; do not let old probe
+  numbers remain in the current status page unless they are explicitly labeled
+  as historical comparison.
 - Keep `__pycache__/`, `*.pyc`, and `.pytest_cache/` out of git.
 - Do not add benchmark-specific answer shortcuts to L1 graph construction or
   atomic skills.

@@ -4,10 +4,12 @@ Last updated: 2026-07-06
 
 ## Current Assessment
 
-The repository is usable, but it is not yet physically clean. It combines the
+The repository is usable, and the main docs are now cleaner: the current P5
+L1/L2/repair status is the canonical status page, while expired implementation
+history has been moved under `docs/legacy/`. The codebase still combines the
 new L1/L2 clue-graph protocol with the older Video_Skills runtime and several
-earlier training/skill-agent experiments. The right cleanup strategy is
-classification first, deletion later.
+earlier training/skill-agent experiments, so code cleanup should still proceed
+by classification first and deletion later.
 
 ## What Is Clean Enough Now
 
@@ -18,6 +20,8 @@ classification first, deletion later.
   into canonical `ReasoningTrace` and SFT chat JSONL.
 - Generated `dataset_clip_wrapper/output/` artifacts are ignored except
   `.gitkeep`.
+- `docs/implementation-status.md` now reflects the latest P5 batch only; older
+  probe/rerun history is archived in `docs/legacy/implementation-status-pre-p5.md`.
 
 ## Main Mess Sources
 
@@ -28,6 +32,7 @@ classification first, deletion later.
 | `visual_grounding/` | Older grounding stack overlaps with `dataset_clip_wrapper/perception`. | Keep as reference; current L1 perception path remains in wrapper. |
 | `out/` | Tracked generated-looking snapshots. | Do not add more; decide later whether to move to artifact storage. |
 | Many script directories | Earlier experiments used script-first entrypoints. | New code should expose `python -m package.module` entrypoints. |
+| Expired status prose | Old API probes and rerun summaries made the current status hard to read. | Keep historical notes in `docs/legacy/`; current docs should point at P5 artifacts. |
 
 ## Safety Rules Before Moving Files
 
@@ -49,6 +54,8 @@ Done in this pass:
 - Add `scripts/check_repo_layout.py`.
 - Update README pointers.
 - Update bundle map for the new training export bundle.
+- Archive pre-P5 implementation status under `docs/legacy/`.
+- Replace the main implementation status with a compact P5-current entry point.
 
 ### P1: Training Path Freeze
 
