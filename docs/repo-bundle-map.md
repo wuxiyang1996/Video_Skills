@@ -6,6 +6,14 @@ This map classifies the current physical package layout. The top-level
 `dataset_clip_wrapper` package keeps a few compatibility entrypoints, while
 implementation code lives in bundle subpackages.
 
+The high-level agent split maps to bundles as follows:
+
+| Agent | Bundle ownership |
+|-------|------------------|
+| L1 Graph Crafter | `dataset_clip_wrapper/perception/`, `dataset_clip_wrapper/l1_clue_graph/` |
+| L2 Recursive Reasoning / Answer Agent | `dataset_clip_wrapper/l2_reasoning_graph/`, `dataset_clip_wrapper/verification/` |
+| Motif Extraction and Management Agent | planned `dataset_clip_wrapper/motifs/` |
+
 ## High-Level Bundles
 
 | Bundle | Scope | Main paths |
@@ -17,7 +25,7 @@ implementation code lives in bundle subpackages.
 | L2 reasoning graph | Question-conditioned reasoning rollout, GPT-OSS planner, recursive trace shell | `dataset_clip_wrapper/l2_reasoning_graph/` |
 | L2 repair / verifier | Evidence-gap repair, option evidence selection, verifier gates, final acceptance reports | `dataset_clip_wrapper/verification/` |
 | Expert demos / manifests | Verified expert-demo export plus split-aware manifests | `dataset_clip_wrapper/expert_demos/`, `dataset_clip_wrapper/manifests/` |
-| Future motif layer | Optional mining, promotion, registry, and atomic expansion for verified subgraph motifs | `dataset_clip_wrapper/motifs/` when implemented |
+| Motif extraction and management | Qwen3.5/GPT-OSS motif proposal, curation, registry, promotion, deterministic seed/fallback, and atomic expansion templates | `dataset_clip_wrapper/motifs/` |
 | Pipeline runners | End-to-end orchestration commands | `dataset_clip_wrapper/runners/` |
 | Smoke tests | Small executable boundary checks | `dataset_clip_wrapper/tests/` |
 | Generated artifacts | API outputs, staged caches, repair outputs | `dataset_clip_wrapper/output/` |
@@ -175,25 +183,31 @@ dataset_clip_wrapper/export_expert_demos.py
 dataset_clip_wrapper/build_training_manifests.py
 ```
 
-### Future Motif Layer
+### Motif Extraction And Management
 
-Purpose: mine reusable verified subgraph motifs from accepted L2 rollouts and
-use promoted motifs as optional planning/repair priors.
+Purpose: use a Qwen3.5/GPT-OSS motif agent to propose and curate reusable
+verified subgraph motifs from accepted L2 rollouts, then use promoted motifs as
+optional planning/repair priors.
 
-Planned modules:
+Modules:
 
 ```text
+motifs/agent.py
+motifs/build_motif_bank.py
 motifs/canonicalize.py
+motifs/llm_agent.py
 motifs/miner.py
 motifs/registry.py
 motifs/promotion.py
 motifs/expansion.py
 ```
 
-This package is intentionally not in `module_bundles.py` yet because no runtime
-implementation exists. When added, it must consume current `SkillGraphRollout`
-records and expand every motif back into frozen atomic skill nodes before
-execution.
+This package consumes final acceptance reports or expert-demo JSONL files. It
+defaults to a `hybrid` agent mode: Qwen3.5 proposes motif candidates, GPT-OSS
+curates bank decisions, and deterministic trajectory/repair mining is used as a
+seed/fallback/audit path. Future L1/L2 agents may retrieve promoted records as
+planning priors, but every motif must still expand back into frozen atomic
+graph nodes before execution.
 
 ## Cleanup Rules
 

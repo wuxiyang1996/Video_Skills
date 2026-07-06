@@ -10,11 +10,22 @@ The active branch for this cleanup is `clean/l1l2-from-pre-merge-20260706`.
 The goal is to keep the relaunch focused on video-only L1/L2 graph construction,
 verification, repair, expert-demo export, and future controller-training data.
 
+High-level control is split into three agents:
+
+```text
+Agent 1: L1 Graph Crafter
+Agent 2: L2 Recursive Reasoning / Answer Agent
+Agent 3: Motif Extraction and Management Agent
+```
+
+See `docs/three-agent-architecture.md` for the ownership and training/eval
+boundary.
+
 ## Active Path
 
 | Path | Status | Purpose |
 |------|--------|---------|
-| `dataset_clip_wrapper/` | Active | Dataset adapters, video-only perception, L1 clue graph, L2 reasoning/repair/verification, manifests, and expert demo export. |
+| `dataset_clip_wrapper/` | Active | Dataset adapters, video-only perception, L1 clue graph, L2 reasoning/repair/verification, manifests, expert demo export, and motif bank mining. |
 | `atomic_skills/` | Active | Frozen evidence-graph and reasoning-graph atomic skill basis used by L1/L2 graph protocols. |
 | `video_skills/` | Active | Relaunch package namespace for video-skill schema/runtime work present in this clean base. |
 | `visual_grounding/` | Active/reference | Grounding code kept in this base; current L1 path still lives under `dataset_clip_wrapper/`. |
@@ -50,26 +61,30 @@ absent from this clean base:
 | `skill_agents/` | Old GRPO/LoRA skill-bank system. Use only as an external reference if needed; do not make it the motif runtime. |
 | `trainer/` | Old broader training stack. Add a new L1/L2 trainer only after the export format is stable. |
 
-## Future Motif Layer
+## Motif Layer
 
-Future composed-motif work should live under `dataset_clip_wrapper/motifs/`
-once implementation starts. Motifs are optional verified subgraph priors that
-expand into frozen atomic skills. They are not new primitive tools, callable
-skill agents, or hidden evidence.
+Composed-motif work lives under `dataset_clip_wrapper/motifs/`. Motifs are
+optional verified subgraph priors that expand into frozen atomic skills. They
+are not new primitive tools, callable skill agents, or hidden evidence.
 
-Planned ownership:
+Current ownership:
 
 ```text
 dataset_clip_wrapper/motifs/
+  agent.py
   canonicalize.py
+  llm_agent.py
   miner.py
   registry.py
   promotion.py
   expansion.py
 ```
 
-Do not add this package to `dataset_clip_wrapper/module_bundles.py` until real
-implementation modules exist.
+The current implementation follows the old skill-bank-agent shape on the new
+L1/L2 schema: Qwen3.5 proposes motifs, GPT-OSS curates approve/defer/veto bank
+decisions, and the JSONL motif bank stores support/pass-rate/promotion metadata.
+The deterministic miner extracts trajectory-round and repair-subgraph motifs as
+seed/fallback/audit, not as the whole Motif Agent.
 
 ## Cleanup Rules
 
@@ -82,6 +97,7 @@ implementation modules exist.
 - New split/manifest code goes in `dataset_clip_wrapper/manifests/`.
 - New controller-training adapters should go in `dataset_clip_wrapper/training/`
   once the trace format is stable.
+- New motif extraction and management code goes in `dataset_clip_wrapper/motifs/`.
 - Do not add new generated JSONL/JSON artifacts to git unless they are tiny
   checked fixtures for tests.
 - Do not reintroduce legacy top-level packages without updating this document
@@ -90,8 +106,9 @@ implementation modules exist.
 ## Next Cleanup Steps
 
 1. Keep this clean branch free of old game-agent and skill-bank directories.
-2. Add the first `dataset_clip_wrapper/motifs/` implementation only after
-   accepted L2 rollout graphs are stable enough to mine.
+2. Expand Qwen/GPT-OSS motif proposal from trajectory/repair path templates to
+   full atomic skill subgraphs once accepted L2 rollout nodes are exported
+   consistently.
 3. Add an L1/L2 controller-training export adapter under
    `dataset_clip_wrapper/training/`.
 4. Add a small controller SFT trainer only after prompt-visible fields are

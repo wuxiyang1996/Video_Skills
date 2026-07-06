@@ -121,6 +121,22 @@ MODULE_BUNDLES: tuple[ModuleBundle, ...] = (
         ),
     ),
     ModuleBundle(
+        name="motif_extraction_and_management",
+        purpose="Use Qwen/GPT-OSS motif agents plus deterministic seeds to maintain reusable motif-bank records and promotion decisions.",
+        modules=(
+            "motifs.__init__",
+            "motifs.agent",
+            "motifs.build_motif_bank",
+            "motifs.canonicalize",
+            "motifs.expansion",
+            "motifs.llm_agent",
+            "motifs.miner",
+            "motifs.promotion",
+            "motifs.registry",
+            "build_motif_bank",
+        ),
+    ),
+    ModuleBundle(
         name="pipeline_runners",
         purpose="End-to-end runners that connect adapters, perception, L1 graph building, L2 rollout, and reports.",
         modules=(
@@ -147,6 +163,7 @@ MODULE_BUNDLES: tuple[ModuleBundle, ...] = (
             "tests.smoke_test_long_coarse_fine_profile",
             "tests.smoke_test_long_retrieval_repair",
             "tests.smoke_test_module_bundles",
+            "tests.smoke_test_motif_agent",
             "tests.smoke_test_multi_hop_reasoning_skills",
             "tests.smoke_test_neighbor_vlm_l1_graph_compose",
             "tests.smoke_test_reasoning_rollout",

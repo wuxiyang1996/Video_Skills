@@ -13,6 +13,14 @@ The codebase is now easier to reason about: the active path is the L1 clue graph
 L2 reasoning graph, verification/repair, manifests, expert-demo export, frozen
 atomic skills, and schema docs.
 
+The target control split is three high-level agents:
+
+- L1 Graph Crafter for visible evidence graph construction.
+- L2 Recursive Reasoning / Answer Agent for reasoning graph construction,
+  verifier use, bounded repair, and final answer/abstain.
+- Motif Extraction and Management Agent for mining and promoting reusable
+  atomic-subgraph priors from accepted rollouts.
+
 ## What Is Clean Enough Now
 
 - `dataset_clip_wrapper/` has physical bundle boundaries for perception, L1,

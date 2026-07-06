@@ -1,9 +1,26 @@
 # MDP Formulation for Atomic Skill Control
 
-Last updated: 2026-07-05
+Last updated: 2026-07-06
 
 This note defines how the two graph layers in `video_skills_relaunched` can be
 viewed as a Markov decision process where atomic skill invocations are actions.
+
+The high-level controller split has three agents:
+
+```text
+Agent 1: L1 Graph Crafter
+  crafts visible clue/evidence graphs without committing answers
+
+Agent 2: L2 Recursive Reasoning / Answer Agent
+  crafts the L2 reasoning graph, runs bounded recursive repair, and commits or abstains
+
+Agent 3: Motif Extraction and Management Agent
+  mines accepted L2 graphs for reusable atomic-subgraph priors
+```
+
+The MDP below primarily describes Agent 2 and its future closed-loop training.
+Agent 1 defines the evidence-state transition substrate, while Agent 3 updates
+optional motif priors outside the single-example answer-critical path.
 
 ## Implementation Staging
 
