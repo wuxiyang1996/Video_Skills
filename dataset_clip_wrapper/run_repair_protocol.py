@@ -984,6 +984,28 @@ def _select_repair_spans(
     }
 
 
+def _select_existing_l1_repair_spans(example: dict[str, Any]) -> tuple[list[ClipSpan], dict[str, Any]]:
+    duration_s = float((example.get("video") or {}).get("duration_s") or 0.0)
+    return [], {
+        "mode": "existing_l1_option_verification",
+        "duration_s": duration_s,
+        "selected_coarse_indices": [],
+        "candidate_span_count": 0,
+        "candidate_fine_span_count": 0,
+        "fresh_span_count": 0,
+        "chosen_span_count": 0,
+        "selection_mode": "existing_l1_option_verification",
+        "retrieval_rounds": [
+            {
+                "role": "existing_l1_evidence_pack",
+                "selection_mode": "no_new_perception",
+                "selected_after_exclusion": [],
+                "reason": "Short/streaming repair verifies option-specific evidence packs against the existing L1 graph before requesting more perception.",
+            }
+        ],
+    }
+
+
 def _build_producer(args: argparse.Namespace, api_key: str) -> QwenClipSchemaProducer:
     reasoning = None if args.clip_schema_reasoning_effort in {"", "none", "off"} else {"effort": args.clip_schema_reasoning_effort}
     if args.clip_schema_reasoning_effort == "none":
@@ -1306,9 +1328,9 @@ def _candidate_refs_for_option(graph: dict[str, Any], option: dict[str, Any], qu
         node_id = str(node_id)
         if node_id in seen:
             continue
-        if node.get("source_type") not in {"repair_clip_schema", "observation"} and node.get("producer") != "qwen_repair_clip_schema":
+        if not _is_verifiable_l1_node(node):
             continue
-        text = str(node.get("text") or "")
+        text = str(node.get("text") or node.get("summary") or node.get("label") or "")
         words = set(re.findall(r"[a-zA-Z0-9]+", text.lower()))
         overlap = len(query_words & words)
         option_overlap = len(option_words & words)
@@ -1323,6 +1345,227 @@ def _candidate_refs_for_option(graph: dict[str, Any], option: dict[str, Any], qu
             seen.add(node_id)
     scored.sort(reverse=True)
     return [ref for _, ref in scored[:limit]]
+
+
+def _negative_refs_for_option(graph: dict[str, Any], option: dict[str, Any], question_text: str, *, limit: int) -> list[str]:
+    query_words = set(re.findall(r"[a-zA-Z0-9]+", f"{question_text} {option.get('text', '')}".lower()))
+    scored: list[tuple[float, str]] = []
+    for node in graph.get("nodes") or []:
+        node_id = node.get("node_id")
+        if not node_id or not _is_verifiable_l1_node(node):
+            continue
+        text = str(node.get("text") or node.get("summary") or node.get("label") or "")
+        if not text or not _has_negative_target_evidence(text):
+            continue
+        words = set(re.findall(r"[a-zA-Z0-9]+", text.lower()))
+        overlap = len(query_words & words)
+        scored.append((overlap + 1.0, str(node_id)))
+    scored.sort(reverse=True)
+    return [ref for _, ref in scored[:limit]]
+
+
+def _option_evidence_selector_schema() -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "option_evidence_pack_selection",
+            "strict": False,
+            "schema": {
+                "type": "object",
+                "additionalProperties": True,
+                "properties": {
+                    "option_packs": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": True,
+                            "properties": {
+                                "option_label": {"type": "string"},
+                                "positive_refs": {"type": "array", "items": {"type": "string"}},
+                                "negative_refs": {"type": "array", "items": {"type": "string"}},
+                                "missing_requirements": {"type": "array", "items": {"type": "string"}},
+                                "reason_short": {"type": "string"},
+                            },
+                            "required": ["option_label", "positive_refs", "negative_refs", "missing_requirements", "reason_short"],
+                        },
+                    },
+                    "selector_status": {"type": "string"},
+                    "reason_short": {"type": "string"},
+                },
+                "required": ["option_packs", "selector_status", "reason_short"],
+            },
+        },
+    }
+
+
+def _compact_evidence_candidates(graph: dict[str, Any], *, limit: int, text_chars: int) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for node in graph.get("nodes") or []:
+        if not isinstance(node, dict) or not _is_verifiable_l1_node(node):
+            continue
+        if not node.get("node_id"):
+            continue
+        text = " ".join(str(node.get(key) or "").strip() for key in ("text", "summary", "label") if node.get(key)).strip()
+        if not text:
+            continue
+        candidates.append(
+            {
+                "ref": str(node.get("node_id")),
+                "node_type": node.get("node_type"),
+                "source_type": node.get("source_type"),
+                "producer": node.get("producer"),
+                "clip_id": node.get("clip_id"),
+                "time_span": node.get("time_span"),
+                "text": text[:text_chars],
+            }
+        )
+    if len(candidates) <= limit:
+        return candidates
+    repair = [row for row in candidates if row.get("source_type") == "repair_clip_schema" or row.get("producer") == "qwen_repair_clip_schema"]
+    base = [row for row in candidates if row not in repair]
+    remaining = max(0, limit - len(repair))
+    if len(base) <= remaining:
+        return (repair + base)[:limit]
+    if remaining <= 0:
+        return repair[:limit]
+    # Budget-only temporal coverage: keep the candidate table compact without semantic scoring.
+    step = max(1, len(base) / remaining)
+    sampled: list[dict[str, Any]] = []
+    for idx in range(remaining):
+        sampled.append(base[min(len(base) - 1, int(idx * step))])
+    return repair[:limit] + sampled[:remaining]
+
+
+def _select_option_evidence_packs_with_llm(
+    example: dict[str, Any],
+    graph: dict[str, Any],
+    *,
+    clue_spec: dict[str, Any] | None,
+    gaps: list[str] | None,
+    api_key: str | None,
+    args: argparse.Namespace,
+) -> dict[str, Any] | None:
+    if not api_key or args.skip_gptoss_verifier:
+        return None
+    question = example.get("question") or {}
+    options = [opt for opt in question.get("options") or [] if isinstance(opt, dict)]
+    if not options:
+        return None
+    candidates = _compact_evidence_candidates(
+        graph,
+        limit=args.max_evidence_candidate_nodes,
+        text_chars=args.evidence_candidate_text_chars,
+    )
+    if not candidates:
+        return {
+            "selector_status": "no_candidates",
+            "option_packs": [],
+            "reason_short": "No verifiable L1 evidence nodes are available.",
+            "llm_usage": {},
+        }
+    allowed_refs = {row["ref"] for row in candidates}
+    prompt = {
+        "task": "Select option-specific evidence packs for video QA repair.",
+        "rules": [
+            "Use only refs from evidence_candidates.",
+            "Do not use hidden answer labels, dataset annotations, audio, ASR, subtitles, or dialogue as evidence.",
+            "For each option, choose positive_refs that directly support the option from visible evidence.",
+            "Choose negative_refs only when a ref visibly contradicts or weakens that option.",
+            "If no direct visual support exists, leave positive_refs empty and explain missing_requirements.",
+            "Do not select the same generic context refs for every option unless they truly support every option.",
+            "Keep reason_short to one short sentence per option.",
+        ],
+        "question": {
+            "question_text": question.get("question_text"),
+            "options": options,
+            "answer_format": question.get("answer_format"),
+        },
+        "gap_types": gaps or [],
+        "clue_need_spec": clue_spec or {},
+        "max_positive_refs_per_option": args.max_verify_refs,
+        "max_negative_refs_per_option": max(2, args.max_verify_refs // 2),
+        "evidence_candidates": candidates,
+        "required_json_shape": _option_evidence_selector_schema()["json_schema"]["schema"]["properties"],
+    }
+    client = OpenRouterClient(
+        model=args.verifier_model,
+        api_key=api_key,
+        temperature=0.0,
+        max_tokens=args.evidence_selector_max_tokens,
+        reasoning={"effort": "medium", "exclude": True},
+        timeout_s=args.verifier_timeout_s,
+    )
+    try:
+        payload = client.chat_json(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You output JSON only. You are a strict evidence-pack selector for video QA. "
+                        "Select refs; do not answer from memory or hidden labels."
+                    ),
+                },
+                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+            ],
+            response_format=_option_evidence_selector_schema(),
+        )
+    except Exception as exc:
+        if args.allow_lexical_fallback:
+            return {
+                "selector_status": "llm_selector_failed_heuristic_fallback_allowed",
+                "option_packs": [],
+                "reason_short": str(exc)[:240],
+                "llm_usage": client.last_response_metadata,
+            }
+        raise RuntimeError(f"LLM option evidence selector failed and heuristic fallback is disabled: {exc}") from exc
+    option_labels = {str(opt.get("label")) for opt in options if opt.get("label") is not None}
+    packs: list[dict[str, Any]] = []
+    for pack in payload.get("option_packs") or []:
+        if not isinstance(pack, dict) or str(pack.get("option_label")) not in option_labels:
+            continue
+        positive_refs = [str(ref) for ref in pack.get("positive_refs") or [] if str(ref) in allowed_refs]
+        negative_refs = [str(ref) for ref in pack.get("negative_refs") or [] if str(ref) in allowed_refs]
+        packs.append(
+            {
+                "option_label": str(pack.get("option_label")),
+                "positive_refs": positive_refs[: args.max_verify_refs],
+                "negative_refs": negative_refs[: max(2, args.max_verify_refs // 2)],
+                "missing_requirements": [str(item) for item in pack.get("missing_requirements") or []],
+                "reason_short": str(pack.get("reason_short") or "")[:240],
+            }
+        )
+    payload["option_packs"] = packs
+    payload["candidate_count"] = len(candidates)
+    payload["candidate_truncated"] = len(candidates) < sum(1 for node in graph.get("nodes") or [] if isinstance(node, dict) and _is_verifiable_l1_node(node))
+    payload["selector_backend"] = args.verifier_model
+    payload["llm_usage"] = client.last_response_metadata
+    return payload
+
+
+def _is_verifiable_l1_node(node: dict[str, Any]) -> bool:
+    if node.get("node_type") in {"l2_repair_reminder", "answerability_gap", "question_requirement", "clip"}:
+        return False
+    text = str(node.get("text") or node.get("summary") or node.get("label") or "")
+    if not text.strip():
+        return False
+    source_type = str(node.get("source_type") or "")
+    producer = str(node.get("producer") or "")
+    if source_type in {
+        "repair_clip_schema",
+        "observation",
+        "qwen_clip_schema_anchor",
+        "entity_mention",
+        "state",
+        "event",
+        "place",
+        "searchable_phrase",
+    }:
+        return True
+    return producer in {
+        "qwen_repair_clip_schema",
+        "neighbor_vlm_l1_graph_composer",
+        "neighbor_vlm_l1_schema_anchor",
+    }
 
 
 def _bridge_response_schema() -> dict[str, Any]:
@@ -1396,9 +1639,7 @@ def _bridge_context_refs(
     scored: list[tuple[float, str]] = []
     for node in graph.get("nodes") or []:
         node_id = node.get("node_id")
-        if not node_id or node.get("node_type") in {"l2_repair_reminder", "answerability_gap", "question_requirement"}:
-            continue
-        if node.get("source_type") not in {"repair_clip_schema", "observation"} and node.get("producer") != "qwen_repair_clip_schema":
+        if not node_id or not _is_verifiable_l1_node(node):
             continue
         text = str(node.get("text") or node.get("summary") or node.get("label") or "")
         words = set(re.findall(r"[a-zA-Z0-9]+", text.lower()))
@@ -1536,6 +1777,7 @@ def _verify_options(
     question_text = str(question.get("question_text") or "")
     options = question.get("options") or []
     executor: SkillExecutor
+    llm_client: SkillModelClient | None = None
     if api_key and not args.skip_gptoss_verifier:
         llm_client = SkillModelClient(
             model=args.verifier_model,
@@ -1553,9 +1795,36 @@ def _verify_options(
         executor = SkillExecutor(config=SkillBackendConfig(default_mode=SkillBackendMode.RULE))
         backend = "rule_verifier"
 
+    selector_payload = _select_option_evidence_packs_with_llm(
+        example,
+        graph,
+        clue_spec=clue_spec,
+        gaps=gaps,
+        api_key=api_key,
+        args=args,
+    )
+    pack_by_label = {
+        str(pack.get("option_label")): pack
+        for pack in ((selector_payload or {}).get("option_packs") or [])
+        if isinstance(pack, dict)
+    }
+    selector_uses_llm = bool(selector_payload and selector_payload.get("selector_backend"))
+
     verifications: list[dict[str, Any]] = []
     for opt in options:
-        refs = _candidate_refs_for_option(graph, opt, question_text, limit=args.max_verify_refs)
+        selected_pack = pack_by_label.get(str(opt.get("label"))) if selector_payload else None
+        if selected_pack is not None:
+            refs = [str(ref) for ref in selected_pack.get("positive_refs") or []]
+            negative_refs = [str(ref) for ref in selected_pack.get("negative_refs") or []]
+            missing_requirements = [str(item) for item in selected_pack.get("missing_requirements") or []]
+            selector_reason = str(selected_pack.get("reason_short") or "")
+            evidence_selector = "gptoss_option_evidence_selector"
+        else:
+            refs = _candidate_refs_for_option(graph, opt, question_text, limit=args.max_verify_refs)
+            negative_refs = _negative_refs_for_option(graph, opt, question_text, limit=max(2, args.max_verify_refs // 2))
+            missing_requirements = []
+            selector_reason = ""
+            evidence_selector = "heuristic_diagnostic_selector"
         claim = {
             "claim_text": f"{opt.get('label')}: {opt.get('text')}",
             "option_label": opt.get("label"),
@@ -1575,14 +1844,26 @@ def _verify_options(
             },
             graph=graph,
         )
+        usage = dict(llm_client.last_response_metadata or {}) if llm_client is not None else {}
+        messages = result.outputs.get("messages") if isinstance(result.outputs, dict) else []
         verifications.append(
             {
                 "option_label": opt.get("label"),
                 "option_text": opt.get("text"),
+                "positive_refs": result.evidence_refs if result.ok else refs,
+                "negative_refs": negative_refs,
                 "evidence_refs": refs,
                 "ok": bool(result.ok),
                 "failure_code": result.failure_code,
                 "confidence": result.confidence,
+                "support_score": (result.outputs or {}).get("claim_support_score") if isinstance(result.outputs, dict) else None,
+                "target_alignment_score": (result.outputs or {}).get("target_alignment_score") if isinstance(result.outputs, dict) else None,
+                "verifier_decision": "supported" if result.ok else "insufficient",
+                "reason_short": str(messages[0])[:240] if isinstance(messages, list) and messages else "",
+                "selector_reason_short": selector_reason[:240],
+                "missing_requirements": missing_requirements,
+                "evidence_selector": evidence_selector,
+                "llm_usage": usage,
                 "outputs": result.outputs,
             }
         )
@@ -1590,11 +1871,23 @@ def _verify_options(
     passed = [row for row in verifications if row["ok"]]
     if passed:
         passed.sort(key=lambda row: float(row.get("confidence") or 0.0), reverse=True)
-        status = "resolved_strong" if len(passed[0].get("evidence_refs") or []) >= args.min_verify_refs else "resolved_weak"
         best = passed[0]
+        second_conf = float(passed[1].get("confidence") or 0.0) if len(passed) > 1 else 0.0
+        margin = float(best.get("confidence") or 0.0) - second_conf
+        strong_enough = (
+            backend == "gptoss_verifier"
+            and selector_uses_llm
+            and
+            len(best.get("positive_refs") or []) >= args.min_verify_refs
+            and float(best.get("confidence") or 0.0) >= args.min_verify_confidence
+            and margin >= args.min_option_margin
+        )
+        status = "resolved_strong" if strong_enough else "needs_more_evidence"
     else:
         status = "needs_more_evidence"
         best = max(verifications, key=lambda row: float(row.get("confidence") or 0.0), default={})
+        second_conf = 0.0
+        margin = 0.0
     l2 = {
         "schema_version": "video-skills-relaunch/repair-l2-v0.1",
         "example_id": example.get("example_id"),
@@ -1606,6 +1899,16 @@ def _verify_options(
             "text": best.get("option_text"),
             "confidence": best.get("confidence"),
         },
+        "option_verifier_policy": {
+            "min_verify_refs": args.min_verify_refs,
+            "max_verify_refs": args.max_verify_refs,
+            "min_verify_confidence": args.min_verify_confidence,
+            "min_option_margin": args.min_option_margin,
+            "top_margin": round(margin, 4),
+            "supported_option_count": len(passed),
+            "requires_llm_evidence_selector": True,
+        },
+        "option_evidence_selector": selector_payload or {"selector_status": "not_run", "reason_short": "No API verifier available; heuristic diagnostic selector used."},
         "option_verifications": verifications,
     }
     if status != "resolved_strong":
@@ -1666,6 +1969,9 @@ def _verify_options(
                     "confidence": best_bridge.get("confidence"),
                 }
     budget_rows = []
+    if isinstance(selector_payload, dict):
+        budget_rows.append(selector_payload)
+    budget_rows.extend(row for row in verifications if isinstance(row, dict))
     bridge_payload = l2.get("background_bridge_verification")
     if isinstance(bridge_payload, dict):
         budget_rows.append(bridge_payload)
@@ -1699,6 +2005,12 @@ def _build_report(plan: dict[str, Any], patch: dict[str, Any], l2: dict[str, Any
     elif span_selection.get("selector_abstained"):
         next_action = "mark visual-only evidence missing; do not use heuristic fallback"
         failure_type = "visual_only_benchmark_limitation"
+    elif (
+        (l2.get("option_verifier_policy") or {}).get("supported_option_count", 0) > 1
+        and float((l2.get("option_verifier_policy") or {}).get("top_margin") or 0.0) < float((l2.get("option_verifier_policy") or {}).get("min_option_margin") or 0.0)
+    ):
+        next_action = "retrieve or compose more discriminative evidence before committing any option"
+        failure_type = "l2_option_margin_insufficient"
     elif negative_count or span_selection.get("negative_coarse_indices"):
         next_action = "reroute coarse retrieval because repair clips contain negative target evidence"
         failure_type = "l1_target_coverage_failure"
@@ -1725,6 +2037,23 @@ def _build_report(plan: dict[str, Any], patch: dict[str, Any], l2: dict[str, Any
         "selector_abstained": bool(span_selection.get("selector_abstained")),
         "selection_mode": reported_selection_mode,
         "verifier_backend": l2.get("backend"),
+        "option_verifier_policy": l2.get("option_verifier_policy") or {},
+        "option_evidence_packs": [
+            {
+                "option_label": item.get("option_label"),
+                "verifier_decision": item.get("verifier_decision"),
+                "confidence": item.get("confidence"),
+                "positive_refs": item.get("positive_refs") or [],
+                "negative_refs": item.get("negative_refs") or [],
+                "missing_requirements": item.get("missing_requirements") or [],
+                "evidence_selector": item.get("evidence_selector"),
+                "selector_reason_short": item.get("selector_reason_short") or "",
+                "reason_short": item.get("reason_short") or "",
+            }
+            for item in l2.get("option_verifications") or []
+            if isinstance(item, dict)
+        ],
+        "option_evidence_selector": l2.get("option_evidence_selector") or {},
         "not_direct_visual_evidence": bridge,
         "repair_needed_after_round": not (strong or bridge),
         "verifier_reason": (
@@ -1781,8 +2110,12 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
     cached_plan = _read_json(plan_path) if plan_path.exists() and not args.force_repair_stages else None
     prior_schemas = _read_jsonl(schemas_path) if schemas_path.exists() else []
     prior_negative_count = sum(1 for schema in prior_schemas if _has_negative_target_evidence(" ".join(_text_items(schema))))
+    video_regime = str(row.get("video_regime") or (example.get("metadata") or {}).get("video_regime") or "")
     if cached_plan and isinstance(cached_plan.get("clue_need_spec"), dict):
         clue_spec = cached_plan["clue_need_spec"]
+    elif video_regime and video_regime != "long":
+        clue_spec = _fallback_clue_need_spec(example, row, gaps)
+        clue_spec["planner_backend"] = "existing_l1_option_verification_no_clue_planner"
     else:
         clue_spec = _build_clue_need_spec(
             example,
@@ -1798,6 +2131,8 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
     if cached_plan and isinstance(cached_plan.get("span_selection"), dict):
         span_meta = cached_plan["span_selection"]
         spans = _spans_from_cached_plan(cached_plan)
+    elif video_regime and video_regime != "long":
+        spans, span_meta = _select_existing_l1_repair_spans(example)
     elif use_reroute:
         spans, span_meta = _select_rerouted_repair_spans(
             example,
@@ -1824,6 +2159,7 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
         "schema_version": "video-skills-relaunch/repair-plan-v0.1",
         "example_id": example.get("example_id"),
         "dataset": example.get("dataset"),
+        "video_regime": video_regime,
         "source_path": row.get("source_path"),
         "strategy": strategy,
         "repair_mode": span_meta.get("mode"),
@@ -1863,7 +2199,7 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
         return report
 
     schemas: list[dict[str, Any]]
-    if not spans and span_meta.get("selector_abstained"):
+    if not spans:
         schemas = []
     elif args.skip_api and schemas_path.exists():
         schemas = _read_jsonl(schemas_path)
@@ -1907,7 +2243,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quality-report", type=Path, required=True)
     parser.add_argument("--stage-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--datasets", nargs="+", default=["cg_bench", "vrbench"])
+    parser.add_argument("--datasets", nargs="+", default=["video_holmes", "videomme", "ovo_bench", "cg_bench", "vrbench"])
+    parser.add_argument(
+        "--video-regimes",
+        nargs="+",
+        default=["short", "streaming", "long"],
+        help="Repair regimes to include from the quality report.",
+    )
     parser.add_argument("--keys-py", type=Path)
     parser.add_argument("--clip-schema-model", default="qwen/qwen3.5-9b")
     parser.add_argument("--verifier-model", default="openai/gpt-oss-120b")
@@ -1915,6 +2257,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bridge-model", default="openai/gpt-oss-120b")
     parser.add_argument("--clue-planner-max-tokens", type=int, default=1200)
     parser.add_argument("--clue-selector-max-tokens", type=int, default=1600)
+    parser.add_argument("--evidence-selector-max-tokens", type=int, default=1600)
+    parser.add_argument("--max-evidence-candidate-nodes", type=int, default=120)
+    parser.add_argument("--evidence-candidate-text-chars", type=int, default=220)
     parser.add_argument("--bridge-max-tokens", type=int, default=1600)
     parser.add_argument("--clue-planner-timeout-s", type=int, default=180)
     parser.add_argument("--coarse-summary-prompt-chars", type=int, default=260)
@@ -1950,6 +2295,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--negative-reroute-threshold", type=int, default=2)
     parser.add_argument("--max-verify-refs", type=int, default=8)
     parser.add_argument("--min-verify-refs", type=int, default=2)
+    parser.add_argument("--min-verify-confidence", type=float, default=0.55)
+    parser.add_argument("--min-option-margin", type=float, default=0.08)
     parser.add_argument("--max-bridge-refs", type=int, default=10)
     parser.add_argument("--min-bridge-refs", type=int, default=1)
     parser.add_argument("--min-bridge-confidence", type=float, default=0.55)
@@ -1970,10 +2317,13 @@ def main() -> int:
     payload = _read_json(args.quality_report)
     reports = payload.get("reports") if isinstance(payload, dict) else payload
     wanted = set(args.datasets)
+    wanted_regimes = {str(item) for item in args.video_regimes}
     rows = [
         row
         for row in reports
-        if row.get("dataset") in wanted and row.get("repair_needed") and str(row.get("video_regime")) == "long"
+        if row.get("dataset") in wanted
+        and row.get("repair_needed")
+        and (not wanted_regimes or str(row.get("video_regime")) in wanted_regimes)
     ]
 
     api_key = None

@@ -178,13 +178,23 @@ visually answerable. Lexical retrieval is only a dry-run/no-api fallback. These
 are specialized evidence-seeking actions, not independent answer agents. Their
 outputs are candidate evidence packs and negative-window diagnostics.
 
-Final answer commit has two acceptance levels. `resolved_strong` requires
-`verify_claim_support` to ground the claim in non-diagnostic visual evidence.
-`accepted_bridge` is weaker but useful for social, causal, or background-heavy
-benchmarks: it requires real visual anchor refs plus stable objective
-background facts that disambiguate one option. Those background facts are L2
-bridge context, not L1 evidence nodes, and the report must mark
-`not_direct_visual_evidence=true`.
+Final answer commit has two final acceptance levels. `resolved_strong` requires
+GPT-OSS-backed `verify_claim_support` to ground the claim in non-diagnostic
+visual evidence, with enough refs, verifier confidence, and option margin over
+the next candidate. `accepted_bridge` is weaker but useful for social, causal,
+or background-heavy benchmarks: it requires real visual anchor refs plus stable
+objective background facts that disambiguate one option. Those background facts
+are L2 bridge context, not L1 evidence nodes, and the report must mark
+`not_direct_visual_evidence=true`. `accepted_weak` is not final acceptance; it
+is a repair-needed intermediate state.
+
+Repair reports are option-wise. In API runs, GPT-OSS first selects a compact
+evidence pack for each option from a budgeted L1 evidence table. Each pack has
+positive visual refs, negative refs, missing requirements, selector reason,
+verifier decision, confidence, and a short verifier reason. Token-overlap
+selection is a no-API diagnostic fallback only. Rule-only verifier runs may
+validate structure and surface evidence gaps, but they cannot produce
+`resolved_strong`.
 
 This matters for long-video QA because `L1 graph_quality=high` only means the
 observed clips were converted into a dense graph; it does not prove that the
@@ -199,6 +209,8 @@ values such as:
   selection requires social, causal, or commonsense bridging.
 - `resolved_with_objective_background_bridge`: visual anchors plus stable
   background facts support one option, but the answer is not directly visible.
+- `l2_option_margin_insufficient`: multiple answer options have similar support,
+  so the verifier cannot commit a final answer.
 - `visual_only_benchmark_limitation`: the gold answer appears to require
   audio/subtitle/hidden context outside the video-only scope.
 - `l2_verifier_rejects_unsupported`: L2 proposed an answer but verifier rejected

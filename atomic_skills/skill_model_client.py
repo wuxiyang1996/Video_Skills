@@ -77,6 +77,7 @@ class SkillModelClient:
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.timeout_s = timeout_s
+        self.last_response_metadata: dict[str, Any] = {}
 
     def _post(self, messages: list[dict[str, Any]]) -> str:
         headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -90,6 +91,16 @@ class SkillModelClient:
             "temperature": self.temperature,
         }
 
+        prompt_chars = sum(len(str(message.get("content") or "")) for message in messages)
+        self.last_response_metadata = {
+            "model": self.model,
+            "prompt_chars": prompt_chars,
+            "prompt_approx_tokens": max(1, prompt_chars // 4),
+            "output_chars": 0,
+            "malformed_json": 0,
+            "timeout_count": 0,
+            "compact_retry_count": 0,
+        }
         with _total_timeout(self.timeout_s):
             resp = requests.post(
                 self.api_base,
@@ -100,7 +111,9 @@ class SkillModelClient:
             resp.raise_for_status()
             data = resp.json()
         content = data["choices"][0]["message"].get("content") or ""
-        return content.strip()
+        content = content.strip()
+        self.last_response_metadata["output_chars"] = len(content)
+        return content
 
     def reason(self, prompt: str, *, system: str = "You are a precise video reasoning assistant. Answer in JSON only.") -> dict[str, Any]:
         """Send a reasoning prompt and parse JSON response."""
@@ -112,6 +125,7 @@ class SkillModelClient:
         try:
             return _parse_json_from_text(raw)
         except (json.JSONDecodeError, ValueError):
+            self.last_response_metadata["malformed_json"] = int(self.last_response_metadata.get("malformed_json") or 0) + 1
             return {"raw_response": raw, "parse_error": True}
 
     def perceive(
@@ -145,6 +159,7 @@ class SkillModelClient:
         try:
             return _parse_json_from_text(raw)
         except (json.JSONDecodeError, ValueError):
+            self.last_response_metadata["malformed_json"] = int(self.last_response_metadata.get("malformed_json") or 0) + 1
             return {"raw_response": raw, "parse_error": True}
 
     @staticmethod

@@ -553,21 +553,50 @@ background facts cannot become L1 evidence nodes by themselves.
 
 The practical status levels are:
 
-- `resolved_strong`: direct visual evidence refs pass `verify_claim_support`.
+- `resolved_strong`: direct visual evidence refs pass GPT-OSS-backed
+  `verify_claim_support`, with enough refs, verifier confidence, and option
+  margin over the next candidate.
 - `accepted_bridge`: visual anchors plus objective background facts support one
   option; report includes `not_direct_visual_evidence=true`.
+- `accepted_weak`: legacy/base L2 state only. Treat it as `repair_needed`, not
+  final acceptance.
 - `needs_more_evidence`: neither direct evidence nor bridge evidence is enough.
 - `visual_only_benchmark_limitation`: the missing clue appears outside the
   video-only scope, such as audio/subtitle/hidden context.
 
-Repair clip schemas can be parallelized with process workers:
+Repair now runs across all regimes. For short/streaming examples, the first
+repair pass uses `existing_l1_option_verification`: it builds option-specific
+evidence packs from the existing L1 graph and does not call Qwen for new clips.
+This path also skips the GPT-OSS clue planner, because no new clip search is
+needed before the option-wise verifier runs.
+For long-video examples, repair can still use local coarse-neighborhood
+expansion or full reroute plus parallel Qwen repair clip schemas.
+
+Each repaired report includes `option_evidence_packs` with `positive_refs`,
+`negative_refs`, verifier decision, confidence, and a short reason. In API runs,
+these packs are selected by GPT-OSS from a compact L1 evidence table before
+`verify_claim_support` runs. The older token-overlap selector is retained only
+for no-API/rule-only diagnostics or when `--allow-lexical-fallback` is
+explicitly enabled. Rule-only verification is diagnostic and cannot produce
+`resolved_strong`; final strong acceptance requires GPT-OSS evidence-pack
+selection plus GPT-OSS verifier support, or the explicit objective-background
+bridge verifier.
+
+The selector is budgeted with `--max-evidence-candidate-nodes`,
+`--evidence-candidate-text-chars`, and `--evidence-selector-max-tokens`. Reports
+record whether the candidate table was truncated, so long-video failures can be
+separated into "missing visual evidence" vs. "evidence selector budget too
+small".
+
+Repair clip schemas for long videos can be parallelized with process workers:
 
 ```bash
 python dataset_clip_wrapper/run_repair_protocol.py \
-  --quality-report dataset_clip_wrapper/output/rerun5_quality_report.json \
-  --stage-dir dataset_clip_wrapper/output/repair_long_objective_bridge_api \
-  --output dataset_clip_wrapper/output/repair_long_objective_bridge_api_report.json \
-  --datasets cg_bench vrbench \
+  --quality-report dataset_clip_wrapper/output/batch3_quality_report_strict_qwen.json \
+  --stage-dir dataset_clip_wrapper/output/repair_batch3_allregime_api \
+  --output dataset_clip_wrapper/output/repair_batch3_allregime_api_report.json \
+  --datasets video_holmes videomme ovo_bench cg_bench vrbench \
+  --video-regimes short streaming long \
   --repair-mode reroute \
   --repair-clip-schema-workers 4 \
   --keys-py /fs/gamma-projects/vlm-robot/keys.py
@@ -654,6 +683,10 @@ Current batch result: `high` L1 quality on 15/15 examples and strict Qwen-only
 perception on 15/15 examples, with zero fallback clip schemas and zero
 model-error clip schemas. L2 remains the bottleneck: 4 `accepted_strong`,
 8 `accepted_weak`, 3 `rejected`, and 11 examples marked repair-needed.
+The all-regime repair protocol now selects all 11 repair-needed rows instead of
+only the long-video rows. Local rule-only checking confirms the new reports emit
+option-wise evidence packs for all selected examples, but rule-only output is
+not final acceptance.
 
 When rerunning from cached stages:
 

@@ -238,8 +238,12 @@ Current remaining risks:
 - Baseline long-video L1 uses full coarse coverage plus selected fine
   neighborhoods; final answer support must come from verified fine evidence or
   explicit objective bridge verification, not retrieval scores.
-- L2 should continue to run only from gated evidence packs; weak direct support
-  should become repair/bridge, not `accepted_weak`.
+- L2 should continue to run only from gated evidence packs. `accepted_weak` is
+  now treated as a repair-needed intermediate state, not final success.
+- Final direct acceptance requires GPT-OSS-backed option-wise verification with
+  enough visual refs, confidence, and margin over the next option. The visual
+  refs must also come from the GPT-OSS option evidence selector in API runs.
+  Rule-only verifier output is diagnostic only.
 
 ### 4.2 Smoke Tests (no API key)
 
@@ -373,6 +377,10 @@ fixes were needed:
   JSON for long repair prompts;
 - option-aware repair verifier evidence retrieval, because negative repair
   evidence can otherwise outrank the positive option-specific visual clue.
+- all-regime repair routing, because short/streaming `accepted_weak` or
+  `rejected` examples were previously skipped by the long-only repair runner.
+- GPT-OSS option evidence-pack selection before verification, because
+  token-overlap ref selection could still decide what the verifier saw.
 
 Five-dataset x three-sample strict batch:
 
@@ -390,6 +398,25 @@ Interpretation: strict video-only perception and L1 clue graph construction now
 scale beyond the one-video demo. L2 acceptance does not yet scale without
 targeted repair: weak/rejected batch examples should be routed to repair rather
 than counted as accepted.
+
+Latest repair-protocol code path:
+
+- `run_repair_protocol.py` defaults to all five datasets and all regimes
+  (`short`, `streaming`, `long`).
+- short/streaming repair starts with `existing_l1_option_verification`, which
+  constructs option-specific evidence packs from the existing L1 graph without
+  new Qwen perception calls or GPT-OSS clue-planner calls.
+- long repair still supports local coarse-neighborhood expansion, full reroute,
+  process-worker Qwen repair clip schemas, staged cache/resume, and objective
+  background bridge verification.
+- repaired reports now expose `option_evidence_packs` with positive refs,
+  negative refs, verifier decision, confidence, and `reason_short`.
+- in API runs, `option_evidence_packs` are selected by GPT-OSS from a compact L1
+  evidence table before `verify_claim_support` runs; the legacy lexical selector
+  is restricted to no-API diagnostics or explicit `--allow-lexical-fallback`.
+- rule-only checks can validate report shape, but only GPT-OSS evidence-pack
+  selection plus GPT-OSS `verify_claim_support`, or the objective bridge
+  verifier, can produce final acceptance.
 
 Long-video defaults (`ClipPolicyConfig.for_regime(LONG)`):
 
