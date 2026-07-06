@@ -636,17 +636,38 @@ python dataset_clip_wrapper/report_final_acceptance.py \
 The current strict one-video-per-dataset API check reports:
 
 - `high_l1_all=true`
-- `accepted_all=true`
+- `accepted_all=false` on the latest recursive-trace check because
+  Video-Holmes q1 remains `needs_more_evidence` after strict repair
 - `strict_vlm_perception_all=true`
+- `l2_trajectory_complete_all=true`
+- `repair_subgraph_complete_for_repaired=true`
+- `heuristic_final_acceptance_count=0`
 - `fallback_clip_schema_total=0`
 - `model_error_clip_schema_total=0`
-- final L2 status: four `accepted_strong`, one `accepted_bridge`
+- final L2 status: three `accepted_strong`, one `accepted_bridge`, one
+  `needs_more_evidence`
 
 The strict report also records prompt/output budget and cache statistics for
 clip-schema and graph-compose calls (`prompt_chars`, approximate tokens,
 `output_chars`, malformed JSON, timeout, compact retry, cache hit/miss counts).
 The latest strict repair report (`repair_long_objective_bridge_api_v9_strict`)
 adds the same telemetry for repair planning and bridge verification.
+
+If an existing API artifact predates `metadata.l2_trajectory`, retrofit the
+compact initial L2 trace without re-running perception or graph compose:
+
+```bash
+python -m dataset_clip_wrapper.retrofit_l2_trajectory \
+  dataset_clip_wrapper/output/rerun5_videomme_short_strict_qwen.jsonl \
+  dataset_clip_wrapper/output/rerun5_ovo_short_strict_qwen.jsonl \
+  dataset_clip_wrapper/output/rerun5_cg_long_topk8_strict_qwen.jsonl \
+  dataset_clip_wrapper/output/rerun5_vr_long_topk8_strict_qwen.jsonl \
+  --output dataset_clip_wrapper/output/latest_trace_rerun5_base.jsonl
+```
+
+The repair verifier never accepts an option with no positive evidence refs.
+Those options are marked `no_positive_refs_selected`, which prevents LLM
+verifier prose from being confused with evidence support.
 
 If cached local `video_tools` clip schemas remain, or if Qwen returned
 `model_error` rows, rerun the staged pipeline with both retry flags:

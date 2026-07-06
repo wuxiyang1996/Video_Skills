@@ -1453,73 +1453,114 @@ def _select_option_evidence_packs_with_llm(
     options = [opt for opt in question.get("options") or [] if isinstance(opt, dict)]
     if not options:
         return None
-    candidates = _compact_evidence_candidates(
+    total_verifiable = sum(1 for node in graph.get("nodes") or [] if isinstance(node, dict) and _is_verifiable_l1_node(node))
+    base_candidates = _compact_evidence_candidates(
         graph,
         limit=args.max_evidence_candidate_nodes,
         text_chars=args.evidence_candidate_text_chars,
     )
-    if not candidates:
+    if not base_candidates:
         return {
             "selector_status": "no_candidates",
             "option_packs": [],
             "reason_short": "No verifiable L1 evidence nodes are available.",
             "llm_usage": {},
         }
-    allowed_refs = {row["ref"] for row in candidates}
-    prompt = {
-        "task": "Select option-specific evidence packs for video QA repair.",
-        "rules": [
-            "Use only refs from evidence_candidates.",
-            "Do not use hidden answer labels, dataset annotations, audio, ASR, subtitles, or dialogue as evidence.",
-            "For each option, choose positive_refs that directly support the option from visible evidence.",
-            "Choose negative_refs only when a ref visibly contradicts or weakens that option.",
-            "If no direct visual support exists, leave positive_refs empty and explain missing_requirements.",
-            "Do not select the same generic context refs for every option unless they truly support every option.",
-            "Keep reason_short to one short sentence per option.",
-        ],
-        "question": {
-            "question_text": question.get("question_text"),
-            "options": options,
-            "answer_format": question.get("answer_format"),
+    attempts = [
+        {
+            "name": "full",
+            "candidates": base_candidates,
+            "max_tokens": args.evidence_selector_max_tokens,
+            "system_suffix": "Select refs; do not answer from memory or hidden labels.",
         },
-        "gap_types": gaps or [],
-        "clue_need_spec": clue_spec or {},
-        "max_positive_refs_per_option": args.max_verify_refs,
-        "max_negative_refs_per_option": max(2, args.max_verify_refs // 2),
-        "evidence_candidates": candidates,
-        "required_json_shape": _option_evidence_selector_schema()["json_schema"]["schema"]["properties"],
-    }
-    client = OpenRouterClient(
-        model=args.verifier_model,
-        api_key=api_key,
-        temperature=0.0,
-        max_tokens=args.evidence_selector_max_tokens,
-        reasoning={"effort": "medium", "exclude": True},
-        timeout_s=args.verifier_timeout_s,
-    )
-    try:
-        payload = client.chat_json(
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "You output JSON only. You are a strict evidence-pack selector for video QA. "
-                        "Select refs; do not answer from memory or hidden labels."
-                    ),
-                },
-                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+        {
+            "name": "compact_json_retry",
+            "candidates": _compact_evidence_candidates(
+                graph,
+                limit=min(args.max_evidence_candidate_nodes, 60),
+                text_chars=min(args.evidence_candidate_text_chars, 140),
+            ),
+            "max_tokens": max(args.evidence_selector_max_tokens, 1200),
+            "system_suffix": (
+                "Return exactly one JSON object matching the schema. "
+                "Use short arrays of refs and short strings only; no markdown or prose."
+            ),
+        },
+    ]
+    payload: dict[str, Any] | None = None
+    candidates: list[dict[str, Any]] = base_candidates
+    client: OpenRouterClient | None = None
+    errors: list[str] = []
+    for attempt_index, attempt in enumerate(attempts):
+        candidates = attempt["candidates"]
+        allowed_refs = {row["ref"] for row in candidates}
+        prompt = {
+            "task": "Select option-specific evidence packs for video QA repair.",
+            "selector_attempt": attempt["name"],
+            "rules": [
+                "Use only refs from evidence_candidates.",
+                "Do not use hidden answer labels, dataset annotations, audio, ASR, subtitles, or dialogue as evidence.",
+                "For each option, choose positive_refs that directly support the option from visible evidence.",
+                "Choose negative_refs only when a ref visibly contradicts or weakens that option.",
+                "If no direct visual support exists, leave positive_refs empty and explain missing_requirements.",
+                "Do not select the same generic context refs for every option unless they truly support every option.",
+                "Keep reason_short to one short sentence per option.",
             ],
-            response_format=_option_evidence_selector_schema(),
+            "question": {
+                "question_text": question.get("question_text"),
+                "options": options,
+                "answer_format": question.get("answer_format"),
+            },
+            "gap_types": gaps or [],
+            "clue_need_spec": clue_spec or {},
+            "max_positive_refs_per_option": args.max_verify_refs,
+            "max_negative_refs_per_option": max(2, args.max_verify_refs // 2),
+            "evidence_candidates": candidates,
+            "required_json_shape": _option_evidence_selector_schema()["json_schema"]["schema"]["properties"],
+        }
+        client = OpenRouterClient(
+            model=args.verifier_model,
+            api_key=api_key,
+            temperature=0.0,
+            max_tokens=attempt["max_tokens"],
+            reasoning={"effort": "medium", "exclude": True},
+            timeout_s=args.verifier_timeout_s,
         )
-    except Exception as exc:
+        try:
+            payload = client.chat_json(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You output JSON only. You are a strict evidence-pack selector for video QA. "
+                            f"{attempt['system_suffix']}"
+                        ),
+                    },
+                    {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+                ],
+                response_format=_option_evidence_selector_schema(),
+            )
+            payload["selector_attempt"] = attempt["name"]
+            usage = dict(client.last_response_metadata or {})
+            usage["compact_retry_count"] = int(usage.get("compact_retry_count") or 0) + attempt_index
+            if attempt_index:
+                usage["malformed_json_count"] = int(usage.get("malformed_json_count") or 0) + len(errors)
+            payload["llm_usage"] = usage
+            break
+        except Exception as exc:
+            errors.append(f"{attempt['name']}: {exc}")
+            payload = None
+            continue
+    if payload is None:
         if args.allow_lexical_fallback:
             return {
                 "selector_status": "llm_selector_failed_heuristic_fallback_allowed",
                 "option_packs": [],
-                "reason_short": str(exc)[:240],
-                "llm_usage": client.last_response_metadata,
+                "reason_short": "; ".join(errors)[-240:],
+                "llm_usage": (client.last_response_metadata if client is not None else {}),
             }
-        raise RuntimeError(f"LLM option evidence selector failed and heuristic fallback is disabled: {exc}") from exc
+        raise RuntimeError(f"LLM option evidence selector failed and heuristic fallback is disabled: {'; '.join(errors)}")
+    allowed_refs = {row["ref"] for row in candidates}
     option_labels = {str(opt.get("label")) for opt in options if opt.get("label") is not None}
     packs: list[dict[str, Any]] = []
     for pack in payload.get("option_packs") or []:
@@ -1538,9 +1579,9 @@ def _select_option_evidence_packs_with_llm(
         )
     payload["option_packs"] = packs
     payload["candidate_count"] = len(candidates)
-    payload["candidate_truncated"] = len(candidates) < sum(1 for node in graph.get("nodes") or [] if isinstance(node, dict) and _is_verifiable_l1_node(node))
+    payload["candidate_truncated"] = len(candidates) < total_verifiable
     payload["selector_backend"] = args.verifier_model
-    payload["llm_usage"] = client.last_response_metadata
+    payload.setdefault("llm_usage", client.last_response_metadata if client is not None else {})
     return payload
 
 
@@ -1832,6 +1873,29 @@ def _verify_options(
             "option_label": opt.get("label"),
             "question_text": question_text,
         }
+        if not refs:
+            verifications.append(
+                {
+                    "option_label": opt.get("label"),
+                    "option_text": opt.get("text"),
+                    "positive_refs": [],
+                    "negative_refs": negative_refs,
+                    "evidence_refs": [],
+                    "ok": False,
+                    "failure_code": "no_positive_refs_selected",
+                    "confidence": 0.0,
+                    "support_score": 0.0,
+                    "target_alignment_score": 0.0,
+                    "verifier_decision": "insufficient",
+                    "reason_short": "No positive visual evidence refs were selected for this option.",
+                    "selector_reason_short": selector_reason[:240],
+                    "missing_requirements": missing_requirements,
+                    "evidence_selector": evidence_selector,
+                    "llm_usage": {},
+                    "outputs": {"messages": ["no_positive_refs_selected"]},
+                }
+            )
+            continue
         result = executor.execute(
             "verify_claim_support",
             args={

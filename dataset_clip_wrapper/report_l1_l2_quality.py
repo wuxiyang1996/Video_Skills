@@ -109,6 +109,7 @@ def summarize_example(example: dict[str, Any], *, source_path: str, topk: int) -
     pack = rollout.get("verified_evidence_pack") or {}
     detail = (rollout.get("metadata") or {}).get("acceptance_status_detail") or {}
     commonsense_pack = (rollout.get("metadata") or {}).get("commonsense_repair_pack") or {}
+    l2_trajectory = (rollout.get("metadata") or {}).get("l2_trajectory") or {}
     failure_reasons = rollout.get("failure_reasons") or []
     verifier_reason = (
         pack.get("verifier_reason")
@@ -155,6 +156,8 @@ def summarize_example(example: dict[str, Any], *, source_path: str, topk: int) -
         },
         "verifier_reason": verifier_reason,
         "llm_budget_report": _budget_report(example),
+        "l2_trajectory": l2_trajectory,
+        "l2_trajectory_complete": bool(l2_trajectory.get("rounds")),
         "repair_needed": repair_needed,
         "repair_hints": {
             "qa_answerability_grade": qa_answerability.get("grade"),

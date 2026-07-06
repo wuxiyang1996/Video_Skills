@@ -232,9 +232,12 @@ Takeaway:
 - The current path is feasible: Qwen clip schemas and GPT-OSS neighbor-local L1
   can produce graph nodes and, on some examples, useful semantic edges such as
   `same_entity`, `same_place`, `supports_observation`, and `temporal_next`.
-- The current five-dataset one-video API check is stable enough for the current
-  protocol: all five examples have high L1 quality; final L2 status is four
-  `accepted_strong` and one `accepted_bridge` after long-video repair.
+- The latest recursive-trace five-dataset check is structurally clean: all five
+  examples have high L1 quality, strict Qwen perception, complete L2
+  trajectories, and complete repair subgraphs for repaired examples.
+  Final L2 status is three `accepted_strong`, one `accepted_bridge`, and one
+  `needs_more_evidence` on Video-Holmes q1. This is a verifier abstention, not
+  an unsupported answer commit.
 - Long-video L2 now distinguishes direct evidence (`resolved_strong`) from
   visual-anchor-plus-objective-background inference (`accepted_bridge`).
 - Throughput is improved by process workers for `neighbor_vlm_l1` graph
@@ -253,6 +256,10 @@ Current remaining risks:
   records clip-schema and graph-compose prompt chars, approximate tokens,
   output chars, malformed JSON count, timeout count, compact retry count, and
   cache hit/miss counts.
+- L2 selector JSON robustness is now handled by compact retry rather than
+  heuristic fallback. The Video-Holmes q1 repair run exercised this path:
+  malformed full selector output was retried with a compact JSON prompt, and
+  the final status remained `needs_more_evidence`.
 - Baseline long-video L1 uses full coarse coverage plus selected fine
   neighborhoods; final answer support must come from verified fine evidence or
   explicit objective bridge verification, not retrieval scores.

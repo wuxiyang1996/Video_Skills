@@ -210,6 +210,11 @@ This is a bounded recursive trace, not an unbounded agent loop. The default
 budget is two repair rounds, and commonsense/background facts remain L2 bridge
 context rather than L1 visual evidence.
 
+The option verifier is evidence-gated. If the GPT-OSS evidence selector returns
+no positive refs for an option, the verifier is not called for that option and
+the option is marked `no_positive_refs_selected`. This keeps model prose from
+being treated as support when the graph has no evidence pack.
+
 This matters for long-video QA because `L1 graph_quality=high` only means the
 observed clips were converted into a dense graph; it does not prove that the
 graph covers the question target. The repair report records `failure_type`
