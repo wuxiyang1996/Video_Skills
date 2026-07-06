@@ -2,6 +2,11 @@
 
 > **Evidence-grounded multi-hop video reasoning, orchestrated by a small trainable controller over a stable structured memory of grounded perception.**
 
+> Integration note: this branch now also contains the relaunch L1/L2
+> clue-graph, verification, repair, and training-export protocol. Start with
+> [`REPO_STRUCTURE.md`](REPO_STRUCTURE.md) for the active path, legacy paths, and
+> cleanup rules.
+
 Video_Skills is a research codebase for long-horizon, evidence-grounded video understanding. The system answers questions about long, multi-character, perspective-bearing videos by:
 
 1. **Grounding** the video into a structured `SocialVideoGraph` of entities, interactions, events, and social/spatial state — using **frozen large VLMs (72B / 32B)** as visual specialists,

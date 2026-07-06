@@ -2,6 +2,11 @@
 
 Trace-to-Skill Fitting for verifiable video reasoning.
 
+> Integration note: this branch merges the relaunch L1/L2 clue-graph protocol
+> with the original `Video_Skills` controller runtime. Start with
+> [`REPO_STRUCTURE.md`](REPO_STRUCTURE.md) for the active path, legacy paths, and
+> cleanup rules.
+
 ## Core Idea
 
 This relaunch studies whether complex video reasoning can be converted from

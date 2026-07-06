@@ -16,6 +16,7 @@ implementation code lives in bundle subpackages.
 | L1 clue graph | Question-agnostic clue-memory graph construction, retrieval, graph compose, L1 gating | `dataset_clip_wrapper/l1_clue_graph/` |
 | L2 reasoning graph | Question-conditioned reasoning rollout, GPT-OSS planner, recursive trace shell | `dataset_clip_wrapper/l2_reasoning_graph/` |
 | L2 repair / verifier | Evidence-gap repair, option evidence selection, verifier gates, final acceptance reports | `dataset_clip_wrapper/verification/` |
+| Expert demos / training export | Verified expert-demo export plus `ReasoningTrace` and SFT chat conversion | `dataset_clip_wrapper/expert_demos/`, `dataset_clip_wrapper/training/` |
 | Pipeline runners | End-to-end orchestration commands | `dataset_clip_wrapper/runners/` |
 | Smoke tests | Small executable boundary checks | `dataset_clip_wrapper/tests/` |
 | Generated artifacts | API outputs, staged caches, repair outputs | `dataset_clip_wrapper/output/` |
@@ -152,6 +153,25 @@ runners/run_staged_llm_pipeline.py
 Top-level modules with the same command names remain as compatibility
 entrypoints for `python -m dataset_clip_wrapper.run_repair_protocol`,
 `python -m dataset_clip_wrapper.run_staged_llm_pipeline`, and related commands.
+
+### Expert Demos And Controller Training Exports
+
+Purpose: turn final accepted/abstaining L1/L2/repair reports into training data
+without exposing hidden supervision.
+
+Modules:
+
+```text
+expert_demos/export_expert_demos.py
+training/trace_adapter.py
+```
+
+Compatibility entrypoints:
+
+```text
+dataset_clip_wrapper/export_expert_demos.py
+dataset_clip_wrapper/export_reasoning_traces.py
+```
 
 ## Cleanup Rules
 
