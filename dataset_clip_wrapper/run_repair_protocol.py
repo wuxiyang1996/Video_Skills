@@ -27,6 +27,7 @@ try:
     from .clip_policy import segment_coarse_index, segment_perception_clips
     from .clip_retrieval import retrieve_coarse_clips
     from .clip_schema import QwenClipSchemaProducer
+    from .l2_recursive_trace import repair_artifacts_to_trajectory
     from .openrouter_client import OpenRouterClient, load_openrouter_api_key
     from .schemas import ClipPolicyConfig, ClipSchemaConfig, ClipSpan, VideoRegime
 except ImportError:  # pragma: no cover - direct script execution
@@ -38,6 +39,7 @@ except ImportError:  # pragma: no cover - direct script execution
     from dataset_clip_wrapper.clip_policy import segment_coarse_index, segment_perception_clips
     from dataset_clip_wrapper.clip_retrieval import retrieve_coarse_clips
     from dataset_clip_wrapper.clip_schema import QwenClipSchemaProducer
+    from dataset_clip_wrapper.l2_recursive_trace import repair_artifacts_to_trajectory
     from dataset_clip_wrapper.openrouter_client import OpenRouterClient, load_openrouter_api_key
     from dataset_clip_wrapper.schemas import ClipPolicyConfig, ClipSchemaConfig, ClipSpan, VideoRegime
 
@@ -2192,9 +2194,14 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
     if args.dry_run:
         patch = _build_l1_patch(example, row, [], gaps)
         l2 = {"repair_status": "dry_run", "backend": "none", "best_option": {}}
+        report = _build_report(plan, patch, l2)
+        trajectory = repair_artifacts_to_trajectory(plan=plan, patch=patch, l2=l2, report=report)
+        l2["l2_trajectory"] = trajectory
+        l2["repair_subgraph"] = trajectory.get("repair_subgraph") or {}
+        report["l2_trajectory"] = trajectory
+        report["repair_subgraph"] = trajectory.get("repair_subgraph") or {}
         _write_json(patch_path, patch)
         _write_json(l2_path, l2)
-        report = _build_report(plan, patch, l2)
         _write_json(report_path, report)
         return report
 
@@ -2234,6 +2241,12 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
             l2["missing_clue_diagnosis"] = (span_meta.get("retrieval_rounds") or [{}])[0].get("reason", "")
         _write_json(l2_path, l2)
     report = _build_report(plan, patch, l2)
+    trajectory = repair_artifacts_to_trajectory(plan=plan, patch=patch, l2=l2, report=report)
+    l2["l2_trajectory"] = trajectory
+    l2["repair_subgraph"] = trajectory.get("repair_subgraph") or {}
+    report["l2_trajectory"] = trajectory
+    report["repair_subgraph"] = trajectory.get("repair_subgraph") or {}
+    _write_json(l2_path, l2)
     _write_json(report_path, report)
     return report
 

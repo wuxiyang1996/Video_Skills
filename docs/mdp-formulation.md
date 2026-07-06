@@ -1,6 +1,6 @@
 # MDP Formulation for Atomic Skill Control
 
-Last updated: 2026-07-01
+Last updated: 2026-07-05
 
 This note defines how the two graph layers in `video_skills_relaunched` can be
 viewed as a Markov decision process where atomic skill invocations are actions.
@@ -10,16 +10,20 @@ viewed as a Markov decision process where atomic skill invocations are actions.
 The MDP formulation describes the **target agent system**. Implementation is
 staged so that data collection and model training can proceed incrementally:
 
-### Stage 0: Expert Demo Craft (current)
+### Stage 0: Expert Demo Craft + Bounded Repair Traces (current)
 
-The current implementation uses gpt-oss as an **open-loop expert planner** that
-generates complete reasoning programs in one shot. This is intentional:
+The current implementation uses gpt-oss as an **open-loop expert planner** for
+the initial L2 reasoning rollout, then records bounded repair as an
+MDP-compatible trajectory when verification is weak. This is intentionally not
+yet RL training:
 
 - gpt-oss plans a full skill sequence given (question, L1 evidence graph).
-- The plan is executed sequentially without re-planning between steps.
-- No action masks, budget tracking, or repair loops are applied.
-- Functional failures (e.g. `no_event_match`) are recorded but do not trigger
-  re-planning.
+- The initial plan is executed sequentially.
+- If verification is weak, the repair protocol records a bounded recursive
+  round: gap diagnosis, evidence selection, optional L1 patch, option
+  verification, objective bridge verification, and commit/abstain.
+- The logged state is a compact graph snapshot, not a duplicated full graph.
+- No learned action mask or learned policy is applied yet.
 
 This produces **expert demonstration trajectories** that serve as:
 
@@ -27,8 +31,20 @@ This produces **expert demonstration trajectories** that serve as:
 2. Offline RL dataset (state, action, reward tuples extracted post-hoc).
 3. Validation of the skill ontology and graph schema under real LLM outputs.
 
-The open-loop planner lives in `dataset_clip_wrapper/reasoning_planner.py` (L2)
-and `dataset_clip_wrapper/graph_composer.py` (L1).
+The initial L2 planner lives in `dataset_clip_wrapper/reasoning_planner.py`.
+The repair protocol lives in `dataset_clip_wrapper/run_repair_protocol.py`.
+Both write `l2_trajectory` records using
+`dataset_clip_wrapper/l2_recursive_trace.py`.
+
+The current process should be described as:
+
+```text
+POMDP/Semi-MDP-compatible bounded recursive graph agent trace
+```
+
+not as a trained MDP policy. The hidden video semantics are only partially
+observed through selected clips and VLM outputs, while repair stages are
+macro-actions with variable cost and duration.
 
 ### Stage 1: Closed-Loop MDP Controller (future)
 
@@ -51,6 +67,7 @@ The transition from Stage 0 to Stage 1 requires:
 
 ```text
 Stage 0 (now):   gpt-oss open-loop planner → expert trajectories
+                   + bounded repair trajectory logs
                                                     ↓
 Stage 1 (next):  trajectories → train policy → closed-loop MDP controller
 ```
@@ -175,7 +192,20 @@ where:
   latency, or maximum rollout length.
 
 For Stage A, `G_evidence_t` is usually fixed and only `G_reasoning_t` grows. For
-Stage C, graph-construction skills can also update `G_evidence_t`.
+current bounded repair, `G_evidence_t` may receive a non-destructive L1 patch
+from additional VLM clip schemas, while commonsense/background bridges stay in
+`G_reasoning_t` and are marked as not-direct visual evidence. For Stage C,
+graph-construction skills can also update `G_evidence_t`.
+
+The implementation records compact state snapshots in `l2_trajectory.rounds[]`:
+
+```text
+state_snapshot:
+  l1: graph id, node/edge counts, regime, observation boundary
+  l2: rollout id, node/edge/claim counts, acceptance status
+  repair_plan: gap types, selected spans, retrieval-round count
+  l1_patch: patch node/edge counts
+```
 
 ## Actions
 
@@ -302,6 +332,20 @@ There are two kinds of verification:
 The state may store runtime verifier results in `verifier_state_t`, but this is
 state metadata, not a separate verifier graph.
 
+Current repair traces also include tool-level macro-actions:
+
+```text
+call_gptoss_reasoning_planner
+bounded_recursive_repair
+option_evidence_selector
+verify_claim_support
+objective_background_bridge
+commit_or_abstain
+```
+
+These are MDP-compatible action records. They are not yet actions sampled by a
+learned policy.
+
 Action masks should be derived from skill preconditions. For example,
 `commit_answer` should be unavailable until there is a verified claim or a
 support chain, and `retrieve_by_time` should require either a time span or an
@@ -330,6 +374,16 @@ Useful components:
 - local repair turns failed nodes into verified nodes;
 - retrieval / model / tool cost stays within budget;
 - `video_only` rollouts do not cite hidden supervision.
+
+The logged `reward_proxy` is intentionally simple and diagnostic:
+
+- `1.0` for `accepted_strong` / `resolved_strong`;
+- `0.65` for `accepted_bridge`;
+- negative values for unsupported weak commits, rejected answers, or
+  `needs_more_evidence`.
+
+This is not a final training reward. It makes trajectories auditable and
+convertible to offline-RL style tuples later.
 
 For expert-demo training, hidden supervision may be used to label the target
 rollout, but the visibility field must make this explicit. For `video_only`

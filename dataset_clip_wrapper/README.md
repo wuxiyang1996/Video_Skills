@@ -588,6 +588,24 @@ record whether the candidate table was truncated, so long-video failures can be
 separated into "missing visual evidence" vs. "evidence selector budget too
 small".
 
+Repair reports now also emit a bounded recursive L2 trace:
+
+- `l2_trajectory`: an MDP-compatible, partially observable trajectory record.
+  It stores compact state snapshots, tool/action records, graph deltas,
+  verifier signals, reward proxies, and terminal status. This is logging for
+  audit/offline learning, not a claim that a trained MDP policy is already
+  deployed.
+- `repair_subgraph`: explicit L2 repair nodes and edges for
+  `l2_gap_diagnosis`, `repair_plan`, `l1_patch`, `option_evidence_selector`,
+  `option_verifier`, optional `commonsense_bridge_verifier`, and
+  `final_commit_or_abstain`.
+
+The initial GPT-OSS L2 rollout also stores round 0 under
+`metadata.l2_trajectory`. If its status is not `accepted_strong`, the terminal
+status is `repair_requested`; the repair protocol then appends the bounded
+repair round in its own artifacts. This keeps recursive reasoning explicit
+without allowing open-ended agent loops.
+
 Repair clip schemas for long videos can be parallelized with process workers:
 
 ```bash

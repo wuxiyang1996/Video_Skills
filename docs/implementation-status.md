@@ -1,10 +1,28 @@
 # Implementation Status
 
-Last updated: 2026-07-04
+Last updated: 2026-07-05
 
 This document tracks what is designed, what is implemented, and how to run the
 current code. It consolidates status from README, atomic skills v1, dataset
 rollout plans, and recent experiments.
+
+## 0. Latest L2 Recursive Trace Status
+
+The L2 path now records bounded recursive repair as a first-class graph/trace
+artifact:
+
+- `reasoning_planner.py` attaches `metadata.l2_trajectory` to the initial
+  GPT-OSS L2 rollout. Round 0 records `question + L1 graph -> L2 reasoning
+  graph -> verifier status`; weak/rejected outputs end with
+  `terminal_status=repair_requested`.
+- `run_repair_protocol.py` writes `l2_trajectory` and `repair_subgraph` into
+  both the repair report and the L2 verifier artifact. The repair subgraph
+  contains nodes for gap diagnosis, repair planning, L1 patching, GPT-OSS
+  evidence selection, option verification, optional objective bridge
+  verification, and final commit/abstain.
+- The trace is POMDP/Semi-MDP-compatible logging, not current MDP training.
+  Each round stores compact state snapshots, action/tool records, graph deltas,
+  verifier signals, reward proxies, and terminal status.
 
 ## 1. Project Architecture
 

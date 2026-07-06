@@ -196,6 +196,20 @@ selection is a no-API diagnostic fallback only. Rule-only verifier runs may
 validate structure and surface evidence gaps, but they cannot produce
 `resolved_strong`.
 
+Repair reports also expose the recursive L2 process as graph data:
+
+- `l2_trajectory.rounds[]` records compact POMDP/Semi-MDP-compatible steps:
+  state snapshot, tool/action, observation summary, graph delta, verifier
+  signal, reward proxy, and terminal status.
+- `repair_subgraph` contains explicit Layer-2 nodes for gap diagnosis, repair
+  planning, L1 patch reference, GPT-OSS evidence selection, option
+  verification, optional commonsense/objective bridge verification, and final
+  commit or abstain.
+
+This is a bounded recursive trace, not an unbounded agent loop. The default
+budget is two repair rounds, and commonsense/background facts remain L2 bridge
+context rather than L1 visual evidence.
+
 This matters for long-video QA because `L1 graph_quality=high` only means the
 observed clips were converted into a dense graph; it does not prove that the
 graph covers the question target. The repair report records `failure_type`

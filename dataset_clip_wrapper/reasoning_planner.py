@@ -44,6 +44,7 @@ from atomic_skills.reasoning_graph_assembly import (  # noqa: E402
 
 from .clue_memory import make_reasoning_rollout_shell
 from .graph_plan_validator import resolve_plan_value, _coerce_node_ref
+from .l2_recursive_trace import attach_initial_l2_trajectory
 from .openrouter_client import OpenRouterClient, load_openrouter_api_key
 from .schemas import GraphComposerConfig
 
@@ -1303,6 +1304,7 @@ def build_llm_reasoning_rollout(
         rollout["failure_reasons"] = ["planner_execution_failed"]
         if repair_result:
             rollout["metadata"]["repair"] = repair_result
+        attach_initial_l2_trajectory(rollout, clue_memory_graph)
         return rollout
 
     answerability_diagnostic = (planner_example.get("metadata") or {}).get("answerability_diagnostic") or {}
@@ -1648,4 +1650,5 @@ def build_llm_reasoning_rollout(
         rollout["metadata"]["query_memory_consistency"] = query_memory_consistency
     if commonsense_repair_pack:
         rollout["metadata"]["commonsense_repair_pack"] = commonsense_repair_pack
+    attach_initial_l2_trajectory(rollout, clue_memory_graph)
     return rollout
