@@ -1,0 +1,117 @@
+{
+  "provider": "claude",
+  "model": "claude-sonnet-4-5-20250929",
+  "results": [
+    {
+      "benchmark": "video_holmes",
+      "status": "ok",
+      "result_type": "DirectContext",
+      "elapsed_s": 41.51,
+      "schema_issues": [],
+      "summary": {
+        "windows": 5,
+        "entities": 6,
+        "interactions": 1,
+        "events": 5,
+        "hypotheses": 10,
+        "evidence": 10
+      }
+    },
+    {
+      "benchmark": "siv_bench",
+      "status": "ok",
+      "result_type": "DirectContext",
+      "elapsed_s": 62.05,
+      "schema_issues": [],
+      "summary": {
+        "windows": 6,
+        "entities": 18,
+        "interactions": 12,
+        "events": 7,
+        "hypotheses": 23,
+        "evidence": 11
+      }
+    },
+    {
+      "benchmark": "vrbench",
+      "status": "ok",
+      "result_type": "SocialVideoGraph",
+      "elapsed_s": 20.55,
+      "schema_issues": [],
+      "summary": {
+        "stats": {
+          "episodic": 2,
+          "interaction": 5,
+          "event": 4,
+          "social_hypothesis": 8,
+          "semantic": 1,
+          "total": 20,
+          "evidence": 4,
+          "entities": 0
+        },
+        "search_hits": 3
+      }
+    },
+    {
+      "benchmark": "long_video_bench",
+      "status": "ok",
+      "result_type": "SocialVideoGraph",
+      "elapsed_s": 29.68,
+      "schema_issues": [],
+      "summary": {
+        "stats": {
+          "episodic": 4,
+          "interaction": 4,
+          "event": 4,
+          "social_hypothesis": 9,
+          "semantic": 1,
+          "total": 22,
+          "evidence": 8,
+          "entities": 0
+        },
+        "search_hits": 3
+      }
+    },
+    {
+      "benchmark": "cg_bench",
+      "status": "ok",
+      "result_type": "SocialVideoGraph",
+      "elapsed_s": 15.06,
+      "schema_issues": [],
+      "summary": {
+        "stats": {
+          "episodic": 2,
+          "interaction": 3,
+          "event": 1,
+          "social_hypothesis": 3,
+          "semantic": 1,
+          "total": 10,
+          "evidence": 6,
+          "entities": 0
+        },
+        "search_hits": 3
+      }
+    },
+    {
+      "benchmark": "m3_bench",
+      "status": "ok",
+      "result_type": "SocialVideoGraph",
+      "elapsed_s": 21.62,
+      "schema_issues": [],
+      "summary": {
+        "stats": {
+          "entity": 3,
+          "episodic": 2,
+          "interaction": 4,
+          "event": 6,
+          "social_hypothesis": 8,
+          "semantic": 1,
+          "total": 24,
+          "evidence": 10,
+          "entities": 3
+        },
+        "search_hits": 3
+      }
+    }
+  ]
+}

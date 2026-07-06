@@ -1,0 +1,378 @@
+# Plan docs: implementation checklist (missing parts)
+
+This is an implementation checklist organized by file. Gaps are phrased as concrete edits rather than abstract criticism. Focus: what to add directly to the plan documents.
+
+> **Status update:** The grounding-related items (§2 entity schema, §3 entire checklist) are addressed by the new [`grounding_pipeline_execution_plan.md`](../01_grounding/grounding_pipeline_execution_plan.md) plus additions to [`video_benchmarks_grounding.md`](../01_grounding/video_benchmarks_grounding.md) §2.6 / §2.7 / §6.1 / §11 and the "Entity-centric indexing" section in [`agentic_memory_design.md`](../02_memory/agentic_memory_design.md). Checkboxes below are ticked accordingly; remaining unchecked items are still open.
+
+> **Phase-1 substrate landed (code, not just docs):** the canonical contracts, memory stores + 9 procedures, skill bank + 14 atomics, retriever, verifier, harness, rule-based v0 controller, and online serving loop now live in [`video_skills/`](../../video_skills/) (see [`video_skills/README.md`](../../video_skills/README.md)). 58/58 unit + smoke tests pass via `pytest tests/video_skills`. The doc-vs-code mapping is summarized at the bottom of this file under **Implementation status (code)**; checkboxes that have a corresponding code artifact are now ticked **[c]** in addition to whatever status the docs have.
+
+---
+
+## 1) `infra_plans/03_controller/actors_reasoning_model.md`
+
+**Role today:** Strong on the 8B controller, two-phase operation, hop execution, and direct vs retrieval modes.
+
+**Gap:** It does not yet define one canonical end-to-end schema for what flows between modules.
+
+### Add: section — **Canonical Runtime Data Contracts**
+
+Define typed objects for at least:
+
+- `GroundedWindow`
+- `EvidenceBundle`
+- `HopGoal`
+- `AtomicStepResult`
+- `VerificationResult`
+- `AbstainDecision`
+- `ReasoningTrace`
+
+The file already says the controller should log hop goals, atomic traces, intermediate claims, evidence pointers, and confidence — this section formalizes those objects.
+
+### Add: section — **Retriever and Verifier as first-class subsystems**
+
+Move beyond `graph.search(query)` and conceptual verification. Specify explicit policies for:
+
+- query rewriting
+- entity-conditioned retrieval
+- time-conditioned retrieval
+- counterevidence retrieval
+- top-k fusion
+- contradiction handling
+- evidence sufficiency thresholds
+
+The loop already distinguishes `search_memory` as a primitive and says each atomic has a `verification_rule` — specify what those rules actually check.
+
+### Add: section — **Training signals for the controller**
+
+The file says the controller is trainable and outputs are exposed for logging, GRPO, and evolution, but not how supervision is generated.
+
+Add a **table** for rewards or supervision targets, e.g.:
+
+- decomposition quality
+- retrieval recall
+- evidence precision
+- perspective correctness
+- abstention correctness
+- final answer correctness
+
+Add a short **anti-hacking** note: the controller must not win by over-retrieving or abstaining too often.
+
+### Checklist (what to add)
+
+- [c] Canonical object schemas — `video_skills/contracts.py` (all 7 typed dataclasses + supporting refs)
+- [c] Retrieval policy — `video_skills/retriever.py` (rewrite, entity/time/perspective filters, dedup, broaden ladder, counter-retrieval)
+- [c] Verification rubric — `video_skills/verifier.py` (6 named checks + threshold gates)
+- [c] Abstention policy — `video_skills/verifier.py::Verifier.decide_abstain` + `loop.py` integration
+- [ ] Training/reward table *(Phase-2; loop produces traces ready for it)*
+- [c] Online serving loop with retry/fallback behavior — `video_skills/loop.py` (`run_question` ties controller + harness + verifier + retriever)
+
+---
+
+## 2) `infra_plans/02_memory/agentic_memory_design.md`
+
+**Role today:** Right top-level split (episodic, semantic, state) and “skills operate over memory.”
+
+**Gap:** Too thin for lifecycle semantics — it stops before defining when and how memory changes.
+
+### Add: **Memory write policy**
+
+- When an observation becomes an episodic entry
+- When episodic clusters become semantic summaries
+- When state is updated
+- How conflicts are resolved on write
+
+### Add: **Memory revision policy**
+
+- Contradiction handling
+- Confidence decay
+- Stale state
+- Semantic-summary refresh
+- Long-video social cases: “old belief later disproven,” “identity uncertain,” “speaker attribution revised”
+
+### Add: **Entity-centric indexing** (subsection)
+
+- Character profiles, aliases
+- Face/voice IDs
+- Cross-episode identity persistence
+- Local vs global knowledge state  
+
+(Rationale: state memory already covers who knows what, beliefs, trust, stance, spatial facts.)
+
+### Add: **Compression and eviction**
+
+- What stays episodic at full granularity
+- What gets compressed
+- What gets discarded or archived  
+
+(Rationale: 8B controller needs compact, interpretable memory.)
+
+### Checklist (what to add)
+
+- [c] Write/update triggers — `video_skills/memory/procedures.py` (`append_grounded_event`, `refresh_state_memory`, `compress_episode_cluster` enforce τ thresholds + audit log)
+- [c] Contradiction and revision rules — `procedures.py` (collision detection in `append_grounded_event`, `mark_memory_conflict`, `revise_belief_state`)
+- [c] Confidence fields and decay — `stores.py` (`BeliefState` + `EpisodicEvent.confidence`); decay constant `DEFAULT_BELIEF_DECAY_HALFLIFE_S` in `procedures.py`
+- [xc] Entity profile schema — `agentic_memory_design.md` → "Entity-centric indexing" section; implementation in `video_skills/memory/stores.py::EntityProfileRegistry` (union-find aliases) and `procedures.py::update_entity_profile` / `resolve_entity_alias`
+- [ ] Compression/eviction policy *(stub `compress_episode_cluster` exists; full eviction policy still open)*
+- [ ] Semantic refresh policy *(stub in `refresh_state_memory`; full periodic-refresh policy still open)*
+
+---
+
+## 3) `infra_plans/01_grounding/video_benchmarks_grounding.md`
+
+**Role today:** Shared grounding schema idea, tiers, grounding on vs persistence conditional.
+
+**Gap:** Reads more like a survey than an implementation plan; missing wire format and entity policy.
+
+### Add: section — **Grounded output schema**
+
+Exact fields per window or clip, e.g.:
+
+- entities, actions, dialogue spans
+- object states, interactions
+- inferred social cues
+- timestamps, uncertainty
+- evidence pointers  
+
+Then: **mapping from grounded outputs → episodic memory writes.**
+
+### Add: **Entity resolution / re-identification**
+
+Policy for:
+
+- re-identification
+- alias mapping
+- occlusion handling
+- confidence-based identity repair  
+
+(M3-Bench and similar already imply face/voice/person tracking — this is a high-risk gap if unspecified.)
+
+### Add: **Benchmark-to-capability mapping table**
+
+Per benchmark, which submodules are supervised, stressed, or evaluation-only, e.g.:
+
+- local grounding, temporal ordering, retrieval
+- evidence attribution, perspective tracking, belief modeling, entity resolution
+
+### Checklist (what to add)
+
+- [x] Grounded window schema — `video_benchmarks_grounding.md` §2.6 (normative wire format with typed dataclasses + invariants)
+- [x] Grounding confidence and uncertainty fields — `video_benchmarks_grounding.md` §2.6 (`confidence`, `provenance`, `supporting_evidence`, `contradicting_evidence`, `identity_status`, `low_confidence_reason` metadata)
+- [x] Entity resolution/re-identification policy — `video_benchmarks_grounding.md` §2.7 (three-stage resolver) + `grounding_pipeline_execution_plan.md` Phase 2
+- [x] Benchmark-to-capability mapping — `video_benchmarks_grounding.md` §6.1 (S / G / E / — matrix across 17 capabilities × 6 benchmarks)
+- [x] Adapter definitions per benchmark — `grounding_pipeline_execution_plan.md` Phase 5 (six adapters behind `BaseAdapter`) ; design in `video_benchmarks_grounding.md` §5
+- [x] Grounding error taxonomy — `video_benchmarks_grounding.md` §11 (E1–E8 with detection signal + repair action)
+
+---
+
+## 4) `infra_plans/05_skills/skill_extraction_bank.md`
+
+**Role today:** Solid stance — skills as reasoning operators; atomic vs composite.
+
+**Gap:** No full “bank specification” or canonical starter set; boundary with synthesis doc unclear.
+
+### Add: formal **SkillRecord** schema
+
+Fields to pin down, e.g.:
+
+- `skill_id`, `name`, `type` (atomic | composite)
+- `trigger_conditions`
+- `input_schema`, `output_schema`
+- `verification_rule`, `failure_modes`
+- `required_memory_fields`, `retrieval_hints`
+- `usage_stats`
+- parent/child links
+
+### Add: **minimal atomic skill inventory** (canonical starter set)
+
+Group explicitly, e.g.:
+
+- entity grounding
+- temporal linking
+- causal linking
+- belief update
+- perspective check
+- contradiction check
+- evidence sufficiency
+- alternative hypothesis check
+- answer/abstain decision
+
+### Add: **composite formation rules** and formats
+
+- trigger-condition format
+- verification-rule format
+
+### Add: **one explicit paragraph** — reasoning skills vs scene/action tags
+
+The bank’s primary content is **reasoning skills**. Scene/action/intention patterns (e.g. NAVIGATE, MANIPULATE) are **auxiliary metadata or triggers only**, not the main skill definition — aligns with `skill_synthetics_agents.md` cleanup (see §5).
+
+### Checklist (what to add)
+
+- [c] Formal SkillRecord schema — `video_skills/skills/bank.py::SkillRecord` (id/name/family/io/verification_rule/failure_modes/required_memory_fields/usage)
+- [c] Canonical starter atomic skill set — `video_skills/skills/atomics.py` (14 v1 atomics across grounding, temporal, social/belief, perspective, evidence, decision)
+- [ ] Composite skill formation rules *(harness has `expand` hook; promotion thresholds Phase-2)*
+- [c] Trigger-condition format — `contracts.py::TriggerSpec` consumed by `bank.py`
+- [c] Verification-rule format — `contracts.py::VerificationCheckSpec` consumed by `verifier.py`
+- [ ] Clear boundary between reasoning skills and scene/action tags *(doc edit; code already treats only reasoning skills as bank entries)*
+
+---
+
+## 5) `infra_plans/05_skills/skill_synthetics_agents.md`
+
+**Role today:** Quality control, failure taxonomy, failure-to-update mapping, evolution loop — keep.
+
+**Gap:** Front half still leans on segment intention tags (OBSERVE, INTERACT, NAVIGATE, …) as if they were the skill ontology — closer to video-behavior taxonomy than reasoning-skill bank.
+
+### Revise narrative: **reasoning-skill synthesis from reasoning traces**
+
+- **Primary synthesis unit:** successful hop traces over memory (atomic reasoning chains).
+- **Segments:** produce grounded evidence and latent situation patterns; keep as **support signal**, not the main synthesis unit.
+- **Bank:** synthesized primarily from **repeated successful reasoning chains**.
+
+Keep segment tags only as **side metadata** where useful.
+
+### Add to quality control
+
+- **Verifiability** — can each skill output be checked against explicit evidence?
+- **Non-leakiness** — does the skill avoid benchmark-specific answer templates or spurious shortcuts?
+
+### Add: **trace-localization procedure**
+
+On failure, distinguish:
+
+- wrong atomic step vs missing retrieval vs final answer unsupported despite correct intermediates
+
+### Add
+
+- promotion thresholds: atomic → composite
+- bank versioning and rollback rules
+
+### Checklist (what to change / add)
+
+- [ ] Replace “skill synthesis from intention-tagged segments” with “skill synthesis from successful reasoning traces”
+- [ ] Keep segment tags only as side metadata
+- [ ] Verifiability and shortcut checks
+- [ ] Trace-localization procedure
+- [ ] Promotion thresholds for atomic → composite
+- [ ] Bank versioning and rollback rules
+
+---
+
+## 6) `infra_plans/04_harness/atomic_skills_hop_refactor_execution_plan.md`
+
+**Status:** This file **exists** in `infra_plans/`; several other docs reference it. Treat it as the **operational bridge** between controller and skill bank — **verify it is complete** and expand if it is thin or outdated.
+
+**Suggested contents** (create or fill gaps):
+
+- definition of a hop
+- allowed hop length
+- atomic-step input/output contract
+- local verification rule format
+- composite expansion rules
+- trace logging format
+- failure localization protocol
+- reflection update hooks
+
+This should reduce ambiguity currently spread across other docs.
+
+---
+
+## 7) New file: `infra_plans/07_evaluation/evaluation_ablation_plan.md`
+
+**Purpose:** Benchmark and synthesis docs name tasks and failures; this doc **proves each subsystem matters** (paper-ready ablations).
+
+### Include
+
+**Ablations** (examples):
+
+- no memory
+- no state memory
+- no entity resolver
+- no verifier
+- no abstention
+- no skill bank
+- atomic-only
+- composite-only
+
+**Metrics per subsystem** (examples):
+
+- retrieval recall, evidence precision
+- entity resolution accuracy
+- perspective accuracy
+- abstention F1
+- final QA accuracy
+
+**Design:**
+
+- error buckets aligned to failure taxonomy
+- benchmark-to-metric table
+- cost/latency reporting
+
+---
+
+## Highest-priority edit order
+
+Suggested fastest path (updated — grounding layer done, reasoning + skills layer still pending):
+
+1. ~~Verify / expand `atomic_skills_hop_refactor_execution_plan.md`~~ *(exists; already referenced by the grounding execution plan for the infrastructure-primitive contract)*
+2. Expand `agentic_memory_design.md` — entity-centric indexing added; **still open:** write/update triggers, contradiction rules, confidence decay, compression/eviction, semantic refresh policy
+3. Add canonical runtime schemas to `actors_reasoning_model.md`
+4. Rewrite the front half of `skill_synthetics_agents.md` around reasoning traces
+5. ~~Add entity-resolution and benchmark-capability mapping to `video_benchmarks_grounding.md`~~ *(done: §2.7 + §6.1 + §11 wire-format / error taxonomy)*
+6. Add formal SkillRecord schema to `skill_extraction_bank.md`
+7. Add `evaluation_ablation_plan.md`
+8. Execute `grounding_pipeline_execution_plan.md` Phase 0 → Phase 6 (replaces `out/claude_grounding/` with `out/grounding_v1/`)
+
+---
+
+## Blunt overall verdict
+
+The repo is not missing a new big idea. It is missing:
+
+- a shared schema
+- a precise memory lifecycle
+- a retrieval/verification design
+- a clean reasoning-skill definition
+- an evaluation plan
+
+Those are fixable by **tightening the plans** rather than changing direction.
+
+---
+
+## Optional next step
+
+Turn this into a **copy-paste TODO list** in Cursor with one block per file and **exact section titles** to add — this file is the source list; section titles above can be copied verbatim into each target doc.
+
+For the grounding layer specifically, see [`grounding_pipeline_execution_plan.md`](../01_grounding/grounding_pipeline_execution_plan.md) — it is already the Cursor-ready checklist for §3 of this file and for the entity-indexing addition to §2.
+
+---
+
+## Implementation status (code)
+
+The Phase-1 reasoning substrate now has a runnable Python implementation in
+[`video_skills/`](../../video_skills/). Tests: `pytest tests/video_skills` →
+**58 passed**. Key artefacts and the checklist items they discharge:
+
+| Plan section | Code artefact | Discharges |
+|---|---|---|
+| `03_controller/actors_reasoning_model.md` — Canonical Runtime Data Contracts | `video_skills/contracts.py` | §1 schemas |
+| `03_controller/actors_reasoning_model.md` — Retriever / Verifier subsystems | `video_skills/retriever.py`, `video_skills/verifier.py` | §1 retrieval policy + verification rubric + abstention |
+| `03_controller/actors_reasoning_model.md` §2D — Online serving loop | `video_skills/loop.py::run_question` (+ `Runtime`, `build_runtime`) | §1 online loop |
+| `02_memory/agentic_memory_design.md` — stores | `video_skills/memory/stores.py` (Episodic, Semantic, State{Belief,Spatial}, Evidence, EntityProfileRegistry) | §2 entity profile schema, partial write/contradiction/decay |
+| `02_memory/agentic_memory_design.md` — lifecycle procedures | `video_skills/memory/procedures.py` (9 procedures + audit log) | §2 write/update triggers, contradiction handling, conflict marking, belief revision |
+| `04_harness/atomic_skills_hop_refactor_execution_plan.md` | `video_skills/harness.py` (`Harness`, `HopExecutionContext`, atomic-step iteration, evidence binding, write routing, trace logging) | §6 hop interpreter |
+| `05_skills/skill_extraction_bank.md` — `SkillRecord` schema | `video_skills/skills/bank.py` (`SkillRecord`, `ReasoningSkillBank`) | §4 schema |
+| `05_skills/skill_extraction_bank.md` — atomic starter set | `video_skills/skills/atomics.py` (14 atomics, `register_starter_skills`, `build_starter_bank`) | §4 starter set |
+| Rule-based v0 controller (placeholder for trained 8B) | `video_skills/controller.py` | §1 question analysis + hop planning + skill routing + answer composition |
+| Tests | `tests/video_skills/` (per-module unit tests + `test_end_to_end.py` smoke test on synthetic windows) | runnable verification of all of the above |
+
+Notation in the per-section checklists above:
+
+- `[c]` — discharged by Phase-1 code (the doc gap may still remain; see the artefact column)
+- `[xc]` — discharged in **both** the docs and the code
+- `[x]` — doc-only fix has landed
+- `[ ]` — still open
+
+**Still open (doc + Phase-2 code):** training/reward table for the controller,
+full compression/eviction policy, full semantic-refresh policy, composite-skill
+promotion thresholds, the doc rewrite of `skill_synthetics_agents.md` around
+reasoning traces, and the `evaluation_ablation_plan.md` doc.

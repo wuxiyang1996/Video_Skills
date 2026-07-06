@@ -1,0 +1,20 @@
+{
+  "model": "gpt-4o-mini",
+  "results": [
+    {
+      "benchmark": "video_holmes",
+      "status": "ok",
+      "result_type": "DirectContext",
+      "elapsed_s": 1.4,
+      "schema_issues": [],
+      "summary": {
+        "windows": 5,
+        "entities": 0,
+        "interactions": 0,
+        "events": 0,
+        "hypotheses": 0,
+        "evidence": 10
+      }
+    }
+  ]
+}

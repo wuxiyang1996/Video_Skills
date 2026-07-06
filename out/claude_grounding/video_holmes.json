@@ -1,0 +1,593 @@
+{
+  "benchmark": "video_holmes",
+  "video": "/fs/gamma-projects/vlm-robot/Video_Skills/dataset_examples/video_holmes/0at001QMutY.mp4",
+  "elapsed_s": 41.51,
+  "status": "ok",
+  "schema_issues": [],
+  "summary": {
+    "windows": 5,
+    "entities": 6,
+    "interactions": 1,
+    "events": 5,
+    "hypotheses": 10,
+    "evidence": 10
+  },
+  "preview": {
+    "type": "DirectContext",
+    "duration": 93.02635969302636,
+    "num_windows": 5,
+    "first_window": {
+      "window_id": "win_ae4d4b6d80",
+      "time_span": [
+        0.0,
+        20.0
+      ],
+      "scene": "apartment building entrance hallway",
+      "subtitle_mode": "origin",
+      "entities": [
+        {
+          "id": "p1",
+          "type": "person",
+          "attributes": {
+            "emotion": "neutral",
+            "gaze": "forward",
+            "speaking": false
+          }
+        }
+      ],
+      "interactions": [],
+      "events": [
+        {
+          "type": "enters_building",
+          "agents": [
+            "p1"
+          ],
+          "confidence": 0.9,
+          "description": "person walking through apartment entrance hallway",
+          "metadata": {}
+        }
+      ],
+      "social_hypotheses": [
+        {
+          "type": "intention",
+          "target": "p1",
+          "value": "entering or exiting apartment building",
+          "confidence": 0.85,
+          "provenance": "directly_observed",
+          "supporting_evidence": [
+            "frame_1"
+          ],
+          "contradicting_evidence": []
+        },
+        {
+          "type": "goal",
+          "target": "p1",
+          "value": "accessing specific apartment or leaving building",
+          "confidence": 0.75,
+          "provenance": "inferred_from_behavior",
+          "supporting_evidence": [
+            "frame_1"
+          ],
+          "contradicting_evidence": []
+        }
+      ],
+      "evidence": [
+        {
+          "ref_id": "frm_81de6284e4",
+          "modality": "frame",
+          "timestamp": [
+            0.0,
+            0.0
+          ],
+          "locator": {
+            "path": "/tmp/vg_vlm_frames/video_holmes/frm_81de6284e4.jpg",
+            "frame_index": 0
+          },
+          "text": null
+        },
+        {
+          "ref_id": "frm_0099ff049e",
+          "modality": "frame",
+          "timestamp": [
+            10.0,
+            10.0
+          ],
+          "locator": {
+            "path": "/tmp/vg_vlm_frames/video_holmes/frm_0099ff049e.jpg",
+            "frame_index": 300
+          },
+          "text": null
+        }
+      ],
+      "frame_indices": [
+        0,
+        300
+      ],
+      "confidence": 1.0,
+      "metadata": {}
+    }
+  },
+  "full_context": {
+    "video_path": "/fs/gamma-projects/vlm-robot/Video_Skills/dataset_examples/video_holmes/0at001QMutY.mp4",
+    "duration": 93.02635969302636,
+    "mode": "direct",
+    "subtitle_mode": "origin",
+    "windows": [
+      {
+        "window_id": "win_ae4d4b6d80",
+        "time_span": [
+          0.0,
+          20.0
+        ],
+        "scene": "apartment building entrance hallway",
+        "subtitle_mode": "origin",
+        "entities": [
+          {
+            "id": "p1",
+            "type": "person",
+            "attributes": {
+              "emotion": "neutral",
+              "gaze": "forward",
+              "speaking": false
+            }
+          }
+        ],
+        "interactions": [],
+        "events": [
+          {
+            "type": "enters_building",
+            "agents": [
+              "p1"
+            ],
+            "confidence": 0.9,
+            "description": "person walking through apartment entrance hallway",
+            "metadata": {}
+          }
+        ],
+        "social_hypotheses": [
+          {
+            "type": "intention",
+            "target": "p1",
+            "value": "entering or exiting apartment building",
+            "confidence": 0.85,
+            "provenance": "directly_observed",
+            "supporting_evidence": [
+              "frame_1"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "goal",
+            "target": "p1",
+            "value": "accessing specific apartment or leaving building",
+            "confidence": 0.75,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "frame_1"
+            ],
+            "contradicting_evidence": []
+          }
+        ],
+        "evidence": [
+          {
+            "ref_id": "frm_81de6284e4",
+            "modality": "frame",
+            "timestamp": [
+              0.0,
+              0.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/video_holmes/frm_81de6284e4.jpg",
+              "frame_index": 0
+            },
+            "text": null
+          },
+          {
+            "ref_id": "frm_0099ff049e",
+            "modality": "frame",
+            "timestamp": [
+              10.0,
+              10.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/video_holmes/frm_0099ff049e.jpg",
+              "frame_index": 300
+            },
+            "text": null
+          }
+        ],
+        "frame_indices": [
+          0,
+          300
+        ],
+        "confidence": 1.0,
+        "metadata": {}
+      },
+      {
+        "window_id": "win_7dd51629a4",
+        "time_span": [
+          20.0,
+          40.0
+        ],
+        "scene": "woman in dimly lit hallway",
+        "subtitle_mode": "origin",
+        "entities": [
+          {
+            "id": "p1",
+            "type": "person",
+            "attributes": {
+              "emotion": "concerned or apprehensive",
+              "gaze": "forward and alert",
+              "speaking": false
+            }
+          }
+        ],
+        "interactions": [],
+        "events": [
+          {
+            "type": "observing_environment",
+            "agents": [
+              "p1"
+            ],
+            "confidence": 0.85,
+            "description": "woman cautiously observing surroundings in hallway",
+            "metadata": {}
+          }
+        ],
+        "social_hypotheses": [
+          {
+            "type": "emotion",
+            "target": "p1",
+            "value": "vigilance or wariness",
+            "confidence": 0.75,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "20.0"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "intention",
+            "target": "p1",
+            "value": "investigating or searching for something",
+            "confidence": 0.65,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "30.0"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "suspicion",
+            "target": "p1",
+            "value": "heightened awareness of potential danger",
+            "confidence": 0.7,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "20.0",
+              "30.0"
+            ],
+            "contradicting_evidence": []
+          }
+        ],
+        "evidence": [
+          {
+            "ref_id": "frm_89be571f78",
+            "modality": "frame",
+            "timestamp": [
+              20.0,
+              20.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/video_holmes/frm_89be571f78.jpg",
+              "frame_index": 599
+            },
+            "text": null
+          },
+          {
+            "ref_id": "frm_79fd357d49",
+            "modality": "frame",
+            "timestamp": [
+              30.0,
+              30.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/video_holmes/frm_79fd357d49.jpg",
+              "frame_index": 899
+            },
+            "text": null
+          }
+        ],
+        "frame_indices": [
+          599,
+          899
+        ],
+        "confidence": 1.0,
+        "metadata": {}
+      },
+      {
+        "window_id": "win_f5e8425b69",
+        "time_span": [
+          40.0,
+          60.0
+        ],
+        "scene": "person in dark forest",
+        "subtitle_mode": "origin",
+        "entities": [
+          {
+            "id": "p1",
+            "type": "person",
+            "attributes": {
+              "emotion": "tense",
+              "gaze": "forward",
+              "speaking": false
+            }
+          }
+        ],
+        "interactions": [],
+        "events": [
+          {
+            "type": "moving_through_forest",
+            "agents": [
+              "p1"
+            ],
+            "confidence": 0.85,
+            "description": "person navigating through dark wooded area",
+            "metadata": {}
+          }
+        ],
+        "social_hypotheses": [
+          {
+            "type": "intention",
+            "target": "p1",
+            "value": "searching or pursuing something",
+            "confidence": 0.7,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "40.0",
+              "50.0"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "emotion",
+            "target": "p1",
+            "value": "cautious or apprehensive",
+            "confidence": 0.75,
+            "provenance": "directly_observed",
+            "supporting_evidence": [
+              "50.0"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "goal",
+            "target": "p1",
+            "value": "reaching destination through forest",
+            "confidence": 0.65,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "40.0",
+              "50.0"
+            ],
+            "contradicting_evidence": []
+          }
+        ],
+        "evidence": [
+          {
+            "ref_id": "frm_03c6aa1353",
+            "modality": "frame",
+            "timestamp": [
+              40.0,
+              40.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/video_holmes/frm_03c6aa1353.jpg",
+              "frame_index": 1199
+            },
+            "text": null
+          },
+          {
+            "ref_id": "frm_18d5c35872",
+            "modality": "frame",
+            "timestamp": [
+              50.0,
+              50.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/video_holmes/frm_18d5c35872.jpg",
+              "frame_index": 1498
+            },
+            "text": null
+          }
+        ],
+        "frame_indices": [
+          1199,
+          1498
+        ],
+        "confidence": 1.0,
+        "metadata": {}
+      },
+      {
+        "window_id": "win_86f765486a",
+        "time_span": [
+          60.0,
+          80.0
+        ],
+        "scene": "pressing elevator button for floor 7",
+        "subtitle_mode": "origin",
+        "entities": [
+          {
+            "id": "p1",
+            "type": "person",
+            "attributes": {
+              "emotion": "neutral",
+              "gaze": "at elevator button",
+              "speaking": false
+            }
+          },
+          {
+            "id": "o1",
+            "type": "object",
+            "attributes": {
+              "emotion": "",
+              "gaze": "",
+              "speaking": false
+            }
+          },
+          {
+            "id": "o2",
+            "type": "object",
+            "attributes": {
+              "emotion": "",
+              "gaze": "",
+              "speaking": false
+            }
+          }
+        ],
+        "interactions": [
+          {
+            "src": "p1",
+            "rel": "pressing",
+            "dst": "o1",
+            "confidence": 0.95,
+            "metadata": {}
+          }
+        ],
+        "events": [
+          {
+            "type": "pressing_button",
+            "agents": [
+              "p1"
+            ],
+            "confidence": 0.95,
+            "description": "person presses floor 7 button in elevator",
+            "metadata": {}
+          },
+          {
+            "type": "elevator_travel",
+            "agents": [
+              "p1"
+            ],
+            "confidence": 0.85,
+            "description": "elevator moving between floors",
+            "metadata": {}
+          }
+        ],
+        "social_hypotheses": [
+          {
+            "type": "intention",
+            "target": "p1",
+            "value": "travel to floor 7",
+            "confidence": 0.95,
+            "provenance": "directly_observed",
+            "supporting_evidence": [
+              "frame_60.0"
+            ],
+            "contradicting_evidence": []
+          },
+          {
+            "type": "goal",
+            "target": "p1",
+            "value": "reach destination on floor 7",
+            "confidence": 0.9,
+            "provenance": "inferred_from_behavior",
+            "supporting_evidence": [
+              "frame_60.0"
+            ],
+            "contradicting_evidence": []
+          }
+        ],
+        "evidence": [
+          {
+            "ref_id": "frm_1e1729e301",
+            "modality": "frame",
+            "timestamp": [
+              60.0,
+              60.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/video_holmes/frm_1e1729e301.jpg",
+              "frame_index": 1798
+            },
+            "text": null
+          },
+          {
+            "ref_id": "frm_86009dc1a2",
+            "modality": "frame",
+            "timestamp": [
+              70.0,
+              70.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/video_holmes/frm_86009dc1a2.jpg",
+              "frame_index": 2098
+            },
+            "text": null
+          }
+        ],
+        "frame_indices": [
+          1798,
+          2098
+        ],
+        "confidence": 1.0,
+        "metadata": {}
+      },
+      {
+        "window_id": "win_7c07c80d7c",
+        "time_span": [
+          80.0,
+          93.02635969302636
+        ],
+        "scene": "empty apartment building hallway",
+        "subtitle_mode": "origin",
+        "entities": [],
+        "interactions": [],
+        "events": [],
+        "social_hypotheses": [],
+        "evidence": [
+          {
+            "ref_id": "frm_d77293df11",
+            "modality": "frame",
+            "timestamp": [
+              80.0,
+              80.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/video_holmes/frm_d77293df11.jpg",
+              "frame_index": 2398
+            },
+            "text": null
+          },
+          {
+            "ref_id": "frm_e4a1a3a82e",
+            "modality": "frame",
+            "timestamp": [
+              90.0,
+              90.0
+            ],
+            "locator": {
+              "path": "/tmp/vg_vlm_frames/video_holmes/frm_e4a1a3a82e.jpg",
+              "frame_index": 2697
+            },
+            "text": null
+          }
+        ],
+        "frame_indices": [
+          2398,
+          2697
+        ],
+        "confidence": 1.0,
+        "metadata": {}
+      }
+    ],
+    "subtitles": [],
+    "frame_index_path": "/tmp/vg_vlm_frames/video_holmes",
+    "metadata": {
+      "window_seconds": 20.0,
+      "fps": 0.1,
+      "entity_tracking": false,
+      "voice_tracking": false
+    }
+  }
+}

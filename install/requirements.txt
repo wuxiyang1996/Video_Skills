@@ -1,0 +1,56 @@
+# =============================================================================
+# Game-AI-Agent  —  Main environment (game-ai-agent)
+# Python 3.11 | CUDA 12.x
+#
+# Install:
+#   pip install -r install/requirements.txt
+# =============================================================================
+
+# ── Core ────────────────────────────────────────────────────────────────────
+numpy==1.26.4                   # pinned: GamingAgent requires <1.25 but works with 1.26
+pyyaml>=6.0
+
+# ── Deep Learning ───────────────────────────────────────────────────────────
+torch>=2.1                      # GRPO, FSDP, LoRA adapters
+transformers>=4.51.0            # Qwen3-8B backbone
+peft>=0.10                      # LoRA adapter loading / merging
+safetensors>=0.4                # checkpoint save/load
+datasets>=2.0                   # SFT data loading (trainer/SFT)
+accelerate>=0.30                # FSDP / multi-GPU helpers
+
+# ── RAG ─────────────────────────────────────────────────────────────────────
+sentence-transformers>=2.7.0    # Qwen3-Embedding-0.6B text embedder
+Pillow>=9.0                     # multimodal embedder (qwen3_vl_embedding)
+
+# ── Inference server ────────────────────────────────────────────────────────
+vllm>=0.4                       # fast local inference during co-evolution
+httpx>=0.24                     # async vLLM client
+
+# ── API clients (baselines & cold-start) ────────────────────────────────────
+openai>=1.0                     # OpenRouter & OpenAI API calls
+anthropic>=0.30                 # Claude baselines
+google-genai>=1.0               # Gemini baselines
+
+# ── Configuration ───────────────────────────────────────────────────────────
+omegaconf>=2.3.0                # Orak wrappers, config files
+hydra-core>=1.3.0               # config composition
+
+# ── Game environments (external packages) ───────────────────────────────────
+diplomacy>=1.1.2                # Diplomacy game engine
+requests>=2.28                  # env_wrappers HTTP calls
+
+# ── Skill bank ──────────────────────────────────────────────────────────────
+scikit-learn>=1.0               # AgglomerativeClustering (skill_bank/new_pool)
+
+# ── Logging & experiment tracking ───────────────────────────────────────────
+loguru>=0.7.0                   # cold-start Orak logging
+coloredlogs                     # AgentEvolver dependency
+tensorboard>=2.14               # co-evolution TensorBoard logging
+
+# ── Testing ─────────────────────────────────────────────────────────────────
+pytest>=7.0                     # unit tests (tests/)
+
+# ── Optional (uncomment if needed) ──────────────────────────────────────────
+# wandb                         # experiment tracking (trainer/coevolution)
+# lm_eval                       # academic benchmark evaluation (MMLU-Pro, Math-500)
+# qwen-vl-utils>=0.0.14         # multimodal RAG embedder (Qwen3-VL-Embedding-2B)
