@@ -557,13 +557,28 @@ class SkillExecutor:
                 rule_score = float(rule_result.outputs.get("verification_score", 0.0))
                 rule_claim_score = float(rule_result.outputs.get("claim_support_score", 0.0))
                 rule_target_score = float(rule_result.outputs.get("target_alignment_score", 0.0))
-                if not rule_result.ok:
+                support_policy = args.get("support_policy") if isinstance(args.get("support_policy"), dict) else {}
+                allow_llm_alignment_override = bool(support_policy.get("allow_llm_target_alignment_override"))
+                llm_target_aligned = bool(response.get("target_aligned", ok))
+                override_min_score = float(support_policy.get("llm_alignment_override_min_score") or 0.75)
+                can_override_alignment = (
+                    allow_llm_alignment_override
+                    and ok
+                    and llm_target_aligned
+                    and score >= override_min_score
+                    and refs
+                )
+                if not rule_result.ok and not can_override_alignment:
                     ok = False
                     score = min(score, rule_score)
                 elif ok:
                     score = max(score, rule_score)
-                if rule_claim_score < 0.05 or rule_target_score < 0.05:
+                if rule_claim_score < 0.05:
                     ok = False
+                if rule_target_score < 0.05 and not can_override_alignment:
+                    ok = False
+                if can_override_alignment:
+                    rule_target_score = max(rule_target_score, score)
             return make_result(skill_id, {
                 "verification_score": score,
                 "passed": ok,

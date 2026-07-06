@@ -92,7 +92,7 @@ bridge, or abstain.
 
 | Path | Purpose |
 |------|---------|
-| `verification/run_repair_protocol.py` | Bounded repair protocol: gap diagnosis, repair clip selection, L1 patch, GPT-OSS option evidence selector, verifier, bridge verifier. |
+| `verification/run_repair_protocol.py` | Bounded repair protocol: gap diagnosis, repair clip selection, L1 patch, audit-guided semantic patch nodes, GPT-OSS option evidence selector, verifier, bridge verifier. |
 | `verification/runtime_verifier.py` | Runtime schema/evidence/leakage invariants. |
 | `verification/evaluate_l1_query_memory.py` | L1 query-memory quality and answerability diagnostics. |
 | `verification/evaluate_vrbench_video_only_graph.py` | VRBench-specific video-only graph evaluation helper. |

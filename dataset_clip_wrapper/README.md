@@ -680,6 +680,77 @@ The latest audit reports one retrieval-missed clue, two cases needing
 discriminative L1 nodes, one verifier-calibration case, and no broad VLM
 perception rerun recommendation.
 
+The follow-up repair pass should feed that audit back into the repair protocol
+instead of adding dataset-specific rules. `run_repair_protocol.py` supports:
+
+- `--evidence-audit-report`: attach GPT-OSS failure hints such as missing clue,
+  visual answerability, and recommended next action to the next clue plan.
+- `--example-ids`: rerun only the audited targets that can still improve.
+- GPT-OSS semantic L1 patch nodes: compact, evidence-grounded scene/category,
+  attribute, action, or temporal clue nodes with explicit `support_refs`.
+
+Example targeted rerun:
+
+```bash
+python -m dataset_clip_wrapper.run_repair_protocol \
+  --quality-report dataset_clip_wrapper/output/batch3_latest_trace_quality_report.json \
+  --evidence-audit-report dataset_clip_wrapper/output/batch3_latest_trace_evidence_audit_api_report.json \
+  --stage-dir dataset_clip_wrapper/output/batch3_p5_audit_guided_repair_stages \
+  --output dataset_clip_wrapper/output/batch3_p5_audit_guided_repair_api_report.json \
+  --example-ids \
+    video_holmes:train:oZ4pa_5R0nY:q3 \
+    videomme:streambridge_demo:2 \
+    ovo_bench:streaming_tiny_000_02 \
+    cg_bench:14 \
+  --repair-mode reroute \
+  --reroute-topk 8 \
+  --reroute-topk-per-query 5 \
+  --force-repair-stages \
+  --keys-py /fs/gamma-projects/vlm-robot/keys.py
+```
+
+Then merge the new targeted report after the prior repair report so updated
+examples override older repair attempts:
+
+```bash
+python -m dataset_clip_wrapper.report_final_acceptance \
+  --quality-report dataset_clip_wrapper/output/batch3_latest_trace_quality_report.json \
+  --repair-reports \
+    dataset_clip_wrapper/output/batch3_latest_trace_repair_api_report.json \
+    dataset_clip_wrapper/output/batch3_p5_audit_guided_repair_api_report.json \
+  --output dataset_clip_wrapper/output/batch3_p5_final_acceptance_api_report.json
+```
+
+Latest targeted API result:
+
+- `batch3_p5_audit_guided_repair_api_report.json`: fixed `cg_bench:14` with
+  second-pass reroute plus semantic repair nodes.
+- `batch3_p5b_existing_l1_semantic_repair_api_report.json`: fixed
+  `video_holmes:q3` and `videomme:streambridge_demo:2` by letting GPT-OSS
+  compose semantic L1 patch nodes from existing L1 visual refs.
+- `batch3_p5c_verifier_calibration_api_report.json`: fixed
+  `ovo_bench:streaming_tiny_000_02` with audit-gated verifier calibration.
+
+The merged report is:
+
+- `dataset_clip_wrapper/output/batch3_p5_final_acceptance_api_report.json`
+- `dataset_clip_wrapper/output/batch3_p5_failure_taxonomy_api_report.json`
+
+Merged status:
+
+- `examples=15`
+- `high_l1_all=true`
+- `strict_vlm_perception_all=true`
+- `l2_trajectory_complete_all=true`
+- `repair_subgraph_complete_for_repaired=true`
+- `heuristic_final_acceptance_count=0`
+- `fallback_clip_schema_total=0`
+- `model_error_clip_schema_total=0`
+- final L2: `accepted_strong=12`, `needs_more_evidence=3`
+
+Remaining examples are intentionally not accepted without more evidence:
+`video_holmes:q2`, `cg_bench:19`, and `vrbench:qa1`.
+
 The current strict one-video-per-dataset API check reports:
 
 - `high_l1_all=true`

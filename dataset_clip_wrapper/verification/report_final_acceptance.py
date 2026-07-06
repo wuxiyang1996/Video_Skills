@@ -264,12 +264,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build final 5-dataset L1/L2/repair acceptance report.")
     parser.add_argument("--quality-report", type=Path, required=True)
     parser.add_argument("--repair-report", type=Path, action="append", default=[])
+    parser.add_argument("--repair-reports", type=Path, nargs="+", default=[])
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
     base = _read_json(args.quality_report)
     repair_by_id: dict[str, dict[str, Any]] = {}
-    for path in args.repair_report:
+    for path in [*args.repair_report, *args.repair_reports]:
         payload = _read_json(path)
         for report in payload.get("reports") or []:
             if report.get("example_id"):

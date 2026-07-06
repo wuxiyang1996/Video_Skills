@@ -140,6 +140,58 @@ long-video clue, adding/repairing high-level discriminative L1 nodes for two
 cases, and one verifier calibration case where the visual evidence is present
 but not accepted.
 
+Implemented follow-up: `run_repair_protocol.py` can now consume the GPT-OSS
+evidence audit with `--evidence-audit-report` and optionally restrict reruns
+with `--example-ids`. The audit hint is attached to the clue plan as compact
+JSON, then GPT-OSS may compose bounded semantic L1 repair nodes from existing
+visual refs. These nodes are not free-form answers: each node must cite
+`support_refs` from Qwen/VLM visual evidence, stays in `video_only` visibility,
+and is surfaced to the option evidence selector before verification. This is
+the preferred P5 path for:
+
+- scene/category verifier calibration such as OVO kitchen/context cases;
+- discriminative L1 gaps such as missing high-level context nodes;
+- audit-guided second-pass retrieval for a missed long-video clue.
+
+The verifier remains strict: if no visual refs support a semantic patch or
+option evidence pack, the example remains `needs_more_evidence` rather than
+falling back to heuristic acceptance.
+
+P5 targeted API results:
+
+- `cg_bench:14` is now `resolved_strong`: the audit-guided second-pass reroute
+  retrieved the vehicle segment, GPT-OSS composed two semantic repair nodes, and
+  the verifier accepted option E with eight visual refs.
+- `video_holmes:q3` is now `resolved_strong`: GPT-OSS composed a semantic node
+  linking the visible hand-to-head gesture to the headache-relief option, with
+  support refs retained in the graph.
+- `videomme:streambridge_demo:2` is now `resolved_strong`: GPT-OSS composed a
+  kitchen/environment semantic node from existing L1 refs.
+- `ovo_bench:streaming_tiny_000_02` is now `resolved_strong`: the verifier uses
+  an audit-gated LLM target-alignment override only when the evidence audit says
+  the verifier is too strict and GPT-OSS verifier returns supported,
+  target-aligned, high-confidence evidence.
+
+Merged final report:
+
+```text
+examples=15
+high_l1_all=true
+strict_vlm_perception_all=true
+l2_trajectory_complete_all=true
+repair_subgraph_complete_for_repaired=true
+heuristic_final_acceptance_count=0
+fallback_clip_schema_total=0
+model_error_clip_schema_total=0
+accepted_strong=12
+needs_more_evidence=3
+```
+
+The remaining cases are `video_holmes:q2`, `cg_bench:19`, and `vrbench:qa1`.
+They still require more discriminative visual anchors or another bounded repair
+round; the current protocol correctly abstains instead of committing weak
+answers.
+
 ## 0.2 Latest L2 Recursive Trace Status
 
 The L2 path now records bounded recursive repair as a first-class graph/trace

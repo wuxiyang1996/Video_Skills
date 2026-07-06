@@ -119,6 +119,57 @@ def _gap_types(row: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(gaps))
 
 
+def _load_evidence_audit_map(path: Path | None) -> dict[str, dict[str, Any]]:
+    if not path:
+        return {}
+    payload = _read_json(path)
+    rows = payload.get("reports") if isinstance(payload, dict) else payload
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows or []:
+        if isinstance(row, dict) and row.get("example_id"):
+            audit = row.get("llm_audit") if isinstance(row.get("llm_audit"), dict) else row
+            merged = dict(audit)
+            merged.setdefault("dataset", row.get("dataset"))
+            merged.setdefault("example_id", row.get("example_id"))
+            out[str(row["example_id"])] = merged
+    return out
+
+
+def _compact_audit_hint(audit: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(audit, dict) or not audit:
+        return {}
+    keys = (
+        "primary_failure_class",
+        "visual_answerability",
+        "evidence_assessment",
+        "selected_refs_assessment",
+        "missing_clue",
+        "should_rerun_retrieval",
+        "should_rerun_vlm_perception",
+        "should_adjust_verifier",
+        "should_mark_dataset_fit_risk",
+        "recommended_next_action",
+        "confidence",
+    )
+    return {key: audit.get(key) for key in keys if audit.get(key) not in (None, "", [])}
+
+
+def _attach_audit_hint(spec: dict[str, Any], audit: dict[str, Any] | None) -> dict[str, Any]:
+    hint = _compact_audit_hint(audit)
+    if not hint:
+        return spec
+    spec = dict(spec)
+    spec["evidence_audit_hint"] = hint
+    missing = str(hint.get("missing_clue") or "").strip()
+    if missing:
+        spec["must_find_visual_evidence"] = list(dict.fromkeys([*(spec.get("must_find_visual_evidence") or []), missing]))
+        spec["visual_attributes_to_resolve"] = list(dict.fromkeys([*(spec.get("visual_attributes_to_resolve") or []), missing]))
+        queries = list(spec.get("coarse_search_queries") or [])
+        queries.append({"role": "audit_missing_clue_search", "query": missing})
+        spec["coarse_search_queries"] = queries
+    return spec
+
+
 def _strategy_for_gaps(gaps: list[str]) -> str:
     if "discriminative_visual_evidence" in gaps:
         return "visual_disambiguation_retrieval"
@@ -1320,6 +1371,225 @@ def _build_l1_patch(example: dict[str, Any], row: dict[str, Any], schemas: list[
     }
 
 
+def _semantic_patch_schema() -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "semantic_repair_patch_nodes",
+            "strict": False,
+            "schema": {
+                "type": "object",
+                "additionalProperties": True,
+                "properties": {
+                    "patch_status": {"type": "string"},
+                    "nodes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": True,
+                            "properties": {
+                                "node_type": {"type": "string"},
+                                "text": {"type": "string"},
+                                "support_refs": {"type": "array", "items": {"type": "string"}},
+                                "reason_short": {"type": "string"},
+                            },
+                            "required": ["node_type", "text", "support_refs", "reason_short"],
+                        },
+                    },
+                    "reason_short": {"type": "string"},
+                },
+                "required": ["patch_status", "nodes", "reason_short"],
+            },
+        },
+    }
+
+
+def _semantic_patch_candidates(patch: dict[str, Any], *, limit: int = 48, text_chars: int = 260) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for node in patch.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        node_id = node.get("node_id")
+        if not node_id or node.get("node_type") in {"l2_repair_reminder", "answerability_gap"}:
+            continue
+        text = str(node.get("text") or node.get("summary") or node.get("label") or "").strip()
+        if not text:
+            continue
+        out.append(
+            {
+                "ref": str(node_id),
+                "node_type": node.get("node_type"),
+                "clip_id": node.get("clip_id"),
+                "time_span": node.get("time_span") or {},
+                "text": text[:text_chars],
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _semantic_patch_allowed(clue_spec: dict[str, Any] | None) -> bool:
+    hint = (clue_spec or {}).get("evidence_audit_hint")
+    if not isinstance(hint, dict):
+        return False
+    if hint.get("primary_failure_class") in {
+        "l1_graph_lacks_discriminative_node",
+        "evidence_exists_verifier_too_strict",
+        "insufficient_evidence_after_repair",
+    }:
+        return True
+    return bool(hint.get("should_adjust_verifier") or hint.get("should_rerun_retrieval"))
+
+
+def _augment_patch_with_llm_semantic_nodes(
+    example: dict[str, Any],
+    patch: dict[str, Any],
+    *,
+    clue_spec: dict[str, Any] | None,
+    support_graph: dict[str, Any] | None = None,
+    api_key: str | None,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    if not api_key or args.dry_run or args.skip_gptoss_verifier or args.disable_llm_semantic_patch:
+        return patch
+    if not _semantic_patch_allowed(clue_spec):
+        return patch
+    patch_candidates = _semantic_patch_candidates(patch, limit=args.semantic_patch_candidate_nodes)
+    graph_candidates = (
+        _compact_evidence_candidates(
+            support_graph,
+            limit=args.semantic_patch_candidate_nodes,
+            text_chars=args.evidence_candidate_text_chars,
+        )
+        if isinstance(support_graph, dict)
+        else []
+    )
+    seen_refs: set[str] = set()
+    candidates: list[dict[str, Any]] = []
+    for row in patch_candidates + graph_candidates:
+        ref = str(row.get("ref") or "")
+        if not ref or ref in seen_refs:
+            continue
+        candidates.append(row)
+        seen_refs.add(ref)
+        if len(candidates) >= args.semantic_patch_candidate_nodes:
+            break
+    if not candidates:
+        return patch
+    question = example.get("question") or {}
+    allowed_refs = {row["ref"] for row in candidates}
+    prompt = {
+        "task": "Compose compact evidence-grounded semantic repair nodes for L1/L2 video QA.",
+        "rules": [
+            "Use only the provided visual_evidence_candidates as support.",
+            "Do not use hidden answer labels, dataset annotations, audio, ASR, subtitles, narration, or dialogue.",
+            "Create a semantic node only when the support_refs visibly justify the text.",
+            "Prefer discriminative clue/context nodes that help option verification: scene category, visible attribute, action state, temporal relation, or missing visual clue.",
+            "For scene/environment/category answers, a node may summarize multiple visible objects/actions that jointly establish the category.",
+            "Keep each text short and factual. Do not answer the question unless the visual refs support it.",
+            "If the refs do not support a useful node, return patch_status=no_grounded_semantic_patch and nodes=[].",
+        ],
+        "question": {
+            "question_text": question.get("question_text"),
+            "options": question.get("options") or [],
+            "answer_format": question.get("answer_format"),
+        },
+        "clue_need_spec": clue_spec or {},
+        "visual_evidence_candidates": candidates,
+        "max_nodes": args.semantic_patch_max_nodes,
+        "required_json_shape": _semantic_patch_schema()["json_schema"]["schema"]["properties"],
+    }
+    client = OpenRouterClient(
+        model=args.verifier_model,
+        api_key=api_key,
+        temperature=0.0,
+        max_tokens=args.semantic_patch_max_tokens,
+        reasoning={"effort": "medium", "exclude": True},
+        timeout_s=args.verifier_timeout_s,
+    )
+    try:
+        payload = client.chat_json(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You output JSON only. You create evidence-grounded semantic L1 repair nodes. "
+                        "No markdown or prose outside JSON."
+                    ),
+                },
+                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+            ],
+            response_format=_semantic_patch_schema(),
+        )
+    except Exception as exc:
+        patch = dict(patch)
+        patch.setdefault("metadata", {})
+        patch["metadata"]["semantic_patch_error"] = str(exc)[:240]
+        return patch
+
+    new_nodes: list[dict[str, Any]] = []
+    new_edges: list[dict[str, Any]] = []
+    for row in (payload.get("nodes") or [])[: args.semantic_patch_max_nodes]:
+        if not isinstance(row, dict):
+            continue
+        refs = [str(ref) for ref in row.get("support_refs") or [] if str(ref) in allowed_refs]
+        text = str(row.get("text") or "").strip()
+        if len(refs) < args.semantic_patch_min_refs or not text:
+            continue
+        node_id = stable_id("repair.semantic", example.get("example_id"), text, refs)
+        node = {
+            "node_id": node_id,
+            "node_type": str(row.get("node_type") or "repair_semantic_observation"),
+            "text": text[:500],
+            "modality": "visual",
+            "confidence": 0.78,
+            "source_type": "repair_semantic_patch",
+            "producer": args.verifier_model,
+            "support_refs": refs,
+            "reason_short": str(row.get("reason_short") or "")[:240],
+            "visibility": {"mode": "video_only", "hidden_supervision": False},
+            "provenance": {"created_by": "dataset_clip_wrapper.run_repair_protocol.semantic_patch"},
+        }
+        new_nodes.append(node)
+        for ref in refs:
+            new_edges.append(
+                {
+                    "edge_id": stable_id("repair.semantic.edge", ref, node_id),
+                    "src": ref,
+                    "dst": node_id,
+                    "edge_type": "supports_semantic_patch",
+                    "text": "Visual evidence supports a semantic repair clue node.",
+                    "confidence": 0.72,
+                    "evidence_refs": [ref, node_id],
+                    "producer": args.verifier_model,
+                    "visibility": {"mode": "video_only", "hidden_supervision": False},
+                }
+            )
+    patch = dict(patch)
+    patch["nodes"] = list(patch.get("nodes") or []) + new_nodes
+    patch["edges"] = list(patch.get("edges") or []) + new_edges
+    patch.setdefault("metadata", {})
+    patch["metadata"]["semantic_patch"] = {
+        "patch_status": payload.get("patch_status"),
+        "node_count": len(new_nodes),
+        "edge_count": len(new_edges),
+        "reason_short": str(payload.get("reason_short") or "")[:240],
+        "llm_usage": client.last_response_metadata,
+    }
+    patch["counts"] = {
+        "nodes": len(patch.get("nodes") or []),
+        "edges": len(patch.get("edges") or []),
+        "repair_observation_nodes": sum(
+            1
+            for node in patch.get("nodes") or []
+            if isinstance(node, dict) and node.get("node_type") not in {"l2_repair_reminder", "answerability_gap"}
+        ),
+        "semantic_repair_nodes": len(new_nodes),
+    }
+    return patch
+
+
 def _merge_patch_graph(example: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     base = ((example.get("metadata") or {}).get("clue_memory_graph") or {"nodes": [], "edges": []})
     graph = dict(base)
@@ -1438,7 +1708,12 @@ def _compact_evidence_candidates(graph: dict[str, Any], *, limit: int, text_char
         )
     if len(candidates) <= limit:
         return candidates
-    repair = [row for row in candidates if row.get("source_type") == "repair_clip_schema" or row.get("producer") == "qwen_repair_clip_schema"]
+    repair = [
+        row
+        for row in candidates
+        if row.get("source_type") in {"repair_clip_schema", "repair_semantic_patch"}
+        or row.get("producer") == "qwen_repair_clip_schema"
+    ]
     base = [row for row in candidates if row not in repair]
     remaining = max(0, limit - len(repair))
     if len(base) <= remaining:
@@ -1514,13 +1789,15 @@ def _select_option_evidence_packs_with_llm(
             "selector_attempt": attempt["name"],
             "rules": [
                 "Use only refs from evidence_candidates.",
-                "Do not use hidden answer labels, dataset annotations, audio, ASR, subtitles, or dialogue as evidence.",
-                "For each option, choose positive_refs that directly support the option from visible evidence.",
-                "Choose negative_refs only when a ref visibly contradicts or weakens that option.",
-                "If no direct visual support exists, leave positive_refs empty and explain missing_requirements.",
-                "Do not select the same generic context refs for every option unless they truly support every option.",
-                "Keep reason_short to one short sentence per option.",
-            ],
+            "Do not use hidden answer labels, dataset annotations, audio, ASR, subtitles, or dialogue as evidence.",
+            "For each option, choose positive_refs that directly support the option from visible evidence.",
+            "Choose negative_refs only when a ref visibly contradicts or weakens that option.",
+            "If no direct visual support exists, leave positive_refs empty and explain missing_requirements.",
+            "For scene, environment, or category options, visible objects/actions may jointly support the option; select the grouped refs and explain the category cue.",
+            "Prefer compact semantic repair nodes when they are supported by visual refs, but keep their support_refs traceable through the graph.",
+            "Do not select the same generic context refs for every option unless they truly support every option.",
+            "Keep reason_short to one short sentence per option.",
+        ],
             "question": {
                 "question_text": question.get("question_text"),
                 "options": options,
@@ -1619,6 +1896,7 @@ def _is_verifiable_l1_node(node: dict[str, Any]) -> bool:
     producer = str(node.get("producer") or "")
     if source_type in {
         "repair_clip_schema",
+        "repair_semantic_patch",
         "observation",
         "qwen_clip_schema_anchor",
         "entity_mention",
@@ -1630,6 +1908,7 @@ def _is_verifiable_l1_node(node: dict[str, Any]) -> bool:
         return True
     return producer in {
         "qwen_repair_clip_schema",
+        "openai/gpt-oss-120b",
         "neighbor_vlm_l1_graph_composer",
         "neighbor_vlm_l1_schema_anchor",
     }
@@ -1881,6 +2160,13 @@ def _verify_options(
         and selector_payload.get("selector_status") in {"error", "no_candidates"}
         and not args.allow_lexical_fallback
     )
+    audit_hint = (clue_spec or {}).get("evidence_audit_hint") if isinstance(clue_spec, dict) else {}
+    allow_llm_alignment_override = bool(
+        isinstance(audit_hint, dict)
+        and audit_hint.get("should_adjust_verifier")
+        and str(audit_hint.get("primary_failure_class") or "")
+        in {"evidence_exists_verifier_too_strict", "insufficient_evidence_after_repair"}
+    )
 
     verifications: list[dict[str, Any]] = []
     for opt in options:
@@ -1943,6 +2229,8 @@ def _verify_options(
                     "min_evidence_refs": args.min_verify_refs,
                     "min_claim_score": 0.05,
                     "min_target_score": 0.05,
+                    "allow_llm_target_alignment_override": allow_llm_alignment_override,
+                    "llm_alignment_override_min_score": 0.75,
                 },
             },
             graph=graph,
@@ -2046,6 +2334,8 @@ def _verify_options(
                                 "min_evidence_refs": args.min_verify_refs,
                                 "min_claim_score": 0.05,
                                 "min_target_score": 0.05,
+                                "allow_llm_target_alignment_override": allow_llm_alignment_override,
+                                "llm_alignment_override_min_score": 0.75,
                             },
                         },
                         graph=graph,
@@ -2206,7 +2496,13 @@ def _spans_from_cached_plan(plan: dict[str, Any]) -> list[ClipSpan]:
     return spans
 
 
-def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | None) -> dict[str, Any]:
+def _process_row(
+    row: dict[str, Any],
+    args: argparse.Namespace,
+    api_key: str | None,
+    *,
+    evidence_audit: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     example = _load_source_example(row)
     gaps = _gap_types(row)
     strategy = _strategy_for_gaps(gaps)
@@ -2235,6 +2531,7 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
             api_key=api_key,
             args=args,
         )
+    clue_spec = _attach_audit_hint(clue_spec, evidence_audit)
     use_reroute = args.repair_mode == "reroute" or (
         args.repair_mode == "auto" and prior_negative_count >= args.negative_reroute_threshold
     )
@@ -2275,6 +2572,7 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
         "repair_mode": span_meta.get("mode"),
         "gap_types": gaps,
         "clue_need_spec": clue_spec,
+        "evidence_audit_hint": _compact_audit_hint(evidence_audit),
         "repair_query": query,
         "span_selection": span_meta,
         "spans": [
@@ -2338,6 +2636,14 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
         patch = _read_json(patch_path)
     else:
         patch = _build_l1_patch(example, row, schemas, gaps)
+        patch = _augment_patch_with_llm_semantic_nodes(
+            example,
+            patch,
+            clue_spec=clue_spec,
+            support_graph=(example.get("metadata") or {}).get("clue_memory_graph") or {},
+            api_key=api_key,
+            args=args,
+        )
         _write_json(patch_path, patch)
     repaired_graph = _merge_patch_graph(example, patch)
     if l2_path.exists() and not args.force_repair_stages:
@@ -2362,9 +2668,11 @@ def _process_row(row: dict[str, Any], args: argparse.Namespace, api_key: str | N
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run targeted graph repair for L1/L2 quality failures.")
     parser.add_argument("--quality-report", type=Path, required=True)
+    parser.add_argument("--evidence-audit-report", type=Path)
     parser.add_argument("--stage-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--datasets", nargs="+", default=["video_holmes", "videomme", "ovo_bench", "cg_bench", "vrbench"])
+    parser.add_argument("--example-ids", nargs="+", help="Optional exact example_ids to repair.")
     parser.add_argument(
         "--video-regimes",
         nargs="+",
@@ -2418,6 +2726,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-verify-refs", type=int, default=2)
     parser.add_argument("--min-verify-confidence", type=float, default=0.55)
     parser.add_argument("--min-option-margin", type=float, default=0.08)
+    parser.add_argument("--disable-llm-semantic-patch", action="store_true")
+    parser.add_argument("--semantic-patch-candidate-nodes", type=int, default=48)
+    parser.add_argument("--semantic-patch-max-nodes", type=int, default=4)
+    parser.add_argument("--semantic-patch-min-refs", type=int, default=1)
+    parser.add_argument("--semantic-patch-max-tokens", type=int, default=1000)
     parser.add_argument("--max-bridge-refs", type=int, default=10)
     parser.add_argument("--min-bridge-refs", type=int, default=1)
     parser.add_argument("--min-bridge-confidence", type=float, default=0.55)
@@ -2439,19 +2752,25 @@ def main() -> int:
     reports = payload.get("reports") if isinstance(payload, dict) else payload
     wanted = set(args.datasets)
     wanted_regimes = {str(item) for item in args.video_regimes}
+    wanted_examples = {str(item) for item in args.example_ids or []}
+    audit_map = _load_evidence_audit_map(args.evidence_audit_report)
     rows = [
         row
         for row in reports
         if row.get("dataset") in wanted
         and row.get("repair_needed")
         and (not wanted_regimes or str(row.get("video_regime")) in wanted_regimes)
+        and (not wanted_examples or str(row.get("example_id")) in wanted_examples)
     ]
 
     api_key = None
     if not args.dry_run and not args.skip_api:
         api_key = load_openrouter_api_key(keys_py_path=str(args.keys_py) if args.keys_py else None)
 
-    out_reports = [_process_row(row, args, api_key) for row in rows]
+    out_reports = [
+        _process_row(row, args, api_key, evidence_audit=audit_map.get(str(row.get("example_id"))))
+        for row in rows
+    ]
     summary = {
         "examples": len(out_reports),
         "datasets": sorted({str(row.get("dataset")) for row in out_reports}),
