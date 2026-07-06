@@ -2406,8 +2406,6 @@ def main() -> int:
     api_key = None
     if not args.dry_run and not args.skip_api:
         api_key = load_openrouter_api_key(keys_py_path=str(args.keys_py) if args.keys_py else None)
-    elif not args.dry_run and not args.skip_gptoss_verifier:
-        api_key = load_openrouter_api_key(keys_py_path=str(args.keys_py) if args.keys_py else None)
 
     out_reports = [_process_row(row, args, api_key) for row in rows]
     summary = {

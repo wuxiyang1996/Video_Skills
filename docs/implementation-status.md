@@ -22,7 +22,49 @@ entrypoints such as `run_repair_protocol.py` and `run_staged_llm_pipeline.py`.
 Old import paths are aliased in `dataset_clip_wrapper/__init__.py`; new code
 should import from the bundle paths directly.
 
-## 0.1 Latest L2 Recursive Trace Status
+## 0.1 Latest 5-Dataset x 3-Sample Batch Status
+
+The current 5-dataset x 3-sample strict batch artifacts are:
+
+- `dataset_clip_wrapper/output/batch3_latest_trace_base.jsonl`
+- `dataset_clip_wrapper/output/batch3_latest_trace_quality_report.json`
+- `dataset_clip_wrapper/output/batch3_latest_trace_repair_skipapi_report.json`
+- `dataset_clip_wrapper/output/batch3_latest_trace_final_acceptance_report.json`
+- `dataset_clip_wrapper/output/batch3_latest_trace_failure_taxonomy_report.json`
+
+This batch uses the latest L2 trajectory schema on the base artifacts and a
+strict `--skip-api` repair pass to validate repair graph structure without
+calling GPT-OSS for the selector/verifier. The final structural status is:
+
+```text
+examples=15
+high_l1_all=true
+strict_vlm_perception_all=true
+l2_trajectory_complete_all=true
+repair_subgraph_complete_for_repaired=true
+heuristic_final_acceptance_count=0
+accepted_all=false
+final_l2_status_counts={accepted_strong: 4, needs_more_evidence: 11}
+```
+
+The failure taxonomy reports:
+
+```text
+failure_stage_counts={repair_selector: 11}
+missing_evidence_type_counts={
+  commonsense_bridge_without_discriminative_visual_anchor: 3,
+  discriminative_visual_evidence_gap: 2,
+  long_video_retrieval_or_fine_evidence_gap: 6
+}
+dataset_failure_counts={video_holmes: 2, videomme: 1, ovo_bench: 2, cg_bench: 3, vrbench: 3}
+```
+
+Interpretation: the graph protocol is structurally clean on 15 samples, but the
+repair selector/verifier has not been API-exercised for this batch. The next API
+run should target only the 11 `repair_selector` failures, not rebuild all 15 L1
+graphs.
+
+## 0.2 Latest L2 Recursive Trace Status
 
 The L2 path now records bounded recursive repair as a first-class graph/trace
 artifact:

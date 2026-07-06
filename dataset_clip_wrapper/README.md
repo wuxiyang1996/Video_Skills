@@ -638,6 +638,21 @@ python -m dataset_clip_wrapper.report_final_acceptance \
   --output dataset_clip_wrapper/output/rerun5_final_acceptance_report.json
 ```
 
+For 5-dataset x 3-sample checks, run the failure taxonomy report after final
+acceptance so failed or abstained examples are grouped by stage and missing
+evidence type:
+
+```bash
+python -m dataset_clip_wrapper.report_failure_taxonomy \
+  --final-report dataset_clip_wrapper/output/batch3_final_acceptance_report.json \
+  --output dataset_clip_wrapper/output/batch3_failure_taxonomy_report.json
+```
+
+The taxonomy report separates `failure_stage` from `missing_evidence_type`, so
+we can tell apart L1 graph gaps, long-video retrieval gaps, L2 planner failures,
+repair-selector abstentions, verifier rejections, and short-video examples that
+may require non-visual/background bridges.
+
 The current strict one-video-per-dataset API check reports:
 
 - `high_l1_all=true`

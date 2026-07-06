@@ -22,6 +22,7 @@ Use it when adding new modules or deciding where a change belongs.
 | `run_repair_protocol.py` | Compatibility entrypoint for `verification/run_repair_protocol.py`. |
 | `report_l1_l2_quality.py` | Compatibility entrypoint for `verification/report_l1_l2_quality.py`. |
 | `report_final_acceptance.py` | Compatibility entrypoint for `verification/report_final_acceptance.py`. |
+| `report_failure_taxonomy.py` | Compatibility entrypoint for `verification/report_failure_taxonomy.py`. |
 | `retrofit_l2_trajectory.py` | Compatibility entrypoint for `verification/retrofit_l2_trajectory.py`. |
 | `output/` | Generated API outputs, staged caches, repair artifacts, and reports. Only `.gitkeep` should be tracked. |
 
@@ -96,6 +97,7 @@ bridge, or abstain.
 | `verification/evaluate_vrbench_video_only_graph.py` | VRBench-specific video-only graph evaluation helper. |
 | `verification/report_l1_l2_quality.py` | Batch L1/L2 quality report with trajectory completeness fields. |
 | `verification/report_final_acceptance.py` | Merges base quality and repair reports into final acceptance status. |
+| `verification/report_failure_taxonomy.py` | Classifies non-accepted examples by failure stage, missing evidence type, repairability, and dataset-fit risk. |
 | `verification/retrofit_l2_trajectory.py` | Adds latest L2 trajectory metadata to older JSONL artifacts without re-running perception. |
 
 ## `runners/`
