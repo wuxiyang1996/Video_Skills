@@ -103,6 +103,15 @@ MODULE_BUNDLES: tuple[ModuleBundle, ...] = (
         ),
     ),
     ModuleBundle(
+        name="expert_demo_exports",
+        purpose="Export accepted and abstaining L1/L2/repair trajectories as training-ready expert-demo candidates.",
+        modules=(
+            "expert_demos.__init__",
+            "expert_demos.export_expert_demos",
+            "export_expert_demos",
+        ),
+    ),
+    ModuleBundle(
         name="pipeline_runners",
         purpose="End-to-end runners that connect adapters, perception, L1 graph building, L2 rollout, and reports.",
         modules=(
@@ -122,6 +131,7 @@ MODULE_BUNDLES: tuple[ModuleBundle, ...] = (
             "tests.smoke_test",
             "tests.smoke_test_coarse_fine_graph_crafting",
             "tests.smoke_test_fault_repair",
+            "tests.smoke_test_export_expert_demos",
             "tests.smoke_test_graph_compose",
             "tests.smoke_test_graph_plan_validator",
             "tests.smoke_test_l2_recursive_trace",

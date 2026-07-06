@@ -24,6 +24,7 @@ Use it when adding new modules or deciding where a change belongs.
 | `report_final_acceptance.py` | Compatibility entrypoint for `verification/report_final_acceptance.py`. |
 | `report_failure_taxonomy.py` | Compatibility entrypoint for `verification/report_failure_taxonomy.py`. |
 | `report_evidence_audit.py` | Compatibility entrypoint for `verification/report_evidence_audit.py`. |
+| `export_expert_demos.py` | Compatibility entrypoint for `expert_demos/export_expert_demos.py`. |
 | `retrofit_l2_trajectory.py` | Compatibility entrypoint for `verification/retrofit_l2_trajectory.py`. |
 | `output/` | Generated API outputs, staged caches, repair artifacts, and reports. Only `.gitkeep` should be tracked. |
 
@@ -102,6 +103,16 @@ bridge, or abstain.
 | `verification/report_evidence_audit.py` | Uses GPT-OSS to audit non-accepted examples from packed L1/L2/repair evidence instead of heuristic labels. |
 | `verification/retrofit_l2_trajectory.py` | Adds latest L2 trajectory metadata to older JSONL artifacts without re-running perception. |
 
+## `expert_demos/`
+
+Training-data export. This bundle turns verified video-only L1/L2/repair traces
+into expert-demo candidates while keeping hidden supervision out of visible
+inputs.
+
+| Path | Purpose |
+|------|---------|
+| `expert_demos/export_expert_demos.py` | Exports direct, repaired, bridge, and abstain trajectories plus a demo quality report. |
+
 ## `runners/`
 
 End-to-end orchestration. Runners may connect adapters, perception, L1, L2, and
@@ -134,6 +145,7 @@ target specific contracts rather than full benchmark accuracy.
 | `tests/smoke_test_multi_hop_reasoning_skills.py` | Checks multi-hop reasoning-skill execution. |
 | `tests/smoke_test_skill_executor.py` | Checks atomic skill executor backend behavior. |
 | `tests/smoke_test_fault_repair.py` | Checks local L2 fault repair. |
+| `tests/smoke_test_export_expert_demos.py` | Checks expert-demo export and gold-field boundary. |
 | `tests/smoke_test_graph_plan_validator.py` | Checks graph-composition plan validation. |
 | `tests/smoke_test_long_coarse_fine_profile.py` | Checks long coarse/fine profile defaults. |
 | `tests/smoke_test_short_multi_hop_profile.py` | Checks short multi-hop profile defaults. |
@@ -147,6 +159,7 @@ target specific contracts rather than full benchmark accuracy.
 - New reasoning rollout or trajectory code goes in `l2_reasoning_graph/`.
 - New answer verification, evidence repair, or acceptance reporting goes in
   `verification/`.
+- New training-data/demo export code goes in `expert_demos/`.
 - New orchestration commands go in `runners/` plus a thin compatibility
   entrypoint at the package root only when an existing public command needs it.
 - New smoke tests go in `tests/` and should be added to `module_bundles.py`.

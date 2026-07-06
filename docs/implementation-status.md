@@ -192,7 +192,46 @@ They still require more discriminative visual anchors or another bounded repair
 round; the current protocol correctly abstains instead of committing weak
 answers.
 
-## 0.2 Latest L2 Recursive Trace Status
+## 0.2 Expert Demo Gathering Seed
+
+The first video-only expert-demo exporter is implemented:
+
+- `dataset_clip_wrapper/expert_demos/export_expert_demos.py`
+- compatibility entrypoint: `python -m dataset_clip_wrapper.export_expert_demos`
+- smoke test: `dataset_clip_wrapper/tests/smoke_test_export_expert_demos.py`
+
+It consumes a final acceptance report and exports direct, repaired, bridge, and
+abstaining trajectories. Visible inputs are sanitized with gold/answer fields
+removed; hidden supervision is kept only as bookkeeping metadata. Each row has
+quality flags such as `training_candidate`, `abstain_candidate`,
+`strict_vlm_perception`, `high_l1`, `l2_trajectory_complete`,
+`repair_subgraph_complete`, and `no_gold_keys_in_visible_inputs`.
+
+Current seed artifacts:
+
+- `dataset_clip_wrapper/output/expert_demos/batch3_p5_video_only_expert_demos.jsonl`
+- `dataset_clip_wrapper/output/expert_demos/batch3_p5_video_only_expert_demo_quality.json`
+
+Current seed quality:
+
+```text
+examples=15
+training_candidate_count=12
+abstain_candidate_count=3
+demo_type_counts={direct_strong: 4, repair_strong: 8, abstain_needs_more_evidence: 3}
+visible_gold_key_leak_count=0
+strict_vlm_perception_all=true
+high_l1_all=true
+heuristic_final_acceptance_count=0
+```
+
+Interpretation: expert-demo gathering can now start, but this is still a seed
+bank. The next step toward a training protocol is split-aware batch expansion:
+generate larger train/dev/test manifests, run the same strict L1/L2/repair
+pipeline on train split examples, export candidates, and reserve held-out
+datasets/examples for evaluation only.
+
+## 0.3 Latest L2 Recursive Trace Status
 
 The L2 path now records bounded recursive repair as a first-class graph/trace
 artifact:

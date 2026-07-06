@@ -751,6 +751,39 @@ Merged status:
 Remaining examples are intentionally not accepted without more evidence:
 `video_holmes:q2`, `cg_bench:19`, and `vrbench:qa1`.
 
+### Export Video-Only Expert Demo Candidates
+
+Once a final acceptance report is available, export L1/L2/repair trajectories
+as expert-demo candidates:
+
+```bash
+python -m dataset_clip_wrapper.export_expert_demos \
+  --final-report dataset_clip_wrapper/output/batch3_p5_final_acceptance_api_report.json \
+  --output-jsonl dataset_clip_wrapper/output/expert_demos/batch3_p5_video_only_expert_demos.jsonl \
+  --quality-report-output dataset_clip_wrapper/output/expert_demos/batch3_p5_video_only_expert_demo_quality.json
+```
+
+The exporter keeps the demo in `video_only` mode: question gold/answer fields
+are removed from `visible_demo_inputs`, hidden supervision is recorded only as
+bookkeeping metadata, and each demo carries quality flags for downstream
+training filters.
+
+Current seed export:
+
+- `examples=15`
+- `training_candidate_count=12`
+- `abstain_candidate_count=3`
+- demo types: `direct_strong=4`, `repair_strong=8`,
+  `abstain_needs_more_evidence=3`
+- `visible_gold_key_leak_count=0`
+- `strict_vlm_perception_all=true`
+- `high_l1_all=true`
+- `heuristic_final_acceptance_count=0`
+
+This is a gathering seed, not yet a training set. Before training, expand the
+batch under train/dev/test split control and train only from examples whose
+`quality_flags.training_candidate` or `quality_flags.abstain_candidate` pass.
+
 The current strict one-video-per-dataset API check reports:
 
 - `high_l1_all=true`
