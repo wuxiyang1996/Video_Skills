@@ -18,6 +18,7 @@ Use it when adding new modules or deciding where a change belongs.
 | `pipeline.py` | Lightweight canonical-example builder that does not own API/VLM orchestration. |
 | `cli.py` | Simple CLI wrapper around canonical-example export. |
 | `build_training_manifests.py` | Compatibility entrypoint for `manifests/build_training_manifests.py`. |
+| `export_reasoning_traces.py` | Compatibility entrypoint for `training/trace_adapter.py`. |
 | `run_llm_pipeline.py` | Compatibility entrypoint for `runners/run_llm_pipeline.py`. |
 | `run_staged_llm_pipeline.py` | Compatibility entrypoint for `runners/run_staged_llm_pipeline.py`. |
 | `run_repair_protocol.py` | Compatibility entrypoint for `verification/run_repair_protocol.py`. |
@@ -123,6 +124,16 @@ for demo gathering, prompt/dev tuning, or held-out evaluation.
 |------|---------|
 | `manifests/build_training_manifests.py` | Builds deterministic train/dev/test manifests grouped by video id to prevent cross-split video leakage. |
 
+## `training/`
+
+Controller-training exports. This bundle does not perform new reasoning; it
+maps verified expert-demo trajectories into canonical runtime/training formats.
+
+| Path | Purpose |
+|------|---------|
+| `training/trace_adapter.py` | Converts compact L1/L2 expert demos into `video_skills.contracts.ReasoningTrace` JSONL and compact chat-SFT JSONL. |
+| `training/__init__.py` | Public exports for training adapters. |
+
 ## `runners/`
 
 End-to-end orchestration. Runners may connect adapters, perception, L1, L2, and
@@ -171,6 +182,7 @@ target specific contracts rather than full benchmark accuracy.
 - New answer verification, evidence repair, or acceptance reporting goes in
   `verification/`.
 - New training-data/demo export code goes in `expert_demos/`.
+- New controller-training trace/chat adapters go in `training/`.
 - New split or dataset manifest code goes in `manifests/`.
 - New orchestration commands go in `runners/` plus a thin compatibility
   entrypoint at the package root only when an existing public command needs it.

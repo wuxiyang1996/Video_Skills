@@ -121,6 +121,15 @@ MODULE_BUNDLES: tuple[ModuleBundle, ...] = (
         ),
     ),
     ModuleBundle(
+        name="controller_training_exports",
+        purpose="Adapt verified L1/L2 expert demos into canonical ReasoningTrace and compact SFT chat records.",
+        modules=(
+            "training.__init__",
+            "training.trace_adapter",
+            "export_reasoning_traces",
+        ),
+    ),
+    ModuleBundle(
         name="pipeline_runners",
         purpose="End-to-end runners that connect adapters, perception, L1 graph building, L2 rollout, and reports.",
         modules=(
@@ -153,6 +162,7 @@ MODULE_BUNDLES: tuple[ModuleBundle, ...] = (
             "tests.smoke_test_retrieval",
             "tests.smoke_test_short_multi_hop_profile",
             "tests.smoke_test_skill_executor",
+            "tests.smoke_test_trace_adapter",
             "tests.smoke_test_training_manifests",
             "tests.smoke_test_two_layer_schema",
             "tests.smoke_test_video_only_takein",

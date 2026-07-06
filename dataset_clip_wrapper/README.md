@@ -53,6 +53,43 @@ python -m dataset_clip_wrapper.tests.smoke_test_two_layer_schema
 python -m dataset_clip_wrapper.tests.smoke_test_module_bundles
 ```
 
+## Controller training export
+
+The training path is now split into two explicit steps:
+
+```text
+final acceptance report
+  -> expert demo export
+  -> ReasoningTrace JSONL + compact SFT chat JSONL
+```
+
+The first step keeps hidden supervision out of visible inputs. The second step
+is a schema adapter only: it does not repair answers or add new evidence; it
+maps verified L1/L2/repair trajectories into `video_skills.contracts` for
+controller SFT/GRPO work.
+
+```bash
+python -m dataset_clip_wrapper.export_expert_demos \
+  --final-report dataset_clip_wrapper/output/batch3_p5_final_acceptance_api_report.json \
+  --training-view compact \
+  --max-l1-nodes 80 \
+  --output-jsonl dataset_clip_wrapper/output/expert_demos/batch3_p5_video_only_expert_demos_compact.jsonl \
+  --quality-report-output dataset_clip_wrapper/output/expert_demos/batch3_p5_video_only_expert_demo_quality_compact.json
+
+python -m dataset_clip_wrapper.export_reasoning_traces \
+  --expert-demos dataset_clip_wrapper/output/expert_demos/batch3_p5_video_only_expert_demos_compact.jsonl \
+  --trace-output-jsonl dataset_clip_wrapper/output/training/batch3_p5_reasoning_traces.jsonl \
+  --sft-output-jsonl dataset_clip_wrapper/output/training/batch3_p5_sft_chat.jsonl \
+  --quality-report-output dataset_clip_wrapper/output/training/batch3_p5_training_export_quality.json
+```
+
+Recommended training paradigm:
+
+- P0: behavior-cloning/SFT on one 8B controller LoRA from compact SFT chat.
+- P1: verifier-calibrated SFT with accepted and abstain examples.
+- P2: GRPO only after the controller can emit valid traces and the verifier
+  reward can run against `ReasoningTrace`.
+
 ## Hyperparameters
 
 ### Video regime
