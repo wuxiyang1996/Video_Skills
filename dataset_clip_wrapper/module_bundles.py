@@ -112,6 +112,15 @@ MODULE_BUNDLES: tuple[ModuleBundle, ...] = (
         ),
     ),
     ModuleBundle(
+        name="training_manifests",
+        purpose="Build split-aware train/dev/test manifests for expert-demo gathering and evaluation isolation.",
+        modules=(
+            "manifests.__init__",
+            "manifests.build_training_manifests",
+            "build_training_manifests",
+        ),
+    ),
+    ModuleBundle(
         name="pipeline_runners",
         purpose="End-to-end runners that connect adapters, perception, L1 graph building, L2 rollout, and reports.",
         modules=(
@@ -144,6 +153,7 @@ MODULE_BUNDLES: tuple[ModuleBundle, ...] = (
             "tests.smoke_test_retrieval",
             "tests.smoke_test_short_multi_hop_profile",
             "tests.smoke_test_skill_executor",
+            "tests.smoke_test_training_manifests",
             "tests.smoke_test_two_layer_schema",
             "tests.smoke_test_video_only_takein",
             "tests.smoke_test_video_tools",

@@ -85,6 +85,54 @@ def _contains_gold_key(payload: Any) -> bool:
     return False
 
 
+def _node_text(node: dict[str, Any]) -> str:
+    return str(node.get("text") or node.get("summary") or node.get("label") or node.get("description") or "").strip()
+
+
+def _node_lookup(graph: dict[str, Any], repair_subgraph: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    lookup: dict[str, dict[str, Any]] = {}
+    for node in graph.get("nodes") or []:
+        if isinstance(node, dict) and node.get("node_id"):
+            lookup[str(node["node_id"])] = node
+    for node in repair_subgraph.get("nodes") or []:
+        if isinstance(node, dict) and node.get("node_id"):
+            lookup.setdefault(str(node["node_id"]), node)
+    return lookup
+
+
+def _collect_demo_refs(report: dict[str, Any]) -> list[str]:
+    refs: list[str] = []
+    l2 = report.get("L2_status") if isinstance(report.get("L2_status"), dict) else {}
+    refs.extend(str(ref) for ref in l2.get("support_refs") or [] if ref)
+    trajectory = report.get("l2_trajectory") if isinstance(report.get("l2_trajectory"), dict) else {}
+    for round_row in trajectory.get("rounds") or []:
+        if not isinstance(round_row, dict):
+            continue
+        verifier = round_row.get("verifier_signal") if isinstance(round_row.get("verifier_signal"), dict) else {}
+        pack = verifier.get("verified_evidence_pack") if isinstance(verifier.get("verified_evidence_pack"), dict) else {}
+        refs.extend(str(ref) for ref in pack.get("support_refs") or [] if ref)
+        obs = round_row.get("observation_summary") if isinstance(round_row.get("observation_summary"), dict) else {}
+        refs.extend(str(ref) for ref in obs.get("support_refs") or [] if ref)
+    repair = report.get("repair_report") if isinstance(report.get("repair_report"), dict) else {}
+    selector = repair.get("option_evidence_selector") if isinstance(repair.get("option_evidence_selector"), dict) else {}
+    for pack in selector.get("option_packs") or []:
+        if not isinstance(pack, dict):
+            continue
+        refs.extend(str(ref) for ref in pack.get("positive_refs") or [] if ref)
+        refs.extend(str(ref) for ref in pack.get("negative_refs") or [] if ref)
+    repair_subgraph = report.get("repair_subgraph") if isinstance(report.get("repair_subgraph"), dict) else {}
+    for node in repair_subgraph.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        if node.get("node_id"):
+            refs.append(str(node["node_id"]))
+        for pack in node.get("option_evidence_packs") or []:
+            if isinstance(pack, dict):
+                refs.extend(str(ref) for ref in pack.get("positive_refs") or [] if ref)
+                refs.extend(str(ref) for ref in pack.get("negative_refs") or [] if ref)
+    return list(dict.fromkeys(refs))
+
+
 def _hidden_supervision_stub(example: dict[str, Any]) -> dict[str, Any]:
     hidden = example.get("hidden_supervision") if isinstance(example.get("hidden_supervision"), dict) else {}
     return {
@@ -180,18 +228,88 @@ def _visible_inputs(example: dict[str, Any], report: dict[str, Any]) -> dict[str
     }
 
 
-def _l1_snapshot(example: dict[str, Any], report: dict[str, Any], *, include_graph: bool) -> dict[str, Any]:
+def _compact_l1_evidence(
+    graph: dict[str, Any],
+    repair_subgraph: dict[str, Any],
+    refs: list[str],
+    *,
+    max_nodes: int,
+) -> list[dict[str, Any]]:
+    lookup = _node_lookup(graph, repair_subgraph)
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add_node(ref: str, role: str) -> None:
+        if ref in seen or len(selected) >= max_nodes:
+            return
+        node = lookup.get(ref)
+        if not isinstance(node, dict):
+            return
+        text = _node_text(node)
+        if not text and node.get("node_type") not in {"l2_gap_diagnosis", "repair_plan", "option_verifier"}:
+            return
+        selected.append(
+            {
+                "ref": ref,
+                "role": role,
+                "node_type": node.get("node_type") or node.get("type"),
+                "source_type": node.get("source_type"),
+                "producer": node.get("producer"),
+                "time_span": node.get("time_span") or node.get("source_span") or {},
+                "text": text[:600],
+            }
+        )
+        seen.add(ref)
+
+    for ref in refs:
+        add_node(ref, "used_by_l2_or_repair")
+    if len(selected) < max_nodes:
+        priority_types = {"repair_semantic_observation", "observation", "event", "state", "place", "visual_social_cue"}
+        for node in graph.get("nodes") or []:
+            if not isinstance(node, dict) or node.get("node_type") not in priority_types:
+                continue
+            node_id = str(node.get("node_id") or "")
+            if node_id:
+                add_node(node_id, "compact_context")
+            if len(selected) >= max_nodes:
+                break
+    return selected
+
+
+def _l1_snapshot(
+    example: dict[str, Any],
+    report: dict[str, Any],
+    *,
+    include_graph: bool,
+    training_view: str,
+    max_l1_nodes: int,
+) -> dict[str, Any]:
     graph = ((example.get("metadata") or {}).get("clue_memory_graph") or {})
+    repair_subgraph = report.get("repair_subgraph") if isinstance(report.get("repair_subgraph"), dict) else {}
     quality = report.get("L1_quality") or {}
+    refs = _collect_demo_refs(report)
     snapshot = {
         "graph_id": graph.get("graph_id") or f"clue_memory:{report.get('example_id')}",
+        "training_view": training_view,
         "quality": quality,
         "counts": {
             "nodes": len(graph.get("nodes") or []),
             "edges": len(graph.get("edges") or []),
         },
+        "used_ref_count": len(refs),
     }
-    if include_graph:
+    if training_view == "compact":
+        snapshot["compact_evidence_nodes"] = _compact_l1_evidence(
+            graph,
+            repair_subgraph,
+            refs,
+            max_nodes=max_l1_nodes,
+        )
+        snapshot["compact_policy"] = {
+            "max_l1_nodes": max_l1_nodes,
+            "selection": "support_refs + repair_refs + semantic/context fill",
+        }
+    elif include_graph:
         snapshot["graph"] = _drop_gold_keys(graph)
     return snapshot
 
@@ -210,7 +328,14 @@ def _l2_demo(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _build_demo(report: dict[str, Any], *, include_graph: bool, min_support_refs: int) -> dict[str, Any]:
+def _build_demo(
+    report: dict[str, Any],
+    *,
+    include_graph: bool,
+    min_support_refs: int,
+    training_view: str,
+    max_l1_nodes: int,
+) -> dict[str, Any]:
     example = _load_source_example(report)
     demo_type = _demo_type(report)
     visible_inputs = _visible_inputs(example, report)
@@ -237,10 +362,18 @@ def _build_demo(report: dict[str, Any], *, include_graph: bool, min_support_refs
                 "hidden_supervision",
             ],
             "include_full_l1_graph": include_graph,
+            "training_view": training_view,
+            "max_l1_nodes": max_l1_nodes,
         },
         "visible_demo_inputs": visible_inputs,
         "hidden_supervision": _hidden_supervision_stub(example),
-        "l1": _l1_snapshot(example, report, include_graph=include_graph),
+        "l1": _l1_snapshot(
+            example,
+            report,
+            include_graph=include_graph,
+            training_view=training_view,
+            max_l1_nodes=max_l1_nodes,
+        ),
         "l2": _l2_demo(report),
         "quality_flags": flags,
     }
@@ -267,6 +400,8 @@ def _summarize(demos: list[dict[str, Any]], final_summary: dict[str, Any]) -> di
         "high_l1_all": all((demo.get("quality_flags") or {}).get("high_l1") for demo in demos),
         "heuristic_final_acceptance_count": sum(1 for demo in demos if (demo.get("quality_flags") or {}).get("heuristic_final_acceptance")),
         "visible_gold_key_leak_count": sum(1 for demo in demos if not (demo.get("quality_flags") or {}).get("no_gold_keys_in_visible_inputs")),
+        "compact_evidence_node_count": sum(len(((demo.get("l1") or {}).get("compact_evidence_nodes") or [])) for demo in demos),
+        "training_views": sorted({str((demo.get("l1") or {}).get("training_view") or "full") for demo in demos}),
         "source_final_report_summary": final_summary,
     }
 
@@ -277,6 +412,8 @@ def build_export(
     include_graph: bool,
     include_abstain: bool,
     min_support_refs: int,
+    training_view: str = "full",
+    max_l1_nodes: int = 80,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rows = final_report.get("reports") or []
     demos = []
@@ -284,7 +421,15 @@ def build_export(
         status = str(report.get("final_acceptance_status") or "")
         if not include_abstain and status not in ACCEPTED:
             continue
-        demos.append(_build_demo(report, include_graph=include_graph, min_support_refs=min_support_refs))
+        demos.append(
+            _build_demo(
+                report,
+                include_graph=include_graph,
+                min_support_refs=min_support_refs,
+                training_view=training_view,
+                max_l1_nodes=max_l1_nodes,
+            )
+        )
     return demos, _summarize(demos, final_report.get("summary") or {})
 
 
@@ -294,6 +439,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-jsonl", type=Path, required=True)
     parser.add_argument("--quality-report-output", type=Path, required=True)
     parser.add_argument("--no-full-l1-graph", action="store_true", help="Export graph counts/quality only, not full L1 graph payload.")
+    parser.add_argument("--training-view", default="full", choices=["full", "compact"])
+    parser.add_argument("--max-l1-nodes", type=int, default=80)
     parser.add_argument("--accepted-only", action="store_true", help="Drop needs_more_evidence abstain demos.")
     parser.add_argument("--min-support-refs", type=int, default=2)
     return parser
@@ -304,9 +451,11 @@ def main() -> int:
     final_report = _read_json(args.final_report)
     demos, quality = build_export(
         final_report,
-        include_graph=not args.no_full_l1_graph,
+        include_graph=(not args.no_full_l1_graph and args.training_view == "full"),
         include_abstain=not args.accepted_only,
         min_support_refs=args.min_support_refs,
+        training_view=args.training_view,
+        max_l1_nodes=args.max_l1_nodes,
     )
     _write_jsonl(args.output_jsonl, demos)
     _write_json(args.quality_report_output, quality)

@@ -784,6 +784,48 @@ This is a gathering seed, not yet a training set. Before training, expand the
 batch under train/dev/test split control and train only from examples whose
 `quality_flags.training_candidate` or `quality_flags.abstain_candidate` pass.
 
+### Build Split-Aware Training Manifests
+
+Before expanding demo gathering, create deterministic train/dev/test manifests
+grouped by `dataset:video_id` so the same source video cannot cross splits:
+
+```bash
+python -m dataset_clip_wrapper.build_training_manifests \
+  --dataset-root /fs/gamma-projects/vlm-robot/datasets \
+  --datasets video_holmes videomme ovo_bench cg_bench vrbench \
+  --source-split train \
+  --max-per-dataset 10 \
+  --train-ratio 0.7 \
+  --dev-ratio 0.15 \
+  --output-dir dataset_clip_wrapper/output/manifests/batch_seed
+```
+
+This writes:
+
+- `video_only_train_manifest.jsonl`
+- `video_only_dev_manifest.jsonl`
+- `video_only_test_manifest.jsonl`
+- `video_only_manifest_summary.json`
+
+The seed run reports `group_leakage_count=0`. Small capped runs may have uneven
+per-dataset split counts because video-level grouping is stricter than
+question-level random split.
+
+For training-facing artifacts, prefer the compact demo view:
+
+```bash
+python -m dataset_clip_wrapper.export_expert_demos \
+  --final-report dataset_clip_wrapper/output/batch3_p5_final_acceptance_api_report.json \
+  --training-view compact \
+  --max-l1-nodes 80 \
+  --output-jsonl dataset_clip_wrapper/output/expert_demos/batch3_p5_video_only_expert_demos_compact.jsonl \
+  --quality-report-output dataset_clip_wrapper/output/expert_demos/batch3_p5_video_only_expert_demo_quality_compact.json
+```
+
+Compact export keeps support refs, repair refs, semantic/context nodes, and
+trajectory metadata, but omits the full L1 graph. The current compact file is
+about `1.1M` versus `7.1M` for the full debug export.
+
 The current strict one-video-per-dataset API check reports:
 
 - `high_l1_all=true`

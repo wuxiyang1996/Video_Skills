@@ -199,6 +199,7 @@ The first video-only expert-demo exporter is implemented:
 - `dataset_clip_wrapper/expert_demos/export_expert_demos.py`
 - compatibility entrypoint: `python -m dataset_clip_wrapper.export_expert_demos`
 - smoke test: `dataset_clip_wrapper/tests/smoke_test_export_expert_demos.py`
+- compact training view: `--training-view compact --max-l1-nodes 80`
 
 It consumes a final acceptance report and exports direct, repaired, bridge, and
 abstaining trajectories. Visible inputs are sanitized with gold/answer fields
@@ -211,6 +212,8 @@ Current seed artifacts:
 
 - `dataset_clip_wrapper/output/expert_demos/batch3_p5_video_only_expert_demos.jsonl`
 - `dataset_clip_wrapper/output/expert_demos/batch3_p5_video_only_expert_demo_quality.json`
+- `dataset_clip_wrapper/output/expert_demos/batch3_p5_video_only_expert_demos_compact.jsonl`
+- `dataset_clip_wrapper/output/expert_demos/batch3_p5_video_only_expert_demo_quality_compact.json`
 
 Current seed quality:
 
@@ -220,15 +223,34 @@ training_candidate_count=12
 abstain_candidate_count=3
 demo_type_counts={direct_strong: 4, repair_strong: 8, abstain_needs_more_evidence: 3}
 visible_gold_key_leak_count=0
+training_views={compact}
+compact_evidence_node_count=1200
 strict_vlm_perception_all=true
 high_l1_all=true
 heuristic_final_acceptance_count=0
 ```
 
-Interpretation: expert-demo gathering can now start, but this is still a seed
-bank. The next step toward a training protocol is split-aware batch expansion:
-generate larger train/dev/test manifests, run the same strict L1/L2/repair
-pipeline on train split examples, export candidates, and reserve held-out
+The first split-aware manifest builder is also implemented:
+
+- `dataset_clip_wrapper/manifests/build_training_manifests.py`
+- compatibility entrypoint: `python -m dataset_clip_wrapper.build_training_manifests`
+- smoke test: `dataset_clip_wrapper/tests/smoke_test_training_manifests.py`
+
+It groups examples by `dataset:video_id` before assigning train/dev/test, strips
+gold question fields, and records hidden supervision only as non-inference
+bookkeeping. A seed run over five datasets with `--max-per-dataset 10` produced:
+
+```text
+train=27
+dev=2
+test=21
+group_leakage_count=0
+```
+
+Interpretation: expert-demo gathering can now start under split control, but
+this is still a seed bank. The next step toward a training protocol is larger
+train/dev/test expansion: run the same strict L1/L2/repair pipeline on train
+split manifest rows, export compact candidates, and reserve held-out
 datasets/examples for evaluation only.
 
 ## 0.3 Latest L2 Recursive Trace Status

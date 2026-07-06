@@ -17,6 +17,7 @@ Use it when adding new modules or deciding where a change belongs.
 | `dataset_graph_presets.py` | Dataset/regime defaults for clip policy, retrieval, hidden-source policy, and benchmark profiles. |
 | `pipeline.py` | Lightweight canonical-example builder that does not own API/VLM orchestration. |
 | `cli.py` | Simple CLI wrapper around canonical-example export. |
+| `build_training_manifests.py` | Compatibility entrypoint for `manifests/build_training_manifests.py`. |
 | `run_llm_pipeline.py` | Compatibility entrypoint for `runners/run_llm_pipeline.py`. |
 | `run_staged_llm_pipeline.py` | Compatibility entrypoint for `runners/run_staged_llm_pipeline.py`. |
 | `run_repair_protocol.py` | Compatibility entrypoint for `verification/run_repair_protocol.py`. |
@@ -113,6 +114,15 @@ inputs.
 |------|---------|
 | `expert_demos/export_expert_demos.py` | Exports direct, repaired, bridge, and abstain trajectories plus a demo quality report. |
 
+## `manifests/`
+
+Split-aware dataset manifests. This bundle decides which examples may be used
+for demo gathering, prompt/dev tuning, or held-out evaluation.
+
+| Path | Purpose |
+|------|---------|
+| `manifests/build_training_manifests.py` | Builds deterministic train/dev/test manifests grouped by video id to prevent cross-split video leakage. |
+
 ## `runners/`
 
 End-to-end orchestration. Runners may connect adapters, perception, L1, L2, and
@@ -146,6 +156,7 @@ target specific contracts rather than full benchmark accuracy.
 | `tests/smoke_test_skill_executor.py` | Checks atomic skill executor backend behavior. |
 | `tests/smoke_test_fault_repair.py` | Checks local L2 fault repair. |
 | `tests/smoke_test_export_expert_demos.py` | Checks expert-demo export and gold-field boundary. |
+| `tests/smoke_test_training_manifests.py` | Checks split-aware manifest helpers and gold-field stripping. |
 | `tests/smoke_test_graph_plan_validator.py` | Checks graph-composition plan validation. |
 | `tests/smoke_test_long_coarse_fine_profile.py` | Checks long coarse/fine profile defaults. |
 | `tests/smoke_test_short_multi_hop_profile.py` | Checks short multi-hop profile defaults. |
@@ -160,6 +171,7 @@ target specific contracts rather than full benchmark accuracy.
 - New answer verification, evidence repair, or acceptance reporting goes in
   `verification/`.
 - New training-data/demo export code goes in `expert_demos/`.
+- New split or dataset manifest code goes in `manifests/`.
 - New orchestration commands go in `runners/` plus a thin compatibility
   entrypoint at the package root only when an existing public command needs it.
 - New smoke tests go in `tests/` and should be added to `module_bundles.py`.

@@ -68,7 +68,14 @@ def test_export_expert_demo_boundaries() -> None:
                 }
             ],
         }
-        demos, quality = build_export(final_report, include_graph=True, include_abstain=True, min_support_refs=2)
+        demos, quality = build_export(
+            final_report,
+            include_graph=True,
+            include_abstain=True,
+            min_support_refs=2,
+            training_view="compact",
+            max_l1_nodes=8,
+        )
     assert quality["training_candidate_count"] == 1
     assert demos[0]["demo_type"] == "direct_strong"
     visible = json.dumps(demos[0]["visible_demo_inputs"])
@@ -76,7 +83,8 @@ def test_export_expert_demo_boundaries() -> None:
     assert "answer" not in demos[0]["visible_demo_inputs"]["question"]
     assert "gold_eval_only" not in l2
     assert "official_answer" in demos[0]["hidden_supervision"]["sources"]
-    assert "red cup" in json.dumps(demos[0]["l1"])
+    assert demos[0]["l1"]["training_view"] == "compact"
+    assert demos[0]["l1"]["compact_policy"]["max_l1_nodes"] == 8
 
 
 if __name__ == "__main__":
