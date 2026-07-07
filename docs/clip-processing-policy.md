@@ -182,8 +182,10 @@ split experiments to a later phase. Offline short/long QA is the default MVP.
 
 ## 4. Benchmark-Specific Presets
 
-Recommended `clip_policy` and index mode per local dataset under
-`/fs/gamma-projects/vlm-robot/datasets`:
+Recommended `clip_policy` and index mode per local dataset. Current verified
+cluster paths are listed in
+[cluster dataset inventory](cluster-dataset-inventory.md); the default adapter
+root is `/mnt/is_data/xwu/video_skills/data/datasets`.
 
 | Dataset | Length regime | Recommended `clip_policy` | Index mode | Notes |
 |---------|---------------|---------------------------|------------|-------|

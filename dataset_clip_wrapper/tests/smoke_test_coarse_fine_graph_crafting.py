@@ -49,7 +49,7 @@ def _has_no_gaps(nodes: list[dict[str, Any]]) -> bool:
 
 
 def _check_dataset(dataset: str, regime: VideoRegime) -> dict[str, Any]:
-    dataset_root = "/fs/gamma-projects/vlm-robot/datasets"
+    dataset_root = "/mnt/is_data/xwu/video_skills/data/datasets"
     adapter = get_adapter(dataset, Path(dataset_root), split="train")
     item = next(adapter.iter_items(limit=1))
     config = WrapperConfig(

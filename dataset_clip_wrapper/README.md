@@ -16,13 +16,32 @@ Core clue/video reasoning benchmarks:
 Streaming video benchmarks:
 
 - `ovo_bench` — StreamBridge/OVO-Bench-style realtime QA records with `realtime`
-  anchors; local coding uses `datasets/streambridge_tiny/tiny_ovo_bench_50videos.json`.
+  anchors. The adapter supports the old `datasets/streambridge_tiny` smoke
+  layout and the cluster OVO-Bench path at
+  `/net/mlfs01/export/users/dpatel/OVO-Bench` paired with
+  `/mnt/is_data/xwu/video_skills/code/ml-streambridge/assets/ovo_bench.json`.
 - `videomme` — StreamBridge/VideoMME-style whole-video QA records; local coding
-  uses `datasets/streambridge_tiny/tiny_videomme.json`.
+  supports the old `datasets/streambridge_tiny/tiny_videomme.json` smoke layout
+  and the cluster VideoMME media path at
+  `/net/nj-storage02/mnt/tank/datasets/WHB139426-Grounded-VideoLLM/videomme`
+  paired with
+  `/mnt/is_data/xwu/video_skills/code/ml-streambridge/assets/videomme.json`.
 
-The local StreamBridge files are smoke-test data for adapter and pipeline
-validation, not accuracy reporting. Full OVO-Bench or VideoMME can reuse the
-same adapter format by supplying matching annotation/video layouts.
+See [cluster dataset inventory](../docs/cluster-dataset-inventory.md) for the
+verified shared-storage paths, StreamQA-120K training source, and current
+adapter-readiness notes. The local StreamBridge files remain useful for adapter
+and pipeline validation; full OVO-Bench or VideoMME should use the shared media
+paths above.
+
+Cluster-safe defaults:
+
+- Dataset root: `/mnt/is_data/xwu/video_skills/data/datasets`
+- Generated outputs and staged caches:
+  `/mnt/is_data/xwu/video_skills/outputs/atomic_skills_for_video`
+- Optional overrides: `VIDEO_SKILLS_DATASET_ROOT`, `VIDEO_SKILLS_OUTPUT_ROOT`,
+  `VIDEO_SKILLS_PROJECT_ROOT`, and `VIDEO_SKILLS_KEYS_PY`
+- API keys: prefer `OPENROUTER_API_KEY` in the environment or pass `--keys-py`
+  explicitly.
 
 ## Pipeline
 
@@ -509,7 +528,6 @@ python -m dataset_clip_wrapper.run_repair_protocol \
   --output dataset_clip_wrapper/output/repair_long_reroute_report.json \
   --datasets cg_bench vrbench \
   --repair-mode reroute \
-  --keys-py /fs/gamma-projects/vlm-robot/keys.py \
   --clip-schema-model qwen/qwen3.5-9b \
   --verifier-model openai/gpt-oss-120b
 ```
@@ -621,8 +639,7 @@ python -m dataset_clip_wrapper.run_repair_protocol \
   --datasets video_holmes videomme ovo_bench cg_bench vrbench \
   --video-regimes short streaming long \
   --repair-mode reroute \
-  --repair-clip-schema-workers 4 \
-  --keys-py /fs/gamma-projects/vlm-robot/keys.py
+  --repair-clip-schema-workers 4
 ```
 
 The process-worker path keeps per-clip OpenRouter total timeouts effective and
@@ -672,8 +689,7 @@ instead of adding heuristic labels:
 python -m dataset_clip_wrapper.report_evidence_audit \
   --final-report dataset_clip_wrapper/output/batch3_latest_trace_final_acceptance_api_report.json \
   --repair-report dataset_clip_wrapper/output/batch3_latest_trace_repair_api_report.json \
-  --output dataset_clip_wrapper/output/batch3_latest_trace_evidence_audit_api_report.json \
-  --keys-py /fs/gamma-projects/vlm-robot/keys.py
+  --output dataset_clip_wrapper/output/batch3_latest_trace_evidence_audit_api_report.json
 ```
 
 The latest audit reports one retrieval-missed clue, two cases needing
@@ -705,8 +721,7 @@ python -m dataset_clip_wrapper.run_repair_protocol \
   --repair-mode reroute \
   --reroute-topk 8 \
   --reroute-topk-per-query 5 \
-  --force-repair-stages \
-  --keys-py /fs/gamma-projects/vlm-robot/keys.py
+  --force-repair-stages
 ```
 
 Then merge the new targeted report after the prior repair report so updated
@@ -791,7 +806,7 @@ grouped by `dataset:video_id` so the same source video cannot cross splits:
 
 ```bash
 python -m dataset_clip_wrapper.build_training_manifests \
-  --dataset-root /fs/gamma-projects/vlm-robot/datasets \
+  --dataset-root /mnt/is_data/xwu/video_skills/data/datasets \
   --datasets video_holmes videomme ovo_bench cg_bench vrbench \
   --source-split train \
   --max-per-dataset 10 \
@@ -950,7 +965,7 @@ can cover the target once perception reaches the right temporal neighborhood.
 ## CLI
 
 ```bash
-cd /fs/gamma-projects/vlm-robot/video_skills_relaunched
+cd /home/xwu/atomic_skills_for_video
 
 # Video-Holmes short regime
 python -m dataset_clip_wrapper.cli \
@@ -998,7 +1013,7 @@ from dataset_clip_wrapper import WrapperConfig, VideoRegime, BackboneConfig
 from dataset_clip_wrapper.pipeline import iter_canonical_examples
 
 config = WrapperConfig(
-    dataset_root="/fs/gamma-projects/vlm-robot/datasets",
+    dataset_root="/mnt/is_data/xwu/video_skills/data/datasets",
     dataset="video_holmes",
     regime=VideoRegime.SHORT,
     limit=10,

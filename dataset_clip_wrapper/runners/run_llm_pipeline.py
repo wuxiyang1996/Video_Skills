@@ -7,6 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
+from ..cluster_paths import DEFAULT_DATASET_ROOT, DEFAULT_KEYS_PY, output_path
 from ..dataset_graph_presets import apply_profile_defaults, clip_policy_for, regime_for_dataset, retrieval_for
 from .llm_pipeline import iter_llm_enriched_examples
 from ..schemas import (
@@ -32,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         choices=["video_holmes", "cg_bench", "vrbench", "siv_bench", "ovo_bench", "videomme"],
     )
-    parser.add_argument("--dataset-root", default="/fs/gamma-projects/vlm-robot/datasets")
+    parser.add_argument("--dataset-root", default=str(DEFAULT_DATASET_ROOT))
     parser.add_argument("--split", default="train", choices=["train", "test"])
     parser.add_argument("--regime", default=None, choices=["short", "long", "streaming"])
     parser.add_argument(
@@ -43,10 +44,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--mode", default="expert_demo", choices=["expert_demo", "video_only"])
     parser.add_argument("--limit", type=int, default=1)
-    parser.add_argument("--output", default="dataset_clip_wrapper/output/llm_pipeline.jsonl")
-    parser.add_argument("--keys-py", default="/fs/gamma-projects/vlm-robot/keys.py")
+    parser.add_argument("--output", default=str(output_path("llm_pipeline.jsonl")))
+    parser.add_argument("--keys-py", default=DEFAULT_KEYS_PY)
 
     parser.add_argument("--clip-schema-model", default="qwen/qwen3.5-9b")
+    parser.add_argument("--clip-schema-api-base", default=None)
+    parser.add_argument("--clip-schema-api-key-env", default="OPENROUTER_API_KEY")
     parser.add_argument("--clip-schema-backend", default="qwen", choices=["qwen", "video_tools"])
     parser.add_argument("--clip-schema-max-clips", type=int, default=3)
     parser.add_argument("--clip-schema-frames", type=int, default=4)
@@ -56,6 +59,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip-clip-schema", action="store_true")
 
     parser.add_argument("--graph-model", default="openai/gpt-oss-120b")
+    parser.add_argument("--graph-api-base", default=None)
+    parser.add_argument("--graph-api-key-env", default="OPENROUTER_API_KEY")
     parser.add_argument("--graph-max-tokens", type=int, default=1800)
     parser.add_argument("--graph-reasoning-effort", default="minimal")
     parser.add_argument("--graph-timeout-s", type=int, default=180)
@@ -135,6 +140,8 @@ def main(argv: list[str] | None = None) -> int:
         clip_schema=ClipSchemaConfig(
             backend=args.clip_schema_backend,
             model=args.clip_schema_model,
+            api_base=args.clip_schema_api_base or ClipSchemaConfig.api_base,
+            api_key_env=args.clip_schema_api_key_env,
             keys_py_path=args.keys_py,
             max_clips=args.clip_schema_max_clips,
             request_frames=args.clip_schema_frames,
@@ -144,6 +151,8 @@ def main(argv: list[str] | None = None) -> int:
         ),
         graph_composer=GraphComposerConfig(
             model=args.graph_model,
+            api_base=args.graph_api_base or GraphComposerConfig.api_base,
+            api_key_env=args.graph_api_key_env,
             keys_py_path=args.keys_py,
             use_llm_planner=not args.graph_deterministic,
             composer_mode="deterministic" if args.graph_deterministic else args.graph_composer_mode,

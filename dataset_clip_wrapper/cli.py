@@ -7,6 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
+from .cluster_paths import DEFAULT_DATASET_ROOT, DEFAULT_KEYS_PY, output_path
 from .dataset_graph_presets import apply_profile_defaults, clip_policy_for, regime_for_dataset, retrieval_for
 from .pipeline import iter_canonical_examples
 from .schemas import BenchmarkProfile, BackboneConfig, ClipPolicyConfig, ClipRetrievalConfig, RuntimeMode, VideoRegime, WrapperConfig
@@ -21,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--dataset-root",
-        default="/fs/gamma-projects/vlm-robot/datasets",
+        default=str(DEFAULT_DATASET_ROOT),
         help="Root directory containing video benchmark folders",
     )
     parser.add_argument("--split", default="train", choices=["train", "test"])
@@ -39,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--mode", default="expert_demo", choices=["expert_demo", "video_only"])
     parser.add_argument("--limit", type=int, default=1)
-    parser.add_argument("--output", default="dataset_clip_wrapper/output.jsonl")
+    parser.add_argument("--output", default=str(output_path("canonical_examples.jsonl")))
 
     parser.add_argument("--clip-strategy", default=None, help="Override clip policy strategy")
     parser.add_argument("--window-s", type=float, default=None)
@@ -68,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="openai/gpt-5-mini",
         help="OpenRouter model id when --backbone=openrouter",
     )
-    parser.add_argument("--keys-py", default="/fs/gamma-projects/vlm-robot/keys.py")
+    parser.add_argument("--keys-py", default=DEFAULT_KEYS_PY)
     parser.add_argument("--backbone-max-clips", type=int, default=None)
     parser.add_argument("--run-backbone", action="store_true", help="Call backbone to caption clip spans")
     parser.add_argument("--backbone-temperature", type=float, default=0.0)

@@ -26,7 +26,7 @@ from dataset_clip_wrapper.schemas import (
 
 
 def _check_dataset(dataset: str) -> dict[str, object]:
-    dataset_root = "/fs/gamma-projects/vlm-robot/datasets"
+    dataset_root = "/mnt/is_data/xwu/video_skills/data/datasets"
     profile = BenchmarkProfile.SHORT_MULTI_HOP
     regime = regime_for_dataset(dataset, profile)  # type: ignore[arg-type]
     adapter = get_adapter(dataset, Path(dataset_root), split="train")

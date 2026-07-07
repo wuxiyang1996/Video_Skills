@@ -32,7 +32,7 @@ from dataset_clip_wrapper.schemas import (
 
 
 def _check_dataset(dataset: str) -> dict[str, object]:
-    dataset_root = "/fs/gamma-projects/vlm-robot/datasets"
+    dataset_root = "/mnt/is_data/xwu/video_skills/data/datasets"
     profile = BenchmarkProfile.LONG_COARSE_FINE
     regime = regime_for_dataset(dataset, profile)  # type: ignore[arg-type]
     policy = clip_policy_for(dataset, regime)  # type: ignore[arg-type]

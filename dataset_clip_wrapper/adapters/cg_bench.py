@@ -20,6 +20,17 @@ class CGBenchAdapter(DatasetAdapter):
         bench = self.dataset_root / "CG-Bench"
         return bench / ("cgbench_mini.json" if self.use_mini else "cgbench.json")
 
+    def _resolve_video_path(self, bench: Path, video_uid: str, qid: str) -> Path | None:
+        candidates = [
+            bench / "cg_videos" / f"{video_uid}.mp4",
+            bench / f"{video_uid}.mp4",
+            bench / f"{qid}.mp4",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return None
+
     def iter_items(self, limit: int | None = None) -> Iterator[RawDatasetItem]:
         bench = self.dataset_root / "CG-Bench"
         records = json.loads(self._qa_path().read_text(encoding="utf-8"))
@@ -28,7 +39,9 @@ class CGBenchAdapter(DatasetAdapter):
             qid = row["qid"]
             video_uid = row["video_uid"]
             example_id = f"cg_bench:{qid}"
-            video_path = bench / "cg_videos" / f"{video_uid}.mp4"
+            video_path = self._resolve_video_path(bench, str(video_uid), str(qid))
+            if video_path is None:
+                continue
             clue_clip = bench / "cg_videos_clue" / f"{qid}.mp4"
             subtitle_dir = bench / "cg_subtitles" / "cg_subtitles"
             subtitle_path = subtitle_dir / f"{video_uid}.srt"
@@ -96,7 +109,7 @@ class CGBenchAdapter(DatasetAdapter):
                 split=self.split,
                 task_family="long_video_clue_grounded_qa",
                 video_id=video_uid,
-                video_path=video_path if video_path.exists() else None,
+                video_path=video_path,
                 duration_s=float(row.get("duration") or 0.0) or None,
                 question={
                     "question_id": str(qid),

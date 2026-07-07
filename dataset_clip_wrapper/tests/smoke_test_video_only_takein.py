@@ -141,7 +141,7 @@ def _check_dataset(dataset: str, dataset_root: str) -> dict[str, Any]:
 
 
 def main() -> int:
-    dataset_root = "/fs/gamma-projects/vlm-robot/datasets"
+    dataset_root = "/mnt/is_data/xwu/video_skills/data/datasets"
     report = [_check_dataset(dataset, dataset_root) for dataset in DATASET_REGIMES]
     print(json.dumps(report, indent=2))
     return 0 if all(row["passed"] for row in report) else 2

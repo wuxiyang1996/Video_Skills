@@ -19,7 +19,7 @@ from dataset_clip_wrapper.perception.video_tool_backend import VideoToolConfig, 
 
 
 def main() -> int:
-    dataset_root = Path("/fs/gamma-projects/vlm-robot/datasets")
+    dataset_root = Path("/mnt/is_data/xwu/video_skills/data/datasets")
     adapter = get_adapter("video_holmes", dataset_root, split="train")
     item = next(adapter.iter_items(limit=1))
     if not item.video_path or not item.video_path.exists():

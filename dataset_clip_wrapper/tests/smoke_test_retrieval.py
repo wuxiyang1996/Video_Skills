@@ -42,7 +42,7 @@ def main() -> int:
     fine_only = [s for s in perception if s.granularity == "fine"]
 
     cg_config = WrapperConfig(
-        dataset_root="/fs/gamma-projects/vlm-robot/datasets",
+        dataset_root="/mnt/is_data/xwu/video_skills/data/datasets",
         dataset="cg_bench",
         regime=VideoRegime.LONG,
         mode=RuntimeMode.EXPERT_DEMO,
@@ -63,7 +63,7 @@ def main() -> int:
     )
 
     stream_config = WrapperConfig(
-        dataset_root="/fs/gamma-projects/vlm-robot/datasets",
+        dataset_root="/mnt/is_data/xwu/video_skills/data/datasets",
         dataset="cg_bench",
         regime=VideoRegime.STREAMING,
         mode=RuntimeMode.VIDEO_ONLY,

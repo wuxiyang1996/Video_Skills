@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..adapters import get_adapter
+from ..cluster_paths import DEFAULT_DATASET_ROOT
 from ..dataset_graph_presets import regime_for_dataset, task_family_for
 from ..schemas import BenchmarkProfile, DatasetName
 
@@ -191,7 +192,7 @@ def _group_leakage_count(manifests: dict[str, list[dict[str, Any]]]) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Build train/dev/test manifests for video-only expert-demo gathering.")
-    parser.add_argument("--dataset-root", type=Path, default=Path("/fs/gamma-projects/vlm-robot/datasets"))
+    parser.add_argument("--dataset-root", type=Path, default=DEFAULT_DATASET_ROOT)
     parser.add_argument("--datasets", nargs="+", default=list(DATASETS), choices=list(DATASETS))
     parser.add_argument("--source-split", default="train")
     parser.add_argument("--benchmark-profile", default="default", choices=[item.value for item in BenchmarkProfile])

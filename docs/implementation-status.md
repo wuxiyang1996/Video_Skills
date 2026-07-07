@@ -1,10 +1,68 @@
 # Implementation Status
 
-Last updated: 2026-07-05
+Last updated: 2026-07-07
 
 This document tracks what is designed, what is implemented, and how to run the
 current code. It consolidates status from README, atomic skills v1, dataset
 rollout plans, and recent experiments.
+
+## 0.0 Current Local Qwen3.5-9B Runtime
+
+The current streaming-video QA smoke/evaluation path uses a locally deployed
+Qwen3.5-9B model, not OpenRouter and not any hosted API.
+
+Local model checkout:
+
+```text
+/mnt/is_data/xwu/video_skills/data/models/qwen35_9b/Qwen3.5-9B
+```
+
+A6000-compatible Python environment:
+
+```text
+/mnt/is_data/xwu/video_skills/code/vllm_qwen_cu124_venv
+```
+
+Runtime stack:
+
+```text
+Hugging Face Transformers direct inference
+AutoProcessor
+AutoModelForImageTextToText
+torch_dtype=bfloat16
+device_map=auto
+```
+
+Streaming eval runner and sbatch:
+
+```text
+/mnt/is_data/xwu/video_skills/outputs/atomic_skills_for_video/jobs/qwen35_streaming_eval.py
+/mnt/is_data/xwu/video_skills/outputs/atomic_skills_for_video/jobs/qwen35_streaming_eval_a6000.sbatch
+```
+
+The runner supports both input modes:
+
+```text
+INPUT_MODE=frames      # sample image frames from visible wrapper clips
+INPUT_MODE=video_clip  # pass wrapper derived_clips as local video spans to Qwen
+```
+
+The preferred current setting for OVO-Bench and VideoMME-prefix streaming QA is
+`INPUT_MODE=video_clip`. In this mode, the canonical wrapper still creates
+streaming-visible `derived_clips`; the runner selects visible clips and passes
+their local `path`, `video_start`, and `video_end` to Qwen through
+`qwen_vl_utils` and torchvision/PyAV. This keeps the evaluation local and
+schema-aligned while avoiding OpenRouter/API calls.
+
+Verified smoke artifacts:
+
+```text
+/mnt/is_data/xwu/video_skills/outputs/atomic_skills_for_video/qwen35_streaming_eval/290877/
+```
+
+That smoke ran local Qwen3.5-9B on OVO-Bench and VideoMME in direct
+`video_clip` mode with 5 examples per dataset, `VIDEO_FPS=2`, and
+`VIDEO_MAX_FRAMES_PER_CLIP=8`.
 
 ## 0. Packaging / Bundle Cleanup Status
 
@@ -341,7 +399,11 @@ rather than owning detector / tracker / OCR / ASR implementations.
 
 ## 2. Datasets
 
-Local root: `/fs/gamma-projects/vlm-robot/datasets`
+Current dataset paths are split across `/mnt/is_data` and shared `/net/...`
+mounts; the previous `/fs/gamma-projects/vlm-robot/datasets` root was not
+present when checked on 2026-07-06. See
+[cluster dataset inventory](cluster-dataset-inventory.md) for exact verified
+paths.
 
 ### 2.1 Core Targets
 
@@ -350,8 +412,30 @@ Local root: `/fs/gamma-projects/vlm-robot/datasets`
 | Video-Holmes | 1 | Short | Social/causal/temporal reasoning traces |
 | CG-Bench | 1 | Long | Clue grounding and evidence retrieval |
 | VRBench | 1 | Long | Timestamped multi-step reasoning chains |
+| OVO-Bench | 1 | Online / chunked | Backward tracing and memory recall evaluation |
+| VideoMME | 1 | Short/medium/long | Whole-video QA, StreamBridge-compatible annotation format |
 | SIV-Bench | 2 | Very short | Social/intent/emotion with weak spans |
+| StreamQA-120K | Training source | Multi-video streams | Training/subset evaluation once baseline multi-turn RAG is ready |
 | M3-Bench | 2 (deferred) | Long + memory graph | Memory-query rollouts after graph reader |
+
+Current local readiness:
+
+- `Video-Holmes` and `SIV-Bench` are adapter-ready under
+  `/mnt/is_data/xwu/video_skills/data/datasets`.
+- `CG-Bench` and `VRBench` raw data are present under
+  `/mnt/is_data/xwu/video_skills/data/{cg_bench,vrbench}/raw` and are
+  adapter-ready through `/mnt/is_data/xwu/video_skills/data/datasets`.
+- `OVO-Bench` media are available at
+  `/net/mlfs01/export/users/dpatel/OVO-Bench`; the adapter can pair them with
+  `/mnt/is_data/xwu/video_skills/code/ml-streambridge/assets/ovo_bench.json`.
+- `VideoMME` media/subtitles are available at
+  `/net/nj-storage02/mnt/tank/datasets/WHB139426-Grounded-VideoLLM/videomme`;
+  the adapter can pair them with
+  `/mnt/is_data/xwu/video_skills/code/ml-streambridge/assets/videomme.json`.
+- `StreamQA-120K` train JSONL is available at
+  `/net/mlfs01/export/users/dpatel/StreamingVideoLLM/data/streamqa-120k/train.jsonl`
+  with videos under
+  `/net/nj-storage02/mnt/tank/datasets/WHB139426-Grounded-VideoLLM/`.
 
 ### 2.2 Non-Primary / Reference
 
@@ -523,7 +607,7 @@ Runs the original 28 core atomic skills on a synthetic social-contradiction
 example:
 
 ```bash
-cd /fs/gamma-projects/vlm-robot/video_skills_relaunched
+cd /home/xwu/atomic_skills_for_video
 python experiments/smoke_test_atomic_skills.py
 ```
 
@@ -717,8 +801,9 @@ See [two-layer graph schema](../docs/two-layer-graph-schema.md) and
 
 ### 4.6 Expert Demo with LLM Labeling (API key required)
 
-Reads `OPENROUTER_API_KEY` from `/fs/gamma-projects/vlm-robot/keys.py` or from
-the environment. Default model: `openai/gpt-5-mini`.
+Reads `OPENROUTER_API_KEY` from the environment, or from an explicit
+`--keys-py` path. On this cluster, set `VIDEO_SKILLS_KEYS_PY` if you want a
+workspace-specific default key file. Default model: `openai/gpt-5-mini`.
 
 ```bash
 # Toy example

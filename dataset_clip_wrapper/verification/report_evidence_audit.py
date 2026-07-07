@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ..cluster_paths import DEFAULT_KEYS_PY
 from ..perception.openrouter_client import OpenRouterClient, load_openrouter_api_key
 
 
@@ -400,7 +401,7 @@ def main() -> int:
     parser.add_argument("--final-report", type=Path, required=True)
     parser.add_argument("--repair-report", type=Path, required=True)
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--keys-py", type=Path, default=Path("/fs/gamma-projects/vlm-robot/keys.py"))
+    parser.add_argument("--keys-py", type=Path, default=Path(DEFAULT_KEYS_PY) if DEFAULT_KEYS_PY else None)
     parser.add_argument("--audit-model", default="openai/gpt-oss-120b")
     parser.add_argument("--audit-max-tokens", type=int, default=1200)
     parser.add_argument("--audit-timeout-s", type=int, default=120)

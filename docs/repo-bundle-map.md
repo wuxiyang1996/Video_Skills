@@ -18,7 +18,7 @@ implementation code lives in bundle subpackages.
 | L2 repair / verifier | Evidence-gap repair, option evidence selection, verifier gates, final acceptance reports | `dataset_clip_wrapper/verification/` |
 | Pipeline runners | End-to-end orchestration commands | `dataset_clip_wrapper/runners/` |
 | Smoke tests | Small executable boundary checks | `dataset_clip_wrapper/tests/` |
-| Generated artifacts | API outputs, staged caches, repair outputs | `dataset_clip_wrapper/output/` |
+| Generated artifacts | API outputs, staged caches, repair outputs | `/mnt/is_data/xwu/video_skills/outputs/atomic_skills_for_video/` |
 
 ## Atomic Skills
 
@@ -155,8 +155,10 @@ entrypoints for `python -m dataset_clip_wrapper.run_repair_protocol`,
 
 ## Cleanup Rules
 
-- Keep `dataset_clip_wrapper/output/` as generated artifacts. Only
-  `.gitkeep` should be tracked.
+- Keep generated artifacts under
+  `/mnt/is_data/xwu/video_skills/outputs/atomic_skills_for_video/`. The repo's
+  `dataset_clip_wrapper/output/` directory is legacy/scaffold-only; only
+  `.gitkeep` should be tracked there.
 - Keep `__pycache__/`, `*.pyc`, and `.pytest_cache/` out of git.
 - Do not add benchmark-specific answer shortcuts to L1 graph construction or
   atomic skills.

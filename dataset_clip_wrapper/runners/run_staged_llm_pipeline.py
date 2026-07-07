@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..adapters import get_adapter
+from ..cluster_paths import DEFAULT_DATASET_ROOT, DEFAULT_KEYS_PY, output_path
 from ..perception.clip_schema import QwenClipSchemaProducer
 from ..l1_clue_graph.clue_memory import extract_clue_memory_graph
 from ..l1_clue_graph.graph_composer import GraphComposer
@@ -95,7 +96,7 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         choices=["video_holmes", "cg_bench", "vrbench", "siv_bench", "ovo_bench", "videomme"],
     )
-    parser.add_argument("--dataset-root", default="/fs/gamma-projects/vlm-robot/datasets")
+    parser.add_argument("--dataset-root", default=str(DEFAULT_DATASET_ROOT))
     parser.add_argument("--split", default="train", choices=["train", "test"])
     parser.add_argument("--regime", default=None, choices=["short", "long", "streaming"])
     parser.add_argument(
@@ -106,9 +107,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--mode", default="video_only", choices=["expert_demo", "video_only"])
     parser.add_argument("--limit", type=int, default=1)
-    parser.add_argument("--output", default="dataset_clip_wrapper/output/staged_llm_pipeline.jsonl")
-    parser.add_argument("--stage-dir", default="dataset_clip_wrapper/output/staged")
-    parser.add_argument("--keys-py", default="/fs/gamma-projects/vlm-robot/keys.py")
+    parser.add_argument("--output", default=str(output_path("staged_llm_pipeline.jsonl")))
+    parser.add_argument("--stage-dir", default=str(output_path("staged")))
+    parser.add_argument("--keys-py", default=DEFAULT_KEYS_PY)
     parser.add_argument("--force", action="store_true", help="Ignore cached stage files and rebuild.")
     parser.add_argument(
         "--rebuild-from-stages",

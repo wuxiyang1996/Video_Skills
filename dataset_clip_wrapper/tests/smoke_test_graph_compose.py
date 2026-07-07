@@ -20,7 +20,7 @@ from dataset_clip_wrapper.schemas import GraphComposerConfig, RuntimeMode, Video
 
 def main() -> int:
     config = WrapperConfig(
-        dataset_root="/fs/gamma-projects/vlm-robot/datasets",
+        dataset_root="/mnt/is_data/xwu/video_skills/data/datasets",
         dataset="video_holmes",
         regime=VideoRegime.SHORT,
         mode=RuntimeMode.EXPERT_DEMO,

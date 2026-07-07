@@ -15,6 +15,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from dataset_clip_wrapper.adapters import get_adapter
+from dataset_clip_wrapper.cluster_paths import DEFAULT_DATASET_ROOT, DEFAULT_KEYS_PY, output_path
 from dataset_clip_wrapper.runners.llm_pipeline import build_llm_enriched_example
 from dataset_clip_wrapper.schemas import (
     BackboneConfig,
@@ -136,11 +137,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Measure VRBench video-only graph coverage against hidden reasoning_process timestamps."
     )
-    parser.add_argument("--dataset-root", default="/fs/gamma-projects/vlm-robot/datasets")
+    parser.add_argument("--dataset-root", default=str(DEFAULT_DATASET_ROOT))
     parser.add_argument("--split", default="train")
     parser.add_argument("--limit", type=int, default=3)
-    parser.add_argument("--output", default="dataset_clip_wrapper/output/vrbench_video_only_graph_quality.json")
-    parser.add_argument("--keys-py", default="/fs/gamma-projects/vlm-robot/keys.py")
+    parser.add_argument("--output", default=str(output_path("vrbench_video_only_graph_quality.json")))
+    parser.add_argument("--keys-py", default=DEFAULT_KEYS_PY)
     parser.add_argument("--clip-schema-backend", default="video_tools", choices=["video_tools", "qwen"])
     parser.add_argument("--clip-schema-max-clips", type=int, default=8)
     parser.add_argument("--clip-schema-frames", type=int, default=4)

@@ -150,7 +150,7 @@ class OpenRouterClient:
             payload["max_tokens"] = self.max_tokens
         if self.reasoning is not None:
             payload["reasoning"] = self.reasoning
-        if response_format is not None:
+        if response_format is not None and os.environ.get("VIDEO_SKILLS_DISABLE_RESPONSE_FORMAT") != "1":
             payload["response_format"] = response_format
         self.last_response_metadata = self._base_request_metadata(messages)
         try:

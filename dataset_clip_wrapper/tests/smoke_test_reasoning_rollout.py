@@ -38,7 +38,7 @@ EXPECTED_SKILLS = {
 
 
 def main() -> int:
-    dataset_root = "/fs/gamma-projects/vlm-robot/datasets"
+    dataset_root = "/mnt/is_data/xwu/video_skills/data/datasets"
     cases = [
         ("video_holmes", VideoRegime.SHORT),
         ("cg_bench", VideoRegime.LONG),

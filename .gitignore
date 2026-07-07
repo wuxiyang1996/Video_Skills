@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+keys.py
 
 # Experiment run artifacts (regenerate with experiments/*.py)
 experiments/*_output.json

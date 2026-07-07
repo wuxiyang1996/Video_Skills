@@ -99,6 +99,28 @@ or interpersonal intent that is not visible without audio/ASR. In this setting,
 L2 may form a commonsense repair hypothesis, but it must not commit an answer
 unless concrete video evidence verifies it.
 
+## Current Local Model Runtime
+
+Current streaming-video QA smoke/evaluation runs use a locally deployed
+Qwen3.5-9B model, not OpenRouter or any hosted API. The local model checkout is:
+
+```text
+/mnt/is_data/xwu/video_skills/data/models/qwen35_9b/Qwen3.5-9B
+```
+
+The A6000-compatible runtime environment is:
+
+```text
+/mnt/is_data/xwu/video_skills/code/vllm_qwen_cu124_venv
+```
+
+The current runner uses Hugging Face Transformers direct inference with
+`AutoProcessor` and `AutoModelForImageTextToText`. For streaming OVO-Bench and
+VideoMME-prefix QA, the runner supports direct wrapper clip input via
+`INPUT_MODE=video_clip`, where Qwen reads the selected `derived_clips` spans as
+local video segments through `qwen_vl_utils` / torchvision rather than through a
+remote model API.
+
 ## Documents
 
 - [Problem formulation, English](atomic-skill-decomposition-and-assembly/problem-formulation-en.html)
@@ -111,6 +133,7 @@ unless concrete video evidence verifies it.
 - [MDP formulation](docs/mdp-formulation.md) — atomic skill invocations as graph-state actions
 - [Implementation status](docs/implementation-status.md) — runnable code, datasets, gaps
 - [Dataset clip wrapper](dataset_clip_wrapper/README.md) — core + streaming benchmark canonical clip exporter
+- [Baseline video QA memory](baseline/README.md) — schema-aligned clip records and FAISS retrieval baseline
 - [Canonical example JSON schema](schemas/canonical_video_example.schema.json)
 - [Skill graph rollout JSON schema](schemas/skill_graph_rollout.schema.json)
 
@@ -189,9 +212,11 @@ Current branch state:
 - **Experiments**: smoke test, toy two-layer graph labeling, Video-Holmes expert-demo pipeline in `experiments/`
 - **Not yet built**: raw VLM perception, embedding-based coarse retrieval (lexical gate implemented), controller training
 
-Local datasets live under `/fs/gamma-projects/vlm-robot/datasets`. See
-[implementation status](docs/implementation-status.md) and
-[two-layer graph schema](docs/two-layer-graph-schema.md) for commands and layer contracts.
+Current cluster dataset locations are split across `/mnt/is_data` and shared
+`/net/...` mounts. See [cluster dataset inventory](docs/cluster-dataset-inventory.md),
+[implementation status](docs/implementation-status.md), and
+[two-layer graph schema](docs/two-layer-graph-schema.md) for commands and layer
+contracts.
 
 Quick smoke test:
 
