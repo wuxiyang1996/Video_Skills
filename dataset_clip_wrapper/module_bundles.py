@@ -130,6 +130,20 @@ MODULE_BUNDLES: tuple[ModuleBundle, ...] = (
         ),
     ),
     ModuleBundle(
+        name="motif_management",
+        purpose="Mine, store, retrieve, and evaluate optional L1/L2 graph motif priors.",
+        modules=(
+            "motifs.__init__",
+            "motifs.bank",
+            "motifs.lifecycle",
+            "motifs.mine_existing_l1_l2",
+            "motifs.miner",
+            "motifs.retrieval",
+            "motifs.schemas",
+            "motifs.transfer",
+        ),
+    ),
+    ModuleBundle(
         name="pipeline_runners",
         purpose="End-to-end runners that connect adapters, perception, L1 graph building, L2 rollout, and reports.",
         modules=(

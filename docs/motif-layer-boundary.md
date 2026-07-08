@@ -85,32 +85,36 @@ no hidden supervision appears in runtime-visible fields
 Rejected rollouts may contribute negative statistics, but should not create
 positive motif templates.
 
-## Recommended New Code Location
+## Code Location
 
-When implementation starts, add a small bundle under:
+The first implementation lives under:
 
 ```text
 dataset_clip_wrapper/motifs/
   __init__.py
-  canonicalize.py
+  bank.py
+  lifecycle.py
+  mine_existing_l1_l2.py
   miner.py
-  registry.py
-  promotion.py
-  expansion.py
+  retrieval.py
+  schemas.py
+  transfer.py
 ```
 
 Expected ownership:
 
 | Module | Responsibility |
 |--------|----------------|
-| `canonicalize.py` | Replace surface entities, timestamps, option labels, and dataset-specific terms with abstract roles. |
-| `miner.py` | Extract path/DAG candidates from accepted L2 graphs. |
-| `registry.py` | Store support, failure, dataset, task-family, and example references. |
-| `promotion.py` | Apply support, verifier, confusion, leakage, and expansion gates. |
-| `expansion.py` | Instantiate promoted motifs on current evidence and expand them into atomic skill nodes. |
+| `schemas.py` | Define motif records, evidence refs, lifecycle status, and transfer reports. |
+| `bank.py` | Store, load, summarize, and query motif records. |
+| `lifecycle.py` | Move motifs through draft, candidate, verified, active, shadow, rejected, and retired states. |
+| `retrieval.py` | Select visible motif priors by trigger signature. |
+| `transfer.py` | Compare baseline and motif-assisted runs on held-out examples. |
+| `miner.py` | Extract first-pass candidate motifs from accepted L1/L2 rollout graphs. |
+| `mine_existing_l1_l2.py` | CLI for mining motif candidates from saved JSON/JSONL outputs. |
 
-Update `dataset_clip_wrapper/module_bundles.py` only when this package contains
-real implementation modules.
+Future extensions should add canonicalization, promotion-gate, and expansion
+modules once candidate motifs need to become runtime planning priors.
 
 ## Relationship To skill_agents/
 

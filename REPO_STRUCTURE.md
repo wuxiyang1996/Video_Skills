@@ -28,11 +28,11 @@ verification, repair, demo export, and controller-training data.
 | `docs/` | Active docs | L1/L2 graph schema, implementation status, MDP framing, repo bundle map, and cleanup notes. |
 | `tests/video_skills/` | Active tests | Runtime contract/harness/memory/verifier tests. |
 | `dataset_clip_wrapper/tests/` | Active tests | L1/L2 wrapper, graph, repair, manifest, and training-export smoke tests. |
+| `dataset_clip_wrapper/motifs/` | Active optional layer | Motif bank, lifecycle, retrieval, transfer checks, and deterministic L1/L2 motif mining over accepted rollout graphs. |
 
-Future composed-motif work should live under `dataset_clip_wrapper/motifs/`
-once implementation starts. Motifs are optional verified subgraph priors that
-expand into frozen atomic skills; they are not new primitive tools and should
-not depend on `skill_agents/`.
+Composed motifs are optional verified subgraph priors that expand into frozen
+atomic skills; they are not new primitive tools and should not depend on
+`skill_agents/`.
 
 ## Active Commands
 
@@ -101,8 +101,8 @@ default.
 - New expert-demo export code goes in `dataset_clip_wrapper/expert_demos/`.
 - New controller-training adapters go in `dataset_clip_wrapper/training/`.
 - New motif mining, promotion, registry, and expansion code goes in
-  `dataset_clip_wrapper/motifs/` after the first implementation starts. Motifs
-  must expand into existing atomic skill graph fragments before execution.
+  `dataset_clip_wrapper/motifs/`. Motifs must expand into existing atomic skill
+  graph fragments before execution.
 - New runtime contracts, harness, memory, retriever, or verifier code goes in
   `video_skills/`.
 - New trainer code should either extend `trainer/` or add a clearly named
@@ -117,8 +117,8 @@ default.
 
 ## Next Cleanup Steps
 
-1. Add the first `dataset_clip_wrapper/motifs/` implementation only after the
-   accepted rollout graph format is stable enough to mine.
+1. Extend `dataset_clip_wrapper/motifs/` from deterministic mining into
+   canonicalization, expansion validation, and promotion gates.
 2. Add a real L1/L2 controller SFT trainer entrypoint under `trainer/`.
 3. Convert current compact demo bank into `ReasoningTrace` and SFT chat JSONL
    using `dataset_clip_wrapper.export_reasoning_traces`.
