@@ -199,3 +199,53 @@ inputs:
     "video_end": clip["end_s"],
 }
 ```
+
+## Iterative RAG Memory Query Baseline
+
+`iterative_rag_memory_query.py` adds a text-memory RAG baseline on top of the
+same FAISS clip store. For each canonical QA example, it repeatedly queries the
+index, filters retrieved clips to the same example/video and visible memory,
+deduplicates evidence, then answers from retrieved memory text only.
+
+Smoke test with the hashing-text FAISS index:
+
+```bash
+cd /home/xwu/atomic_skills_for_video
+
+/mnt/is_data/xwu/video_skills/code/vllm_qwen_cu124_venv/bin/python \
+  -m baseline.iterative_rag_memory_query \
+  --index-dir /mnt/is_data/xwu/video_skills/outputs/atomic_skills_for_video/baseline_faiss/ovo_videomme_smoke \
+  --output-dir /mnt/is_data/xwu/video_skills/outputs/atomic_skills_for_video/iterative_rag_memory_query/smoke \
+  --datasets ovo_bench \
+  --limit-per-dataset 1 \
+  --iterations 2 \
+  --per-iteration-top-k 2 \
+  --final-top-k 3 \
+  --answer-backend heuristic
+```
+
+Full local-Qwen text-memory answer generation:
+
+```bash
+cd /home/xwu/atomic_skills_for_video
+
+/mnt/is_data/xwu/video_skills/code/vllm_qwen_cu124_venv/bin/python \
+  -m baseline.iterative_rag_memory_query \
+  --index-dir /mnt/is_data/xwu/video_skills/outputs/atomic_skills_for_video/baseline_faiss/ovo_videomme_clip_5x5_4frames_scan \
+  --output-dir /mnt/is_data/xwu/video_skills/outputs/atomic_skills_for_video/iterative_rag_memory_query/qwen_text_smoke \
+  --datasets ovo_bench videomme \
+  --limit-per-dataset 5 \
+  --iterations 3 \
+  --per-iteration-top-k 4 \
+  --final-top-k 8 \
+  --answer-backend local_qwen \
+  --model /mnt/is_data/xwu/video_skills/data/models/qwen35_9b/Qwen3.5-9B
+```
+
+Outputs:
+
+```text
+run_config.json        # index/model/retrieval configuration
+records.jsonl          # per-example retrieval trace, memory evidence, prediction
+metrics_summary.json   # accuracy, parse rate, failure count, latency
+```
