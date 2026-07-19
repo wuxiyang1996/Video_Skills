@@ -53,6 +53,7 @@ _ALLOWED_EDGE_TYPES = ", ".join(sorted(ALLOWED_MEMORY_EDGES))
 VLM_L1_EDGE_TYPES = {
     "temporal_next",
     "entity_mention",
+    "state_of",
     "derived_from",
     "same_entity",
     "same_object",
@@ -219,6 +220,7 @@ Return JSON only:
     {
       "node_id": "optional local id",
       "node_type": "observation|entity_mention|event|state|dialogue_span|clue",
+      "entity_ref": "required clip-schema mention_id when node_type is entity_mention",
       "text": "short grounded clue for the target clip",
       "modality": "visual|audio|subtitle|ocr|mixed",
       "confidence": 0.0
@@ -242,6 +244,8 @@ Rules:
 1. Use only target_clip and neighbor_clips evidence.
 2. Create target_nodes only for the target clip, not for neighbors.
 3. neighbor_edges may connect the target clip to neighbor clips, or target nodes to target nodes.
+   For same_entity, same_object, or reappears, src_node_id and dst_node_id are
+   required and must be entity mention IDs supplied in target_clip/neighbor_clips.
 4. Prefer sparse, reasoning-useful output: at most 4 target_nodes and 4 neighbor_edges.
 5. Cross-clip edges must be model-judged from evidence, not string matching.
 6. If the relationship is weak or generic, omit the edge.
@@ -269,6 +273,7 @@ def build_vlm_l1_response_schema() -> dict[str, Any]:
                             "properties": {
                                 "node_id": {"type": "string"},
                                 "node_type": {"type": "string"},
+                                "entity_ref": {"type": "string"},
                                 "clip_id": {"type": "string"},
                                 "time_span": {"type": "object", "additionalProperties": True},
                                 "text": {"type": "string"},
@@ -320,6 +325,7 @@ def build_neighbor_vlm_l1_response_schema() -> dict[str, Any]:
                             "properties": {
                                 "node_id": {"type": "string"},
                                 "node_type": {"type": "string"},
+                                "entity_ref": {"type": "string"},
                                 "text": {"type": "string"},
                                 "modality": {"type": "string"},
                                 "confidence": {"type": "number"},
@@ -377,6 +383,27 @@ class GraphComposer:
         return f"{prefix}:{hashlib.sha1(payload.encode('utf-8')).hexdigest()[:10]}"
 
     @staticmethod
+    def _resolve_local_endpoint(
+        local_node_id: Any,
+        *,
+        clip_id: str,
+        local_id_map: dict[str, str],
+        primary_node_by_clip: dict[str, str],
+    ) -> tuple[str | None, str]:
+        """Resolve a composer-local endpoint without silent primary-node fallback."""
+
+        local_id = str(local_node_id or "").strip()
+        if local_id:
+            mapped = local_id_map.get(f"{clip_id}:{local_id}")
+            if mapped is None:
+                return None, "unknown_explicit_local_node"
+            return mapped, "local_node_id"
+        primary = primary_node_by_clip.get(clip_id)
+        if primary is None:
+            return None, "missing_endpoint"
+        return primary, "clip_primary_unspecified_local"
+
+    @staticmethod
     def _clip_digest(schema: dict[str, Any]) -> dict[str, Any]:
         def _strings(items: Any, *, key: str | None = None, limit: int = 5) -> list[str]:
             rows: list[str] = []
@@ -405,6 +432,18 @@ class GraphComposer:
             if text:
                 objects.append(text[:160])
 
+        entities = []
+        for mention in schema.get("entity_mentions") or []:
+            if not isinstance(mention, dict) or not mention.get("mention_id"):
+                continue
+            entities.append(
+                {
+                    "mention_id": mention.get("mention_id"),
+                    "surface_form": mention.get("surface_form"),
+                    "entity_type": mention.get("entity_type"),
+                    "attributes": mention.get("attributes") or {},
+                }
+            )
         return {
             "clip_id": schema.get("clip_id"),
             "time_span": schema.get("time_span"),
@@ -412,7 +451,7 @@ class GraphComposer:
             "scene": str(schema.get("scene_description") or "")[:220],
             "facts": _strings(schema.get("observable_facts"), key="text", limit=6),
             "objects": objects[:6],
-            "entities": _strings(schema.get("entity_mentions"), key="surface_form", limit=6),
+            "entities": entities[:8],
             "events": _strings(schema.get("events"), key="description", limit=4),
             "visual_social_cues": _strings(schema.get("visual_social_cues"), key="description", limit=4),
             "dialogue": _strings(schema.get("dialogue_spans"), key="text", limit=4),
@@ -429,7 +468,9 @@ class GraphComposer:
             parts.append(scene)
         for key in ("facts", "objects", "entities", "events", "visual_social_cues", "dialogue", "searchable_phrases"):
             for value in digest.get(key) or []:
-                text = str(value).strip()
+                text = str(
+                    value.get("surface_form") if isinstance(value, dict) else value
+                ).strip()
                 if text and text not in parts:
                     parts.append(text)
         return " | ".join(parts)[:500]
@@ -700,7 +741,15 @@ class GraphComposer:
         trace: list[dict[str, Any]] = []
         local_id_map: dict[str, str] = {}
         primary_node_by_clip: dict[str, str] = {}
+        semantic_nodes_by_clip: dict[str, list[tuple[str, str]]] = {}
         pending_edges: list[tuple[dict[str, Any], str]] = []
+        self._seed_schema_entity_nodes(
+            graph,
+            visible_schemas=visible_schemas,
+            mode=mode,
+            local_id_map=local_id_map,
+            semantic_nodes_by_clip=semantic_nodes_by_clip,
+        )
 
         indexed_jobs: list[tuple[int, dict[str, Any], list[dict[str, Any]]]] = []
         for index, schema in enumerate(visible_schemas):
@@ -872,13 +921,48 @@ class GraphComposer:
                 raw_node_type = str(raw_node.get("node_type") or "observation").strip() or "observation"
                 node_type = raw_node_type if raw_node_type in VLM_L1_NODE_TYPES else "observation"
                 local_id = str(raw_node.get("node_id") or f"target_node_{node_index}").strip()
+                if node_type == "entity_mention":
+                    entity_ref = str(raw_node.get("entity_ref") or "").strip()
+                    seeded = local_id_map.get(f"{target_clip_id}:{entity_ref}")
+                    if not entity_ref or seeded is None:
+                        trace.append(
+                            {
+                                "skill_id": "neighbor_vlm_l1_skip_node",
+                                "ok": True,
+                                "reason": "ungrounded_entity_reference",
+                                "clip_id": target_clip_id,
+                                "local_node_id": local_id,
+                                "entity_ref": entity_ref,
+                            }
+                        )
+                        continue
+                    local_id_map[f"{target_clip_id}:{local_id}"] = seeded
+                    target_node_ids.append(seeded)
+                    continue
+                local_key = f"{target_clip_id}:{local_id}"
+                if local_key in local_id_map:
+                    trace.append(
+                        {
+                            "skill_id": "neighbor_vlm_l1_skip_node",
+                            "ok": True,
+                            "reason": "duplicate_local_node_id",
+                            "clip_id": target_clip_id,
+                            "local_node_id": local_id,
+                        }
+                    )
+                    continue
                 node_id = self._stable_id("evidence." + node_type, target_clip_id, schema.get("time_span"), text, node_index)
-                local_id_map[f"{target_clip_id}:{local_id}"] = node_id
+                local_id_map[local_key] = node_id
                 target_node_ids.append(node_id)
+                semantic_nodes_by_clip.setdefault(target_clip_id, []).append(
+                    (node_id, node_type)
+                )
                 graph.setdefault("nodes", []).append(
                     {
                         **raw_node,
                         "node_id": node_id,
+                        "local_node_id": local_id,
+                        "local_id_clip_id": target_clip_id,
                         "node_type": node_type,
                         "clip_id": target_clip_id,
                         "time_span": schema.get("time_span"),
@@ -915,7 +999,18 @@ class GraphComposer:
                 if isinstance(edge, dict):
                     pending_edges.append((edge, target_clip_id))
 
+        self._attach_neighbor_vlm_reference_edges(
+            graph,
+            semantic_nodes_by_clip=semantic_nodes_by_clip,
+            mode=mode,
+            trace=trace,
+        )
         valid_node_ids = {node.get("node_id") for node in graph.get("nodes", [])}
+        node_type_by_id = {
+            str(node.get("node_id")): str(node.get("node_type") or "")
+            for node in graph.get("nodes", [])
+            if isinstance(node, dict) and node.get("node_id")
+        }
         for edge_index, (raw_edge, target_clip_id) in enumerate(pending_edges):
             src_clip = str(raw_edge.get("src_clip_id") or target_clip_id)
             dst_clip = str(raw_edge.get("dst_clip_id") or target_clip_id)
@@ -937,22 +1032,71 @@ class GraphComposer:
                                 "clip_id": endpoint_clip,
                             }
                         )
-            src = local_id_map.get(f"{src_clip}:{raw_edge.get('src_node_id')}", primary_node_by_clip.get(src_clip))
-            dst = local_id_map.get(f"{dst_clip}:{raw_edge.get('dst_node_id')}", primary_node_by_clip.get(dst_clip))
-            if src not in valid_node_ids or dst not in valid_node_ids or src == dst:
+            src, src_reason = self._resolve_local_endpoint(
+                raw_edge.get("src_node_id"),
+                clip_id=src_clip,
+                local_id_map=local_id_map,
+                primary_node_by_clip=primary_node_by_clip,
+            )
+            dst, dst_reason = self._resolve_local_endpoint(
+                raw_edge.get("dst_node_id"),
+                clip_id=dst_clip,
+                local_id_map=local_id_map,
+                primary_node_by_clip=primary_node_by_clip,
+            )
+            if (
+                src not in valid_node_ids
+                or dst not in valid_node_ids
+                or src == dst
+                or src_reason == "unknown_explicit_local_node"
+                or dst_reason == "unknown_explicit_local_node"
+            ):
                 trace.append(
                     {
                         "skill_id": "neighbor_vlm_l1_skip_edge",
                         "ok": True,
-                        "reason": "missing_endpoint",
+                        "reason": (
+                            src_reason
+                            if src_reason == "unknown_explicit_local_node"
+                            else dst_reason
+                            if dst_reason == "unknown_explicit_local_node"
+                            else "missing_endpoint"
+                        ),
                         "src_clip_id": src_clip,
                         "dst_clip_id": dst_clip,
+                        "src_node_id": raw_edge.get("src_node_id"),
+                        "dst_node_id": raw_edge.get("dst_node_id"),
                     }
                 )
                 continue
             edge_type = str(raw_edge.get("edge_type") or "supports_observation").strip()
             if edge_type not in VLM_L1_EDGE_TYPES:
-                edge_type = "supports_observation"
+                trace.append(
+                    {
+                        "skill_id": "neighbor_vlm_l1_skip_edge",
+                        "ok": True,
+                        "reason": "unknown_edge_type",
+                        "edge_type": edge_type,
+                        "src_clip_id": src_clip,
+                        "dst_clip_id": dst_clip,
+                    }
+                )
+                continue
+            if edge_type in {"same_entity", "same_object", "reappears"} and (
+                node_type_by_id.get(str(src)) != "entity_mention"
+                or node_type_by_id.get(str(dst)) != "entity_mention"
+            ):
+                trace.append(
+                    {
+                        "skill_id": "neighbor_vlm_l1_skip_edge",
+                        "ok": True,
+                        "reason": "identity_endpoint_not_entity_mention",
+                        "edge_type": edge_type,
+                        "src": src,
+                        "dst": dst,
+                    }
+                )
+                continue
             edge_id = self._stable_id("edge", src, dst, edge_type, raw_edge.get("text"), edge_index)
             graph.setdefault("edges", []).append(
                 {
@@ -983,6 +1127,150 @@ class GraphComposer:
             "notes": "local target-clip graph construction with neighbor semantic edges",
         }
         return graph, trace, plan_payload
+
+    def _seed_schema_entity_nodes(
+        self,
+        graph: dict[str, Any],
+        *,
+        visible_schemas: list[dict[str, Any]],
+        mode: RuntimeMode,
+        local_id_map: dict[str, str],
+        semantic_nodes_by_clip: dict[str, list[tuple[str, str]]],
+    ) -> None:
+        """Materialize grounded clip-schema mentions before relation composition."""
+
+        existing = {
+            str(node.get("node_id"))
+            for node in graph.get("nodes") or []
+            if isinstance(node, dict) and node.get("node_id")
+        }
+        for schema in visible_schemas:
+            clip_id = str(schema.get("clip_id") or "")
+            for mention in schema.get("entity_mentions") or []:
+                if not isinstance(mention, dict):
+                    continue
+                mention_id = str(mention.get("mention_id") or "").strip()
+                surface = str(mention.get("surface_form") or "").strip()
+                entity_type = str(mention.get("entity_type") or "").strip().casefold()
+                if not clip_id or not mention_id or not surface or not entity_type:
+                    continue
+                node_id = self._stable_id("evidence.entity_mention", clip_id, mention_id)
+                local_id_map[f"{clip_id}:{mention_id}"] = node_id
+                members = semantic_nodes_by_clip.setdefault(clip_id, [])
+                if (node_id, "entity_mention") not in members:
+                    members.append((node_id, "entity_mention"))
+                if node_id in existing:
+                    continue
+                graph.setdefault("nodes", []).append(
+                    {
+                        "node_id": node_id,
+                        "local_node_id": mention_id,
+                        "local_id_clip_id": clip_id,
+                        "mention_id": mention_id,
+                        "node_type": "entity_mention",
+                        "entity_type": entity_type,
+                        "attributes": dict(mention.get("attributes") or {}),
+                        "clip_id": clip_id,
+                        "time_span": mention.get("time_span") or schema.get("time_span"),
+                        "text": surface,
+                        "modality": "visual",
+                        "confidence": 1.0,
+                        "evidence_refs": list(mention.get("evidence_refs") or [clip_id]),
+                        "source_type": "qwen_clip_schema_entity_mention",
+                        "producer": "neighbor_vlm_l1_entity_structuralizer",
+                        "visibility": {"hidden_supervision": False, "mode": mode.value},
+                    }
+                )
+                existing.add(node_id)
+
+    def _attach_neighbor_vlm_reference_edges(
+        self,
+        graph: dict[str, Any],
+        *,
+        semantic_nodes_by_clip: dict[str, list[tuple[str, str]]],
+        mode: RuntimeMode,
+        trace: list[dict[str, Any]],
+    ) -> None:
+        """Add deterministic local references omitted by the neighbor model."""
+
+        existing = {
+            (
+                str(edge.get("src") or ""),
+                str(edge.get("dst") or ""),
+                str(edge.get("edge_type") or ""),
+            )
+            for edge in graph.get("edges") or []
+            if isinstance(edge, dict)
+        }
+        for clip_id, members in semantic_nodes_by_clip.items():
+            observations = [
+                node_id for node_id, node_type in members if node_type == "observation"
+            ]
+            entities = [
+                node_id for node_id, node_type in members if node_type == "entity_mention"
+            ]
+            primary_observation = observations[0] if observations else None
+            links: list[tuple[str, str, str]] = []
+            if primary_observation:
+                links.extend(
+                    (primary_observation, entity_id, "entity_mention")
+                    for entity_id in entities
+                )
+                links.extend(
+                    (node_id, primary_observation, "derived_from")
+                    for node_id, node_type in members
+                    if node_type in {"event", "state", "dialogue_span", "clue"}
+                    and node_id != primary_observation
+                )
+            if len(entities) == 1:
+                entity_id = entities[0]
+                links.extend(
+                    (node_id, entity_id, "entity_mention")
+                    for node_id, node_type in members
+                    if node_type == "event"
+                )
+                links.extend(
+                    (node_id, entity_id, "state_of")
+                    for node_id, node_type in members
+                    if node_type == "state"
+                )
+            for link_index, (src, dst, edge_type) in enumerate(links):
+                key = (src, dst, edge_type)
+                if src == dst or key in existing:
+                    continue
+                edge_id = self._stable_id(
+                    "edge",
+                    src,
+                    dst,
+                    edge_type,
+                    clip_id,
+                    link_index,
+                )
+                graph.setdefault("edges", []).append(
+                    {
+                        "edge_id": edge_id,
+                        "src": src,
+                        "dst": dst,
+                        "edge_type": edge_type,
+                        "text": f"Deterministic {edge_type} reference within {clip_id}.",
+                        "confidence": 1.0,
+                        "evidence_refs": [src, dst],
+                        "producer": "neighbor_vlm_l1_reference_structuralizer",
+                        "visibility": {
+                            "hidden_supervision": False,
+                            "mode": mode.value,
+                        },
+                    }
+                )
+                existing.add(key)
+                trace.append(
+                    {
+                        "skill_id": "neighbor_vlm_l1_attach_reference",
+                        "ok": True,
+                        "edge_id": edge_id,
+                        "edge_type": edge_type,
+                    }
+                )
 
     def _add_short_video_recurrence_clues(
         self,
@@ -1155,7 +1443,17 @@ class GraphComposer:
                 continue
             edge_type = str(raw_edge.get("edge_type") or "supports_observation").strip()
             if edge_type not in VLM_L1_EDGE_TYPES:
-                edge_type = "supports_observation"
+                trace.append(
+                    {
+                        "skill_id": "vlm_l1_skip_edge",
+                        "ok": True,
+                        "reason": "unknown_edge_type",
+                        "edge_type": edge_type,
+                        "src": src,
+                        "dst": dst,
+                    }
+                )
+                continue
             refs = [
                 id_map.get(str(ref), str(ref))
                 for ref in raw_edge.get("evidence_refs") or [src, dst]
