@@ -24,7 +24,18 @@ Return JSON only with this shape:
     {"speaker": "name or unknown", "text": "utterance", "time_span": {"start_s": number, "end_s": number}}
   ],
   "entity_mentions": [
-    {"surface_form": "name or object", "entity_type": "person|object|place|other"}
+    {
+      "surface_form": "name or object",
+      "entity_type": "person|object|place|other",
+      "attributes": {
+        "color": "visible color or empty",
+        "clothing": "visible clothing or empty",
+        "material": "visible material or empty",
+        "shape": "visible shape or empty",
+        "size": "visible relative size or empty",
+        "role": "visible role or empty"
+      }
+    }
   ],
   "salient_objects": [
     {"surface_form": "object name", "attributes": ["color/material/shape"], "searchable_phrases": ["phrase"]}
@@ -66,7 +77,7 @@ COMPACT_CLIP_SCHEMA_PROMPT = """Return compact JSON only for one video clip:
   "scene_description": "one short grounded sentence",
   "observable_facts": [{"text": "short visible/spoken fact", "modality": "visual|audio|subtitle|mixed"}],
   "dialogue_spans": [],
-  "entity_mentions": [{"surface_form": "object/person/place", "entity_type": "person|object|place|other"}],
+  "entity_mentions": [{"surface_form": "object/person/place", "entity_type": "person|object|place|other", "attributes": {}}],
   "salient_objects": [{"surface_form": "object", "attributes": ["short"], "searchable_phrases": ["short phrase"]}],
   "place": {"description": "short setting", "searchable_phrases": ["short phrase"]},
   "events": [{"description": "short event", "time_span": {"start_s": number, "end_s": number}}],
@@ -207,10 +218,21 @@ def _normalize_clip_schema_payload(
         mention["surface_form"] = _as_string(
             mention.get("surface_form") or mention.get("name") or mention.get("text")
         )
-        mention["entity_type"] = _as_string(mention.get("entity_type")) or "other"
+        mention["entity_type"] = _as_string(mention.get("entity_type")).casefold() or "other"
+        raw_attributes = mention.get("attributes")
+        mention["attributes"] = {
+            key: _as_string(value)
+            for key, value in (raw_attributes.items() if isinstance(raw_attributes, dict) else [])
+            if key in {"color", "clothing", "material", "shape", "size", "role"}
+            and _as_string(value)
+        }
     normalized["entity_mentions"] = [
         mention for mention in normalized["entity_mentions"] if mention.get("surface_form")
     ]
+    for index, mention in enumerate(normalized["entity_mentions"]):
+        mention["mention_id"] = f"{clip_id}:entity:{index:03d}"
+        mention["time_span"] = clip.to_dict()
+        mention["evidence_refs"] = [clip_id]
 
     for obj in normalized["salient_objects"]:
         obj["surface_form"] = _as_string(obj.get("surface_form") or obj.get("name") or obj.get("text"))
