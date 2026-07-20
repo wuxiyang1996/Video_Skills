@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from pathlib import Path
+import re
 from typing import Any
 
 from .openrouter_client import OpenRouterClient
@@ -330,6 +331,18 @@ def _normalize_clip_schema_payload(
             mention_id = normalized["entity_mentions"][participant_index]["mention_id"]
             if mention_id not in participant_refs:
                 participant_refs.append(mention_id)
+        description_tokens = re.findall(r"[a-z0-9]+", event["description"].casefold())
+        for mention in normalized["entity_mentions"]:
+            surface_tokens = re.findall(
+                r"[a-z0-9]+", str(mention.get("surface_form") or "").casefold()
+            )
+            if not surface_tokens or not _contains_token_phrase(
+                description_tokens, surface_tokens
+            ):
+                continue
+            mention_id = str(mention["mention_id"])
+            if mention_id not in participant_refs:
+                participant_refs.append(mention_id)
         event["participant_refs"] = participant_refs
     normalized["events"] = [event for event in normalized["events"] if event.get("description")]
 
@@ -355,6 +368,11 @@ def _normalize_clip_schema_payload(
     normalized["model"] = model
     normalized["producer"] = "qwen_clip_schema"
     return normalized
+
+
+def _contains_token_phrase(tokens: list[str], phrase: list[str]) -> bool:
+    width = len(phrase)
+    return any(tokens[index : index + width] == phrase for index in range(len(tokens)))
 
 
 class QwenClipSchemaProducer:
