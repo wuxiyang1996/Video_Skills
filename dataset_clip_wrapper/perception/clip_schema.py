@@ -37,12 +37,25 @@ Return JSON only with this shape:
       }
     }
   ],
+  "state_assertions": [
+    {
+      "subject_entity_index": 0,
+      "attribute": "openness|possession|location|motion_state|gaze_direction|expression|visibility|illumination|other",
+      "value": "one visible state value, not a before/after sentence",
+      "evidence_text": "short visible evidence",
+      "confidence": 0.0
+    }
+  ],
   "salient_objects": [
     {"surface_form": "object name", "attributes": ["color/material/shape"], "searchable_phrases": ["phrase"]}
   ],
   "place": {"description": "place or setting", "searchable_phrases": ["phrase"]},
   "events": [
-    {"description": "timestamped event", "time_span": {"start_s": number, "end_s": number}}
+    {
+      "description": "timestamped event",
+      "time_span": {"start_s": number, "end_s": number},
+      "participant_entity_indices": [0]
+    }
   ],
   "visual_social_cues": [
     {
@@ -70,6 +83,13 @@ Rules:
    interaction. Do not infer private motives unless the visual evidence is clear.
 6. Keep lists short and precise.
 7. If nothing is visible, return empty lists and a cautious scene_description.
+8. Emit one entity_mentions row per visible instance. Two people require two rows,
+   even when they look similar.
+9. Every state_assertion must reference one entity_mentions row by zero-based
+   subject_entity_index. Record one snapshot value only; never encode
+   "from X to Y" as one state.
+10. Every event should list all visibly participating entity rows by zero-based
+    participant_entity_indices.
 """
 
 COMPACT_CLIP_SCHEMA_PROMPT = """Return compact JSON only for one video clip:
@@ -78,15 +98,18 @@ COMPACT_CLIP_SCHEMA_PROMPT = """Return compact JSON only for one video clip:
   "observable_facts": [{"text": "short visible/spoken fact", "modality": "visual|audio|subtitle|mixed"}],
   "dialogue_spans": [],
   "entity_mentions": [{"surface_form": "object/person/place", "entity_type": "person|object|place|other", "attributes": {}}],
+  "state_assertions": [{"subject_entity_index": 0, "attribute": "visible state attribute", "value": "single state value", "evidence_text": "short evidence", "confidence": 0.0}],
   "salient_objects": [{"surface_form": "object", "attributes": ["short"], "searchable_phrases": ["short phrase"]}],
   "place": {"description": "short setting", "searchable_phrases": ["short phrase"]},
-  "events": [{"description": "short event", "time_span": {"start_s": number, "end_s": number}}],
+  "events": [{"description": "short event", "time_span": {"start_s": number, "end_s": number}, "participant_entity_indices": [0]}],
   "visual_social_cues": [{"description": "visible social cue", "cue_type": "expression|gesture|posture|interaction|uncertain", "strength": "weak|medium|strong"}],
   "cross_clip_cues": [],
   "searchable_phrases": ["short phrase"],
   "uncertainty": "short note"
 }
 Use only grounded evidence. Keep every string under 80 characters.
+Use one entity row per visible instance. State and event indices refer to the
+zero-based entity_mentions array.
 """
 
 
@@ -126,6 +149,7 @@ def _clip_schema_response_schema() -> dict[str, Any]:
                     },
                     "dialogue_spans": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
                     "entity_mentions": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+                    "state_assertions": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
                     "salient_objects": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
                     "place": {"type": "object", "additionalProperties": True},
                     "events": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
@@ -139,6 +163,7 @@ def _clip_schema_response_schema() -> dict[str, Any]:
                     "observable_facts",
                     "dialogue_spans",
                     "entity_mentions",
+                    "state_assertions",
                     "salient_objects",
                     "place",
                     "events",
@@ -202,6 +227,7 @@ def _normalize_clip_schema_payload(
     normalized["observable_facts"] = _dict_items(normalized.get("observable_facts"))
     normalized["dialogue_spans"] = _dict_items(normalized.get("dialogue_spans"))
     normalized["entity_mentions"] = _dict_items(normalized.get("entity_mentions"))
+    normalized["state_assertions"] = _dict_items(normalized.get("state_assertions"))
     normalized["salient_objects"] = _dict_items(normalized.get("salient_objects"))
     normalized["place"] = normalized.get("place") if isinstance(normalized.get("place"), dict) else {}
     normalized["events"] = _dict_items(normalized.get("events"))
@@ -234,6 +260,55 @@ def _normalize_clip_schema_payload(
         mention["time_span"] = clip.to_dict()
         mention["evidence_refs"] = [clip_id]
 
+    state_assertions: list[dict[str, Any]] = []
+    allowed_state_attributes = {
+        "openness",
+        "possession",
+        "location",
+        "motion_state",
+        "gaze_direction",
+        "expression",
+        "visibility",
+        "illumination",
+        "other",
+    }
+    for raw_state in normalized["state_assertions"]:
+        raw_index = raw_state.get("subject_entity_index")
+        try:
+            subject_index = int(raw_index)
+        except (TypeError, ValueError):
+            continue
+        if not 0 <= subject_index < len(normalized["entity_mentions"]):
+            continue
+        attribute = _as_string(raw_state.get("attribute")).casefold().replace(" ", "_")
+        value = _as_string(raw_state.get("value"))
+        if attribute not in allowed_state_attributes or not value:
+            continue
+        confidence_raw = raw_state.get("confidence", 0.7)
+        try:
+            confidence = max(0.0, min(1.0, float(confidence_raw)))
+        except (TypeError, ValueError):
+            confidence = 0.7
+        state_index = len(state_assertions)
+        state_assertions.append(
+            {
+                "state_id": f"{clip_id}:state:{state_index:03d}",
+                "subject_entity_index": subject_index,
+                "subject_mention_id": normalized["entity_mentions"][subject_index][
+                    "mention_id"
+                ],
+                "attribute": attribute,
+                "value": value,
+                "evidence_text": _as_string(
+                    raw_state.get("evidence_text") or raw_state.get("text")
+                ),
+                "confidence": confidence,
+                "time_span": clip.to_dict(),
+                "evidence_refs": [clip_id],
+            }
+        )
+    normalized["state_assertions"] = state_assertions
+
     for obj in normalized["salient_objects"]:
         obj["surface_form"] = _as_string(obj.get("surface_form") or obj.get("name") or obj.get("text"))
         obj["attributes"] = _string_items(obj.get("attributes"))
@@ -244,6 +319,18 @@ def _normalize_clip_schema_payload(
         event["description"] = _as_string(event.get("description") or event.get("text"))
         if not isinstance(event.get("time_span"), dict):
             event["time_span"] = clip.to_dict()
+        participant_refs: list[str] = []
+        for raw_index in _as_list(event.get("participant_entity_indices")):
+            try:
+                participant_index = int(raw_index)
+            except (TypeError, ValueError):
+                continue
+            if not 0 <= participant_index < len(normalized["entity_mentions"]):
+                continue
+            mention_id = normalized["entity_mentions"][participant_index]["mention_id"]
+            if mention_id not in participant_refs:
+                participant_refs.append(mention_id)
+        event["participant_refs"] = participant_refs
     normalized["events"] = [event for event in normalized["events"] if event.get("description")]
 
     place = normalized["place"]

@@ -136,6 +136,20 @@
         },
         "local_id_clip_id": {"type": "string"},
         "mention_id": {"type": "string"},
+        "state_id": {"type": "string"},
+        "subject_mention_id": {"type": "string"},
+        "subject_ref": {"type": "string"},
+        "attribute": {"type": "string"},
+        "value": {"type": "string"},
+        "participant_refs": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "participant_mention_ids": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "embedding_ref": {"$ref": "#/$defs/embedding_ref"},
         "entity_type": {"type": "string"},
         "attributes": {
           "type": "object",
@@ -206,6 +220,28 @@
         }
       },
       "additionalProperties": true
+    },
+    "embedding_ref": {
+      "type": "object",
+      "required": [
+        "path",
+        "model",
+        "dimension",
+        "dtype",
+        "normalized",
+        "row_index",
+        "checksum"
+      ],
+      "properties": {
+        "path": {"type": "string"},
+        "model": {"const": "Qwen/Qwen3-VL-Embedding-2B"},
+        "dimension": {"const": 2048},
+        "dtype": {"const": "float32"},
+        "normalized": {"const": true},
+        "row_index": {"type": "integer", "minimum": 0},
+        "checksum": {"type": "string"}
+      },
+      "additionalProperties": false
     },
     "clue_edge": {
       "type": "object",

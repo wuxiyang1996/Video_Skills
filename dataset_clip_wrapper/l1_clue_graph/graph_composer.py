@@ -221,6 +221,10 @@ Return JSON only:
       "node_id": "optional local id",
       "node_type": "observation|entity_mention|event|state|dialogue_span|clue",
       "entity_ref": "required clip-schema mention_id when node_type is entity_mention",
+      "participant_refs": ["required clip-schema mention_id for every event participant"],
+      "subject_ref": "required clip-schema mention_id when node_type is state",
+      "state_attribute": "required normalized attribute when node_type is state",
+      "state_value": "required single snapshot value when node_type is state",
       "text": "short grounded clue for the target clip",
       "modality": "visual|audio|subtitle|ocr|mixed",
       "confidence": 0.0
@@ -246,12 +250,17 @@ Rules:
 3. neighbor_edges may connect the target clip to neighbor clips, or target nodes to target nodes.
    For same_entity, same_object, or reappears, src_node_id and dst_node_id are
    required and must be entity mention IDs supplied in target_clip/neighbor_clips.
-4. Prefer sparse, reasoning-useful output: at most 4 target_nodes and 4 neighbor_edges.
-5. Cross-clip edges must be model-judged from evidence, not string matching.
-6. If the relationship is weak or generic, omit the edge.
-7. Do not use answer labels, gold answers, hidden clues, or dataset supervision.
-8. Do not output chain-of-thought.
-9. Keep every text/reason field under 120 characters.
+4. Every event must list all visible actors/objects in participant_refs. Every
+   state must name exactly one subject_ref and one snapshot state_attribute/state_value.
+   Do not encode "from X to Y" in one state node.
+5. state_change edges must connect two state assertion IDs for the same subject
+   and attribute at different times; otherwise omit them.
+6. Prefer sparse, reasoning-useful output: at most 4 target_nodes and 4 neighbor_edges.
+7. Cross-clip edges must be model-judged from evidence, not string matching.
+8. If the relationship is weak or generic, omit the edge.
+9. Do not use answer labels, gold answers, hidden clues, or dataset supervision.
+10. Do not output chain-of-thought.
+11. Keep every text/reason field under 120 characters.
 """
 
 
@@ -274,6 +283,13 @@ def build_vlm_l1_response_schema() -> dict[str, Any]:
                                 "node_id": {"type": "string"},
                                 "node_type": {"type": "string"},
                                 "entity_ref": {"type": "string"},
+                                "participant_refs": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                                "subject_ref": {"type": "string"},
+                                "state_attribute": {"type": "string"},
+                                "state_value": {"type": "string"},
                                 "clip_id": {"type": "string"},
                                 "time_span": {"type": "object", "additionalProperties": True},
                                 "text": {"type": "string"},
@@ -444,6 +460,34 @@ class GraphComposer:
                     "attributes": mention.get("attributes") or {},
                 }
             )
+        states = []
+        for state in schema.get("state_assertions") or []:
+            if not isinstance(state, dict):
+                continue
+            if not state.get("state_id") or not state.get("subject_mention_id"):
+                continue
+            states.append(
+                {
+                    "state_id": state.get("state_id"),
+                    "subject_ref": state.get("subject_mention_id"),
+                    "attribute": state.get("attribute"),
+                    "value": state.get("value"),
+                    "evidence_text": state.get("evidence_text"),
+                }
+            )
+        events = []
+        for event in schema.get("events") or []:
+            if not isinstance(event, dict):
+                continue
+            description = str(event.get("description") or "").strip()
+            if not description:
+                continue
+            events.append(
+                {
+                    "description": description[:160],
+                    "participant_refs": list(event.get("participant_refs") or []),
+                }
+            )
         return {
             "clip_id": schema.get("clip_id"),
             "time_span": schema.get("time_span"),
@@ -452,7 +496,8 @@ class GraphComposer:
             "facts": _strings(schema.get("observable_facts"), key="text", limit=6),
             "objects": objects[:6],
             "entities": entities[:8],
-            "events": _strings(schema.get("events"), key="description", limit=4),
+            "states": states[:8],
+            "events": events[:4],
             "visual_social_cues": _strings(schema.get("visual_social_cues"), key="description", limit=4),
             "dialogue": _strings(schema.get("dialogue_spans"), key="text", limit=4),
             "searchable_phrases": _strings(schema.get("searchable_phrases"), limit=6),
@@ -466,10 +511,26 @@ class GraphComposer:
         scene = str(digest.get("scene") or "").strip()
         if scene:
             parts.append(scene)
-        for key in ("facts", "objects", "entities", "events", "visual_social_cues", "dialogue", "searchable_phrases"):
+        for key in (
+            "facts",
+            "objects",
+            "entities",
+            "states",
+            "events",
+            "visual_social_cues",
+            "dialogue",
+            "searchable_phrases",
+        ):
             for value in digest.get(key) or []:
                 text = str(
-                    value.get("surface_form") if isinstance(value, dict) else value
+                    (
+                        value.get("surface_form")
+                        or value.get("description")
+                        or value.get("evidence_text")
+                        or value.get("value")
+                    )
+                    if isinstance(value, dict)
+                    else value
                 ).strip()
                 if text and text not in parts:
                     parts.append(text)
@@ -951,6 +1012,55 @@ class GraphComposer:
                         }
                     )
                     continue
+                grounded_refs: dict[str, Any] = {}
+                if node_type == "event":
+                    mention_ids = [
+                        str(value).strip()
+                        for value in raw_node.get("participant_refs") or []
+                        if str(value).strip()
+                    ]
+                    participant_nodes = [
+                        local_id_map[f"{target_clip_id}:{mention_id}"]
+                        for mention_id in mention_ids
+                        if f"{target_clip_id}:{mention_id}" in local_id_map
+                    ]
+                    grounded_refs = {
+                        "participant_mention_ids": list(
+                            dict.fromkeys(mention_ids)
+                        ),
+                        "participant_refs": list(
+                            dict.fromkeys(participant_nodes)
+                        ),
+                    }
+                elif node_type == "state":
+                    subject_mention_id = str(
+                        raw_node.get("subject_ref") or ""
+                    ).strip()
+                    subject_node_id = local_id_map.get(
+                        f"{target_clip_id}:{subject_mention_id}"
+                    )
+                    attribute = str(
+                        raw_node.get("state_attribute") or ""
+                    ).strip()
+                    value = str(raw_node.get("state_value") or "").strip()
+                    if subject_node_id is None or not attribute or not value:
+                        trace.append(
+                            {
+                                "skill_id": "neighbor_vlm_l1_skip_node",
+                                "ok": True,
+                                "reason": "ungrounded_state_assertion",
+                                "clip_id": target_clip_id,
+                                "local_node_id": local_id,
+                                "subject_ref": subject_mention_id,
+                            }
+                        )
+                        continue
+                    grounded_refs = {
+                        "subject_mention_id": subject_mention_id,
+                        "subject_ref": subject_node_id,
+                        "attribute": attribute,
+                        "value": value,
+                    }
                 node_id = self._stable_id("evidence." + node_type, target_clip_id, schema.get("time_span"), text, node_index)
                 local_id_map[local_key] = node_id
                 target_node_ids.append(node_id)
@@ -960,6 +1070,7 @@ class GraphComposer:
                 graph.setdefault("nodes", []).append(
                     {
                         **raw_node,
+                        **grounded_refs,
                         "node_id": node_id,
                         "local_node_id": local_id,
                         "local_id_clip_id": target_clip_id,
@@ -1008,6 +1119,11 @@ class GraphComposer:
         valid_node_ids = {node.get("node_id") for node in graph.get("nodes", [])}
         node_type_by_id = {
             str(node.get("node_id")): str(node.get("node_type") or "")
+            for node in graph.get("nodes", [])
+            if isinstance(node, dict) and node.get("node_id")
+        }
+        node_by_id = {
+            str(node.get("node_id")): node
             for node in graph.get("nodes", [])
             if isinstance(node, dict) and node.get("node_id")
         }
@@ -1097,6 +1213,30 @@ class GraphComposer:
                     }
                 )
                 continue
+            if edge_type == "state_change":
+                src_state = node_by_id.get(str(src)) or {}
+                dst_state = node_by_id.get(str(dst)) or {}
+                if (
+                    node_type_by_id.get(str(src)) != "state"
+                    or node_type_by_id.get(str(dst)) != "state"
+                    or not src_state.get("subject_ref")
+                    or not dst_state.get("subject_ref")
+                    or str(src_state.get("attribute") or "").casefold()
+                    != str(dst_state.get("attribute") or "").casefold()
+                    or str(src_state.get("value") or "").casefold()
+                    == str(dst_state.get("value") or "").casefold()
+                ):
+                    trace.append(
+                        {
+                            "skill_id": "neighbor_vlm_l1_skip_edge",
+                            "ok": True,
+                            "reason": "invalid_state_change_contract",
+                            "edge_type": edge_type,
+                            "src": src,
+                            "dst": dst,
+                        }
+                    )
+                    continue
             edge_id = self._stable_id("edge", src, dst, edge_type, raw_edge.get("text"), edge_index)
             graph.setdefault("edges", []).append(
                 {
@@ -1144,6 +1284,15 @@ class GraphComposer:
             for node in graph.get("nodes") or []
             if isinstance(node, dict) and node.get("node_id")
         }
+        existing_edges = {
+            (
+                str(edge.get("src") or ""),
+                str(edge.get("dst") or ""),
+                str(edge.get("edge_type") or ""),
+            )
+            for edge in graph.get("edges") or []
+            if isinstance(edge, dict)
+        }
         for schema in visible_schemas:
             clip_id = str(schema.get("clip_id") or "")
             for mention in schema.get("entity_mentions") or []:
@@ -1182,6 +1331,95 @@ class GraphComposer:
                     }
                 )
                 existing.add(node_id)
+            for state in schema.get("state_assertions") or []:
+                if not isinstance(state, dict):
+                    continue
+                state_id = str(state.get("state_id") or "").strip()
+                subject_mention_id = str(
+                    state.get("subject_mention_id") or ""
+                ).strip()
+                attribute = str(state.get("attribute") or "").strip()
+                value = str(state.get("value") or "").strip()
+                subject_node_id = local_id_map.get(
+                    f"{clip_id}:{subject_mention_id}"
+                )
+                if (
+                    not clip_id
+                    or not state_id
+                    or subject_node_id is None
+                    or not attribute
+                    or not value
+                ):
+                    continue
+                node_id = self._stable_id(
+                    "evidence.state",
+                    clip_id,
+                    state_id,
+                    subject_mention_id,
+                    attribute,
+                    value,
+                )
+                local_id_map[f"{clip_id}:{state_id}"] = node_id
+                members = semantic_nodes_by_clip.setdefault(clip_id, [])
+                if (node_id, "state") not in members:
+                    members.append((node_id, "state"))
+                if node_id not in existing:
+                    evidence_text = str(state.get("evidence_text") or "").strip()
+                    graph.setdefault("nodes", []).append(
+                        {
+                            "node_id": node_id,
+                            "local_node_id": state_id,
+                            "local_id_clip_id": clip_id,
+                            "state_id": state_id,
+                            "node_type": "state",
+                            "subject_mention_id": subject_mention_id,
+                            "subject_ref": subject_node_id,
+                            "attribute": attribute,
+                            "value": value,
+                            "clip_id": clip_id,
+                            "time_span": state.get("time_span")
+                            or schema.get("time_span"),
+                            "text": evidence_text
+                            or f"{attribute}={value}",
+                            "modality": "visual",
+                            "confidence": state.get("confidence", 0.7),
+                            "evidence_refs": list(
+                                state.get("evidence_refs") or [clip_id]
+                            ),
+                            "source_type": "qwen_clip_schema_state_assertion",
+                            "producer": "neighbor_vlm_l1_state_structuralizer",
+                            "visibility": {
+                                "hidden_supervision": False,
+                                "mode": mode.value,
+                            },
+                        }
+                    )
+                    existing.add(node_id)
+                edge_key = (node_id, subject_node_id, "state_of")
+                if edge_key in existing_edges:
+                    continue
+                graph.setdefault("edges", []).append(
+                    {
+                        "edge_id": self._stable_id(
+                            "edge", node_id, subject_node_id, "state_of"
+                        ),
+                        "src": node_id,
+                        "dst": subject_node_id,
+                        "edge_type": "state_of",
+                        "text": (
+                            f"Structured {attribute} state of "
+                            f"{subject_mention_id}."
+                        ),
+                        "confidence": state.get("confidence", 0.7),
+                        "evidence_refs": [node_id, subject_node_id],
+                        "producer": "neighbor_vlm_l1_state_structuralizer",
+                        "visibility": {
+                            "hidden_supervision": False,
+                            "mode": mode.value,
+                        },
+                    }
+                )
+                existing_edges.add(edge_key)
 
     def _attach_neighbor_vlm_reference_edges(
         self,
@@ -1203,6 +1441,11 @@ class GraphComposer:
             if isinstance(edge, dict)
         }
         for clip_id, members in semantic_nodes_by_clip.items():
+            node_by_id = {
+                str(node.get("node_id")): node
+                for node in graph.get("nodes") or []
+                if isinstance(node, dict) and node.get("node_id")
+            }
             observations = [
                 node_id for node_id, node_type in members if node_type == "observation"
             ]
@@ -1222,18 +1465,24 @@ class GraphComposer:
                     if node_type in {"event", "state", "dialogue_span", "clue"}
                     and node_id != primary_observation
                 )
-            if len(entities) == 1:
-                entity_id = entities[0]
-                links.extend(
-                    (node_id, entity_id, "entity_mention")
-                    for node_id, node_type in members
-                    if node_type == "event"
-                )
-                links.extend(
-                    (node_id, entity_id, "state_of")
-                    for node_id, node_type in members
-                    if node_type == "state"
-                )
+            for node_id, node_type in members:
+                node = node_by_id.get(node_id) or {}
+                if node_type == "event":
+                    participant_refs = [
+                        str(value)
+                        for value in node.get("participant_refs") or []
+                        if str(value) in entities
+                    ]
+                    if not participant_refs and len(entities) == 1:
+                        participant_refs = entities
+                    links.extend(
+                        (node_id, entity_id, "entity_mention")
+                        for entity_id in participant_refs
+                    )
+                elif node_type == "state":
+                    subject_ref = str(node.get("subject_ref") or "")
+                    if subject_ref in entities:
+                        links.append((node_id, subject_ref, "state_of"))
             for link_index, (src, dst, edge_type) in enumerate(links):
                 key = (src, dst, edge_type)
                 if src == dst or key in existing:
