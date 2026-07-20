@@ -21,7 +21,12 @@ class EntityReferenceContractTest(unittest.TestCase):
                     "surface_form": "red box",
                     "entity_type": "OBJECT",
                     "attributes": {"color": "red", "intent": "gift"},
-                }
+                },
+                {
+                    "surface_form": "person",
+                    "entity_type": "person",
+                    "attributes": {},
+                },
             ],
             "state_assertions": [
                 {
@@ -37,7 +42,7 @@ class EntityReferenceContractTest(unittest.TestCase):
             "events": [
                 {
                     "description": "A person holds the closed red box.",
-                    "participant_entity_indices": [0],
+                    "participant_entity_indices": [1],
                 }
             ],
             "cross_clip_cues": [],
@@ -63,7 +68,7 @@ class EntityReferenceContractTest(unittest.TestCase):
         self.assertEqual(state["value"], "closed")
         self.assertEqual(
             normalized["events"][0]["participant_refs"],
-            [mention["mention_id"]],
+            [normalized["entity_mentions"][1]["mention_id"], mention["mention_id"]],
         )
 
     def test_structured_states_and_multi_participant_events_keep_references(self) -> None:
