@@ -9,7 +9,7 @@
 <body>
   <header class="doc-header">
     <h1>Atomic Skill Decomposition and Assembly: From Reasoning Chains to Reusable Atomic Skills</h1>
-    <p class="meta">Last updated: <time datetime="2026-06-26">2026-06-26</time></p>
+    <p class="meta">Last updated: <time datetime="2026-07-22">2026-07-22</time></p>
     <nav class="lang-nav">
       <a href="problem-formulation-zh.html">Chinese</a> |
       <a href="atomic-skills-v1.md">Atomic skills v1</a> |
@@ -1218,6 +1218,47 @@ measure:
       </details>
     </article>
 
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-032" data-status="active">
+      <h3 class="idea-title">SFT v3 implementation status: five independent Qwen3.5-9B LoRA datasets</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body"><strong>Status as of 2026-07-22:</strong> the five specialist datasets are built, audited, and kept separate for five LoRA adapters. Actual five-adapter training has <strong>not started yet</strong>. The next experiment is to train each adapter independently on Qwen3.5-9B, then compare specialist routing / composition against the earlier shared-LoRA baseline.</p>
+        <p class="code-caption">Final data root</p>
+        <pre class="code-block">dataset_clip_wrapper/output/sft_cold_start/
+  specialist_sft_v3_20260722/five_lora/</pre>
+        <table class="scorecard">
+          <thead><tr><th>LoRA specialist</th><th>Total</th><th>Train</th><th>Dev</th><th>Observed max tokens</th></tr></thead>
+          <tbody>
+            <tr><td>L1 patch / builder</td><td>2,386</td><td>1,918</td><td>468</td><td>3,564</td></tr>
+            <tr><td>L2 retrieval / ranking / recovery</td><td>867</td><td>684</td><td>183</td><td>10,081</td></tr>
+            <tr><td>Verifier</td><td>131</td><td>118</td><td>13</td><td>1,677</td></tr>
+            <tr><td>Repair</td><td>122</td><td>110</td><td>12</td><td>13,528</td></tr>
+            <tr><td>Motif lifecycle / evidence audit</td><td>320</td><td>262</td><td>58</td><td>3,260</td></tr>
+          </tbody>
+        </table>
+        <p class="idea-body"><strong>L2 expansion without collecting new videos:</strong> one source trace is converted into complementary decision views rather than copied as equivalent positives.</p>
+        <table class="scorecard">
+          <thead><tr><th>L2 supervision view</th><th>Examples</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>Select-set</td><td>92</td><td>choose the evidence set required by the query</td></tr>
+            <tr><td>Atomic decision</td><td>114</td><td>judge a single candidate clip / item</td></tr>
+            <tr><td>Ranking</td><td>266</td><td>228 pairwise + 38 listwise ordering decisions</td></tr>
+            <tr><td>Stop / continue</td><td>61</td><td>decide whether current evidence is sufficient</td></tr>
+            <tr><td>Recovery</td><td>334</td><td>194 recovery actions + 140 failure diagnoses</td></tr>
+          </tbody>
+        </table>
+        <ul class="key-points">
+          <li><strong>Evidence boundary:</strong> L2 contains 23 strict, independent positive core select-set examples and 844 derived curriculum / decision views. The derived views add action supervision, not new independent video evidence.</li>
+          <li><strong>No positive laundering:</strong> weak or rejected traces are not converted into positive targets; future teacher selections are removed from prompts.</li>
+          <li><strong>Weight control:</strong> variants from the same source family have normalized <code>source_family_weight</code>, so expansion does not multiply that source's training weight.</li>
+          <li><strong>Leakage control:</strong> train / dev are split by video group; all five datasets have zero train-dev video-group overlap. Evaluation-only VRBench, VideoMME, and OVO examples are excluded.</li>
+          <li><strong>Format and length gates:</strong> forbidden prompt-key hits are zero, all hard gates pass, and all examples fit the Qwen3.5-9B 16k context under the actual tokenizer.</li>
+          <li><strong>Adapter boundary:</strong> L1, L2, Verifier, Repair, and Motif remain five separate LoRAs; Verifier and Repair are intentionally not merged.</li>
+        </ul>
+        <p class="idea-notes"><strong>Audit artifacts:</strong> <code>training_manifest.json</code> records counts and split boundaries; <code>token_audit.json</code> records actual-tokenizer length checks. The relevant expansion / split / training tests pass (13 tests).</p>
+      </details>
+    </article>
+
     <article class="idea" data-id="atomic-skill-decomposition-and-assembly-021" data-status="open">
       <h3 class="idea-title">Open questions</h3>
       <details class="foldable idea-details" open>
@@ -1247,6 +1288,7 @@ measure:
   <section class="changelog">
     <h2>Discussion log</h2>
     <ol>
+      <li><time datetime="2026-07-22">2026-07-22</time> — Added SFT v3 implementation status: five separate Qwen3.5-9B LoRA datasets are ready (L1 2,386; L2 867; Verifier 131; Repair 122; Motif 320). Documented L2's 23 independent core examples versus 844 derived decision views, source-family weighting, leakage / token gates, and the fact that five-adapter training has not started.</li>
       <li><time datetime="2026-06-30">2026-06-30</time> — Added Trace-to-Skill Fitting update: demonstrations induce candidate operation clusters; compact atomic basis is selected by coverage / confusion / cost and frozen before controller training; discovered reusable skills are composite motifs that expand into frozen atomics, not online-created primitives.</li>
       <li><time datetime="2026-06-30">2026-06-30</time> — Added optional motif card: composed skills are not a core first-paper mechanism; verified reasoning motifs serve only as assembly / repair priors, carry no current-video facts, and must expand into frozen atomic skill graphs before execution and verification.</li>
       <li><time datetime="2026-06-26">2026-06-26</time> — Added card 029: five video-understanding benchmarks deployed under <code>datasets/</code> (Video-Holmes / SIV-Bench / VRBench / CG-Bench / M3-Bench) with local paths, sizes, loaders, and <code>run_eval.py</code> entry points; card 022 cross-ref to 028/029; open-questions benchmark list updated.</li>
