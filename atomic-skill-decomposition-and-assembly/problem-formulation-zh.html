@@ -9,7 +9,7 @@
 <body>
   <header class="doc-header">
     <h1>Atomic Skill Decomposition and Assembly：从推理链到可复用原子技能</h1>
-    <p class="meta">最后更新：<time datetime="2026-06-26">2026-06-26</time></p>
+    <p class="meta">最后更新：<time datetime="2026-07-22">2026-07-22</time></p>
     <nav class="lang-nav">
       <a href="problem-formulation-en.html">English</a> |
       <a href="atomic-skills-v1.md">Atomic skills v1</a> |
@@ -1218,6 +1218,47 @@ measure:
       </details>
     </article>
 
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-032" data-status="active">
+      <h3 class="idea-title">SFT v3 落地状态：五套独立 Qwen3.5-9B LoRA 数据</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body"><strong>截至 2026-07-22：</strong>五套 specialist 数据已经构建、审计完毕，并保持为五个相互独立的 LoRA adapter 数据集。五个 adapter 的正式训练<strong>尚未开始</strong>。下一步是在 Qwen3.5-9B 上分别训练，再把 specialist routing / composition 与之前的 shared-LoRA baseline 对比。</p>
+        <p class="code-caption">最终数据目录</p>
+        <pre class="code-block">dataset_clip_wrapper/output/sft_cold_start/
+  specialist_sft_v3_20260722/five_lora/</pre>
+        <table class="scorecard">
+          <thead><tr><th>LoRA specialist</th><th>总数</th><th>Train</th><th>Dev</th><th>实测最大 tokens</th></tr></thead>
+          <tbody>
+            <tr><td>L1 patch / builder</td><td>2,386</td><td>1,918</td><td>468</td><td>3,564</td></tr>
+            <tr><td>L2 retrieval / ranking / recovery</td><td>867</td><td>684</td><td>183</td><td>10,081</td></tr>
+            <tr><td>Verifier</td><td>131</td><td>118</td><td>13</td><td>1,677</td></tr>
+            <tr><td>Repair</td><td>122</td><td>110</td><td>12</td><td>13,528</td></tr>
+            <tr><td>Motif lifecycle / evidence audit</td><td>320</td><td>262</td><td>58</td><td>3,260</td></tr>
+          </tbody>
+        </table>
+        <p class="idea-body"><strong>不采集新视频的 L2 扩展：</strong>把同一 source trace 转换成互补的 decision views，而不是复制成多个等价正样本。</p>
+        <table class="scorecard">
+          <thead><tr><th>L2 监督视图</th><th>样本数</th><th>目标</th></tr></thead>
+          <tbody>
+            <tr><td>Select-set</td><td>92</td><td>选择回答 query 所需的证据集合</td></tr>
+            <tr><td>Atomic decision</td><td>114</td><td>判断单个候选 clip / item</td></tr>
+            <tr><td>Ranking</td><td>266</td><td>228 条 pairwise + 38 条 listwise 排序决策</td></tr>
+            <tr><td>Stop / continue</td><td>61</td><td>判断当前证据是否已经充分</td></tr>
+            <tr><td>Recovery</td><td>334</td><td>194 条 recovery action + 140 条 failure diagnosis</td></tr>
+          </tbody>
+        </table>
+        <ul class="key-points">
+          <li><strong>证据边界：</strong>L2 只有 23 条严格、相互独立的 positive core select-set 样本，其余 844 条是派生的 curriculum / decision views。派生视图增加 action supervision，不代表新增了 844 条独立视频证据。</li>
+          <li><strong>不清洗成假正例：</strong>weak 或 rejected traces 不会被转换成 positive targets；prompt 中也移除了未来 teacher selections。</li>
+          <li><strong>权重控制：</strong>同一 source family 的 variants 使用归一化 <code>source_family_weight</code>，扩展不会成倍放大该 source 的训练权重。</li>
+          <li><strong>泄漏控制：</strong>train / dev 按 video group 切分，五套数据的 train-dev video-group overlap 都为 0；evaluation-only 的 VRBench、VideoMME、OVO 样本已排除。</li>
+          <li><strong>格式与长度门槛：</strong>forbidden prompt-key hits 为 0，全部 hard gates 通过，并且用实际 Qwen3.5-9B tokenizer 检查后全部落在 16k context 内。</li>
+          <li><strong>Adapter 边界：</strong>L1、L2、Verifier、Repair、Motif 保持五个独立 LoRA；Verifier 与 Repair 明确不合并。</li>
+        </ul>
+        <p class="idea-notes"><strong>审计产物：</strong><code>training_manifest.json</code> 记录数据量和 split 边界；<code>token_audit.json</code> 记录实际 tokenizer 长度检查。相关 expansion / split / training 测试共 13 项，全部通过。</p>
+      </details>
+    </article>
+
     <article class="idea" data-id="atomic-skill-decomposition-and-assembly-021" data-status="open">
       <h3 class="idea-title">开放问题</h3>
       <details class="foldable idea-details" open>
@@ -1247,6 +1288,7 @@ measure:
   <section class="changelog">
     <h2>讨论记录</h2>
     <ol>
+      <li><time datetime="2026-07-22">2026-07-22</time> — 新增 SFT v3 落地状态：五套独立 Qwen3.5-9B LoRA 数据已就绪（L1 2,386；L2 867；Verifier 131；Repair 122；Motif 320）。明确 L2 的 23 条独立 core 样本与 844 条派生 decision views、source-family 权重、泄漏 / token 门槛，以及五个 adapter 尚未开始训练。</li>
       <li><time datetime="2026-06-30">2026-06-30</time> — 新增 Trace-to-Skill Fitting 更新：demonstrations 诱导 candidate operation clusters；紧凑 atomic basis 由 coverage / confusion / cost 选择并在 controller 训练前冻结；可发现的新技能是能展开成冻结 atomics 的 composite motifs，而不是在线创建的新 primitives。</li>
       <li><time datetime="2026-06-30">2026-06-30</time> — 新增可选 motif 卡片：composed skills 不作为第一篇核心机制；verified reasoning motifs 只作为 assembly / repair prior，不携带当前视频事实，执行和验证前必须展开成冻结的 atomic skill graph。</li>
       <li><time datetime="2026-06-26">2026-06-26</time> — 新增卡片 029：五个视频理解 benchmark 统一落地到 <code>datasets/</code>（Video-Holmes / SIV-Bench / VRBench / CG-Bench / M3-Bench），记录本地路径、数据量、loader 与 <code>run_eval.py</code> 入口；卡片 022 增加指向 028/029 的交叉引用；开放问题 benchmark 列表同步更新。</li>
