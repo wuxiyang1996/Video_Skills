@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 import signal
+import threading
 from contextlib import contextmanager
 from typing import Any
 
@@ -21,7 +22,9 @@ import requests
 
 @contextmanager
 def _total_timeout(seconds: int):
-    if seconds <= 0:
+    # SIGALRM is process-main-thread only. Background workers remain bounded by
+    # the requests connect/read timeout passed by SkillModelClient._post.
+    if seconds <= 0 or threading.current_thread() is not threading.main_thread():
         yield
         return
 
@@ -109,10 +112,17 @@ class SkillModelClient:
                 timeout=self.timeout_s,
             )
             resp.raise_for_status()
-            data = resp.json()
+        data = resp.json()
         content = data["choices"][0]["message"].get("content") or ""
         content = content.strip()
-        self.last_response_metadata["output_chars"] = len(content)
+        usage = data.get("usage") or {}
+        self.last_response_metadata.update({
+            "output_chars": len(content),
+            "prompt_tokens": usage.get("prompt_tokens"),
+            "completion_tokens": usage.get("completion_tokens"),
+            "total_tokens": usage.get("total_tokens"),
+            "finish_reason": data["choices"][0].get("finish_reason"),
+        })
         return content
 
     def reason(self, prompt: str, *, system: str = "You are a precise video reasoning assistant. Answer in JSON only.") -> dict[str, Any]:

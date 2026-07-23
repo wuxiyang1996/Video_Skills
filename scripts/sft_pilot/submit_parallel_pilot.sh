@@ -3,6 +3,7 @@ set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-/fs/gamma-projects/vlm-robot/Video_Skills}"
 LOG_ROOT="${REPO_ROOT}/dataset_clip_wrapper/output/pilot_20260710/slurm_logs"
+WALLTIME="${WALLTIME:-12:00:00}"
 mkdir -p "${LOG_ROOT}"
 
 submit_worker() {
@@ -12,7 +13,7 @@ submit_worker() {
   sbatch --parsable \
     --job-name="vs-${dataset}-${start}" \
     --partition="${partition}" --account="${account}" --qos="${qos}" \
-    --gres="${gres}" --cpus-per-task=4 --mem=32G --time=3-00:00:00 \
+    --gres="${gres}" --cpus-per-task=4 --mem=32G --time="${WALLTIME}" \
     --output="${LOG_ROOT}/${dataset}-${start}-%j.out" \
     --error="${LOG_ROOT}/${dataset}-${start}-%j.err" \
     --export="ALL,DATASET=${dataset},START_INDEX=${start},LIMIT=${limit},SMOKE=0,PILOT_TAG=pilot_20260710_free,CLIP_WORKERS=1,GRAPH_WORKERS=2,GRAPH_MODEL=openai/gpt-oss-120b:free" \

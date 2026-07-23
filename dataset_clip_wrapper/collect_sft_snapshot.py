@@ -12,6 +12,7 @@ from .training.l1_builder_sft_adapter import build_l1_builder_exports
 from .training.l1_patch_sft_adapter import build_l1_patch_exports
 from .training.l2_retrieval_sft_adapter import build_l2_retrieval_exports
 from .training.motif_sft_adapter import build_motif_exports
+from .training.repair_report_stepwise_sft_adapter import build_repair_report_stepwise_exports
 from .training.sft_common import read_jsonl, write_json, write_jsonl
 from .training.stepwise_sft_adapter import build_stepwise_exports
 from .training.verifier_sft_adapter import build_verifier_exports
@@ -184,6 +185,13 @@ def collect_snapshot(args: argparse.Namespace) -> dict[str, Any]:
                 report,
             )
         )
+
+    if repair_stage_roots:
+        transitions, chats, report = build_repair_report_stepwise_exports(repair_stage_roots)
+        if transitions or chats:
+            summary["exports"].append(
+                _write_export(output_dir, "l2_repair_from_reports", transitions, chats, report)
+            )
 
     if args.motif_bank and args.motif_bank.exists():
         transitions, chats, report = build_motif_exports(args.motif_bank)

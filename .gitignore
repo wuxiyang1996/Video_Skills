@@ -14,9 +14,13 @@ __pycache__/
 dist/
 build/
 *.egg
+.env
+.venv-qwen35-serve/
+.venv-qwen35-vllm/
 
 # ── L1/L2 video graph artifacts ─────────────────────────────────
 experiments/*_output.json
+motif/output/
 experiments/*_run.json
 experiments/expert_demo_video_holmes_gpt5mini_output.json
 dataset_clip_wrapper/output/*.jsonl

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -12,22 +13,36 @@ from .base import DatasetAdapter, RawDatasetItem
 def parse_time_range(value: str | None) -> dict[str, float] | None:
   if not value:
     return None
-  value = value.strip()
+  value = (
+    value.strip()
+    .replace("：", ":")
+    .replace("；", ":")
+    .replace(";", ":")
+    .replace("–", "-")
+    .replace("—", "-")
+    .replace("−", "-")
+  )
   if "-" in value:
     start, end = value.split("-", 1)
   else:
     start = end = value
 
   def to_seconds(part: str) -> float:
-    pieces = [float(p) for p in part.strip().split(":")]
+    pieces = [float(p.strip()) for p in part.strip().split(":")]
+    if not pieces or len(pieces) > 3 or not all(math.isfinite(piece) and piece >= 0 for piece in pieces):
+      raise ValueError(f"Invalid Video-Holmes timestamp: {part!r}")
     if len(pieces) == 3:
       return pieces[0] * 3600 + pieces[1] * 60 + pieces[2]
     if len(pieces) == 2:
       return pieces[0] * 60 + pieces[1]
     return pieces[0]
 
-  start_s = to_seconds(start)
-  end_s = to_seconds(end)
+  try:
+    start_s = to_seconds(start)
+    end_s = to_seconds(end)
+  except (TypeError, ValueError):
+    # A malformed hidden annotation must not abort video-only dataset iteration.
+    return None
   if end_s < start_s:
     start_s, end_s = end_s, start_s
   if start_s == end_s:

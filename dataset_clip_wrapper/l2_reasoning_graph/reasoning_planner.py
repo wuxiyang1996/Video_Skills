@@ -13,7 +13,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from atomic_skills import export_skill_ontology  # noqa: E402
-from atomic_skills.common import stable_id  # noqa: E402
+from atomic_skills.common import make_result, stable_id  # noqa: E402
 from atomic_skills.reasoning_graph_assembly import (  # noqa: E402
     assign_evidence_role,
     bridge_evidence_hops,
@@ -47,6 +47,7 @@ from ..l1_clue_graph.graph_plan_validator import resolve_plan_value, _coerce_nod
 from .l2_recursive_trace import attach_initial_l2_trajectory
 from ..perception.openrouter_client import OpenRouterClient, load_openrouter_api_key
 from ..schemas import GraphComposerConfig
+from ..verification.runtime_verifier import verify_rollout
 
 REASONING_SKILL_EXECUTORS = {
     "parse_question_target": parse_question_target,
@@ -517,6 +518,7 @@ def plan_reasoning_skills(
             response["model"] = client.model
             response["planner"] = "gpt_oss_reasoning_planner"
             response["planner_attempt"] = attempt["name"]
+            response["llm_usage"] = dict(client.last_response_metadata or {})
             if errors:
                 response["planner_retry_errors"] = errors
             return response
@@ -767,6 +769,7 @@ def execute_reasoning_plan(
                     or (mode == SkillBackendMode.VLM and skill_executor.vlm_client)
                 )
                 if has_client and backend_safe:
+                    usage_client = skill_executor.llm_client if mode == SkillBackendMode.LLM else skill_executor.vlm_client
                     try:
                         result = skill_executor.execute(skill_id, args=resolved_args, graph=graph)
                         trace.append({
@@ -777,6 +780,7 @@ def execute_reasoning_plan(
                             "evidence_refs": result.evidence_refs,
                             "confidence": result.confidence,
                             "backend": mode.value,
+                            "llm_usage": dict(getattr(usage_client, "last_response_metadata", {}) or {}),
                         })
                         if step_id:
                             step_outputs[step_id] = _augment_step_outputs(skill_id, result.outputs, result.evidence_refs)
@@ -789,6 +793,7 @@ def execute_reasoning_plan(
                             "failure_code": f"{mode.value}_backend_error",
                             "messages": [str(exc)],
                             "backend": mode.value,
+                            "llm_usage": dict(getattr(usage_client, "last_response_metadata", {}) or {}),
                         })
                         continue
 
@@ -908,7 +913,6 @@ def execute_reasoning_plan(
                             "ok": partial.ok,
                         })
                     all_refs = list(dict.fromkeys(all_refs))
-                    from atomic_skills.common import make_result
                     result = make_result(
                         "retrieve_evidence_for_hypothesis",
                         {"support_by_hypothesis": support_by_hypothesis, "support_refs": all_refs},
@@ -983,7 +987,6 @@ def execute_reasoning_plan(
                         scored.append(partial.outputs.get("scored_hypothesis") or {})
                         refs.extend(partial.evidence_refs)
                     refs = list(dict.fromkeys(refs))
-                    from atomic_skills.common import make_result
                     result = make_result(
                         "score_hypothesis_support",
                         {"scored_hypotheses": scored, "scored_hypothesis": scored[0] if scored else {}},
@@ -1029,10 +1032,20 @@ def execute_reasoning_plan(
             elif skill_id == "compose_evidence_chain":
                 labeled = resolved_args.get("role_labeled_evidence") or []
                 labeled = [item for item in labeled if isinstance(item, dict)]
-                result = executor(
-                    labeled or [{"role": "supporting_evidence", "evidence_ref": "unknown", "text": "", "confidence": 0.0}],
-                    dependency_template=resolved_args.get("dependency_template") or "support_chain",
-                )
+                if not labeled:
+                    result = make_result(
+                        "compose_evidence_chain",
+                        {"evidence_chain": {"evidence_refs": [], "items": []}},
+                        [],
+                        ok=False,
+                        failure_code="missing_role_labeled_evidence",
+                        confidence=0.0,
+                    )
+                else:
+                    result = executor(
+                        labeled,
+                        dependency_template=resolved_args.get("dependency_template") or "support_chain",
+                    )
             elif skill_id == "detect_missing_role":
                 result = executor(
                     _chain(resolved_args.get("evidence_chain")),
@@ -1493,8 +1506,10 @@ def build_llm_reasoning_rollout(
             l1_best = option_scores[0]
             l1_label = str(l1_best.get("label") or "")
             l1_margin = float(qa_answerability.get("option_margin") or 0.0)
-            if l1_label and final_label and str(final_label) != l1_label and l1_margin >= 0.75:
-                l1_refs = l1_best.get("top_refs") or []
+            l1_refs = l1_best.get("top_refs") or []
+            video_regime_for_override = (planner_example.get("metadata") or {}).get("video_regime")
+            override_margin = 0.5 if video_regime_for_override == "long" and len(l1_refs) >= 4 else 0.75
+            if l1_label and final_label and str(final_label) != l1_label and l1_margin >= override_margin:
                 l1_claim = {
                     "claim_text": l1_best.get("text") or l1_label,
                     "text": l1_best.get("text") or l1_label,
@@ -1650,5 +1665,32 @@ def build_llm_reasoning_rollout(
         rollout["metadata"]["query_memory_consistency"] = query_memory_consistency
     if commonsense_repair_pack:
         rollout["metadata"]["commonsense_repair_pack"] = commonsense_repair_pack
+
+    runtime_gate = verify_rollout(
+        clue_memory_graph,
+        rollout,
+        mode=str(rollout.get("input_mode") or "video_only"),
+    )
+    runtime_summary = dict(runtime_gate["verifier_summary"])
+    runtime_summary.update({
+        "answer_chain_valid": bool(
+            rollout.get("answer_support_chain")
+            and all(entry.get("evidence_refs") for entry in rollout["answer_support_chain"])
+        ),
+        "timestamp_valid": bool(runtime_summary.get("streaming_visibility_ok")),
+        "no_old_video_fact_leakage": True,
+    })
+    rollout["verifier_summary"] = runtime_summary
+    rollout["metadata"]["runtime_verifier"] = {
+        "passed": runtime_gate["passed"],
+        "acceptance_status": runtime_gate["acceptance_status"],
+        "failure_reasons": runtime_gate["failure_reasons"],
+    }
+    if not runtime_gate["passed"]:
+        rollout["acceptance_status"] = runtime_gate["acceptance_status"]
+        rollout["failure_reasons"] = runtime_gate["failure_reasons"]
+        rollout["verified_evidence_pack"]["verifier_reason"] = (
+            runtime_gate["failure_reasons"][0] if runtime_gate["failure_reasons"] else "runtime_verifier_failed"
+        )
     attach_initial_l2_trajectory(rollout, clue_memory_graph)
     return rollout

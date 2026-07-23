@@ -123,6 +123,7 @@ unless concrete video evidence verifies it.
 - [Repository bundle map](docs/repo-bundle-map.md) — L1/L2/verifier/tooling ownership boundaries
 - [Motif layer boundary](docs/motif-layer-boundary.md) — composed motifs vs legacy skill agents
 - [MDP formulation](docs/mdp-formulation.md) — atomic skill invocations as graph-state actions
+- [MDP-style SFT data generation](docs/sft-data-generation.md) — L1 builder/patch, L2/repair, verifier, and motif cold-start exports
 - [Implementation status](docs/implementation-status.md) — runnable code, datasets, gaps
 - [Dataset clip wrapper](dataset_clip_wrapper/README.md) — core + streaming benchmark canonical clip exporter
 - [Canonical example JSON schema](schemas/canonical_video_example.schema.json)

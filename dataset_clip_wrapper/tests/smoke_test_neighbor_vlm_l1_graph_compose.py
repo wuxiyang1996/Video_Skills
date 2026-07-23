@@ -42,7 +42,21 @@ class FakeNeighborVlmClient:
                 "text": f"{target_clip_id} shows a metal fence clue.",
                 "modality": "visual",
                 "confidence": 0.8,
-            }
+            },
+            {
+                "node_id": "entity_fence",
+                "node_type": "entity_mention",
+                "text": "metal fence",
+                "modality": "visual",
+                "confidence": 0.9,
+            },
+            {
+                "node_id": "state_fence",
+                "node_type": "state",
+                "text": "The metal fence is closed.",
+                "modality": "visual",
+                "confidence": 0.85,
+            },
         ]
         return {
             "target_nodes": target_nodes,
@@ -97,6 +111,11 @@ def main() -> int:
     )
     edge_types = {edge.get("edge_type") for edge in composed["graph"].get("edges", [])}
     producers = {node.get("producer") for node in composed["graph"].get("nodes", [])}
+    local_ids = {
+        node.get("local_node_id")
+        for node in composed["graph"].get("nodes", [])
+        if node.get("producer") == "neighbor_vlm_l1_graph_composer"
+    }
     report = {
         "composer_mode": composed.get("composer_mode"),
         "used_deterministic_fallback": composed.get("used_deterministic_fallback"),
@@ -105,9 +124,23 @@ def main() -> int:
         "has_neighbor_nodes": "neighbor_vlm_l1_graph_composer" in producers,
         "has_schema_anchor": "neighbor_vlm_l1_schema_anchor" in producers,
         "has_reappears": "reappears" in edge_types,
+        "preserves_local_ids": {
+            "target_fence",
+            "entity_fence",
+            "state_fence",
+        }.issubset(local_ids),
+        "has_entity_reference": "entity_mention" in edge_types,
+        "has_state_reference": "state_of" in edge_types,
     }
     print(json.dumps(report, indent=2))
-    return 0 if report["composer_mode"] == "neighbor_vlm_l1" and report["has_reappears"] and report["has_schema_anchor"] else 2
+    required = (
+        "has_reappears",
+        "has_schema_anchor",
+        "preserves_local_ids",
+        "has_entity_reference",
+        "has_state_reference",
+    )
+    return 0 if report["composer_mode"] == "neighbor_vlm_l1" and all(report[key] for key in required) else 2
 
 
 if __name__ == "__main__":
