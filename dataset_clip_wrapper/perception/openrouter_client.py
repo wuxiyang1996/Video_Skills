@@ -105,6 +105,7 @@ class OpenRouterClient:
         self.reasoning = reasoning
         self.timeout_s = timeout_s
         self.last_response_metadata: dict[str, Any] = {}
+        self.is_openrouter_endpoint = "openrouter.ai" in api_base.lower()
 
     @staticmethod
     def _message_text_chars(messages: list[dict[str, Any]]) -> int:
@@ -148,9 +149,9 @@ class OpenRouterClient:
         }
         if self.max_tokens is not None:
             payload["max_tokens"] = self.max_tokens
-        if self.reasoning is not None:
+        if self.reasoning is not None and self.is_openrouter_endpoint:
             payload["reasoning"] = self.reasoning
-        if response_format is not None:
+        if response_format is not None and self.is_openrouter_endpoint:
             payload["response_format"] = response_format
         self.last_response_metadata = self._base_request_metadata(messages)
         try:
@@ -164,7 +165,12 @@ class OpenRouterClient:
                     json=payload,
                     timeout=self.timeout_s,
                 )
-                response.raise_for_status()
+                if not response.ok:
+                    body = response.text[:1000]
+                    raise requests.HTTPError(
+                        f"{response.status_code} error from {self.api_base}: {body}",
+                        response=response,
+                    )
                 response_payload = response.json()
         except TimeoutError:
             self.last_response_metadata["timeout_count"] = 1

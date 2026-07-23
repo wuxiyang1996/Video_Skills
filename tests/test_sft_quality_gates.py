@@ -118,6 +118,46 @@ def test_l2_retrieval_export_hides_gold_and_requires_strong_or_resolved_correct_
     assert report["excluded_counts"] == {"final_not_strong_or_resolved": 1}
 
 
+def test_l2_retrieval_catalog_is_bounded_but_keeps_all_indices(tmp_path):
+    rollouts = tmp_path / "rollouts.jsonl"
+    schemas = [{
+        "time_span": {"start_s": index * 30, "end_s": (index + 1) * 30},
+        "scene_description": "scene " + ("x" * 1000),
+        "observable_facts": [{"text": "fact " + ("y" * 1000)} for _ in range(10)],
+        "events": [{"text": "event " + ("z" * 1000)} for _ in range(10)],
+        "searchable_phrases": ["phrase " + ("p" * 1000) for _ in range(10)],
+    } for index in range(100)]
+    _write_jsonl(rollouts, [{
+        "dataset": "cg_bench",
+        "example_id": "cg_bench:large",
+        "question": {"question_text": "What happens?", "answer": {"label": "A"}},
+        "metadata": {
+            "coarse_clip_schemas": schemas,
+            "clip_schemas": [{"clip_id": "fine:0"}],
+            "perception": {"retrieval": {
+                "ok": True,
+                "mode": "gpt_oss_atomic_select_coarse",
+                "selected_coarse_indices": [2, 90],
+                "topk": 2,
+            }},
+            "reasoning_rollout": {
+                "acceptance_status": "accepted_strong",
+                "final_answer": {"label": "A"},
+            },
+        },
+    }])
+
+    repairs = tmp_path / "repairs.jsonl"
+    _write_jsonl(repairs, [{"example_id": "cg_bench:large", "repair_status": "resolved_strong"}])
+    transitions, chats, _ = build_l2_retrieval_exports([rollouts], repair_results_paths=[repairs])
+    catalog = transitions[0]["state_t"]["l1_coarse_summary_catalog"]
+
+    assert len(catalog) == 100
+    assert {row["coarse_index"] for row in catalog} == set(range(100))
+    assert len(chats[0]["messages"][1]["content"]) < 64000
+    assert len(catalog[2]["observable_facts"][0]) > len(catalog[3]["observable_facts"][0])
+
+
 def test_missing_chain_evidence_never_injects_unknown_ref():
     trace, _ = execute_reasoning_plan(
         reasoning_plan=[{

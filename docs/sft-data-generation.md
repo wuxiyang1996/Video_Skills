@@ -136,6 +136,20 @@ hard failure. Dataset coverage, class balance, duplicate transition ids, empty
 evidence catalogs, and source split membership should also be checked before
 training.
 
+### Gated pilot package
+
+After collecting a snapshot, build the training-ready pilot package with:
+
+```bash
+bash scripts/sft_pilot/prepare_sft_v2.sh
+```
+
+The strict builder excludes the evaluation-only `VRBench`, `VideoMME`, and
+`OVO-Bench` sources, resolves distinct rows that collide on a transition id,
+keeps all currently gated L2 retrieval examples, caps serialized chat length,
+and writes SHA-256 hashes to `training_manifest.json`. It fails rather than
+writing a silently incomplete training package when a hard gate is violated.
+
 ## 2026-07-10 Pilot Audit
 
 Do not train from the original 5-dataset L1 export or the original 27-row

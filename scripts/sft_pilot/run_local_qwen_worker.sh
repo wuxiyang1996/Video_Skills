@@ -18,16 +18,34 @@ QUERY_TIME_RETRIEVAL="${QUERY_TIME_RETRIEVAL:-1}"
 CLIP_FRAMES="${CLIP_FRAMES:-4}"
 CLIP_MAX_TOKENS="${CLIP_MAX_TOKENS:-1600}"
 LLM_COARSE_SELECTOR="${LLM_COARSE_SELECTOR:-1}"
+CONTINUE_ON_ITEM_ERROR="${CONTINUE_ON_ITEM_ERROR:-1}"
 
 export HF_HOME
 export TRANSFORMERS_CACHE="${HF_HOME}/hub"
 export VLLM_USE_DEEP_GEMM=0
 export TOKENIZERS_PARALLELISM=false
+# The serving venv intentionally inherits the Swift conda environment for
+# PyTorch. Force stdlib distutils so setuptools does not assert when both
+# environments expose different distutils implementations.
+export SETUPTOOLS_USE_DISTUTILS=stdlib
 
 RUN_ROOT="${REPO_ROOT}/dataset_clip_wrapper/output/${PILOT_TAG}/${DATASET}/start_${START_INDEX}_limit_${LIMIT}"
 mkdir -p "${RUN_ROOT}"
 SERVER_LOG="${RUN_ROOT}/transformers_server.log"
 RUN_LOG="${RUN_ROOT}/pipeline.log"
+
+completed_examples=0
+if [[ -f "${RUN_ROOT}/examples.jsonl" ]]; then
+  completed_examples="$(wc -l < "${RUN_ROOT}/examples.jsonl")"
+fi
+if [[ "${SMOKE}" != "1" && "${completed_examples}" -ge "${LIMIT}" ]]; then
+  printf '{"status":"already_complete","dataset":"%s","start_index":%s,"limit":%s,"examples":%s,"run_root":"%s"}\n' \
+    "${DATASET}" "${START_INDEX}" "${LIMIT}" "${completed_examples}" "${RUN_ROOT}" | tee -a "${RUN_LOG}"
+  exit 0
+fi
+
+printf '{"status":"starting","dataset":"%s","start_index":%s,"limit":%s,"examples":%s,"pilot_tag":"%s","clip_model":"%s","graph_model":"%s"}\n' \
+  "${DATASET}" "${START_INDEX}" "${LIMIT}" "${completed_examples}" "${PILOT_TAG}" "${MODEL}" "${GRAPH_MODEL}" | tee -a "${RUN_LOG}"
 
 cleanup() {
   trap - EXIT INT TERM
@@ -86,6 +104,9 @@ else
   if [[ "${LLM_COARSE_SELECTOR}" == "1" ]]; then
     RETRIEVAL_ARGS+=(--llm-coarse-selector)
   fi
+  if [[ "${CONTINUE_ON_ITEM_ERROR}" == "1" ]]; then
+    RETRIEVAL_ARGS+=(--continue-on-item-error)
+  fi
   /fs/gamma-projects/vlm-robot/conda/bin/python -m dataset_clip_wrapper.run_staged_llm_pipeline \
     --dataset "${DATASET}" \
     --split train \
@@ -100,6 +121,8 @@ else
     --clip-schema-workers "${CLIP_WORKERS}" \
     --graph-model "${GRAPH_MODEL}" \
     --graph-neighbor-workers "${GRAPH_WORKERS}" \
+    --skill-model "${MODEL}" \
+    --skill-api-base "${LOCAL_ENDPOINT}" \
     "${RETRIEVAL_ARGS[@]}" \
     --output "${RUN_ROOT}/examples.jsonl" \
     --stage-dir "${RUN_ROOT}/stages" 2>&1 | tee "${RUN_LOG}"

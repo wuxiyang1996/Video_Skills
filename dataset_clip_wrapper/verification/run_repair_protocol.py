@@ -1081,6 +1081,7 @@ def _build_producer(args: argparse.Namespace, api_key: str) -> QwenClipSchemaPro
     client = OpenRouterClient(
         model=args.clip_schema_model,
         api_key=api_key,
+        api_base=args.clip_schema_api_base,
         temperature=0.0,
         max_tokens=args.clip_schema_max_tokens,
         reasoning=reasoning,
@@ -1124,6 +1125,7 @@ def _clip_id_for_span(example: dict[str, Any], span: ClipSpan) -> str:
 def _schema_worker_args(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "clip_schema_model": args.clip_schema_model,
+        "clip_schema_api_base": args.clip_schema_api_base,
         "keys_py_path": str(args.keys_py) if args.keys_py else None,
         "request_frames": args.request_frames,
         "clip_schema_max_tokens": args.clip_schema_max_tokens,
@@ -1148,6 +1150,7 @@ def _repair_clip_schema_worker(job: dict[str, Any]) -> dict[str, Any]:
     client = OpenRouterClient(
         model=args["clip_schema_model"],
         api_key=job["api_key"],
+        api_base=args["clip_schema_api_base"],
         temperature=0.0,
         max_tokens=int(args["clip_schema_max_tokens"]),
         reasoning=reasoning,
@@ -2681,6 +2684,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--keys-py", type=Path)
     parser.add_argument("--clip-schema-model", default="qwen/qwen3.5-9b")
+    parser.add_argument("--clip-schema-api-base", default="https://openrouter.ai/api/v1/chat/completions")
     parser.add_argument("--verifier-model", default="openai/gpt-oss-120b")
     parser.add_argument("--clue-planner-model", default="openai/gpt-oss-120b")
     parser.add_argument("--bridge-model", default="openai/gpt-oss-120b")

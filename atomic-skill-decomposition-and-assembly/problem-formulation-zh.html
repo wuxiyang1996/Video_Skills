@@ -1229,11 +1229,11 @@ measure:
         <table class="scorecard">
           <thead><tr><th>LoRA specialist</th><th>总数</th><th>Train</th><th>Dev</th><th>实测最大 tokens</th></tr></thead>
           <tbody>
-            <tr><td>L1 patch / builder</td><td>2,386</td><td>1,918</td><td>468</td><td>3,564</td></tr>
-            <tr><td>L2 retrieval / ranking / recovery</td><td>867</td><td>684</td><td>183</td><td>10,081</td></tr>
-            <tr><td>Verifier</td><td>131</td><td>118</td><td>13</td><td>1,677</td></tr>
-            <tr><td>Repair</td><td>122</td><td>110</td><td>12</td><td>13,528</td></tr>
-            <tr><td>Motif lifecycle / evidence audit</td><td>320</td><td>262</td><td>58</td><td>3,260</td></tr>
+            <tr><td>L1 patch / builder</td><td>1,709</td><td>1,401</td><td>308</td><td>3,564</td></tr>
+            <tr><td>L2 retrieval / ranking / recovery</td><td>867</td><td>684</td><td>183</td><td>9,929</td></tr>
+            <tr><td>Verifier</td><td>92</td><td>79</td><td>13</td><td>1,677</td></tr>
+            <tr><td>Repair</td><td>127</td><td>115</td><td>12</td><td>2,765</td></tr>
+            <tr><td>Motif lifecycle / evidence gate</td><td>320</td><td>262</td><td>58</td><td>3,296</td></tr>
           </tbody>
         </table>
         <p class="idea-body"><strong>不采集新视频的 L2 扩展：</strong>把同一 source trace 转换成互补的 decision views，而不是复制成多个等价正样本。</p>
@@ -1251,11 +1251,12 @@ measure:
           <li><strong>证据边界：</strong>L2 只有 23 条严格、相互独立的 positive core select-set 样本，其余 844 条是派生的 curriculum / decision views。派生视图增加 action supervision，不代表新增了 844 条独立视频证据。</li>
           <li><strong>不清洗成假正例：</strong>weak 或 rejected traces 不会被转换成 positive targets；prompt 中也移除了未来 teacher selections。</li>
           <li><strong>权重控制：</strong>同一 source family 的 variants 使用归一化 <code>source_family_weight</code>，扩展不会成倍放大该 source 的训练权重。</li>
+          <li><strong>审计后清洗：</strong>L2 已改成与 label 无关的正负对称候选表示，“选择最长候选”捷径降至 pairwise 29.8%、listwise 13.2%；L1 删除 677 条 endpoint 不可见、损坏或缺少支撑的记录；Repair 不再暴露预计算 repair / selection 决策；Motif evidence target 现在以可见 gate observations 为条件。</li>
           <li><strong>泄漏控制：</strong>train / dev 按 video group 切分，五套数据的 train-dev video-group overlap 都为 0；evaluation-only 的 VRBench、VideoMME、OVO 样本已排除。</li>
           <li><strong>格式与长度门槛：</strong>forbidden prompt-key hits 为 0，全部 hard gates 通过，并且用实际 Qwen3.5-9B tokenizer 检查后全部落在 16k context 内。</li>
           <li><strong>Adapter 边界：</strong>L1、L2、Verifier、Repair、Motif 保持五个独立 LoRA；Verifier 与 Repair 明确不合并。</li>
         </ul>
-        <p class="idea-notes"><strong>审计产物：</strong><code>training_manifest.json</code> 记录数据量和 split 边界；<code>token_audit.json</code> 记录实际 tokenizer 长度检查。相关 expansion / split / training 测试共 13 项，全部通过。</p>
+        <p class="idea-notes"><strong>审计产物：</strong><code>training_manifest.json</code> 记录数据量、split 边界、shortcut 检查和 prompt-target gates；<code>token_audit.json</code> 记录实际 tokenizer 长度检查。相关 expansion / split / training 测试共 17 项，全部通过。</p>
       </details>
     </article>
 
@@ -1288,7 +1289,7 @@ measure:
   <section class="changelog">
     <h2>讨论记录</h2>
     <ol>
-      <li><time datetime="2026-07-22">2026-07-22</time> — 新增 SFT v3 落地状态：五套独立 Qwen3.5-9B LoRA 数据已就绪（L1 2,386；L2 867；Verifier 131；Repair 122；Motif 320）。明确 L2 的 23 条独立 core 样本与 844 条派生 decision views、source-family 权重、泄漏 / token 门槛，以及五个 adapter 尚未开始训练。</li>
+      <li><time datetime="2026-07-22">2026-07-22</time> — 新增并完成审计后清洗的 SFT v3：五套独立 Qwen3.5-9B LoRA 数据已就绪（L1 1,709；L2 867；Verifier 92；Repair 127；Motif 320）。已移除 L2 长度捷径、L1 不可见 / 损坏 endpoint、Repair 决策复制泄漏和 Motif 不可观测 target；正式训练仍未开始。</li>
       <li><time datetime="2026-06-30">2026-06-30</time> — 新增 Trace-to-Skill Fitting 更新：demonstrations 诱导 candidate operation clusters；紧凑 atomic basis 由 coverage / confusion / cost 选择并在 controller 训练前冻结；可发现的新技能是能展开成冻结 atomics 的 composite motifs，而不是在线创建的新 primitives。</li>
       <li><time datetime="2026-06-30">2026-06-30</time> — 新增可选 motif 卡片：composed skills 不作为第一篇核心机制；verified reasoning motifs 只作为 assembly / repair prior，不携带当前视频事实，执行和验证前必须展开成冻结的 atomic skill graph。</li>
       <li><time datetime="2026-06-26">2026-06-26</time> — 新增卡片 029：五个视频理解 benchmark 统一落地到 <code>datasets/</code>（Video-Holmes / SIV-Bench / VRBench / CG-Bench / M3-Bench），记录本地路径、数据量、loader 与 <code>run_eval.py</code> 入口；卡片 022 增加指向 028/029 的交叉引用；开放问题 benchmark 列表同步更新。</li>

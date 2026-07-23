@@ -13,16 +13,61 @@ from .sft_common import compact_visibility, contains_forbidden_prompt_key, read_
 from ..verification.evaluate_l1_query_memory import evaluate_example
 
 
-def _catalog(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _short_text(value: Any, max_chars: int) -> str:
+    if isinstance(value, dict):
+        for key in ("text", "description", "event", "fact", "phrase", "label", "name"):
+            if value.get(key):
+                value = value[key]
+                break
+        else:
+            value = json.dumps(compact_visibility(value), ensure_ascii=False, separators=(",", ":"))
+    text = str(value or "").strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max(0, max_chars - 1)].rstrip() + "…"
+
+
+def _compact_cues(values: Any, *, max_items: int, max_chars: int) -> list[str]:
+    rows = values if isinstance(values, list) else [values]
+    result: list[str] = []
+    for value in rows:
+        text = _short_text(value, max_chars)
+        if text and text not in result:
+            result.append(text)
+        if len(result) >= max_items:
+            break
+    return result
+
+
+def _catalog(schemas: list[dict[str, Any]], selected_indices: set[int] | None = None) -> list[dict[str, Any]]:
+    """Build a bounded retrieval catalog suitable for a finite SFT context.
+
+    Selected teacher entries retain more cues. Non-selected entries stay visible
+    so the action remains a genuine choice over the full coarse index.
+    """
+    selected_indices = selected_indices or set()
     rows = []
     for index, schema in enumerate(schemas):
+        selected = index in selected_indices
         rows.append({
             "coarse_index": index,
             "time_span": schema.get("time_span"),
-            "scene_description": schema.get("scene_description"),
-            "observable_facts": compact_visibility(schema.get("observable_facts") or []),
-            "events": compact_visibility(schema.get("events") or []),
-            "searchable_phrases": schema.get("searchable_phrases") or [],
+            "scene_description": _short_text(schema.get("scene_description"), 240 if selected else 120),
+            "observable_facts": _compact_cues(
+                compact_visibility(schema.get("observable_facts") or []),
+                max_items=4 if selected else 2,
+                max_chars=100 if selected else 70,
+            ),
+            "events": _compact_cues(
+                compact_visibility(schema.get("events") or []),
+                max_items=3 if selected else 1,
+                max_chars=100 if selected else 70,
+            ),
+            "searchable_phrases": _compact_cues(
+                schema.get("searchable_phrases") or [],
+                max_items=6 if selected else 2,
+                max_chars=80 if selected else 50,
+            ),
         })
     return rows
 
@@ -92,12 +137,12 @@ def build_l2_retrieval_exports(
             coarse_schemas = metadata.get("coarse_clip_schemas") if isinstance(metadata.get("coarse_clip_schemas"), list) else []
             selected = [int(value) for value in selection.get("selected_coarse_indices", [])]
             state = {
-                "schema_version": "video-skills/l2-retrieval-state-v0.1",
+                "schema_version": "video-skills/l2-retrieval-state-v0.2",
                 "process_model": "mdp_style_l2_retrieval_controller",
                 "dataset": row.get("dataset"),
                 "example_id": row.get("example_id"),
                 "question": compact_visibility(row.get("question") or {}),
-                "l1_coarse_summary_catalog": _catalog(coarse_schemas),
+                "l1_coarse_summary_catalog": _catalog(coarse_schemas, set(selected)),
                 "partial_l1_summary": {
                     "coarse_summary_count": len(coarse_schemas),
                     "fine_observation_count": 0,

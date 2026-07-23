@@ -2,9 +2,12 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .env
+.venv-qwen35-serve/
+.venv-qwen35-vllm/
 
 # Experiment run artifacts (regenerate with experiments/*.py)
 experiments/*_output.json
+motif/output/
 experiments/*_run.json
 experiments/expert_demo_video_holmes_gpt5mini_output.json
 
