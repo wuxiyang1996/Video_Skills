@@ -191,6 +191,10 @@ rows are MDP-style transitions, not one-shot graph dumps.
 | `training/repair_report_stepwise_sft_adapter.py` | Repair-report-derived stepwise exports. |
 | `training/collect_sft_snapshot.py` | Snapshot collector that gathers gated controller JSONL bundles. |
 | `training/build_sft_splits.py` | Strict train/dev split builder with controller mixture gates. |
+| `training/build_split_manifest.py` | Freeze source-video roles (`sft_seed` / `opd_pool` / `grpo_pool` / `dev_tune` / `heldout_test`). |
+| `training/build_specialist_sft_v4.py` | Filter v3 five_lora → v4 using split_manifest (`sft_seed`/`dev_tune` only). |
+| `training/evaluate_sft_package_gates.py` | Preflight gates for five-LoRA SFT packages before training. |
+| `training/evaluate_lora_sft_gates.py` | Post-SFT warm-up gates vs base-9B and majority-action baselines. |
 | `training/train_lora_sft.py` | Small LoRA SFT trainer entrypoint. |
 | `training/sft_common.py` | Shared JSONL IO, leakage gates, and report helpers. |
 

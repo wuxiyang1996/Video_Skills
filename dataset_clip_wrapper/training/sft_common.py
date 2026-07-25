@@ -3,8 +3,43 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Iterable
+
+
+# Qwen3 / Qwen3.5 chat templates must always run with thinking disabled for
+# Video_Skills controller SFT and generation gates. `enable_thinking=False`
+# still inserts an empty <think></think> block before the answer; that is the
+# official "thinking off" prompt shape, not an active reasoning mode.
+ENABLE_THINKING = False
+_THINK_COMPLETE_RE = re.compile(r"<think>[\s\S]*?</think>", re.DOTALL)
+_THINK_OPEN_RE = re.compile(r"<think>[\s\S]*$", re.DOTALL)
+
+
+def strip_think_tags(text: str) -> str:
+    """Remove residual ``<think>…</think>`` (or truncated open) blocks."""
+    if not text or "<think>" not in text:
+        return text
+    result = _THINK_COMPLETE_RE.sub("", text)
+    result = _THINK_OPEN_RE.sub("", result)
+    return result.strip()
+
+
+def apply_chat_template_no_think(
+    tokenizer: Any,
+    messages: list[dict[str, Any]],
+    *,
+    add_generation_prompt: bool,
+    **kwargs: Any,
+) -> Any:
+    """apply_chat_template with thinking hard-disabled."""
+    return tokenizer.apply_chat_template(
+        messages,
+        add_generation_prompt=add_generation_prompt,
+        enable_thinking=ENABLE_THINKING,
+        **kwargs,
+    )
 
 
 FORBIDDEN_PROMPT_KEYS = {

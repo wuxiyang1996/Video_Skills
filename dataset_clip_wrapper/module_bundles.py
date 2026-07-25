@@ -134,7 +134,11 @@ MODULE_BUNDLES: tuple[ModuleBundle, ...] = (
         purpose="Controller SFT adapters, LoRA training entrypoints, snapshot collection, and root export_*_sft shims.",
         modules=(
             "training.build_sft_splits",
+            "training.build_split_manifest",
+            "training.build_specialist_sft_v4",
             "training.collect_sft_snapshot",
+            "training.evaluate_lora_sft_gates",
+            "training.evaluate_sft_package_gates",
             "training.l1_builder_sft_adapter",
             "training.l1_patch_sft_adapter",
             "training.l2_retrieval_sft_adapter",
