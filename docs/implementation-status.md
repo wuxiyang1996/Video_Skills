@@ -1,10 +1,10 @@
 # Implementation Status
 
-Last updated: 2026-07-06
+Last updated: 2026-07-24
 
 This document tracks what is designed, what is implemented, and how to run the
 current code. It consolidates status from README, atomic skills v1, dataset
-rollout plans, and recent experiments.
+rollout plans, SFT cold-start packages, and recent experiments.
 
 Clean-base note: the active cleanup branch starts from
 `backup/pre-merge-l1l2-training-20260706`. It keeps the L1/L2 relaunch core and
@@ -745,6 +745,55 @@ python experiments/toy_graph_skill_reasoning.py
 Uses synthetic perceived-video notes, asks the model to emit both graphs, and
 runs a local verifier on cross-layer bindings.
 
+## 4.7 Five-Specialist Cold-Start SFT (2026-07-22)
+
+Current training-ready package:
+
+```text
+dataset_clip_wrapper/output/sft_cold_start/specialist_sft_v3_20260722/five_lora/
+backup: backups/video_skills_five_lora_sft_v3_20260723.tar.gz
+```
+
+Hard gates pass (`all_hard_gates_passed=true`): video-group train/dev split,
+zero group overlap, `prompt_forbidden_key_hits=0`. Details and collection rules
+live in [sft-data-generation.md](sft-data-generation.md).
+
+Controller walkthrough:
+
+```text
+video
+  -> [perception] Qwen clip schemas (outside the five LoRAs)
+  -> L1: question-blind clue-memory graph build / patch
+  -> L2: question + L1 -> coarse/fine retrieval + recovery
+  -> Verifier: supported vs insufficient
+       |- supported -> may commit; later motif mining
+       `- insufficient -> Repair (bounded patch / reroute / re-verify)
+  -> Motif: post-hoc prior (must expand before use)
+```
+
+| Specialist | Rows (train/dev) | Dominant actions in package |
+|---|---:|---|
+| L1 | 15,690 (12,686 / 3,004) | `create_node`, `create_schema_anchor`, `create_edge`, segment, L1 patch |
+| L2 | 867 (684 / 183); core=23 | select/rank coarse, recovery diagnose / reject-commit |
+| Repair | 127 (115 / 12) | `bounded_recursive_repair` (coarse round actions) |
+| Verifier | 92 (79 / 13); 60 supported / 32 insufficient | `emit_verifier_decision` |
+| Motif | 320 (262 / 58) | evidence-ref audit + lifecycle (rejected-heavy) |
+
+### SFT coverage gaps (relative to designed MDP)
+
+| Gap | Notes |
+|---|---|
+| L2 claim/compose assembly | Designed `extract_claim` / `compose_evidence_chain` / … mostly absent; L2 SFT is retrieval/recovery |
+| L2 core positives | Thin (23 core); raw `accepted_strong` remains no-go without gates |
+| Fine-grained repair | Diagnose → patch → verify → abstain collapsed into round-level actions |
+| Verifier / motif breadth | Verifier CG-heavy; motif rejected/audit-heavy |
+| Classic 9 L1 atomics as tool names | Folded into `neighbor_vlm_l1_*` |
+| Perception / eval datasets / GRPO | Perception not in five LoRAs; VRBench/VideoMME/OVO excluded from SFT by design; GRPO/closed-loop still open |
+| Mixture balance | Doc target ~35/35/20/10; v3 is ~91% L1 by rows |
+
+Priority fills: gated L2 claim/compose, fine-step repair, Video-Holmes verifier
+negatives.
+
 ## 5. What Is Not Implemented Yet
 
 | Item | Notes |
@@ -759,7 +808,11 @@ runs a local verifier on cross-layer bindings.
 | Full raw VLM caption / ASR / object tracking stack | Stage C future work |
 | `create_semantic_memory_node` | Discussed in early skill drafts; not in final 9-skill set |
 | M3-Bench memory graph reader | Blocker for M3 rollouts |
-| Controller training / verified RL | Design only |
+| Five-specialist cold-start SFT export | Implemented: `specialist_sft_v3_20260722/five_lora/` (see §4.7) |
+| Gated L2 claim/compose SFT | Missing / thin in v3; retrieval/recovery only |
+| Fine-grained repair-step SFT | Missing; package has coarse `bounded_recursive_repair` rounds |
+| Controller LoRA trainer | Present (`dataset_clip_wrapper/training/train_lora_sft.py`); treat as cold-start BC |
+| Verified RL / GRPO closed loop | Design + data scaffolding; not a finished training loop |
 | `--graph-only` batch exporter | Not yet added |
 
 ## 5.1 Training Feasibility Assessment
@@ -860,6 +913,8 @@ Documented in `problem-formulation-zh.html` and preserved here for implementatio
 ## 8. Related Documents
 
 - [MDP formulation](mdp-formulation.md)
+- [MDP-style SFT data generation](sft-data-generation.md) — five-specialist package, gaps, collection protocol
+- [Three-agent architecture](three-agent-architecture.md)
 - [Clip processing policy](clip-processing-policy.md)
 - [Unified video skill schema](unified-video-skill-schema.md)
 - [Atomic skills v1](../atomic-skill-decomposition-and-assembly/atomic-skills-v1.md)

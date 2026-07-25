@@ -16,19 +16,18 @@ KNOWN_TOP_LEVEL = {
     "REPO_STRUCTURE.md",
     "atomic-skill-decomposition-and-assembly",
     "atomic_skills",
+    "backups",
     "dataset_clip_wrapper",
     "docs",
     "experiments",
-    "rag",
-    "reflection",
+    "motif",
     "schemas",
     "scripts",
     "tests",
-    "video_skills",
-    "visual_grounding",
 }
 
-GENERATED_SHOULD_NOT_BE_TRACKED = {
+# Exact names that are local/generated and must not be treated as unexpected.
+LOCAL_OR_GENERATED_EXACT = {
     ".env",
     ".pytest_cache",
     "__pycache__",
@@ -42,6 +41,22 @@ LEGACY_TOP_LEVEL = {
     "skill_agents",
     "trainer",
 }
+
+# Ghost packages removed in the P0 layout cleanup; keep blocked if they reappear.
+REMOVED_GHOST_TOP_LEVEL = {
+    "rag",
+    "video_skills",
+    "visual_grounding",
+}
+
+
+def _is_local_or_generated(name: str) -> bool:
+    if name in LOCAL_OR_GENERATED_EXACT:
+        return True
+    # Local virtualenvs (.venv, .venv-*, venv) are generated, not layout assets.
+    if name == ".venv" or name.startswith(".venv-") or name == "venv":
+        return True
+    return False
 
 
 def _tracked_files(*paths: str) -> list[str]:
@@ -58,7 +73,11 @@ def main() -> int:
         if path.name != ".git" and not path.name.endswith(".egg-info")
     }
 
-    unexpected = sorted(entries - KNOWN_TOP_LEVEL - GENERATED_SHOULD_NOT_BE_TRACKED)
+    unexpected = sorted(
+        name
+        for name in entries
+        if name not in KNOWN_TOP_LEVEL and not _is_local_or_generated(name)
+    )
     if unexpected:
         problems.append(
             "Unexpected top-level paths: "
@@ -73,9 +92,31 @@ def main() -> int:
             + ", ".join(legacy_present)
         )
 
-    tracked_generated = _tracked_files(*GENERATED_SHOULD_NOT_BE_TRACKED)
+    ghost_present = sorted(entries & REMOVED_GHOST_TOP_LEVEL)
+    if ghost_present:
+        problems.append(
+            "Removed ghost top-level packages reappeared: "
+            + ", ".join(ghost_present)
+            + ". Clear empty pycache shells or update layout docs if intentional."
+        )
+
+    tracked_generated = _tracked_files(*sorted(LOCAL_OR_GENERATED_EXACT))
     if tracked_generated:
         problems.append("Generated/local-only paths are tracked: " + ", ".join(tracked_generated))
+
+    tracked_venvs = [
+        path
+        for path in _tracked_files()
+        if path.startswith(".venv/")
+        or path.startswith(".venv-")
+        or path.startswith("venv/")
+        or path == ".venv"
+        or path == "venv"
+    ]
+    if tracked_venvs:
+        problems.append(
+            "Local virtualenv paths are tracked: " + ", ".join(tracked_venvs[:10])
+        )
 
     tracked_dataset_outputs = [
         path

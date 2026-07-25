@@ -110,31 +110,32 @@ def _valid_row(row: dict[str, Any], max_characters: int) -> bool:
     return True
 
 
-def _sample_by_key(rows: list[dict[str, Any]], key_fn, quotas: dict[str, int], salt: str) -> list[dict[str, Any]]:
-    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in rows:
-        grouped[str(key_fn(row))].append(row)
-    result: list[dict[str, Any]] = []
-    for key, quota in quotas.items():
-        candidates = sorted(grouped.get(key, []), key=lambda row: _stable(str(row.get("transition_id")), f"{salt}:{key}"))
-        result.extend(candidates[:quota])
-    return result
-
-
 def _l1_rows(snapshot: Path, salt: str) -> list[dict[str, Any]]:
+    # L1 is trained as its own adapter, so it no longer needs a hard row quota
+    # to keep it from overwhelming unrelated controller families. Quality gates
+    # below still remove actions that cannot be inferred from the visible state.
+    del salt
     builder = read_jsonl(snapshot / "l1_builder_sft.jsonl")
     patch = read_jsonl(snapshot / "l1_patch_sft.jsonl")
-    quotas = {
-        "segment_video_or_select_clip": 200,
-        "neighbor_vlm_l1_create_node": 600,
-        "neighbor_vlm_l1_create_schema_anchor": 300,
-        "neighbor_vlm_l1_create_edge": 600,
-        "neighbor_vlm_l1_skip_edge": 100,
-        "short_video_recurrence_create_clue": 100,
-        "short_video_recurrence_link": 100,
-    }
-    sampled = _sample_by_key(builder, lambda row: (row.get("metadata") or {}).get("skill_id"), quotas, salt)
-    return sampled + patch
+    return builder + patch
+
+
+def _l1_skill_family(row: dict[str, Any]) -> str:
+    metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    return str(metadata.get("skill_id") or metadata.get("controller") or "unknown")
+
+
+def _apply_l1_skill_weights(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Give every L1 skill family equal aggregate loss weight without dropping rows."""
+    counts = Counter(_l1_skill_family(row) for row in rows)
+    for row in rows:
+        family = _l1_skill_family(row)
+        metadata = dict(row.get("metadata") or {})
+        metadata["task"] = family
+        metadata["weight_family"] = "l1_skill"
+        metadata["source_family_weight"] = 1.0 / counts[family]
+        row["metadata"] = metadata
+    return dict(counts)
 
 
 def _l1_quality_reason(row: dict[str, Any]) -> str | None:
@@ -423,6 +424,8 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
                 counts["record_id_collision_rewritten"] += 1
             unique[record_id] = payload
         prepared[specialist] = list(unique.values())
+        if specialist == "l1":
+            _apply_l1_skill_weights(prepared[specialist])
         excluded[specialist] = counts
         all_groups.update(str(row["split_group_id"]) for row in prepared[specialist])
 
@@ -435,11 +438,31 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         rows.sort(key=lambda row: str(row.get("transition_id") or row.get("demo_id")))
         train = [row for row in rows if group_to_split[row["split_group_id"]] == "train"]
         dev = [row for row in rows if group_to_split[row["split_group_id"]] == "dev"]
+        if specialist == "l1":
+            # Normalize against the rows the optimizer/evaluator actually sees;
+            # group splitting can otherwise skew aggregate family weights.
+            _apply_l1_skill_weights(train)
+            _apply_l1_skill_weights(dev)
         target = args.output_dir / specialist
         write_jsonl(target / "all_sft.jsonl", rows)
         write_jsonl(target / "train.jsonl", train)
         write_jsonl(target / "dev.jsonl", dev)
         report = _audit(rows, train, dev)
+        if specialist == "l1":
+            train_weight_sums: dict[str, float] = defaultdict(float)
+            dev_weight_sums: dict[str, float] = defaultdict(float)
+            for split_rows, weight_sums in ((train, train_weight_sums), (dev, dev_weight_sums)):
+                for row in split_rows:
+                    metadata = row.get("metadata") or {}
+                    weight_sums[_l1_skill_family(row)] += float(metadata.get("source_family_weight") or 0.0)
+            report["skill_family_counts"] = dict(Counter(_l1_skill_family(row) for row in rows))
+            report["train_skill_family_weight_sums"] = dict(train_weight_sums)
+            report["dev_skill_family_weight_sums"] = dict(dev_weight_sums)
+            report["train_skill_family_weight_sum_min"] = min(train_weight_sums.values(), default=0.0)
+            report["train_skill_family_weight_sum_max"] = max(train_weight_sums.values(), default=0.0)
+            report["dev_skill_family_weight_sum_min"] = min(dev_weight_sums.values(), default=0.0)
+            report["dev_skill_family_weight_sum_max"] = max(dev_weight_sums.values(), default=0.0)
+            report["dev_missing_skill_families"] = sorted(set(train_weight_sums) - set(dev_weight_sums))
         if specialist == "l2":
             core = [row for row in rows if (row.get("metadata") or {}).get("is_core")]
             derived = [row for row in rows if not (row.get("metadata") or {}).get("is_core")]
@@ -478,6 +501,15 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             and report["prompt_forbidden_key_hits"] == 0
             and report["train_rows"] > 0
             and report["dev_rows"] > 0
+            and (
+                specialist != "l1"
+                or (
+                    abs(report["train_skill_family_weight_sum_min"] - 1.0) < 1e-9
+                    and abs(report["train_skill_family_weight_sum_max"] - 1.0) < 1e-9
+                    and abs(report["dev_skill_family_weight_sum_min"] - 1.0) < 1e-9
+                    and abs(report["dev_skill_family_weight_sum_max"] - 1.0) < 1e-9
+                )
+            )
             and (specialist != "l2" or report["length_shortcut_audit"]["passed"])
             and (specialist != "repair" or report["prompt_target_decision_copy_count"] == 0)
             and (specialist != "motif" or report["motif_gate_inconsistency_count"] == 0)

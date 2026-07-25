@@ -195,12 +195,64 @@ Current branch state:
 
 - **Design docs**: unified schema, clip policy, dataset rollout recipes, problem formulation
 - **Atomic skills**: 28 executable Python functions (9 graph construction + 19 reasoning assembly) in `atomic_skills/`
-- **Experiments**: smoke test, toy two-layer graph labeling, Video-Holmes expert-demo pipeline in `experiments/`
-- **Not yet built**: raw VLM perception, embedding-based coarse retrieval (lexical gate implemented), controller training
+- **Runtime path**: Qwen clip schemas → L1 clue graph → L2 retrieval/reasoning → verifier → bounded repair → optional motif curation
+- **Cold-start SFT**: five-specialist chat package at
+  `dataset_clip_wrapper/output/sft_cold_start/specialist_sft_v3_20260722/five_lora/`
+  (`all_hard_gates_passed=true`; backup tarball under `backups/`)
+- **Code layout**: functional bundles under `dataset_clip_wrapper/`
+  (`perception` → `l1_clue_graph` → `l2_reasoning_graph` → `verification` → `motifs`,
+  plus `training/` SFT adapters); smokes grouped the same way under `tests/<bundle>/`
+- **Still open**: full VLM/ASR/tracker perception, embedding coarse retrieval, gated L2 claim/compose SFT, fine-grained repair traces, GRPO / closed-loop controller; consolidate top-level `motif/` into `dataset_clip_wrapper/motifs/`
 
 Local datasets live under `/fs/gamma-projects/vlm-robot/datasets`. See
-[implementation status](docs/implementation-status.md) and
+[implementation status](docs/implementation-status.md),
+[SFT data generation](docs/sft-data-generation.md), and
 [two-layer graph schema](docs/two-layer-graph-schema.md) for commands and layer contracts.
+
+### Controller walkthrough (L1 / L2 / repair / motif / verifier)
+
+```text
+video
+  -> [perception] Qwen clip schemas (not one of the five LoRAs)
+  -> L1: question-blind clue-memory graph build / patch
+  -> L2: question + L1 -> coarse/fine retrieval + reasoning control
+  -> Verifier: is option evidence sufficient?
+       |- supported -> may commit; later motif mining
+       `- insufficient -> Repair (bounded L1 patch / reroute / re-verify)
+  -> Motif: post-hoc reusable prior from accepted traces (must expand before use)
+```
+
+The deterministic runtime verifier remains the hard gate. Learned verifier and
+motif models are auxiliaries only.
+
+| Specialist | Role | v3 rows (train/dev) | Dominant supervised actions |
+|---|---|---:|---|
+| **L1** | Build/patch visible evidence graph; never answer | 15,690 (12,686 / 3,004) | `create_node`, `create_schema_anchor`, `create_edge`, `segment_*`, `apply_l1_evidence_patch` |
+| **L2** | Query-time retrieval and recovery over cached L1 | 867 (684 / 183); **core=23** | `select_coarse_clips`, rank/select next coarse, recovery diagnose / reject-commit |
+| **Repair** | Bounded fix after verifier failure | 127 (115 / 12) | mostly `bounded_recursive_repair` (`reroute`, `existing_l1_option_verification`) |
+| **Verifier** | `supported` / `insufficient` on claim + evidence pack | 92 (79 / 13); 60/32 | `emit_verifier_decision` |
+| **Motif** | Lifecycle + evidence-ref audit; non-executable prior | 320 (262 / 58) | `set_motif_evidence_ref_audit`, `set_motif_lifecycle_status` |
+
+Each SFT row is one MDP-style chat transition: visible `state_t` in the user
+turn, next tool-action JSON in the assistant turn. Split unit is source-video
+group; `prompt_forbidden_key_hits=0`.
+
+### What is missing or thin
+
+| Gap | Notes |
+|---|---|
+| L2 claim / compose assembly | Designed actions (`extract_claim`, `assign_evidence_role`, `compose_evidence_chain`, …) are mostly **not** in the v3 SFT package; current L2 is retrieval/recovery-heavy |
+| L2 core positives | Only 23 core rows vs 844 derived; raw `accepted_strong` remains **no-go** without correctness + option verifier gates |
+| Fine-grained repair | Repair rows collapse diagnose → patch → re-verify → abstain into coarse round actions |
+| Verifier coverage | Small and CG-Bench-heavy; Video-Holmes nearly absent |
+| Motif positives | Rejected/audit-heavy; few candidate/shadow and almost no promoted-use traces |
+| Classic 9 L1 atomics as tool names | Folded into `neighbor_vlm_l1_*` (+ segment/patch); `extract_observation` etc. not exported as distinct tools |
+| Perception LoRA | Clip schemas stay on local Qwen; not part of the five specialists |
+| Dataset scope | SFT is CG-Bench + Video-Holmes only; VRBench / VideoMME / OVO held out by design |
+| Training loop | Export + LoRA trainer exist; GRPO / joint L1+L2 / closed-loop policy still open |
+| Mixture balance | Doc target ~35/35/20/10 (L1 / L2+repair / verifier / motif); v3 is ~91% L1 by row count |
+
+Priority fills: gated L2 claim/compose, fine-step repair, Video-Holmes verifier negatives.
 
 Quick smoke test:
 

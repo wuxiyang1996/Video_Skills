@@ -1,5 +1,7 @@
 # MDP-Style Cold-Start SFT Data
 
+Last updated: 2026-07-24
+
 This repository treats L1, L2, and repair as controller processes. The primary
 training record is a transition, not a one-shot `video -> full graph` target:
 
@@ -110,9 +112,12 @@ These are cold-start pseudo-gold records, not an unbiased policy dataset.
 - L1 builder rows imitate successful teacher actions; failed calls are retained
   only as observations before the next successful action. Add deliberate retry,
   reject, and alternative valid-action data before policy optimization.
-- Use a per-example skill-balanced cap for L1 SFT so one dense video cannot
-  dominate the controller loss. The exporter also drops duplicate example IDs;
-  put corrected/new rollouts before historical files so they take precedence.
+- Train L1 as a separate adapter and retain every row that passes visibility,
+  schema, leakage, and source-video split gates. Normalize
+  `source_family_weight` within each train/dev split and L1 skill family so
+  dense create-node trajectories do not dominate rare patch, segment, or skip
+  actions. The exporter also drops duplicate example IDs; put corrected/new
+  rollouts before historical files so they take precedence.
 - L1 patch rows are positive, repair-triggered actions. Add valid no-op, reject,
   and link-versus-skip transitions before broad repair-policy training.
 - The full verifier set should be retained for auditing. Use the deterministic
@@ -198,6 +203,68 @@ Scaling verdict after this pilot:
   option-level verifier/repair gate are mandatory.
 - Before scaling short-video L2 positives, add question-conditioned visual
   reinspection when existing L1 evidence cannot discriminate the options.
+
+## 2026-07-22 Five-Specialist Package (current)
+
+Current training-ready package (prefer this over the 2026-07-10 pilot files):
+
+```text
+dataset_clip_wrapper/output/sft_cold_start/specialist_sft_v3_20260722/five_lora/
+backup: backups/video_skills_five_lora_sft_v3_20260723.tar.gz
+```
+
+`training_manifest.json` reports `all_hard_gates_passed=true`, video-group
+train/dev split with zero group overlap, and
+`prompt_forbidden_key_hits=0` on every specialist.
+
+### Runtime walkthrough vs SFT specialists
+
+```text
+video
+  -> [perception] local Qwen clip schemas (outside the five LoRAs)
+  -> L1: question-blind clue-memory graph build / patch
+  -> L2: question + L1 -> coarse/fine retrieval + recovery control
+  -> Verifier: supported vs insufficient on claim + evidence pack
+       |- supported -> may commit; later motif mining
+       `- insufficient -> Repair (bounded L1 patch / reroute / re-verify)
+  -> Motif: post-hoc reusable prior (must expand into atomic nodes before use)
+```
+
+The deterministic runtime verifier remains authoritative. Learned verifier and
+motif controllers are auxiliaries only.
+
+| Specialist | Rows | Train / Dev | What the package actually supervises |
+|---|---:|---:|---|
+| L1 | 15,690 | 12,686 / 3,004 | `neighbor_vlm_l1_create_node` (8205), `create_schema_anchor` (3540), `create_edge` (2957), `segment_video_or_select_clip` (584), `apply_l1_evidence_patch` (390), `skip_edge` (14). CG-Bench 6015 + Video-Holmes 9675 |
+| L2 | 867 | 684 / 183 | Retrieval/recovery heavy: rank/select coarse, stop/continue, recovery diagnose / reject-commit. **core_rows=23**, derived_rows=844. CG-heavy (749) vs Video-Holmes (118) |
+| Repair | 127 | 115 / 12 | Almost all `bounded_recursive_repair` (121) plus a few `call_gptoss_reasoning_planner` (6). Modes: `reroute`+`exploratory_probe`, `existing_l1_option_verification` |
+| Verifier | 92 | 79 / 13 | `emit_verifier_decision` only; label mix supported 60 / insufficient 32; nearly all CG-Bench |
+| Motif | 320 | 262 / 58 | `set_motif_evidence_ref_audit` (240) + `set_motif_lifecycle_status` (80: rejected 60 / candidate 11 / shadow 9) |
+
+Chat format is unchanged: one transition per row with visible `state_t` in the
+user message and the next tool-action JSON in the assistant message.
+
+### Gaps relative to the designed controller MDP
+
+| Gap | Status in v3 package |
+|---|---|
+| L2 claim / compose / verify_claim assembly | **Missing / thin.** Designed actions such as `extract_claim`, `assign_evidence_role`, and `compose_evidence_chain` are not the supervised mass; L2 SFT is retrieval and recovery |
+| L2 core positives | **Thin.** 23 core vs 844 derived; keep the no-go on ungated raw L2 `accepted_strong` |
+| Fine-grained repair steps | **Coarse.** Diagnose → patch → option-verify → abstain is collapsed into round-level `bounded_recursive_repair` |
+| Verifier breadth | **Thin / skewed.** 92 rows, Video-Holmes nearly absent |
+| Motif promotion / use | **Thin on positives.** Rejected and ref-audit dominate; few candidate/shadow; almost no promoted-use traces |
+| Classic 9 L1 evidence atomics as tool names | **Folded.** Exported as `neighbor_vlm_l1_*` (+ segment/patch), not `extract_observation` / `create_event_node` / … |
+| Perception controller | **Out of package.** Clip schemas stay on local Qwen |
+| Eval-only datasets in SFT | **Correctly excluded.** VRBench / VideoMME / OVO-Bench stay held out |
+| Cold-start mixture balance | **Not matched yet.** Doc target ~35% L1 / 35% L2+repair / 20% verifier / 10% motif; v3 is ~91% L1 by row count |
+| Closed-loop training | **Open.** Export + LoRA trainer exist; GRPO / joint L1+L2 policy not closed |
+
+Priority fills for the next collection pass:
+
+1. Gated L2 claim/compose transitions (correctness + option verifier gates).
+2. Fine-step repair transitions (diagnose / inspect / patch / verify / abstain).
+3. Video-Holmes verifier negatives and abstentions.
+4. More motif candidate/shadow (and later promoted-use) under the non-executable boundary.
 
 ## Full Dataset Collection Protocol
 

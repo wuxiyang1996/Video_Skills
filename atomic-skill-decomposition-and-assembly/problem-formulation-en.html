@@ -1222,14 +1222,14 @@ measure:
       <h3 class="idea-title">SFT v3 implementation status: five independent Qwen3.5-9B LoRA datasets</h3>
       <details class="foldable idea-details" open>
         <summary>Show full description</summary>
-        <p class="idea-body"><strong>Status as of 2026-07-22:</strong> the five specialist datasets are built, audited, and kept separate for five LoRA adapters. Actual five-adapter training has <strong>not started yet</strong>. The next experiment is to train each adapter independently on Qwen3.5-9B, then compare specialist routing / composition against the earlier shared-LoRA baseline.</p>
+        <p class="idea-body"><strong>Status as of 2026-07-23:</strong> the five specialist datasets are built, audited, and kept separate for five LoRA adapters. Actual five-adapter training has <strong>not started yet</strong>. The next experiment is to train each adapter independently on Qwen3.5-9B, then compare specialist routing / composition against the earlier shared-LoRA baseline.</p>
         <p class="code-caption">Final data root</p>
         <pre class="code-block">dataset_clip_wrapper/output/sft_cold_start/
   specialist_sft_v3_20260722/five_lora/</pre>
         <table class="scorecard">
           <thead><tr><th>LoRA specialist</th><th>Total</th><th>Train</th><th>Dev</th><th>Observed max tokens</th></tr></thead>
           <tbody>
-            <tr><td>L1 patch / builder</td><td>1,709</td><td>1,401</td><td>308</td><td>3,564</td></tr>
+            <tr><td>L1 patch / builder</td><td>15,690</td><td>12,686</td><td>3,004</td><td>3,564</td></tr>
             <tr><td>L2 retrieval / ranking / recovery</td><td>867</td><td>684</td><td>183</td><td>9,929</td></tr>
             <tr><td>Verifier</td><td>92</td><td>79</td><td>13</td><td>1,677</td></tr>
             <tr><td>Repair</td><td>127</td><td>115</td><td>12</td><td>2,765</td></tr>
@@ -1250,13 +1250,13 @@ measure:
         <ul class="key-points">
           <li><strong>Evidence boundary:</strong> L2 contains 23 strict, independent positive core select-set examples and 844 derived curriculum / decision views. The derived views add action supervision, not new independent video evidence.</li>
           <li><strong>No positive laundering:</strong> weak or rejected traces are not converted into positive targets; future teacher selections are removed from prompts.</li>
-          <li><strong>Weight control:</strong> variants from the same source family have normalized <code>source_family_weight</code>, so expansion does not multiply that source's training weight.</li>
-          <li><strong>Post-audit cleanup:</strong> L2 now uses a label-independent symmetric candidate representation; the longest-candidate shortcut falls to 29.8% pairwise and 13.2% listwise. L1 drops 677 rows with invisible, malformed, or unsupported endpoints; Repair exposes no precomputed repair / selection decision; Motif evidence targets are conditioned on visible gate observations.</li>
+          <li><strong>Weight control:</strong> L1 keeps every quality-gated row and normalizes aggregate loss weight across its six skill families; L2 variants from the same source family have normalized <code>source_family_weight</code>, so expansion does not multiply that source's training weight.</li>
+          <li><strong>Post-audit cleanup:</strong> L2 now uses a label-independent symmetric candidate representation; the longest-candidate shortcut falls to 29.8% pairwise and 13.2% listwise. L1 drops 5,772 rows with invisible, malformed, or unsupported endpoints and retains 15,690 valid actions without a shared-LoRA quota; Repair exposes no precomputed repair / selection decision; Motif evidence targets are conditioned on visible gate observations.</li>
           <li><strong>Leakage control:</strong> train / dev are split by video group; all five datasets have zero train-dev video-group overlap. Evaluation-only VRBench, VideoMME, and OVO examples are excluded.</li>
           <li><strong>Format and length gates:</strong> forbidden prompt-key hits are zero, all hard gates pass, and all examples fit the Qwen3.5-9B 16k context under the actual tokenizer.</li>
           <li><strong>Adapter boundary:</strong> L1, L2, Verifier, Repair, and Motif remain five separate LoRAs; Verifier and Repair are intentionally not merged.</li>
         </ul>
-        <p class="idea-notes"><strong>Audit artifacts:</strong> <code>training_manifest.json</code> records counts, split boundaries, shortcut checks, and prompt-target gates; <code>token_audit.json</code> records actual-tokenizer length checks. The relevant expansion / split / training tests pass (17 tests).</p>
+        <p class="idea-notes"><strong>Audit artifacts:</strong> <code>training_manifest.json</code> records counts, split boundaries, shortcut checks, skill-family weights, and prompt-target gates; <code>token_audit.json</code> records actual-tokenizer length checks. The relevant expansion / split / training tests pass (30 tests).</p>
       </details>
     </article>
 
@@ -1289,6 +1289,7 @@ measure:
   <section class="changelog">
     <h2>Discussion log</h2>
     <ol>
+      <li><time datetime="2026-07-23">2026-07-23</time> — Removed the obsolete shared-LoRA quota from the independent L1 adapter. All 15,690 visibility-gated L1 actions are retained (12,686 train / 3,004 dev), while normalized skill-family weights prevent 8,205 create-node rows from dominating rare patch, segment, and skip actions. All 17,096 five-adapter rows pass the actual Qwen3.5-9B 16k tokenizer audit.</li>
       <li><time datetime="2026-07-22">2026-07-22</time> — Added and post-audit cleaned SFT v3: five separate Qwen3.5-9B LoRA datasets are ready (L1 1,709; L2 867; Verifier 92; Repair 127; Motif 320). Removed L2 length shortcuts, invisible / malformed L1 endpoints, Repair decision-copy leakage, and unobservable Motif targets; training remains not started.</li>
       <li><time datetime="2026-06-30">2026-06-30</time> — Added Trace-to-Skill Fitting update: demonstrations induce candidate operation clusters; compact atomic basis is selected by coverage / confusion / cost and frozen before controller training; discovered reusable skills are composite motifs that expand into frozen atomics, not online-created primitives.</li>
       <li><time datetime="2026-06-30">2026-06-30</time> — Added optional motif card: composed skills are not a core first-paper mechanism; verified reasoning motifs serve only as assembly / repair priors, carry no current-video facts, and must expand into frozen atomic skill graphs before execution and verification.</li>

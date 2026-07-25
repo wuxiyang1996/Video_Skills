@@ -2,7 +2,11 @@ import json
 
 from dataset_clip_wrapper.training.l2_specialist_sft_adapter import _positive_expansions
 from dataset_clip_wrapper.training.motif_evidence_sft_adapter import build_motif_evidence_exports
-from scripts.sft_pilot.build_specialist_sft_v3 import _l1_quality_reason, _sanitize_repair_row
+from scripts.sft_pilot.build_specialist_sft_v3 import (
+    _apply_l1_skill_weights,
+    _l1_quality_reason,
+    _sanitize_repair_row,
+)
 
 
 def _write_jsonl(path, rows):
@@ -156,3 +160,18 @@ def test_l1_quality_gate_rejects_invisible_or_malformed_endpoints():
     }
 
     assert _l1_quality_reason(row) == "l1_invisible_edge_endpoint"
+
+
+def test_l1_skill_weights_keep_all_rows_and_balance_family_loss():
+    rows = [
+        {"metadata": {"skill_id": "create_node"}},
+        {"metadata": {"skill_id": "create_node"}},
+        {"metadata": {"controller": "l1_patch"}},
+    ]
+
+    counts = _apply_l1_skill_weights(rows)
+
+    assert counts == {"create_node": 2, "l1_patch": 1}
+    assert len(rows) == 3
+    assert [row["metadata"]["source_family_weight"] for row in rows] == [0.5, 0.5, 1.0]
+    assert [row["metadata"]["task"] for row in rows] == ["create_node", "create_node", "l1_patch"]
