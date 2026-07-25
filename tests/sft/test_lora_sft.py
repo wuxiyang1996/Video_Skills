@@ -35,6 +35,11 @@ def test_extract_json_object_handles_reasoning_wrapper():
     assert payload == {"action": "ok"}
 
 
+def test_extract_json_object_strips_qwen_think_tags():
+    wrapped = "<think>\ninternal monologue\n</think>\n" + json.dumps({"tool_name": "x", "arguments": {}})
+    assert _extract_json_object(wrapped) == {"tool_name": "x", "arguments": {}}
+
+
 def test_task_and_weight_are_read_from_chat_metadata():
     row = {
         "metadata": {"controller": "l2_controller", "task": "rank_candidates", "source_family_weight": 0.25}

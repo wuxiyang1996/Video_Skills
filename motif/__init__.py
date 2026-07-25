@@ -15,6 +15,12 @@ from .schemas import (
     MotifTransferReport,
 )
 from .transfer import MotifTransferAdapter, MotifTransferExample
+from .online_expand import MotifExpansionResult, expand_motif_record, expand_skill_sequence_to_plan
+from .dual_loop import (  # noqa: E402
+    empty_dual_loop_meta,
+    maybe_mine_candidate_after_verified,
+    select_repair_motif,
+)
 
 __all__ = [
     "MotifBank",
@@ -27,4 +33,10 @@ __all__ = [
     "MotifTransferAdapter",
     "MotifTransferExample",
     "MotifTransferReport",
+    "MotifExpansionResult",
+    "expand_motif_record",
+    "expand_skill_sequence_to_plan",
+    "empty_dual_loop_meta",
+    "maybe_mine_candidate_after_verified",
+    "select_repair_motif",
 ]

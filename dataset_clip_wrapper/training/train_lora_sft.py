@@ -13,6 +13,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from .sft_common import apply_chat_template_no_think, strip_think_tags
+
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -59,6 +61,7 @@ def _representative_subset(rows: list[dict[str, Any]], limit: int, seed: int) ->
 
 
 def _extract_json_object(text: str) -> dict[str, Any] | None:
+    text = strip_think_tags(text or "")
     start = text.find("{")
     end = text.rfind("}")
     if start < 0 or end <= start:
@@ -88,9 +91,12 @@ def _encode_chat(
     messages = row.get("messages") or []
     if [message.get("role") for message in messages] != ["system", "user", "assistant"]:
         raise ValueError(f"Unexpected chat roles for {row.get('transition_id') or row.get('demo_id')}")
-    template_args = {"tokenize": False, "enable_thinking": False}
-    full_text = tokenizer.apply_chat_template(messages, add_generation_prompt=False, **template_args)
-    prompt_text = tokenizer.apply_chat_template(messages[:2], add_generation_prompt=True, **template_args)
+    full_text = apply_chat_template_no_think(
+        tokenizer, messages, add_generation_prompt=False, tokenize=False
+    )
+    prompt_text = apply_chat_template_no_think(
+        tokenizer, messages[:2], add_generation_prompt=True, tokenize=False
+    )
     input_ids = _token_ids(tokenizer, full_text)
     prompt_ids = _token_ids(tokenizer, prompt_text)
     common_prefix = 0
@@ -225,6 +231,28 @@ def _action_signature(payload: dict[str, Any] | None) -> tuple[str, str]:
     return str(payload.get("tool_name") or nested.get("action_type") or ""), str(payload.get("round_type") or "")
 
 
+def _assistant_text(row: dict[str, Any]) -> str:
+    for message in row.get("messages") or []:
+        if isinstance(message, dict) and message.get("role") == "assistant":
+            return str(message.get("content") or "")
+    return ""
+
+
+def _json_complete_stopping_criteria(tokenizer: Any, prompt_len: int):
+    """Stop once the *generated suffix* (not the prompt) is a parseable JSON object."""
+    from transformers import StoppingCriteria
+
+    class _JsonComplete(StoppingCriteria):
+        def __call__(self, input_ids, scores, **kwargs):  # type: ignore[no-untyped-def]
+            gen_ids = input_ids[0, prompt_len:]
+            if gen_ids.numel() < 8:
+                return False
+            text = strip_think_tags(tokenizer.decode(gen_ids, skip_special_tokens=True))
+            return _extract_json_object(text) is not None
+
+    return _JsonComplete()
+
+
 def _generation_check(
     model: Any,
     tokenizer: Any,
@@ -236,34 +264,51 @@ def _generation_check(
 ) -> dict[str, Any]:
     import torch
 
+    # Prefer shortest *assistant* gold JSON per controller (not shortest prompt).
     shortest_by_controller: dict[str, dict[str, Any]] = {}
     for row in rows:
         controller = _row_task(row)
-        if controller not in shortest_by_controller or len(json.dumps(row["messages"])) < len(
-            json.dumps(shortest_by_controller[controller]["messages"])
-        ):
+        asst_len = len(_assistant_text(row))
+        prev = shortest_by_controller.get(controller)
+        if prev is None or asst_len < len(_assistant_text(prev)):
             shortest_by_controller[controller] = row
-    selected = list(shortest_by_controller.values())[:max_examples]
+    selected = sorted(shortest_by_controller.values(), key=lambda row: len(_assistant_text(row)))[:max_examples]
     results = []
     model.eval()
     model.config.use_cache = True
     with torch.no_grad():
         for row in selected:
-            prompt = tokenizer.apply_chat_template(
-                row["messages"][:2], tokenize=False, add_generation_prompt=True, enable_thinking=False
+            gold_text = _assistant_text(row)
+            gold_token_len = max(1, len(_token_ids(tokenizer, gold_text)))
+            # Cap per-example budget near gold size (with headroom); still below global max
+            # so runaway loops cannot burn thousands of tokens.
+            example_max_new = max(256, min(max_new_tokens, int(gold_token_len * 3.0) + 128))
+            prompt = apply_chat_template_no_think(
+                tokenizer,
+                row["messages"][:2],
+                add_generation_prompt=True,
+                tokenize=False,
             )
             encoded = tokenizer(prompt, return_tensors="pt", add_special_tokens=False)
             encoded = {key: value.to(device) for key, value in encoded.items()}
+            prompt_len = int(encoded["input_ids"].shape[1])
+            stop = _json_complete_stopping_criteria(tokenizer, prompt_len)
             generated = model.generate(
                 **encoded,
-                max_new_tokens=max_new_tokens,
+                max_new_tokens=example_max_new,
                 do_sample=False,
                 pad_token_id=tokenizer.pad_token_id,
                 eos_token_id=tokenizer.eos_token_id,
+                stopping_criteria=[stop],
             )
-            completion = tokenizer.decode(generated[0, encoded["input_ids"].shape[1] :], skip_special_tokens=True)
+            completion = strip_think_tags(
+                tokenizer.decode(
+                    generated[0, encoded["input_ids"].shape[1] :],
+                    skip_special_tokens=True,
+                )
+            )
             payload = _extract_json_object(completion)
-            gold = _extract_json_object(str(row["messages"][2].get("content") or ""))
+            gold = _extract_json_object(gold_text)
             action_match = bool(payload is not None and _action_signature(payload) == _action_signature(gold))
             results.append({
                 "record_id": row.get("transition_id") or row.get("demo_id"),
@@ -271,6 +316,7 @@ def _generation_check(
                 "json_valid": payload is not None,
                 "action_match": action_match,
                 "exact_match": payload == gold,
+                "max_new_tokens": example_max_new,
                 "completion": completion,
             })
     valid = sum(result["json_valid"] for result in results)
@@ -291,9 +337,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--train-jsonl", type=Path, required=True)
     parser.add_argument("--dev-jsonl", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--stage", choices=["smoke", "pilot"], required=True)
+    parser.add_argument("--stage", choices=["smoke", "pilot", "base_baseline"], required=True)
     parser.add_argument("--max-length", type=int, default=16384)
     parser.add_argument("--max-train-samples", type=int, default=0)
+    parser.add_argument(
+        "--max-eval-samples",
+        type=int,
+        default=0,
+        help="If >0, evaluate loss on a representative subset of dev (smoke-friendly).",
+    )
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--max-steps", type=int, default=0)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=4)
@@ -309,6 +361,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-json-rate", type=float, default=0.5)
     parser.add_argument("--min-action-rate", type=float, default=0.5)
     parser.add_argument("--data-only", action="store_true")
+    parser.add_argument(
+        "--attn-implementation",
+        default="flash_attention_2",
+        help="Prefer flash_attention_2; falls back to sdpa only if FA2 unavailable",
+    )
+    parser.add_argument(
+        "--require-flash-attn",
+        action="store_true",
+        help="Fail if flash_attn cannot be imported (recommended on A6000)",
+    )
     args = parser.parse_args(argv)
 
     import torch
@@ -319,8 +381,15 @@ def main(argv: list[str] | None = None) -> int:
     from torch.utils.data import DataLoader
     from transformers import AutoModelForCausalLM, AutoTokenizer, get_linear_schedule_with_warmup
 
+    from trainer.grpo.attn_utils import resolve_attn_implementation
+
     random.seed(args.seed)
     torch.manual_seed(args.seed)
+    attn_implementation = resolve_attn_implementation(
+        args.attn_implementation,
+        allow_sdpa_fallback=not bool(args.require_flash_attn),
+    )
+    print(json.dumps({"event": "attn_backend", "attn_implementation": attn_implementation}), flush=True)
     # This environment inherits torchao 0.9 from the shared Swift conda env.
     # PEFT 0.19 probes every optional LoRA dispatcher and raises on that old
     # torchao even for ordinary bf16 Linear weights. TorchAO is not used here.
@@ -332,26 +401,71 @@ def main(argv: list[str] | None = None) -> int:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
     source_train = _read_jsonl(args.train_jsonl)
+    source_dev = _read_jsonl(args.dev_jsonl)
+    # Generation always uses the full (or selected) chat rows; loss eval can be capped.
+    dev_rows = source_dev
+
+    # Base baseline only needs a few generation prompts — skip full train encode.
+    if args.stage == "base_baseline":
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required for base baseline generation")
+        device = torch.device("cuda")
+        model = AutoModelForCausalLM.from_pretrained(
+            args.model,
+            local_files_only=True,
+            dtype=torch.bfloat16,
+            attn_implementation=attn_implementation,
+        ).to(device)
+        model.eval()
+        data_report = {
+            "stage": args.stage,
+            "source_train_rows": len(source_train),
+            "source_dev_rows": len(source_dev),
+            "enable_thinking": False,
+            "attn_implementation": attn_implementation,
+        }
+        (args.output_dir / "data_report.json").write_text(
+            json.dumps(data_report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        print(json.dumps({"event": "data_ready", **data_report}, ensure_ascii=False), flush=True)
+        generation = _generation_check(
+            model,
+            tokenizer,
+            dev_rows,
+            device,
+            max_examples=args.generation_examples,
+            max_new_tokens=args.generation_max_new_tokens,
+        )
+        generation["model"] = args.model
+        generation["stage"] = "base_baseline"
+        out_path = args.output_dir / "base_generation_report.json"
+        out_path.write_text(json.dumps(generation, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps({"event": "base_baseline_complete", "output": str(out_path), **generation}, ensure_ascii=False), flush=True)
+        return 0
+
     train_rows = _representative_subset(source_train, args.max_train_samples, args.seed)
-    dev_rows = _read_jsonl(args.dev_jsonl)
+    eval_rows = _representative_subset(source_dev, args.max_eval_samples, args.seed + 1)
     mean_train_weight = sum(_row_weight(row) for row in train_rows) / max(1, len(train_rows))
     encoded_train = [
         _encode_chat(tokenizer, row, args.max_length, weight_scale=1.0 / mean_train_weight)
         for row in train_rows
     ]
-    encoded_dev = [_encode_chat(tokenizer, row, args.max_length) for row in dev_rows]
+    encoded_dev = [_encode_chat(tokenizer, row, args.max_length) for row in eval_rows]
     data_report = {
         "stage": args.stage,
         "source_train_rows": len(source_train),
         "train_rows": len(encoded_train),
+        "source_dev_rows": len(source_dev),
         "dev_rows": len(encoded_dev),
+        "max_eval_samples": args.max_eval_samples,
         "train_token_min": min(len(row["input_ids"]) for row in encoded_train),
         "train_token_max": max(len(row["input_ids"]) for row in encoded_train),
-        "dev_token_max": max(len(row["input_ids"]) for row in encoded_dev),
+        "dev_token_max": max((len(row["input_ids"]) for row in encoded_dev), default=0),
         "assistant_only_loss": True,
         "sample_weighted_loss": True,
         "raw_train_weight_sum": sum(_row_weight(row) for row in train_rows),
         "train_controllers": dict(__import__("collections").Counter(row["controller"] for row in encoded_train)),
+        "enable_thinking": False,
     }
     (args.output_dir / "data_report.json").write_text(
         json.dumps(data_report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -367,8 +481,9 @@ def main(argv: list[str] | None = None) -> int:
         args.model,
         local_files_only=True,
         dtype=torch.bfloat16,
-        attn_implementation="sdpa",
+        attn_implementation=attn_implementation,
     )
+
     model.config.use_cache = False
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model.enable_input_require_grads()
@@ -444,8 +559,13 @@ def main(argv: list[str] | None = None) -> int:
     adapter_dir = args.output_dir / "adapter"
     model.save_pretrained(adapter_dir)
     tokenizer.save_pretrained(adapter_dir)
+    # Smoke: generate on the overfit train subset (wiring check). Pilot/base: use dev.
+    generation_rows = train_rows if args.stage == "smoke" else dev_rows
     generation = _generation_check(
-        model, tokenizer, dev_rows, device,
+        model,
+        tokenizer,
+        generation_rows,
+        device,
         max_examples=args.generation_examples,
         max_new_tokens=args.generation_max_new_tokens,
     )

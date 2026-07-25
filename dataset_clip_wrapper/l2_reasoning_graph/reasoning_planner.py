@@ -1219,18 +1219,140 @@ def execute_reasoning_plan(
     return trace, step_outputs
 
 
+def _resolve_motif_online_plan(
+    example: dict[str, Any],
+    *,
+    question: dict[str, Any],
+    task_family: str,
+    motif_enabled: bool,
+    motif_bank_path: str | Path | None,
+    forced_motif_id: str | None,
+    motif_top_k: int,
+    include_shadow_motifs: bool,
+) -> dict[str, Any]:
+    """Mandatory Motif retrieve/expand when enabled; never aborts the episode."""
+    meta: dict[str, Any] = {
+        "motif_retrieval_attempted": bool(motif_enabled),
+        "candidate_ids": [],
+        "selected_motif_id": None,
+        "bank_version": None,
+        "expansion_valid": False,
+        "fallback_reason": None,
+        "downstream_verified_success": None,
+        "motif_phase": "accelerate" if motif_enabled else "none",
+        "repair_retrieval_attempted": False,
+        "repair_candidate_ids": [],
+        "repair_selected_motif_id": None,
+        "repair_expansion_valid": False,
+        "repair_fallback_reason": None,
+        "candidate_mined": False,
+        "mined_motif_id": None,
+        "mined_skill_sequence": [],
+    }
+    if not motif_enabled:
+        meta["fallback_reason"] = "motif_disabled"
+        meta["motif_phase"] = "none"
+        return {"use_motif_plan": False, "reasoning_plan": [], "motif_meta": meta}
+
+    try:
+        from motif import MotifBank, MotifQueryEngine
+        from motif.online_expand import expand_motif_record
+    except Exception as exc:  # pragma: no cover - import path issues
+        meta["fallback_reason"] = f"motif_import_failed:{exc}"
+        return {"use_motif_plan": False, "reasoning_plan": [], "motif_meta": meta}
+
+    bank_path = motif_bank_path or (example.get("metadata") or {}).get("motif_bank_path")
+    if not bank_path:
+        meta["fallback_reason"] = "missing_motif_bank_path"
+        return {"use_motif_plan": False, "reasoning_plan": [], "motif_meta": meta}
+
+    bank_path = Path(bank_path)
+    if not bank_path.exists():
+        meta["fallback_reason"] = "motif_bank_missing"
+        meta["bank_version"] = str(bank_path)
+        return {"use_motif_plan": False, "reasoning_plan": [], "motif_meta": meta}
+
+    bank = MotifBank.load_jsonl(bank_path)
+    meta["bank_version"] = f"{bank_path.name}:n={len(bank)}"
+    dataset = str(example.get("dataset") or "")
+    query_text = " ".join(
+        part
+        for part in (
+            str((question or {}).get("question_text") or ""),
+            task_family,
+            dataset,
+        )
+        if part
+    ).strip()
+
+    record = None
+    if forced_motif_id:
+        record = bank.get(str(forced_motif_id))
+        meta["candidate_ids"] = [str(forced_motif_id)]
+        meta["selected_motif_id"] = str(forced_motif_id) if record is not None else None
+        if record is None:
+            meta["fallback_reason"] = "forced_motif_not_found"
+            return {"use_motif_plan": False, "reasoning_plan": [], "motif_meta": meta}
+    else:
+        engine = MotifQueryEngine(bank)
+        selections = engine.select(
+            query=query_text or task_family or dataset or "video_qa",
+            task_family=task_family,
+            dataset=dataset,
+            include_shadow=include_shadow_motifs,
+            top_k=max(1, int(motif_top_k)),
+        )
+        meta["candidate_ids"] = [item.motif_id for item in selections]
+        if not selections:
+            meta["fallback_reason"] = "no_motif_candidates"
+            return {"use_motif_plan": False, "reasoning_plan": [], "motif_meta": meta}
+        meta["selected_motif_id"] = selections[0].motif_id
+        record = bank.get(selections[0].motif_id)
+        if record is None:
+            meta["fallback_reason"] = "selected_motif_missing_in_bank"
+            return {"use_motif_plan": False, "reasoning_plan": [], "motif_meta": meta}
+
+    expansion = expand_motif_record(record)
+    meta["expansion_valid"] = bool(expansion.expansion_valid)
+    meta["expansion"] = expansion.to_dict()
+    if not expansion.expansion_valid or not expansion.reasoning_plan:
+        meta["fallback_reason"] = expansion.fallback_reason or "expansion_invalid"
+        return {"use_motif_plan": False, "reasoning_plan": [], "motif_meta": meta}
+
+    return {
+        "use_motif_plan": True,
+        "reasoning_plan": expansion.reasoning_plan,
+        "motif_meta": meta,
+        "motif_prior": {
+            "motif_id": meta["selected_motif_id"],
+            "skill_sequence": expansion.skill_sequence,
+            "constraints": list(getattr(record, "expansion_constraints", []) or []),
+        },
+    }
+
+
 def build_llm_reasoning_rollout(
     example: dict[str, Any],
     clue_memory_graph: dict[str, Any],
     *,
     client: OpenRouterClient,
     skill_executor: Any | None = None,
+    motif_enabled: bool = False,
+    motif_bank_path: str | Path | None = None,
+    forced_motif_id: str | None = None,
+    motif_top_k: int = 3,
+    include_shadow_motifs: bool = False,
+    motif_candidate_sink_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Full L2: plan with gpt-oss then execute reasoning skills. Falls back to deterministic.
 
     Args:
         skill_executor: Optional SkillExecutor for LLM-backed skill dispatch.
             If provided, skills configured for LLM mode will call the model API.
+        motif_enabled: When True, mandatorily attempt Motif retrieve/expand before
+            the LLM planner; invalid expansion falls back without aborting.
+        motif_candidate_sink_path: Optional JSONL sink for dual-loop CANDIDATE mine
+            after repair→verified success (never auto-promotes).
     """
     question = example.get("question") or {}
     input_mode = ((example.get("available_inputs") or {}).get("mode") or "").strip()
@@ -1240,23 +1362,62 @@ def build_llm_reasoning_rollout(
         planner_example = {**example, "question": question}
     task_family = example.get("task_family") or ""
 
-    try:
-        plan_response = plan_reasoning_skills(
-            question=question,
-            clue_memory_graph=clue_memory_graph,
-            task_family=task_family,
-            client=client,
-        )
-        reasoning_plan = plan_response.get("reasoning_plan") or []
-    except Exception as exc:
-        reasoning_plan = _default_multi_hop_mcq_plan()
+    # Prefer explicit kwargs; allow example.metadata overrides for staged runners.
+    example_meta = example.get("metadata") or {}
+    if "motif_enabled" in example_meta:
+        motif_enabled = bool(example_meta.get("motif_enabled"))
+    if example_meta.get("motif_bank_path") and motif_bank_path is None:
+        motif_bank_path = example_meta.get("motif_bank_path")
+    if example_meta.get("forced_motif_id") and forced_motif_id is None:
+        forced_motif_id = example_meta.get("forced_motif_id")
+    if example_meta.get("motif_candidate_sink_path") and motif_candidate_sink_path is None:
+        motif_candidate_sink_path = example_meta.get("motif_candidate_sink_path")
+
+    motif_resolution = _resolve_motif_online_plan(
+        example,
+        question=question if isinstance(question, dict) else {},
+        task_family=task_family,
+        motif_enabled=motif_enabled,
+        motif_bank_path=motif_bank_path,
+        forced_motif_id=forced_motif_id,
+        motif_top_k=motif_top_k,
+        include_shadow_motifs=include_shadow_motifs,
+    )
+    motif_meta = dict(motif_resolution.get("motif_meta") or {})
+
+    if motif_resolution.get("use_motif_plan"):
+        reasoning_plan = list(motif_resolution.get("reasoning_plan") or [])
         plan_response = {
             "reasoning_plan": reasoning_plan,
-            "notes": "planner failed; using deterministic short-video multi-hop MCQ fallback",
-            "planner_error": str(exc),
-            "planner": "deterministic_multi_hop_fallback",
-            "fallback_reason": "planner_failed",
+            "planner": "motif_expanded_skill_sequence",
+            "notes": "motif retrieve/expand succeeded; skipping LLM planner",
+            "motif_prior": motif_resolution.get("motif_prior") or {},
+            "fallback_reason": None,
         }
+    else:
+        try:
+            plan_response = plan_reasoning_skills(
+                question=question,
+                clue_memory_graph=clue_memory_graph,
+                task_family=task_family,
+                client=client,
+            )
+            reasoning_plan = plan_response.get("reasoning_plan") or []
+            if motif_enabled and not plan_response.get("fallback_reason"):
+                plan_response = {
+                    **plan_response,
+                    "fallback_reason": motif_meta.get("fallback_reason") or "motif_fallback_to_llm_planner",
+                    "planner": plan_response.get("planner") or "llm_after_motif_fallback",
+                }
+        except Exception as exc:
+            reasoning_plan = _default_multi_hop_mcq_plan()
+            plan_response = {
+                "reasoning_plan": reasoning_plan,
+                "notes": "planner failed; using deterministic short-video multi-hop MCQ fallback",
+                "planner_error": str(exc),
+                "planner": "deterministic_multi_hop_fallback",
+                "fallback_reason": "planner_failed",
+            }
 
     if not reasoning_plan:
         reasoning_plan = _default_multi_hop_mcq_plan()
@@ -1281,10 +1442,15 @@ def build_llm_reasoning_rollout(
         item.get("skill_id") == "commit_answer" and item.get("ok") for item in trace
     )
 
-    # --- Fault localization + repair attempt ---
+    # --- Fault localization + template repair attempt ---
     repair_result = None
+    localized_faults: list[dict[str, Any]] = []
+    repair_motif_skill_sequence: list[str] = []
+    repair_motif_contributed = False
     if failed_steps and not crash_steps:
-        from .fault_repair import attempt_repair
+        from .fault_repair import attempt_repair, localize_faults
+
+        localized_faults = localize_faults(trace)
         repair_result = attempt_repair(
             trace, step_outputs, reasoning_plan, clue_memory_graph, question,
             skill_executor=skill_executor,
@@ -1294,6 +1460,72 @@ def build_llm_reasoning_rollout(
             trace = trace + repair_result["repair_trace"]
             ok_steps = [t for t in trace if t.get("ok")]
             failed_steps = [t for t in trace if t.get("ok") is False]
+            has_successful_commit = any(
+                item.get("skill_id") == "commit_answer" and item.get("ok") for item in trace
+            )
+
+    # --- Dual-loop Phase B: failure → repair motif retrieve/expand/execute ---
+    if (
+        motif_enabled
+        and not has_successful_commit
+        and not crash_steps
+        and failed_steps
+        and motif_bank_path
+    ):
+        try:
+            from motif.dual_loop import select_repair_motif
+
+            repair_sel = select_repair_motif(
+                bank_path=motif_bank_path,
+                question=question if isinstance(question, dict) else {},
+                task_family=task_family,
+                dataset=str(example.get("dataset") or ""),
+                faults=localized_faults,
+                exclude_motif_ids=[str(motif_meta.get("selected_motif_id") or "")],
+                top_k=max(1, int(motif_top_k)),
+            )
+            motif_meta.update(repair_sel.meta_updates)
+            if repair_sel.used_repair_motif and repair_sel.reasoning_plan:
+                repair_plan = list(repair_sel.reasoning_plan)
+                # Namespace step ids so they do not collide with the first plan.
+                for step in repair_plan:
+                    sid = str(step.get("step_id") or "r")
+                    step["step_id"] = f"repair_{sid}"
+                    deps = step.get("depends_on") or []
+                    step["depends_on"] = [f"repair_{d}" for d in deps]
+                    args = dict(step.get("args") or {})
+                    for key, value in list(args.items()):
+                        if isinstance(value, str) and value.startswith("$step."):
+                            rest = value[len("$step.") :]
+                            args[key] = f"$step.repair_{rest}"
+                    step["args"] = args
+                    step["from_repair_motif"] = True
+                repair_trace, repair_outputs = execute_reasoning_plan(
+                    reasoning_plan=repair_plan,
+                    clue_memory_graph=clue_memory_graph,
+                    question=question,
+                    skill_executor=skill_executor,
+                )
+                trace = trace + repair_trace
+                step_outputs.update(repair_outputs)
+                ok_steps = [t for t in trace if t.get("ok")]
+                failed_steps = [t for t in trace if t.get("ok") is False]
+                commit_after = any(
+                    item.get("skill_id") == "commit_answer" and item.get("ok") for item in repair_trace
+                )
+                if commit_after:
+                    has_successful_commit = True
+                    repair_motif_contributed = True
+                    repair_motif_skill_sequence = list(repair_sel.skill_sequence)
+                    motif_meta["motif_phase"] = "repair"
+                    plan_response = {
+                        **plan_response,
+                        "repair_motif_plan": repair_plan,
+                        "repair_motif_id": repair_sel.selected_motif_id,
+                    }
+        except Exception as exc:
+            motif_meta["repair_retrieval_attempted"] = True
+            motif_meta["repair_fallback_reason"] = f"repair_motif_error:{exc}"
 
     if not has_successful_commit and (crash_steps or (not ok_steps and len(failed_steps) > 3)):
         rollout = make_reasoning_rollout_shell(planner_example, clue_memory_graph, rollout_source="gpt_oss_execution_failed")
@@ -1302,6 +1534,8 @@ def build_llm_reasoning_rollout(
         rollout["metadata"]["llm_trace"] = trace
         rollout["metadata"]["fallback_suppressed"] = True
         rollout["metadata"]["fallback_reason"] = "too_many_failures"
+        motif_meta["downstream_verified_success"] = False
+        rollout["metadata"]["motif_online"] = motif_meta
         trace_refs: list[str] = []
         for item in reversed(trace):
             trace_refs.extend(str(ref) for ref in item.get("evidence_refs") or [] if ref)
@@ -1658,6 +1892,7 @@ def build_llm_reasoning_rollout(
             "trace_fail_ratio": round(trace_fail_ratio, 4),
             "strong_min_refs": strong_min_refs,
         },
+        "motif_online": motif_meta,
     }
     if repair_result:
         rollout["metadata"]["repair"] = repair_result
@@ -1692,5 +1927,34 @@ def build_llm_reasoning_rollout(
         rollout["verified_evidence_pack"]["verifier_reason"] = (
             runtime_gate["failure_reasons"][0] if runtime_gate["failure_reasons"] else "runtime_verifier_failed"
         )
+    motif_meta["downstream_verified_success"] = bool(
+        runtime_gate["passed"]
+        and str(rollout.get("acceptance_status") or "").startswith(("accepted_strong", "resolved_strong"))
+    )
+    # Dual-loop mine: only after verified success with repair-motif contribution.
+    if motif_meta.get("downstream_verified_success") and repair_motif_contributed:
+        try:
+            from motif.dual_loop import maybe_mine_candidate_after_verified
+
+            mine = maybe_mine_candidate_after_verified(
+                downstream_verified_success=True,
+                repair_contributed=True,
+                skill_sequence=repair_motif_skill_sequence,
+                example=example,
+                faults=localized_faults,
+                repair_motif_id=motif_meta.get("repair_selected_motif_id"),
+                candidate_sink_path=motif_candidate_sink_path,
+                source_path=str(motif_bank_path or ""),
+            )
+            motif_meta["candidate_mined"] = bool(mine.mined)
+            motif_meta["mined_motif_id"] = mine.motif_id
+            motif_meta["mined_skill_sequence"] = list(repair_motif_skill_sequence)
+            motif_meta["mine_reason"] = mine.reason
+            if mine.sink_path:
+                motif_meta["candidate_sink_path"] = mine.sink_path
+        except Exception as exc:
+            motif_meta["candidate_mined"] = False
+            motif_meta["mine_reason"] = f"mine_error:{exc}"
+    rollout["metadata"]["motif_online"] = motif_meta
     attach_initial_l2_trajectory(rollout, clue_memory_graph)
     return rollout

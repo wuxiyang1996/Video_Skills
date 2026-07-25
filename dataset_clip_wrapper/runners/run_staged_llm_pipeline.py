@@ -175,6 +175,28 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--graph-deterministic", action="store_true")
     parser.add_argument("--skip-l2-planner", action="store_true")
+    parser.add_argument(
+        "--motif-enabled",
+        action="store_true",
+        help="Mandate Motif retrieve/expand before L2 planner (fallback on failure).",
+    )
+    parser.add_argument(
+        "--motif-bank",
+        default=None,
+        help="Path to motif bank JSONL used for online retrieve/expand.",
+    )
+    parser.add_argument("--forced-motif-id", default=None, help="Force a motif_id instead of retrieval.")
+    parser.add_argument("--motif-top-k", type=int, default=3)
+    parser.add_argument(
+        "--include-shadow-motifs",
+        action="store_true",
+        help="Allow SHADOW motifs in online retrieval (pilot only).",
+    )
+    parser.add_argument(
+        "--reuse-frozen-l1",
+        action="store_true",
+        help="Prefer cached 04_l1_example.json / clue graph; only re-run L2+Motif when possible.",
+    )
     parser.add_argument("--skill-model", default="qwen/qwen3.5-9b")
     parser.add_argument(
         "--skill-api-base",
@@ -262,6 +284,12 @@ def _config_from_args(args: argparse.Namespace) -> WrapperConfig:
         run_clip_schema=True,
         run_graph_compose=True,
         run_l2_llm_planner=not args.skip_l2_planner,
+        motif_enabled=bool(args.motif_enabled),
+        motif_bank_path=args.motif_bank,
+        forced_motif_id=args.forced_motif_id,
+        motif_top_k=int(args.motif_top_k),
+        include_shadow_motifs=bool(args.include_shadow_motifs),
+        reuse_frozen_l1_example=bool(args.reuse_frozen_l1),
     )
 
 
@@ -705,6 +733,11 @@ def _compose_l1_and_l2(
 
     clue_graph = extract_clue_memory_graph(example, mode=config.mode)
     example["metadata"]["clue_memory_graph"] = clue_graph
+    example["metadata"]["motif_enabled"] = bool(config.motif_enabled)
+    if config.motif_bank_path:
+        example["metadata"]["motif_bank_path"] = config.motif_bank_path
+    if config.forced_motif_id:
+        example["metadata"]["forced_motif_id"] = config.forced_motif_id
 
     if config.run_l2_llm_planner:
         from ..l2_reasoning_graph.reasoning_planner import build_llm_reasoning_rollout
@@ -720,7 +753,17 @@ def _compose_l1_and_l2(
             timeout_s=config.graph_composer.timeout_s,
         )
         skill_exec = _build_skill_executor(api_key, config)
-        rollout = build_llm_reasoning_rollout(example, clue_graph, client=l2_client, skill_executor=skill_exec)
+        rollout = build_llm_reasoning_rollout(
+            example,
+            clue_graph,
+            client=l2_client,
+            skill_executor=skill_exec,
+            motif_enabled=bool(config.motif_enabled),
+            motif_bank_path=config.motif_bank_path,
+            forced_motif_id=config.forced_motif_id,
+            motif_top_k=int(config.motif_top_k),
+            include_shadow_motifs=bool(config.include_shadow_motifs),
+        )
     else:
         rollout = build_reasoning_rollout(example, clue_graph, rollout_source="staged_llm_pipeline")
     example["metadata"]["reasoning_rollout"] = rollout
@@ -749,6 +792,52 @@ def _run_item(
     example_stage_dir.mkdir(parents=True, exist_ok=True)
 
     final_path = example_stage_dir / "final_example.json"
+    frozen_l1_path = example_stage_dir / "04_l1_example.json"
+    if (
+        config.reuse_frozen_l1_example
+        and frozen_l1_path.exists()
+        and config.run_l2_llm_planner
+        and not force
+    ):
+        example = _read_json(frozen_l1_path)
+        clue_graph = (example.get("metadata") or {}).get("clue_memory_graph") or {}
+        if clue_graph:
+            from ..l2_reasoning_graph.reasoning_planner import build_llm_reasoning_rollout
+
+            keys_py = config.graph_composer.keys_py_path or config.backbone.keys_py_path
+            api_key = load_openrouter_api_key(keys_py_path=keys_py, env_var=config.graph_composer.api_key_env)
+            l2_client = OpenRouterClient(
+                model=config.graph_composer.model,
+                api_key=api_key,
+                max_tokens=1800,
+                reasoning={"effort": "minimal", "exclude": True},
+                timeout_s=config.graph_composer.timeout_s,
+            )
+            example.setdefault("metadata", {})
+            example["metadata"]["motif_enabled"] = bool(config.motif_enabled)
+            if config.motif_bank_path:
+                example["metadata"]["motif_bank_path"] = config.motif_bank_path
+            if config.forced_motif_id:
+                example["metadata"]["forced_motif_id"] = config.forced_motif_id
+            skill_exec = _build_skill_executor(api_key, config)
+            rollout = build_llm_reasoning_rollout(
+                example,
+                clue_graph,
+                client=l2_client,
+                skill_executor=skill_exec,
+                motif_enabled=bool(config.motif_enabled),
+                motif_bank_path=config.motif_bank_path,
+                forced_motif_id=config.forced_motif_id,
+                motif_top_k=int(config.motif_top_k),
+                include_shadow_motifs=bool(config.include_shadow_motifs),
+            )
+            example["metadata"]["reasoning_rollout"] = rollout
+            example["metadata"]["reasoning_rollout_shell"] = rollout
+            example["metadata"]["reused_frozen_l1"] = True
+            _write_json(example_stage_dir / "05_l2_rollout.json", rollout)
+            _write_json(final_path, example)
+            return example
+
     if final_path.exists() and not force and not rebuild_from_stages and not retry_failed_clip_schemas:
         return _read_json(final_path)
 

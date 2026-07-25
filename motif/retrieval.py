@@ -60,19 +60,35 @@ class MotifQueryEngine:
         task_family: str = "",
         dataset: str = "",
         include_shadow: bool = False,
+        include_candidate: bool = False,
         top_k: int = 3,
+        exclude_motif_ids: set[str] | frozenset[str] | None = None,
+        phase: str = "accelerate",
     ) -> list[MotifSelectionResult]:
+        """Select motifs.
+
+        ``phase=accelerate`` (default): VERIFIED/ACTIVE only — used to skip planner.
+        ``phase=repair``: also allows SHADOW/CANDIDATE as repair priors.
+        """
+        if phase == "repair":
+            include_shadow = True
+            include_candidate = True
         query_tokens = _tokenize(query)
+        excluded = {str(x) for x in (exclude_motif_ids or set())}
         candidates = []
         for record in self.bank.records:
-            if not self._is_visible(record, include_shadow=include_shadow):
+            if record.motif_id in excluded:
+                continue
+            if not self._is_visible(
+                record,
+                include_shadow=include_shadow,
+                include_candidate=include_candidate,
+            ):
                 continue
             relevance = self._relevance(record, query_tokens)
             applicability = self._applicability(record, task_family=task_family, dataset=dataset)
             confidence = record.empirical_confidence
             score = 0.45 * relevance + 0.35 * applicability + 0.20 * confidence
-            if score <= 0:
-                continue
             candidates.append(MotifSelectionResult(
                 motif_id=record.motif_id,
                 name=record.name,
@@ -85,16 +101,27 @@ class MotifQueryEngine:
                 expansion_constraints=list(record.expansion_constraints),
                 trigger_signature=dict(record.trigger_signature),
             ))
-        return sorted(candidates, key=lambda item: item.score, reverse=True)[:top_k]
+        # Prefer positive-score matches; if none, still return visible motifs so a
+        # non-empty ACTIVE/VERIFIED bank can satisfy mandatory retrieve attempts.
+        ranked = sorted(candidates, key=lambda item: item.score, reverse=True)
+        positive = [item for item in ranked if item.score > 0]
+        chosen = positive if positive else ranked
+        return chosen[:top_k]
 
     @staticmethod
-    def _is_visible(record: MotifRecord, include_shadow: bool) -> bool:
+    def _is_visible(
+        record: MotifRecord,
+        include_shadow: bool,
+        include_candidate: bool = False,
+    ) -> bool:
         visible = {
             MotifLifecycleStatus.VERIFIED,
             MotifLifecycleStatus.ACTIVE,
         }
         if include_shadow:
             visible.add(MotifLifecycleStatus.SHADOW)
+        if include_candidate:
+            visible.add(MotifLifecycleStatus.CANDIDATE)
         return record.status in visible
 
     @staticmethod

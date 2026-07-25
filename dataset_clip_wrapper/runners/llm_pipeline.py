@@ -1177,7 +1177,23 @@ def build_llm_enriched_example(
                 timeout_s=config.graph_composer.timeout_s,
             )
             skill_exec = _build_skill_executor(api_key, config) if config.run_l2_llm_planner else None
-            reasoning_rollout = build_llm_reasoning_rollout(example, clue_graph, client=l2_client, skill_executor=skill_exec)
+            example.setdefault("metadata", {})
+            example["metadata"]["motif_enabled"] = bool(getattr(config, "motif_enabled", False))
+            if getattr(config, "motif_bank_path", None):
+                example["metadata"]["motif_bank_path"] = config.motif_bank_path
+            if getattr(config, "forced_motif_id", None):
+                example["metadata"]["forced_motif_id"] = config.forced_motif_id
+            reasoning_rollout = build_llm_reasoning_rollout(
+                example,
+                clue_graph,
+                client=l2_client,
+                skill_executor=skill_exec,
+                motif_enabled=bool(getattr(config, "motif_enabled", False)),
+                motif_bank_path=getattr(config, "motif_bank_path", None),
+                forced_motif_id=getattr(config, "forced_motif_id", None),
+                motif_top_k=int(getattr(config, "motif_top_k", 3) or 3),
+                include_shadow_motifs=bool(getattr(config, "include_shadow_motifs", False)),
+            )
         else:
             reasoning_rollout = build_reasoning_rollout(example, clue_graph, rollout_source="llm_pipeline")
         example["metadata"]["reasoning_rollout"] = reasoning_rollout

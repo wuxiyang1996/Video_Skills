@@ -298,6 +298,12 @@ class WrapperConfig:
     run_clip_schema: bool = False
     run_graph_compose: bool = False
     run_l2_llm_planner: bool = False
+    motif_enabled: bool = False
+    motif_bank_path: str | None = None
+    forced_motif_id: str | None = None
+    motif_top_k: int = 3
+    include_shadow_motifs: bool = False
+    reuse_frozen_l1_example: bool = False
 
     def resolved_clip_policy(self, duration_s: float | None = None) -> ClipPolicyConfig:
         from .dataset_graph_presets import clip_policy_for
