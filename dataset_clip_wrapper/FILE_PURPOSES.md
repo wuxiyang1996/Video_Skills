@@ -1,9 +1,21 @@
 # Dataset Clip Wrapper File Purposes
 
-Last updated: 2026-07-05
+Last updated: 2026-07-24
 
 This document explains why each `dataset_clip_wrapper` folder/file exists.
 Use it when adding new modules or deciding where a change belongs.
+
+Functional flow:
+
+```text
+adapters + perception
+  -> l1_clue_graph
+  -> l2_reasoning_graph
+  -> verification (repair / accept / abstain)
+  -> motifs (optional post-hoc priors)
+training/ exports SFT transitions across L1, L2, repair, verifier, motif
+runners/ orchestrate the end-to-end path
+```
 
 ## Package Root
 
@@ -28,6 +40,13 @@ Use it when adding new modules or deciding where a change belongs.
 | `report_failure_taxonomy.py` | Compatibility entrypoint for `verification/report_failure_taxonomy.py`. |
 | `report_evidence_audit.py` | Compatibility entrypoint for `verification/report_evidence_audit.py`. |
 | `export_expert_demos.py` | Compatibility entrypoint for `expert_demos/export_expert_demos.py`. |
+| `export_l1_builder_sft.py` | Compatibility entrypoint for `training/l1_builder_sft_adapter.py`. |
+| `export_l1_patch_sft.py` | Compatibility entrypoint for `training/l1_patch_sft_adapter.py`. |
+| `export_l2_retrieval_sft.py` | Compatibility entrypoint for `training/l2_retrieval_sft_adapter.py`. |
+| `export_motif_sft.py` | Compatibility entrypoint for `training/motif_sft_adapter.py`. |
+| `export_stepwise_sft.py` | Compatibility entrypoint for `training/stepwise_sft_adapter.py`. |
+| `export_verifier_sft.py` | Compatibility entrypoint for `training/verifier_sft_adapter.py`. |
+| `collect_sft_snapshot.py` | Compatibility entrypoint for `training/collect_sft_snapshot.py`. |
 | `retrofit_l2_trajectory.py` | Compatibility entrypoint for `verification/retrofit_l2_trajectory.py`. |
 | `output/` | Generated API outputs, staged caches, repair artifacts, and reports. Only `.gitkeep` should be tracked. |
 
@@ -153,6 +172,28 @@ expandable atomic graph templates rather than callable skill agents.
 | `motifs/canonicalize.py` | Canonical signature helpers that remove surface labels from motif ids. |
 | `motifs/build_motif_bank.py` | CLI for building a motif bank from accepted L1/L2 artifacts; defaults to `--agent-mode hybrid`. |
 
+## `training/`
+
+Controller SFT adapters and collection. One adapter family per specialist
+(L1 builder/patch, L2 retrieval, repair stepwise, verifier, motif). Chat SFT
+rows are MDP-style transitions, not one-shot graph dumps.
+
+| Path | Purpose |
+|------|---------|
+| `training/l1_builder_sft_adapter.py` | Atomic L1 create-node/edge/segment/skip exports. |
+| `training/l1_patch_sft_adapter.py` | Repair-triggered L1 patch exports. |
+| `training/l2_retrieval_sft_adapter.py` | Coarse retrieval / recovery action exports. |
+| `training/l2_specialist_sft_adapter.py` | Expanded L2 specialist rows for five-LoRA packages. |
+| `training/verifier_sft_adapter.py` | Auxiliary verifier supported/insufficient exports. |
+| `training/motif_sft_adapter.py` | Motif lifecycle SFT exports. |
+| `training/motif_evidence_sft_adapter.py` | Motif evidence-ref audit exports. |
+| `training/stepwise_sft_adapter.py` | L2/repair round stepwise exports. |
+| `training/repair_report_stepwise_sft_adapter.py` | Repair-report-derived stepwise exports. |
+| `training/collect_sft_snapshot.py` | Snapshot collector that gathers gated controller JSONL bundles. |
+| `training/build_sft_splits.py` | Strict train/dev split builder with controller mixture gates. |
+| `training/train_lora_sft.py` | Small LoRA SFT trainer entrypoint. |
+| `training/sft_common.py` | Shared JSONL IO, leakage gates, and report helpers. |
+
 ## `runners/`
 
 End-to-end orchestration. Runners may connect adapters, perception, L1, L2, and
@@ -166,33 +207,19 @@ verification, but implementation details should remain in the bundle modules.
 
 ## `tests/`
 
-Executable smoke tests. These should be fast enough for local validation and
-target specific contracts rather than full benchmark accuracy.
+Executable smoke tests, grouped by function. Implementation modules live under
+bundle subpackages; root `tests/smoke_test_*.py` files are thin compatibility
+shims so `python -m dataset_clip_wrapper.tests.smoke_test_*` keeps working.
 
-| Path | Purpose |
-|------|---------|
-| `tests/smoke_test_module_bundles.py` | Ensures every wrapper module is classified in `module_bundles.py`. |
-| `tests/smoke_test_motif_agent.py` | Checks deterministic motif fallback plus mocked Qwen/GPT-OSS propose-curate output. |
-| `tests/smoke_test_l2_recursive_trace.py` | Checks trajectory and repair-subgraph encoding. |
-| `tests/smoke_test_two_layer_schema.py` | Validates L1/L2 schemas across datasets/regimes. |
-| `tests/smoke_test_graph_compose.py` | Checks deterministic graph composition. |
-| `tests/smoke_test_neighbor_vlm_l1_graph_compose.py` | Checks neighbor-local L1 graph composition contract. |
-| `tests/smoke_test_vlm_l1_graph_compose.py` | Checks VLM L1 graph composition contract. |
-| `tests/smoke_test_retrieval.py` | Checks coarse/fine retrieval and memory routing. |
-| `tests/smoke_test_video_tools.py` | Checks local `video_tools` perception backend. |
-| `tests/smoke_test_video_only_takein.py` | Checks all-dataset video-only canonicalization. |
-| `tests/smoke_test_coarse_fine_graph_crafting.py` | Checks hierarchical long-video graph crafting. |
-| `tests/smoke_test_reasoning_rollout.py` | Checks L2 rollout shell/contract. |
-| `tests/smoke_test_multi_hop_reasoning_skills.py` | Checks multi-hop reasoning-skill execution. |
-| `tests/smoke_test_skill_executor.py` | Checks atomic skill executor backend behavior. |
-| `tests/smoke_test_fault_repair.py` | Checks local L2 fault repair. |
-| `tests/smoke_test_export_expert_demos.py` | Checks expert-demo export and gold-field boundary. |
-| `tests/smoke_test_training_manifests.py` | Checks split-aware manifest helpers and gold-field stripping. |
-| `tests/smoke_test_graph_plan_validator.py` | Checks graph-composition plan validation. |
-| `tests/smoke_test_long_coarse_fine_profile.py` | Checks long coarse/fine profile defaults. |
-| `tests/smoke_test_short_multi_hop_profile.py` | Checks short multi-hop profile defaults. |
-| `tests/smoke_test_long_retrieval_repair.py` | Checks long-video repair span selection. |
-| `tests/smoke_test.py` | General canonical wrapper smoke test. |
+| Subpackage | Covers |
+|------------|--------|
+| `tests/core/` | Module-bundle registry, two-layer schema, general wrapper smoke |
+| `tests/perception/` | `video_tools` backend, video-only take-in contract |
+| `tests/l1/` | Graph compose, retrieval, coarse/fine profiles, plan validation |
+| `tests/l2/` | Reasoning rollout, multi-hop skills, recursive trace, executor, fault repair |
+| `tests/verification/` | Long-video retrieval repair |
+| `tests/motifs/` | Motif agent propose/curate fallback |
+| `tests/training/` | Expert-demo export and training manifests |
 
 ## Placement Rules
 
@@ -202,9 +229,10 @@ target specific contracts rather than full benchmark accuracy.
 - New answer verification, evidence repair, or acceptance reporting goes in
   `verification/`.
 - New training-data/demo export code goes in `expert_demos/`.
-- New controller-training trace/chat adapters go in `training/`.
+- New controller-training trace/chat adapters and SFT snapshot collection go in `training/`.
 - New split or dataset manifest code goes in `manifests/`.
 - New motif mining, promotion, registry, or expansion code goes in `motifs/`.
 - New orchestration commands go in `runners/` plus a thin compatibility
   entrypoint at the package root only when an existing public command needs it.
-- New smoke tests go in `tests/` and should be added to `module_bundles.py`.
+- New smoke tests go under `tests/<bundle>/` and must be registered in
+  `module_bundles.py` (plus a root shim if a public `-m` path is required).

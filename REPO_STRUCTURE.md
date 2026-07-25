@@ -39,7 +39,8 @@ verification, repair, demo export, and controller-training data.
 | `docs/` | Active docs | L1/L2 graph schema, implementation status, MDP framing, repo bundle map, and cleanup notes. |
 | `tests/video_skills/` | Active tests | Runtime contract/harness/memory/verifier tests. |
 | `dataset_clip_wrapper/tests/` | Active tests | L1/L2 wrapper, graph, repair, manifest, and training-export smoke tests. |
-| `dataset_clip_wrapper/motifs/` | Active optional layer | Motif bank, lifecycle, retrieval, transfer checks, and deterministic L1/L2 motif mining over accepted rollout graphs. |
+| `dataset_clip_wrapper/motifs/` | Active optional layer | Motif bank, lifecycle, Qwen/GPT-OSS motif agent, and deterministic L1/L2 motif mining over accepted rollout graphs. |
+| `motif/` | Transitional | Parallel motif package still used by some SFT/GRPO scripts and `tests/motif/`. Canonical Motif Agent lives under `dataset_clip_wrapper/motifs/`. |
 
 Composed motifs are optional verified subgraph priors that expand into frozen
 atomic skills; they are not new primitive tools and should not depend on

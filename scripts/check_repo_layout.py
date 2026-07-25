@@ -21,6 +21,7 @@ KNOWN_TOP_LEVEL = {
     "REPO_STRUCTURE.md",
     "atomic-skill-decomposition-and-assembly",
     "atomic_skills",
+    "backups",
     "cold_start",
     "configs",
     "data_structure",
@@ -33,6 +34,7 @@ KNOWN_TOP_LEVEL = {
     "infra_plans",
     "install",
     "labeling",
+    "motif",
     "out",
     "pyproject.toml",
     "rag",
@@ -55,6 +57,14 @@ GENERATED_SHOULD_NOT_BE_TRACKED = {
 }
 
 
+def _is_local_or_generated(name: str) -> bool:
+    if name in GENERATED_SHOULD_NOT_BE_TRACKED:
+        return True
+    if name == ".venv" or name.startswith(".venv-") or name == "venv":
+        return True
+    return False
+
+
 def _tracked_files(*paths: str) -> list[str]:
     cmd = ["git", "ls-files", *paths]
     result = subprocess.run(cmd, cwd=ROOT, check=True, text=True, capture_output=True)
@@ -69,7 +79,11 @@ def main() -> int:
         if path.name != ".git" and not path.name.endswith(".egg-info")
     }
 
-    unexpected = sorted(entries - KNOWN_TOP_LEVEL - GENERATED_SHOULD_NOT_BE_TRACKED)
+    unexpected = sorted(
+        name
+        for name in entries
+        if name not in KNOWN_TOP_LEVEL and not _is_local_or_generated(name)
+    )
     if unexpected:
         problems.append(
             "Unexpected top-level paths: "
@@ -77,9 +91,23 @@ def main() -> int:
             + ". Update REPO_STRUCTURE.md and scripts/check_repo_layout.py if intentional."
         )
 
-    tracked_generated = _tracked_files(*GENERATED_SHOULD_NOT_BE_TRACKED)
+    tracked_generated = _tracked_files(*sorted(GENERATED_SHOULD_NOT_BE_TRACKED))
     if tracked_generated:
         problems.append("Generated/local-only paths are tracked: " + ", ".join(tracked_generated))
+
+    tracked_venvs = [
+        path
+        for path in _tracked_files()
+        if path.startswith(".venv/")
+        or path.startswith(".venv-")
+        or path.startswith("venv/")
+        or path == ".venv"
+        or path == "venv"
+    ]
+    if tracked_venvs:
+        problems.append(
+            "Local virtualenv paths are tracked: " + ", ".join(tracked_venvs[:10])
+        )
 
     tracked_dataset_outputs = [
         path

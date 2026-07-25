@@ -1,9 +1,9 @@
 # Implementation Status
 
-Last updated: 2026-07-06
+Last updated: 2026-07-24
 
-This is the current entry point for implemented L1/L2 graph work in
-`video_skills_relaunched`. Older probe notes, rerun logs, and pre-P5 batch
+This is the current entry point for implemented L1/L2 graph work in the
+integrated Video_Skills tree. Older probe notes, rerun logs, and pre-P5 batch
 status have been archived in
 [`docs/legacy/implementation-status-pre-p5.md`](legacy/implementation-status-pre-p5.md).
 
@@ -255,9 +255,194 @@ python -m dataset_clip_wrapper.export_reasoning_traces \
 - [Repository bundle map](repo-bundle-map.md)
 - [Repository cleanup audit](repo-cleanup-audit.md)
 - [Two-layer graph schema](two-layer-graph-schema.md)
+- [MDP-style SFT data generation](sft-data-generation.md)
+- [Three-agent architecture](three-agent-architecture.md)
 - [Clip processing policy](clip-processing-policy.md)
 - [MDP formulation](mdp-formulation.md)
 - [Unified video skill schema](unified-video-skill-schema.md)
 - [Atomic skills v1](../atomic-skill-decomposition-and-assembly/atomic-skills-v1.md)
 - [Expert demo rollouts from datasets](../atomic-skill-decomposition-and-assembly/expert-demo-rollouts-from-datasets.md)
 - [Legacy implementation status](legacy/implementation-status-pre-p5.md)
+
+Uses synthetic perceived-video notes, asks the model to emit both graphs, and
+runs a local verifier on cross-layer bindings.
+
+## 4.7 Five-Specialist Cold-Start SFT (2026-07-22)
+
+Current training-ready package:
+
+```text
+dataset_clip_wrapper/output/sft_cold_start/specialist_sft_v3_20260722/five_lora/
+backup: backups/video_skills_five_lora_sft_v3_20260723.tar.gz
+```
+
+Hard gates pass (`all_hard_gates_passed=true`): video-group train/dev split,
+zero group overlap, `prompt_forbidden_key_hits=0`. Details and collection rules
+live in [sft-data-generation.md](sft-data-generation.md).
+
+Controller walkthrough:
+
+```text
+video
+  -> [perception] Qwen clip schemas (outside the five LoRAs)
+  -> L1: question-blind clue-memory graph build / patch
+  -> L2: question + L1 -> coarse/fine retrieval + recovery
+  -> Verifier: supported vs insufficient
+       |- supported -> may commit; later motif mining
+       `- insufficient -> Repair (bounded patch / reroute / re-verify)
+  -> Motif: post-hoc prior (must expand before use)
+```
+
+| Specialist | Rows (train/dev) | Dominant actions in package |
+|---|---:|---|
+| L1 | 15,690 (12,686 / 3,004) | `create_node`, `create_schema_anchor`, `create_edge`, segment, L1 patch |
+| L2 | 867 (684 / 183); core=23 | select/rank coarse, recovery diagnose / reject-commit |
+| Repair | 127 (115 / 12) | `bounded_recursive_repair` (coarse round actions) |
+| Verifier | 92 (79 / 13); 60 supported / 32 insufficient | `emit_verifier_decision` |
+| Motif | 320 (262 / 58) | evidence-ref audit + lifecycle (rejected-heavy) |
+
+### SFT coverage gaps (relative to designed MDP)
+
+| Gap | Notes |
+|---|---|
+| L2 claim/compose assembly | Designed `extract_claim` / `compose_evidence_chain` / … mostly absent; L2 SFT is retrieval/recovery |
+| L2 core positives | Thin (23 core); raw `accepted_strong` remains no-go without gates |
+| Fine-grained repair | Diagnose → patch → verify → abstain collapsed into round-level actions |
+| Verifier / motif breadth | Verifier CG-heavy; motif rejected/audit-heavy |
+| Classic 9 L1 atomics as tool names | Folded into `neighbor_vlm_l1_*` |
+| Perception / eval datasets / GRPO | Perception not in five LoRAs; VRBench/VideoMME/OVO excluded from SFT by design; GRPO/closed-loop still open |
+| Mixture balance | Doc target ~35/35/20/10; v3 is ~91% L1 by rows |
+
+Priority fills: gated L2 claim/compose, fine-step repair, Video-Holmes verifier
+negatives.
+
+## 5. What Is Not Implemented Yet
+
+| Item | Notes |
+|------|-------|
+| Dataset adapters for CG-Bench / VRBench / SIV-Bench | Implemented in `dataset_clip_wrapper/` |
+| Canonical JSONL export (`data/canonical_examples/`) | Use `dataset_clip_wrapper/cli.py` |
+| Embedding-based coarse retrieval (M3-style) | Lexical gate in `clip_retrieval.py`; embedding API not wired |
+| `shot_boundary` / `scene_boundary` / `adaptive` strategies | Schema enum only |
+| Port of legacy `Video_Skills` segmenter | Exists in sibling repo, not wired to relaunch |
+| Local raw-video frame tool backend | Implemented as `video_tool_backend.py`; produces same clip-schema fields as Qwen path |
+| VRBench video-only graph-quality probe | Implemented as `evaluate_vrbench_video_only_graph.py`; current bottleneck is reaching the right long-video temporal neighborhood |
+| Full raw VLM caption / ASR / object tracking stack | Stage C future work |
+| `create_semantic_memory_node` | Discussed in early skill drafts; not in final 9-skill set |
+| M3-Bench memory graph reader | Blocker for M3 rollouts |
+| Five-specialist cold-start SFT export | Implemented: `specialist_sft_v3_20260722/five_lora/` (see §4.7) |
+| Gated L2 claim/compose SFT | Missing / thin in v3; retrieval/recovery only |
+| Fine-grained repair-step SFT | Missing; package has coarse `bounded_recursive_repair` rounds |
+| Controller LoRA trainer | Present (`dataset_clip_wrapper/training/train_lora_sft.py`); treat as cold-start BC |
+| Verified RL / GRPO closed loop | Design + data scaffolding; not a finished training loop |
+| `--graph-only` batch exporter | Not yet added |
+
+## 5.1 Training Feasibility Assessment
+
+For an ICLR submission, the broad version should remain the north-star claim:
+learn a compact controller that turns raw video/question inputs into
+verifiable, evidence-grounded skill graphs under `video_only` constraints.
+The paper should not present Stage A as the final problem. Stage A is the
+supervision and ablation scaffold that makes the broad claim measurable.
+
+The most plausible first technical success case is narrower: train the
+controller to assemble typed reasoning graphs over a mostly fixed clue-memory
+graph. This should be feasible if the expert rollouts are high precision,
+because the action space is small, the verifier can reject malformed or
+ungrounded traces, and the evaluation can measure process quality rather than
+only final answer text.
+
+The broad `video_only` version is the right ICLR-facing problem but the risky
+part experimentally. There the controller must both discover the right evidence
+and compose a reasoning graph, so failures in captioning, retrieval, temporal
+localization, entity linking, and reasoning all compound. The submission should
+therefore use a staged evidence ladder: show the full `video_only` setting, then
+use Stage A/B ablations to identify whether failures come from evidence
+discovery, graph assembly, verification, or repair.
+
+Suggested paper positioning:
+
+```text
+Main claim:
+  Video reasoning should be learned as verifier-grounded skill-graph control
+  over discovered evidence, not as free-form chain-of-thought imitation.
+
+Primary target:
+  video_only evidence discovery + reasoning graph assembly.
+
+Training scaffold:
+  expert_demo traces from train split provide SFT/offline-RL warm-up only.
+
+Key ablation:
+  prebuilt evidence graph vs video_only evidence discovery.
+```
+
+Expected working path:
+
+```text
+1. expert_demo graph fitting works on Video-Holmes / CG-Bench train
+2. SFT learns skill choice, argument binding, and evidence-role structure
+3. verifier-grounded repair improves evidence F1 and trace validity
+4. GRPO / verified RL improves sampled rollouts after SFT warm-up
+5. video_only improves when evidence discovery is trained/evaluated separately
+6. full broad claim is supported if video_only gains survive held-out test
+```
+
+Expected failure modes:
+
+- Expert rollouts are too teacher-specific, so SFT learns formatting but not
+  reusable assembly.
+- The verifier mostly checks schema, not semantic support, so RL optimizes easy
+  surface signals.
+- Retrieval recall is too low in `video_only`, making the reasoning controller
+  look worse even when its policy is reasonable.
+- Motifs overfit common train patterns and quietly leak dataset-specific
+  shortcuts unless accepted on held-out validation examples.
+
+Minimum credible ICLR package:
+
+- A broad `video_only` evaluation with no hidden clue intervals, answers, or
+  official reasoning visible to the agent.
+- A supervised `expert_demo` warm-up built only from train split examples.
+- A controlled ablation where the same controller receives a prebuilt evidence
+  graph, measuring pure reasoning-graph assembly.
+- Evidence discovery metrics such as clue recall, evidence precision, timestamp
+  error, and hidden-supervision leakage rate.
+- Reasoning graph metrics such as schema validity, evidence-ref validity,
+  claim-support precision, repair success, answer accuracy, and tool cost.
+
+## 6. Labeling Policy Summary
+
+| Use rules (deterministic) | Use model (gpt-5-mini / gpt-oss-120) |
+|---------------------------|--------------------------------------|
+| Parse MCQ answers and timestamps | Trace segmentation |
+| Map CG qid to clue clips | Skill fitting to frozen ontology |
+| Parse SRT into subtitle chunks | Evidence-role labeling |
+| Create initial EvidenceRef objects | Repair-target generation |
+| Schema and format validation | |
+
+Never invent new atomic skills during labeling.
+
+## 7. Paper Scope Decisions
+
+Documented in `problem-formulation-zh.html` and preserved here for implementation alignment:
+
+- Paper 1 focuses on decomposition/assembly + query/verify/repair over teacher-built or dataset-seeded memory
+- Store/update/merge/forget/streaming writer-reasoner split deferred to paper 2
+- Streaming remains schema-compatible via `clip_policy.online` and `observation_end_s`
+- Core evaluation trio: Video-Holmes + SIV-Bench + VRBench; CG-Bench and M3-Bench optional
+
+## 8. Related Documents
+
+- [Repository bundle map](repo-bundle-map.md)
+- [Repository cleanup audit](repo-cleanup-audit.md)
+- [Two-layer graph schema](two-layer-graph-schema.md)
+- [MDP formulation](mdp-formulation.md)
+- [MDP-style SFT data generation](sft-data-generation.md)
+- [Three-agent architecture](three-agent-architecture.md)
+- [Clip processing policy](clip-processing-policy.md)
+- [Unified video skill schema](unified-video-skill-schema.md)
+- [Atomic skills v1](../atomic-skill-decomposition-and-assembly/atomic-skills-v1.md)
+- [Expert demo rollouts from datasets](../atomic-skill-decomposition-and-assembly/expert-demo-rollouts-from-datasets.md)
+- [Legacy implementation status](legacy/implementation-status-pre-p5.md)
+

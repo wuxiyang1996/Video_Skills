@@ -1,10 +1,15 @@
 # Repository Bundle Map
 
-Last updated: 2026-07-06
+Last updated: 2026-07-24
 
 This map classifies the current physical package layout. The top-level
 `dataset_clip_wrapper` package keeps a few compatibility entrypoints, while
 implementation code lives in bundle subpackages.
+
+Empty ghost top-level packages `visual_grounding/`, `rag/`, and `video_skills/`
+are not active ownership paths and were cleared from the clean base. Canonical
+Motif Agent ownership is `dataset_clip_wrapper/motifs/`; transitional top-level
+`motif/` remains only for some SFT pilot scripts/tests until consolidation.
 
 The high-level agent split maps to bundles as follows:
 
@@ -12,7 +17,19 @@ The high-level agent split maps to bundles as follows:
 |-------|------------------|
 | L1 Graph Crafter | `dataset_clip_wrapper/perception/`, `dataset_clip_wrapper/l1_clue_graph/` |
 | L2 Recursive Reasoning / Answer Agent | `dataset_clip_wrapper/l2_reasoning_graph/`, `dataset_clip_wrapper/verification/` |
-| Motif Extraction and Management Agent | planned `dataset_clip_wrapper/motifs/` |
+| Motif Extraction and Management Agent | `dataset_clip_wrapper/motifs/` |
+
+## Functional Map
+
+```text
+perception -> L1 -> L2 -> verification/repair -> motif
+training (SFT adapters) sits across L1/L2/repair/verifier/motif exports
+```
+
+Top-level tests mirror this split: `tests/motif/` for motif bank/miner
+coverage, `tests/sft/` for LoRA SFT / quality-gate / split / specialist-expansion
+coverage. Self-repair prior-work notes live under `docs/self-repair-prior-work.md`
+(formerly top-level `reflection/`).
 
 ## High-Level Bundles
 
@@ -216,7 +233,8 @@ still expand back into frozen atomic skill nodes before execution.
 - Keep expired implementation notes under `docs/legacy/`; do not let old probe
   numbers remain in the current status page unless they are explicitly labeled
   as historical comparison.
-- Keep `__pycache__/`, `*.pyc`, and `.pytest_cache/` out of git.
+- Keep `__pycache__/`, `*.pyc`, `.pytest_cache/`, `.env`, and `.venv*` out of
+  git.
 - Do not add benchmark-specific answer shortcuts to L1 graph construction or
   atomic skills.
 - Heuristic retrieval/scoring may remain diagnostic, but final acceptance must
