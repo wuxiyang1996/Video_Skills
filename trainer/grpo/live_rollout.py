@@ -116,6 +116,8 @@ def make_motif_gated_rollout_fn(
         skill_executor.grpo_force_explore = bool(force_explore)  # type: ignore[attr-defined]
         skill_executor.grpo_explore_top_k = int(explore_top_k)  # type: ignore[attr-defined]
         skill_executor.grpo_force_answer_path = True  # type: ignore[attr-defined]
+        # Keep L2/explore labels; L1 top-1 override was collapsing K-samples.
+        skill_executor.grpo_disable_l1_override = True  # type: ignore[attr-defined]
 
     def _rollout(example: dict[str, Any], clue: dict[str, Any]) -> dict[str, Any]:
         meta = dict(example.get("metadata") or {})
@@ -124,6 +126,7 @@ def make_motif_gated_rollout_fn(
         meta["grpo_force_explore"] = bool(force_explore)
         meta["grpo_explore_top_k"] = int(explore_top_k)
         meta["grpo_force_answer_path"] = True
+        meta["grpo_disable_l1_override"] = True
         if sink:
             meta["motif_candidate_sink_path"] = sink
         seed = int(meta.get("grpo_seed") or 0)
@@ -139,6 +142,7 @@ def make_motif_gated_rollout_fn(
             skill_executor.grpo_force_explore = bool(force_explore)  # type: ignore[attr-defined]
             skill_executor.grpo_explore_top_k = int(explore_top_k)  # type: ignore[attr-defined]
             skill_executor.grpo_force_answer_path = True  # type: ignore[attr-defined]
+            skill_executor.grpo_disable_l1_override = True  # type: ignore[attr-defined]
         example = {**example, "metadata": meta}
         return build_llm_reasoning_rollout(
             example,

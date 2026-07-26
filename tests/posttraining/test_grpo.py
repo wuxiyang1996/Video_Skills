@@ -234,6 +234,16 @@ def test_filter_dirty_samples_and_quality_metrics() -> None:
     assert len(cleaned[0].rollouts) >= 2
 
 
+def test_grpo_live_rollout_wires_disable_l1_override() -> None:
+    import inspect
+
+    from trainer.grpo import live_rollout as lr
+
+    src = inspect.getsource(lr.make_motif_gated_rollout_fn)
+    assert "grpo_disable_l1_override" in src
+    assert 'meta["grpo_disable_l1_override"] = True' in src
+
+
 def test_grpo_live_skill_backend_is_llm_for_answer_critical_skills() -> None:
     from atomic_skills.skill_backends import SkillBackendMode
     from trainer.grpo.live_rollout import _GRPO_LLM_SKILLS, _grpo_skill_backend_config
