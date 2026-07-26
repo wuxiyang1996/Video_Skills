@@ -147,6 +147,7 @@ def summarize_group_quality(groups: Sequence[GrpoGroup | Mapping[str, Any]]) -> 
     total_samples = 0
     terminal = 0
     nontrivial_adv_groups = 0
+    compare_ran_samples = 0
 
     for group in groups:
         n_groups += 1
@@ -169,11 +170,18 @@ def summarize_group_quality(groups: Sequence[GrpoGroup | Mapping[str, Any]]) -> 
                 mo = r.motif_online or {}
                 advs.append(float(r.advantage))
                 terminal += int(bool(r.reward.terminal_success))
+                pv = r.policy_view or {}
             else:
                 mo = r.get("motif_online") or {}
                 advs.append(float(r.get("advantage") or 0.0))
                 terminal += int(bool((r.get("reward") or {}).get("terminal_success")))
+                pv = r.get("policy_view") or {}
             motifs.append(mo.get("selected_motif_id") or mo.get("motif_id"))
+            meta = pv.get("metadata") if isinstance(pv, dict) else {}
+            meta = meta if isinstance(meta, dict) else {}
+            skills = meta.get("executed_skill_ids") or []
+            if meta.get("compare_hypotheses_ran") or "compare_hypotheses" in skills:
+                compare_ran_samples += 1
 
         non_null = {x for x in labels if x not in (None, "")}
         if len(non_null) > 1:
@@ -188,6 +196,7 @@ def summarize_group_quality(groups: Sequence[GrpoGroup | Mapping[str, Any]]) -> 
             nontrivial_adv_groups += 1
         _ = example_id
 
+    compare_rate = compare_ran_samples / max(total_samples, 1)
     return {
         "n_groups": n_groups,
         "n_samples": total_samples,
@@ -204,10 +213,12 @@ def summarize_group_quality(groups: Sequence[GrpoGroup | Mapping[str, Any]]) -> 
         "mean_terminal_success": terminal / max(total_samples, 1),
         "nontrivial_advantage_groups": nontrivial_adv_groups,
         "nontrivial_advantage_rate": nontrivial_adv_groups / max(n_groups, 1),
+        "compare_hypotheses_coverage": compare_rate,
         "gates": {
             "label_diverse_ge_0_60": (label_div / max(n_groups, 1)) >= 0.60,
             "mean_terminal_ge_0_15": (terminal / max(total_samples, 1)) >= 0.15,
             "empty_answer_lt_0_10": (empty_answer / max(n_groups, 1)) < 0.10,
             "nontrivial_adv_ge_0_50": (nontrivial_adv_groups / max(n_groups, 1)) >= 0.50,
+            "compare_coverage_ge_0_90": compare_rate >= 0.90,
         },
     }

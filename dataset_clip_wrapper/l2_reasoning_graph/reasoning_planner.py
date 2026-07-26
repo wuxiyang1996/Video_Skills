@@ -377,6 +377,146 @@ def _summarize_clue_graph(clue_memory_graph: dict[str, Any], max_nodes: int = 20
     }
 
 
+# Skills that belong to the answer-selection tail. Motif prefixes may keep
+# retrieval/structure steps; GRPO rewrites this tail so compare/explore always run.
+_GRPO_ANSWER_TAIL_SKILLS = frozenset(
+    {
+        "generate_answer_hypotheses",
+        "retrieve_evidence_for_hypothesis",
+        "score_hypothesis_support",
+        "compare_hypotheses",
+        "bridge_evidence_hops",
+        "verify_temporal_social_consistency",
+        "verify_claim_support",
+        "commit_answer",
+    }
+)
+
+
+def ensure_grpo_answer_critical_plan(
+    reasoning_plan: list[dict[str, Any]],
+    *,
+    options: list[Any] | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Keep Motif prefix, replace answer tail with generate→score→compare→commit.
+
+    Collapsed K-samples often came from Motif sequences that skipped
+    ``compare_hypotheses``, so ``force_explore`` never ran.
+    """
+    meta: dict[str, Any] = {"applied": False, "reason": "not_needed"}
+    if not options:
+        meta["reason"] = "no_options"
+        return list(reasoning_plan or []), meta
+
+    plan = [dict(step) for step in (reasoning_plan or []) if isinstance(step, dict)]
+    skill_ids = [str(step.get("skill_id") or "") for step in plan]
+    has_compare = "compare_hypotheses" in skill_ids
+    has_generate = "generate_answer_hypotheses" in skill_ids
+    has_score = "score_hypothesis_support" in skill_ids
+    if has_compare and has_generate and has_score:
+        meta.update({"applied": False, "reason": "already_has_answer_path", "skill_ids": skill_ids})
+        return plan, meta
+
+    prefix: list[dict[str, Any]] = []
+    for step in plan:
+        sid = str(step.get("skill_id") or "")
+        if sid in _GRPO_ANSWER_TAIL_SKILLS:
+            break
+        prefix.append(step)
+
+    if not any(str(s.get("skill_id") or "") == "parse_question_target" for s in prefix):
+        prefix.insert(
+            0,
+            {
+                "step_id": "grpo_parse",
+                "skill_id": "parse_question_target",
+                "args": {
+                    "question_text": "$bindings.question_text",
+                    "options": "$bindings.options",
+                },
+                "depends_on": [],
+                "from_grpo_answer_path": True,
+            },
+        )
+    parse_id = next(
+        str(s.get("step_id") or "grpo_parse")
+        for s in prefix
+        if str(s.get("skill_id") or "") == "parse_question_target"
+    )
+    tail = [
+        {
+            "step_id": "grpo_gen",
+            "skill_id": "generate_answer_hypotheses",
+            "args": {
+                "question_text": "$bindings.question_text",
+                "options": "$bindings.options",
+                "parsed_target": f"$step.{parse_id}.parsed_target",
+            },
+            "depends_on": [parse_id],
+            "from_grpo_answer_path": True,
+        },
+        {
+            "step_id": "grpo_ret",
+            "skill_id": "retrieve_evidence_for_hypothesis",
+            "args": {"hypothesis": "$step.grpo_gen.hypotheses", "max_refs": 6},
+            "depends_on": ["grpo_gen"],
+            "from_grpo_answer_path": True,
+        },
+        {
+            "step_id": "grpo_score",
+            "skill_id": "score_hypothesis_support",
+            "args": {
+                "hypothesis": "$step.grpo_gen.hypotheses",
+                "support_evidence": "$step.grpo_ret",
+                "counterevidence": [],
+            },
+            "depends_on": ["grpo_gen", "grpo_ret"],
+            "from_grpo_answer_path": True,
+        },
+        {
+            "step_id": "grpo_cmp",
+            "skill_id": "compare_hypotheses",
+            "args": {"scored_hypotheses": "$step.grpo_score.scored_hypotheses"},
+            "depends_on": ["grpo_score"],
+            "from_grpo_answer_path": True,
+        },
+        {
+            "step_id": "grpo_verify",
+            "skill_id": "verify_claim_support",
+            "args": {
+                "claim": "$step.grpo_cmp.best_hypothesis",
+                "evidence_chain": {"evidence_refs": []},
+                "support_policy": {"min_evidence_refs": 1},
+            },
+            "depends_on": ["grpo_cmp"],
+            "from_grpo_answer_path": True,
+        },
+        {
+            "step_id": "grpo_commit",
+            "skill_id": "commit_answer",
+            "args": {
+                "verified_claim": "$step.grpo_verify.verified_claim",
+                "options": "$bindings.options",
+                "answer_format": "multiple_choice",
+                "support_chain": "$step.grpo_verify.evidence_chain",
+            },
+            "depends_on": ["grpo_verify"],
+            "from_grpo_answer_path": True,
+        },
+    ]
+    merged = prefix + tail
+    meta.update(
+        {
+            "applied": True,
+            "reason": "rewrote_answer_tail",
+            "prefix_skill_ids": [str(s.get("skill_id") or "") for s in prefix],
+            "original_skill_ids": skill_ids,
+            "merged_skill_ids": [str(s.get("skill_id") or "") for s in merged],
+        }
+    )
+    return merged, meta
+
+
 def _default_multi_hop_mcq_plan() -> list[dict[str, Any]]:
     """Conservative fallback plan for short/offline multiple-choice reasoning."""
     return [
@@ -1059,8 +1199,9 @@ def execute_reasoning_plan(
                     # Defaults come from live_rollout (SkillExecutor attrs); can
                     # be disabled later for true LLM sampling once gates pass.
                     force_default = bool(getattr(skill_executor, "grpo_force_explore", True))
-                    top_k_default = int(getattr(skill_executor, "grpo_explore_top_k", 2) or 2)
+                    top_k_default = int(getattr(skill_executor, "grpo_explore_top_k", 3) or 3)
                     decision_policy.setdefault("force_explore", force_default)
+                    decision_policy.setdefault("options", options)
                     # Peaked score margins collapse K samples; bump top-k to 3.
                     score_vals = [
                         float(item.get("overall_score") or 0.0)
@@ -1072,7 +1213,11 @@ def execute_reasoning_plan(
                         ranked_scores = sorted(score_vals, reverse=True)
                         if ranked_scores[0] - ranked_scores[1] >= 0.25:
                             top_k = max(top_k, 3)
-                    decision_policy.setdefault("explore_top_k", min(top_k, len(scored) or top_k))
+                    # Pad with options before capping k so singleton scored pools can explore.
+                    decision_policy.setdefault(
+                        "explore_top_k",
+                        max(top_k, min(3, len(options) if options else top_k)),
+                    )
                 force_explore = bool(decision_policy.get("force_explore"))
                 use_llm_compare = False
                 # Skip LLM compare under force_explore — seed rotation on scored
@@ -1195,11 +1340,21 @@ def execute_reasoning_plan(
                     support_chain = _chain(verified_claim.get("supported_by_refs") or verified_claim.get("evidence_refs"))
                 if not support_chain.get("evidence_refs"):
                     support_chain = _chain(_lookup_recent_evidence_refs())
+                commit_policy: dict[str, Any] = {}
+                if skill_executor is not None and getattr(skill_executor.llm_client, "seed", None) is not None:
+                    ran_compare = any(item.get("skill_id") == "compare_hypotheses" for item in trace)
+                    commit_policy = {
+                        "explore_seed": int(skill_executor.llm_client.seed),
+                        "force_explore": bool(getattr(skill_executor, "grpo_force_explore", True)),
+                        # Only rotate at commit when compare never ran (path hole).
+                        "commit_explore": not ran_compare,
+                    }
                 result = executor(
                     verified_claim,
                     options=resolved_args.get("options") or options or None,
                     answer_format=resolved_args.get("answer_format") or ("multiple_choice" if options else "free_text"),
                     support_chain=support_chain,
+                    decision_policy=commit_policy or None,
                 )
             else:
                 result = executor(**resolved_args)
@@ -1510,6 +1665,27 @@ def build_llm_reasoning_rollout(
             "planner": plan_response.get("planner") or "deterministic_multi_hop_fallback",
             "fallback_reason": plan_response.get("fallback_reason") or "empty_reasoning_plan",
         }
+
+    # GRPO: Motif prefixes often skip compare → force_explore never runs.
+    # Rewrite answer tail unless explicitly disabled via metadata/executor.
+    # Default off outside GRPO live_rollout (which sets metadata / executor attr).
+    force_answer_path = bool(example_meta.get("grpo_force_answer_path", False))
+    if skill_executor is not None and hasattr(skill_executor, "grpo_force_answer_path"):
+        force_answer_path = bool(getattr(skill_executor, "grpo_force_answer_path"))
+    answer_path_meta: dict[str, Any] = {"applied": False}
+    q_options = (question if isinstance(question, dict) else {}).get("options") or []
+    if force_answer_path and q_options:
+        reasoning_plan, answer_path_meta = ensure_grpo_answer_critical_plan(
+            reasoning_plan,
+            options=q_options if isinstance(q_options, list) else [],
+        )
+        plan_response = {
+            **plan_response,
+            "reasoning_plan": reasoning_plan,
+            "grpo_answer_path": answer_path_meta,
+        }
+        if answer_path_meta.get("applied"):
+            plan_response["planner"] = f"{plan_response.get('planner') or 'motif'}+grpo_answer_path"
 
     trace, step_outputs = execute_reasoning_plan(
         reasoning_plan=reasoning_plan,
@@ -1968,6 +2144,8 @@ def build_llm_reasoning_rollout(
         "llm_plan": plan_response,
         "llm_trace_ok": len(ok_steps),
         "llm_trace_fail": len(failed_steps),
+        "compare_hypotheses_ran": "compare_hypotheses" in executed_skills,
+        "grpo_answer_path": answer_path_meta if "answer_path_meta" in locals() else {},
         "acceptance_status_detail": {
             "status": acceptance_status,
             "reason": verifier_reason,
