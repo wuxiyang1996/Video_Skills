@@ -226,6 +226,15 @@ def main(argv: list[str] | None = None) -> int:
         if not examples:
             raise SystemExit("No opd_pool examples after split filter")
         assert_role_exclusive(examples, manifest=manifest, allowed_roles=("opd_pool",))
+    # Prefer later paths when the same example_id appears in multiple L1 trees.
+    deduped: dict[str, dict] = {}
+    for example in examples:
+        eid = str(example.get("example_id") or "").strip()
+        if not eid:
+            continue
+        deduped[eid] = example
+    examples = list(deduped.values())
+    print(f"opd_pool unique examples after dedupe: {len(examples)}", flush=True)
     examples = examples[: int(args.limit)]
 
     out_dir = Path(args.output_dir)

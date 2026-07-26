@@ -11,7 +11,8 @@ else
 fi
 
 SPLIT_MANIFEST="${SPLIT_MANIFEST:-${REPO_ROOT}/dataset_clip_wrapper/output/sft_cold_start/split_manifest_v1.json}"
-FROZEN_L1_GLOB="${FROZEN_L1_GLOB:-${REPO_ROOT}/dataset_clip_wrapper/output/pilot_20260710_free/**/04_l1_example.json}"
+# Union of staged L1 trees; collect dedupes by example_id (later path wins).
+FROZEN_L1_GLOB="${FROZEN_L1_GLOB:-${REPO_ROOT}/dataset_clip_wrapper/output/**/04_l1_example.json}"
 MOTIF_BANK="${MOTIF_BANK:-${REPO_ROOT}/motif/output/pilot_online_motif_bank.jsonl}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/dataset_clip_wrapper/output/opd_real_$(date +%Y%m%d_%H%M%S)}"
 LIMIT="${LIMIT:-16}"
