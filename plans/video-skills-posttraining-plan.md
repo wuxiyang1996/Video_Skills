@@ -274,9 +274,27 @@ OPD 只能在给定候选集合内重分配概率，**不能创造候选中不�
 
 OPD 数据采集只使用完成强制 Motif retrieval/expansion 后的 student-induced states；teacher 不看 hidden gold，不生成自由文本 CoT，不对动作给 verbal 0–1 分。OPD 不覆盖 verifier hard gate，也不用于 Motif promotion。
 
+### 5.B OPD 状态稀疏性与采样策略（2026-07-26）
+
+L1 / 开局 L2 动作天然密集；**中后段 L2（compare/compose/commit）与 Repair（diagnose/inspect/patch/re-verify）决策点本来就更稀**。这是预期，不是采集失败的同义词：OPD 不应与 GRPO 比行数，而应比是否覆盖**有分歧的决策边界**。
+
+当前 harness 风险（必须写明，避免误判校准门）：
+
+- [`trainer/closed_loop_harness.py`](../trainer/closed_loop_harness.py) 的 `extract_student_action_from_rollout` 默认取 **motif/LLM plan 的第 1 步** 作为 `student_action`；
+- Motif accelerate 展开后第一步经常是 `parse_question_target`，teacher 再稳定选回 `student`；
+- 结果是：candidate-order stability / mean L1 可以全绿，但分布极尖、几乎只蒸馏开局语法动作——**稳定 ≠ 对 L2/Repair 有用**。
+- 2026-07-26 ranking calib（62 unique `opd_pool` L1）：top1=1.0、mean_l1≈0.077，但 teacher top 约 61/62 为 `student`（`parse_question_target`）。frozen L1 覆盖也卡住更大 calib（manifest `opd_pool` 视频远多于可用 `04_l1_example.json`）。
+
+因此近端路线调整为：
+
+1. **允许 SFT → 扩 GRPO（verified RL）先行**，用 live K-sample 自己制造 compare/commit/repair 分歧与 terminal/progress 信号；不因 step-0 OPD 校准通过就默认进入大规模 OPD KL。
+2. **有用的 L2/Repair OPD 改为轨迹后验采样**：从 GRPO / closed-loop rollout trace 中抽取 mid-horizon、failure、pre-commit、repair-entry 等状态再查 teacher；禁止把“每条 example 只采 step-0”当作 L2/Repair OPD 已就绪的证据。
+3. **稀疏是预期**：L2/Repair OPD 行数可以远小于 L1/开局；退出门看 family 覆盖（尤其 repair/commit/abstain）与执行提升，不看绝对行数是否追上 GRPO。
+4. 若后验 OPD 仍只提高 teacher agreement、不提高 verified success / 恢复率 / RL 样本效率，则按 §9 **删除 OPD 阶段**，保留 SFT → Verified RL。
+
 模块化 OPD 目标：
 
-- **L2 + Repair OPD**：候选是带完整 arguments 的 retrieve、reason、diagnose、patch、reroute、re-verify、commit/abstain action；OPD 后继续进入 verified RL。
+- **L2 + Repair OPD**：候选是带完整 arguments 的 retrieve、reason、diagnose、patch、reroute、re-verify、commit/abstain action；状态优先来自轨迹中后段与失败边界，而不是仅 episode 第一步；OPD 后继续进入 verified RL（或与正在进行的 GRPO 交替 refresh）。
 - **Verifier OPD**：state 来自当前 9B controller 生成的 claim/evidence pack；teacher 在 `supported/insufficient/contradictory` 固定标签上提供 action distribution。训练目标为 teacher KL + 反事实标签 CE + calibration loss；Verifier 训练后冻结，不做策略 RL。
 - **Motif OPD**：候选是完整的 motif retrieval/rerank、use/fallback、expansion-template 和 lifecycle action；teacher distribution 只提供 policy prior。Promotion 不能由 OPD 决定，仍必须通过跨视频支持、evidence audit、可展开性与 paired utility。
 
@@ -286,6 +304,7 @@ OPD 后功能退出门：
 - **Repair**：真实失败状态上的 verified repair conversion、无效循环率和预算；
 - **Verifier**：false-supported、false-insufficient、反事实敏感性和 calibration；
 - **Motif**：retrieval/expansion validity、fallback 恢复率和 paired downstream utility。
+- **采样诊断（硬报告，非可选项）**：distill 包必须报告 teacher-top family 分布、step-index / horizon 直方图、repair-entry 占比；若 `parse_question_target`（或等价开局动作）占比过高，记为 **step-0 collapse**，不得宣称 L2/Repair OPD 功能门通过。
 
 总体要求：相对 SFT-only，held-out `opd_pool` 上首次有效动作率和错误状态恢复率提升，同时 video-only dev 的终局成功率不得下降。若仅 teacher agreement 上升而执行成功率不升，停止 OPD，不进入更大规模采集。
 
@@ -349,6 +368,8 @@ GRPO 的 rollout key 更新为
 - Motif 始终启用且不获得直接 bonus；Motif 展开后的 atomic skills 可按相同 state-delta 规则获得 partial credit。用同 prompt、同 budget、不同随机种子的 paired no-motif rollout 计算 Motif 边际贡献；该结果用于 promotion、排序和诊断，不进入 GRPO 主 reward，也不用于关闭全局 Motif 路径。
 
 ## 7. 实现首轮 GRPO / RLVR
+
+近端可在尚无合格 L2/Repair OPD（§5.B）时，从 SFT LoRA + Motif 直接扩 GRPO collect/train；OPD 不作为启动 GRPO verify 的硬前置，但正式长训前仍须报告是否已有非 step-0 的 OPD prior。
 
 ### 7.0 算力预算（默认 8×A6000）
 
@@ -442,7 +463,7 @@ PROFILE=8gpu LIVE=1 LIMIT=64 K=8 WALLTIME=12:00:00 \
 
 主指标只使用 `video_only` 的 `answer_correct AND accepted_strong/resolved_strong`；同时报告错误 strong commit、正确 abstain、repair conversion、evidence-ref validity、平均 clip reads/tool calls/tokens。VRBench 仅用于最终 OOD，不参与任何阈值选择。
 
-最终保留 OPD 的条件：它必须提高 verified terminal success、降低 RL 冷启动失败率或显著减少 RL 样本量；如果只提高 teacher agreement 而不提高执行结果，就删除 OPD 阶段，保持 SFT → Verified RL 的更简单路线。
+最终保留 OPD 的条件：它必须提高 verified terminal success、降低 RL 冷启动失败率或显著减少 RL 样本量；如果只提高 teacher agreement 而不提高执行结果，就删除 OPD 阶段，保持 SFT → Verified RL 的更简单路线。近端若 step-0 OPD 出现 §5.B 的 collapse，实验顺序允许先跑 **SFT + Motif + verified RL**，再以 GRPO traces 做后验 L2/Repair OPD（见 §5.B）。
 
 ## 10. 采用 9B Online Specialist 的合理性
 
