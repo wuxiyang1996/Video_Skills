@@ -14,7 +14,7 @@ K="${K:-4}"
 TRAIN_AFTER="${TRAIN_AFTER:-1}"
 MAX_GROUPS="${MAX_GROUPS:-0}"
 FORCE_EXPLORE="${FORCE_EXPLORE:-1}"
-EXPLORE_TOP_K="${EXPLORE_TOP_K:-2}"
+EXPLORE_TOP_K="${EXPLORE_TOP_K:-3}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/dataset_clip_wrapper/output/grpo_a6000_shard_$(date +%Y%m%d_%H%M%S)}"
 
 mkdir -p "${OUTPUT_ROOT}/slurm_logs"

@@ -76,7 +76,7 @@ def make_motif_gated_rollout_fn(
     with_skill_executor: bool = True,
     rotate_motifs: bool = True,
     force_explore: bool = True,
-    explore_top_k: int = 2,
+    explore_top_k: int = 3,
     motif_candidate_sink_path: str | Path | None = None,
 ) -> RolloutFn:
     """Build a Motif-first rollout function for GRPO live collection.
