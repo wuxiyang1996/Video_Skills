@@ -1982,6 +1982,10 @@ def build_llm_reasoning_rollout(
                     break
 
     query_memory_consistency: dict[str, Any] | None = None
+    # GRPO K-samples: L1 override collapses explore diversity (same L1 top-1 for all seeds).
+    disable_l1_override = bool(example_meta.get("grpo_disable_l1_override", False))
+    if skill_executor is not None and hasattr(skill_executor, "grpo_disable_l1_override"):
+        disable_l1_override = bool(getattr(skill_executor, "grpo_disable_l1_override"))
     try:
         from ..verification.evaluate_l1_query_memory import evaluate_example
 
@@ -2003,56 +2007,68 @@ def build_llm_reasoning_rollout(
             video_regime_for_override = (planner_example.get("metadata") or {}).get("video_regime")
             override_margin = 0.5 if video_regime_for_override == "long" and len(l1_refs) >= 4 else 0.75
             if l1_label and final_label and str(final_label) != l1_label and l1_margin >= override_margin:
-                l1_claim = {
-                    "claim_text": l1_best.get("text") or l1_label,
-                    "text": l1_best.get("text") or l1_label,
-                    "option_label": l1_label,
-                    "question_text": question.get("question_text") or "",
-                    "supported_by_refs": l1_refs,
-                }
-                evidence_graph = {
-                    "schema_version": clue_memory_graph.get("schema_version"),
-                    "nodes": clue_memory_graph.get("nodes") or [],
-                    "edges": clue_memory_graph.get("edges") or [],
-                }
-                evidence_chain = {"evidence_refs": l1_refs, "items": []}
-                if skill_executor is not None:
-                    verify_result = skill_executor.execute(
-                        "verify_claim_support",
-                        args={
-                            "claim": l1_claim,
-                            "evidence_chain": evidence_chain,
-                            "support_policy": {"min_evidence_refs": 1},
-                            "question_text": question.get("question_text") or "",
-                        },
-                        graph=evidence_graph,
-                    )
+                if disable_l1_override:
+                    query_memory_consistency = {
+                        "conflict": True,
+                        "l2_label": final_label,
+                        "l1_label": l1_label,
+                        "l1_margin": l1_margin,
+                        "verified_l1_override": False,
+                        "verified_l1_override_suppressed": True,
+                        "suppress_reason": "grpo_disable_l1_override",
+                        "l1_refs": l1_refs,
+                    }
                 else:
-                    verify_result = verify_claim_support(
-                        l1_claim,
-                        evidence_chain=evidence_chain,
-                        support_policy={"min_evidence_refs": 1},
-                        evidence_graph=evidence_graph,
-                        question_text=question.get("question_text") or "",
-                    )
-                query_memory_consistency = {
-                    "conflict": True,
-                    "l2_label": final_label,
-                    "l1_label": l1_label,
-                    "l1_margin": l1_margin,
-                    "verified_l1_override": bool(verify_result.ok),
-                    "l1_refs": l1_refs,
-                }
-                if verify_result.ok:
-                    final_label = l1_label
-                    final_text = str(l1_best.get("text") or l1_label)
-                    support_refs = verify_result.evidence_refs
-                    support_chain = {"evidence_refs": support_refs, "items": []}
-                    final_answer = {"label": final_label, "text": final_text}
-                    commit_ok = bool(support_refs)
-                    last_output = {**last_output, "confidence": verify_result.confidence}
-                else:
-                    commit_ok = False
+                    l1_claim = {
+                        "claim_text": l1_best.get("text") or l1_label,
+                        "text": l1_best.get("text") or l1_label,
+                        "option_label": l1_label,
+                        "question_text": question.get("question_text") or "",
+                        "supported_by_refs": l1_refs,
+                    }
+                    evidence_graph = {
+                        "schema_version": clue_memory_graph.get("schema_version"),
+                        "nodes": clue_memory_graph.get("nodes") or [],
+                        "edges": clue_memory_graph.get("edges") or [],
+                    }
+                    evidence_chain = {"evidence_refs": l1_refs, "items": []}
+                    if skill_executor is not None:
+                        verify_result = skill_executor.execute(
+                            "verify_claim_support",
+                            args={
+                                "claim": l1_claim,
+                                "evidence_chain": evidence_chain,
+                                "support_policy": {"min_evidence_refs": 1},
+                                "question_text": question.get("question_text") or "",
+                            },
+                            graph=evidence_graph,
+                        )
+                    else:
+                        verify_result = verify_claim_support(
+                            l1_claim,
+                            evidence_chain=evidence_chain,
+                            support_policy={"min_evidence_refs": 1},
+                            evidence_graph=evidence_graph,
+                            question_text=question.get("question_text") or "",
+                        )
+                    query_memory_consistency = {
+                        "conflict": True,
+                        "l2_label": final_label,
+                        "l1_label": l1_label,
+                        "l1_margin": l1_margin,
+                        "verified_l1_override": bool(verify_result.ok),
+                        "l1_refs": l1_refs,
+                    }
+                    if verify_result.ok:
+                        final_label = l1_label
+                        final_text = str(l1_best.get("text") or l1_label)
+                        support_refs = verify_result.evidence_refs
+                        support_chain = {"evidence_refs": support_refs, "items": []}
+                        final_answer = {"label": final_label, "text": final_text}
+                        commit_ok = bool(support_refs)
+                        last_output = {**last_output, "confidence": verify_result.confidence}
+                    else:
+                        commit_ok = False
             elif l1_label:
                 query_memory_consistency = {
                     "conflict": bool(final_label and str(final_label) != l1_label),
