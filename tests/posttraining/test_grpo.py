@@ -312,6 +312,102 @@ def test_compare_hypotheses_force_explore_rotates_top2_even_if_peaked() -> None:
     assert b.outputs["decision_reason"] == "force_explore_seed"
 
 
+def test_ensure_grpo_answer_path_rewrites_motif_without_compare() -> None:
+    from dataset_clip_wrapper.l2_reasoning_graph.reasoning_planner import (
+        ensure_grpo_answer_critical_plan,
+    )
+
+    motif_plan = [
+        {
+            "step_id": "m1",
+            "skill_id": "parse_question_target",
+            "args": {"question_text": "$bindings.question_text", "options": "$bindings.options"},
+            "depends_on": [],
+        },
+        {
+            "step_id": "m2",
+            "skill_id": "retrieve_by_event",
+            "args": {"event_description": "x"},
+            "depends_on": ["m1"],
+        },
+        {
+            "step_id": "m3",
+            "skill_id": "verify_claim_support",
+            "args": {"claim": {}},
+            "depends_on": ["m2"],
+        },
+        {
+            "step_id": "m4",
+            "skill_id": "commit_answer",
+            "args": {"verified_claim": {}},
+            "depends_on": ["m3"],
+        },
+    ]
+    options = [{"label": "A", "text": "a"}, {"label": "B", "text": "b"}, {"label": "C", "text": "c"}]
+    merged, meta = ensure_grpo_answer_critical_plan(motif_plan, options=options)
+    ids = [s["skill_id"] for s in merged]
+    assert meta["applied"] is True
+    assert "retrieve_by_event" in ids
+    assert ids.index("generate_answer_hypotheses") < ids.index("compare_hypotheses")
+    assert ids[-1] == "commit_answer"
+    assert "compare_hypotheses" in ids
+
+
+def test_compare_pads_options_when_singleton_scored() -> None:
+    from atomic_skills.reasoning_graph_assembly.skills import compare_hypotheses
+
+    scored = [{"option_label": "A", "overall_score": 0.9, "support_refs": ["n1"]}]
+    options = [
+        {"label": "A", "text": "a"},
+        {"label": "B", "text": "b"},
+        {"label": "C", "text": "c"},
+    ]
+    a = compare_hypotheses(
+        scored,
+        decision_policy={
+            "explore_seed": 1,
+            "force_explore": True,
+            "explore_top_k": 3,
+            "options": options,
+        },
+    )
+    b = compare_hypotheses(
+        scored,
+        decision_policy={
+            "explore_seed": 2,
+            "force_explore": True,
+            "explore_top_k": 3,
+            "options": options,
+        },
+    )
+    assert a.outputs["best_hypothesis"]["option_label"] != b.outputs["best_hypothesis"]["option_label"]
+
+
+def test_commit_explore_rotates_when_compare_skipped() -> None:
+    from atomic_skills.reasoning_graph_assembly.skills import commit_answer
+
+    options = [{"label": "A", "text": "a"}, {"label": "B", "text": "b"}]
+    claim = {"claim_text": "a", "option_label": "A", "claim_status": "verified", "confidence": 0.8}
+    chain = {"evidence_refs": ["n1"]}
+    a = commit_answer(
+        claim,
+        options=options,
+        answer_format="multiple_choice",
+        support_chain=chain,
+        decision_policy={"force_explore": True, "explore_seed": 0, "commit_explore": True},
+    )
+    b = commit_answer(
+        claim,
+        options=options,
+        answer_format="multiple_choice",
+        support_chain=chain,
+        decision_policy={"force_explore": True, "explore_seed": 1, "commit_explore": True},
+    )
+    assert a.outputs["final_answer"] == "A"
+    assert b.outputs["final_answer"] == "B"
+    assert b.outputs["commit_explore_used"] is True
+
+
 def test_compare_hypotheses_llm_merges_full_scored_row() -> None:
     from atomic_skills.skill_backends import SkillBackendConfig, SkillBackendMode
     from atomic_skills.skill_executor import SkillExecutor

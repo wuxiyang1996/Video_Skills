@@ -524,16 +524,56 @@ def score_hypothesis_support(
     )
 
 
+def _pad_scored_hypotheses_with_options(
+    scored: list[dict[str, Any]],
+    options: list[Any] | None,
+) -> list[dict[str, Any]]:
+    """Ensure every MCQ label appears so force_explore is not stuck on size-1 pools."""
+    out = [dict(item) for item in scored if isinstance(item, dict)]
+    if not options:
+        return out
+    seen: set[str] = set()
+    for item in out:
+        hyp = item.get("hypothesis") if isinstance(item.get("hypothesis"), dict) else {}
+        label = str(item.get("option_label") or hyp.get("option_label") or "").strip()
+        if label:
+            seen.add(label)
+    for opt in options:
+        if not isinstance(opt, dict):
+            continue
+        label = str(opt.get("label") or opt.get("id") or "").strip()
+        if not label or label in seen:
+            continue
+        text = str(opt.get("text") or label)
+        out.append(
+            {
+                "option_label": label,
+                "claim_text": text,
+                "overall_score": 0.0,
+                "support_score": 0.0,
+                "support_refs": [],
+                "counterevidence_refs": [],
+                "hypothesis": {"option_label": label, "claim_text": text},
+                "padded_option": True,
+            }
+        )
+        seen.add(label)
+    return out
+
+
 def compare_hypotheses(
     scored_hypotheses: list[dict[str, Any]],
     *,
     decision_policy: dict[str, Any] | None = None,
 ) -> Any:
     """Compare option-level hypotheses and choose the strongest supported candidate."""
+    policy = decision_policy or {}
+    force_explore = bool(policy.get("force_explore", False))
     candidates = [item for item in scored_hypotheses if isinstance(item, dict)]
+    if force_explore and policy.get("options"):
+        candidates = _pad_scored_hypotheses_with_options(candidates, policy.get("options"))
     if not candidates:
         return make_result("compare_hypotheses", ok=False, failure_code="no_hypotheses")
-    policy = decision_policy or {}
     margin = float(policy.get("min_margin", 0.0))
     ranked = sorted(
         candidates,
@@ -545,14 +585,16 @@ def compare_hypotheses(
     # Exploration for GRPO K-samples via explore_seed (typically grpo_seed).
     # - default: rotate among near-tied candidates within tie_epsilon
     # - force_explore: always rotate among top-k (guarantees label diversity)
+    # - if top-k pool size==1, fall back to all ranked options
     explore_seed = policy.get("explore_seed")
     tie_eps = float(policy.get("tie_epsilon", 0.15))
-    force_explore = bool(policy.get("force_explore", False))
     explore_top_k = max(1, int(policy.get("explore_top_k", 2)))
     decision_reason = "highest_support_margin"
     if explore_seed is not None and len(ranked) > 1:
         if force_explore:
             pool = ranked[: min(explore_top_k, len(ranked))]
+            if len(pool) <= 1:
+                pool = ranked
         elif tie_eps > 0:
             pool = [
                 item
@@ -900,22 +942,50 @@ def commit_answer(
     options: list[dict[str, Any]] | None = None,
     answer_format: str = "free_text",
     support_chain: dict[str, Any],
+    decision_policy: dict[str, Any] | None = None,
 ) -> Any:
     claim_text = verified_claim.get("text") or verified_claim.get("claim_text") or ""
     if verified_claim.get("claim_status") not in {None, "verified"}:
         return make_result("commit_answer", ok=False, failure_code="claim_not_verified")
     final_answer = claim_text
+    commit_explore_used = False
     if answer_format == "multiple_choice" and options:
         label = str(verified_claim.get("option_label") or "").strip()
-        by_label = {str(opt.get("label") or opt.get("id") or "").strip(): opt for opt in options}
+        by_label = {
+            str(opt.get("label") or opt.get("id") or "").strip(): opt
+            for opt in options
+            if isinstance(opt, dict)
+        }
         best = by_label.get(label) if label else None
+        policy = decision_policy or {}
+        # Backup explore when compare was skipped / singleton: rotate MCQ labels by seed.
+        if (
+            policy.get("force_explore")
+            and policy.get("explore_seed") is not None
+            and by_label
+            and (policy.get("commit_explore") or not label or bool(policy.get("commit_explore_always")))
+        ):
+            labels = list(by_label.keys())
+            pick = labels[int(policy["explore_seed"]) % len(labels)]
+            best = by_label[pick]
+            commit_explore_used = True
         if best is None:
-            best = max(options, key=lambda opt: lexical_score(claim_text, f"{opt.get('label', '')} {opt.get('text', '')}"))
+            best = max(
+                options,
+                key=lambda opt: lexical_score(
+                    claim_text, f"{opt.get('label', '')} {opt.get('text', '')}"
+                ),
+            )
         final_answer = best.get("label") or best.get("text") or claim_text
     refs = support_chain.get("evidence_refs", [])
     return make_result(
         "commit_answer",
-        {"final_answer": final_answer, "answer_support_chain": support_chain, "confidence": verified_claim.get("confidence", 0.8)},
+        {
+            "final_answer": final_answer,
+            "answer_support_chain": support_chain,
+            "confidence": verified_claim.get("confidence", 0.8),
+            "commit_explore_used": commit_explore_used,
+        },
         refs,
         ok=bool(final_answer and refs),
         failure_code=None if final_answer and refs else "invalid_answer_commit",
