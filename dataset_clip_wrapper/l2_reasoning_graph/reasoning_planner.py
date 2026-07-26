@@ -1056,10 +1056,23 @@ def execute_reasoning_plan(
                 if skill_executor is not None and getattr(skill_executor.llm_client, "seed", None) is not None:
                     decision_policy.setdefault("explore_seed", int(skill_executor.llm_client.seed))
                     decision_policy.setdefault("tie_epsilon", 0.2)
-                    # GRPO K-samples need within-group label diversity even when
-                    # rule scores are peaked; force rotate among top-2.
-                    decision_policy.setdefault("force_explore", True)
-                    decision_policy.setdefault("explore_top_k", 2)
+                    # Defaults come from live_rollout (SkillExecutor attrs); can
+                    # be disabled later for true LLM sampling once gates pass.
+                    force_default = bool(getattr(skill_executor, "grpo_force_explore", True))
+                    top_k_default = int(getattr(skill_executor, "grpo_explore_top_k", 2) or 2)
+                    decision_policy.setdefault("force_explore", force_default)
+                    # Peaked score margins collapse K samples; bump top-k to 3.
+                    score_vals = [
+                        float(item.get("overall_score") or 0.0)
+                        for item in scored
+                        if isinstance(item, dict)
+                    ]
+                    top_k = top_k_default
+                    if len(score_vals) >= 2:
+                        ranked_scores = sorted(score_vals, reverse=True)
+                        if ranked_scores[0] - ranked_scores[1] >= 0.25:
+                            top_k = max(top_k, 3)
+                    decision_policy.setdefault("explore_top_k", min(top_k, len(scored) or top_k))
                 force_explore = bool(decision_policy.get("force_explore"))
                 use_llm_compare = False
                 # Skip LLM compare under force_explore — seed rotation on scored

@@ -34,6 +34,11 @@ SKILL_MODEL="${SKILL_MODEL:-qwen/qwen3.5-9b}"
 SKILL_TEMPERATURE="${SKILL_TEMPERATURE:-0.7}"
 WITH_SKILL_EXECUTOR="${WITH_SKILL_EXECUTOR:-1}"
 ROTATE_MOTIFS="${ROTATE_MOTIFS:-1}"
+FORCE_EXPLORE="${FORCE_EXPLORE:-1}"
+EXPLORE_TOP_K="${EXPLORE_TOP_K:-2}"
+DROP_DIRTY_SAMPLES="${DROP_DIRTY_SAMPLES:-1}"
+SHARD_ID="${SHARD_ID:-}"
+SHARD_COUNT="${SHARD_COUNT:-}"
 KEYS_PY="${KEYS_PY:-/fs/gamma-projects/vlm-robot/keys.py}"
 
 export HF_HOME
@@ -67,7 +72,12 @@ print(resolve_attn_implementation("flash_attention_2", allow_sdpa_fallback=False
 PY
 fi
 
-COLLECT_DIR="${OUTPUT_ROOT}/collect"
+# Shard collect writes under collect/shard_${ID}; single-job under collect/.
+if [[ -n "${SHARD_ID}" ]]; then
+  COLLECT_DIR="${OUTPUT_ROOT}/collect/shard_${SHARD_ID}"
+else
+  COLLECT_DIR="${OUTPUT_ROOT}/collect"
+fi
 TRAIN_DIR="${OUTPUT_ROOT}/train_${MODE}"
 mkdir -p "${COLLECT_DIR}" "${TRAIN_DIR}"
 
@@ -84,6 +94,20 @@ if [[ "${STAGE}" == "live_collect" || ( "${STAGE}" == "all" && "${LIVE}" == "1" 
   else
     SKILL_FLAGS+=(--no-rotate-motifs)
   fi
+  if [[ "${FORCE_EXPLORE}" == "1" ]]; then
+    SKILL_FLAGS+=(--force-explore)
+  else
+    SKILL_FLAGS+=(--no-force-explore)
+  fi
+  if [[ "${DROP_DIRTY_SAMPLES}" == "1" ]]; then
+    SKILL_FLAGS+=(--drop-dirty-samples)
+  else
+    SKILL_FLAGS+=(--no-drop-dirty-samples)
+  fi
+  SHARD_FLAGS=()
+  if [[ -n "${SHARD_ID}" && -n "${SHARD_COUNT}" ]]; then
+    SHARD_FLAGS+=(--shard-id "${SHARD_ID}" --shard-count "${SHARD_COUNT}")
+  fi
   "${PYTHON}" -m trainer.grpo.collect_rollouts \
     --frozen-l1-glob "${FROZEN_L1_GLOB}" \
     --split-manifest "${SPLIT_MANIFEST}" \
@@ -95,9 +119,11 @@ if [[ "${STAGE}" == "live_collect" || ( "${STAGE}" == "all" && "${LIVE}" == "1" 
     --planner-model "${PLANNER_MODEL}" \
     --skill-model "${SKILL_MODEL}" \
     --skill-temperature "${SKILL_TEMPERATURE}" \
+    --explore-top-k "${EXPLORE_TOP_K}" \
     --keys-py "${KEYS_PY}" \
     --judge-mock \
-    "${SKILL_FLAGS[@]}"
+    "${SKILL_FLAGS[@]}" \
+    "${SHARD_FLAGS[@]}"
 elif [[ "${STAGE}" == "smoke" || "${STAGE}" == "all" ]]; then
   "${PYTHON}" -m trainer.grpo.collect_rollouts \
     --frozen-l1-glob "${FROZEN_L1_GLOB}" \
@@ -107,12 +133,26 @@ elif [[ "${STAGE}" == "smoke" || "${STAGE}" == "all" ]]; then
     --k "${K}" --limit "${LIMIT}" \
     --mode "${MODE}" \
     --smoke-mock-rollout
+elif [[ "${STAGE}" == "merge_collect" ]]; then
+  "${PYTHON}" -m trainer.grpo.merge_shard_groups \
+    --shard-root "${OUTPUT_ROOT}/collect" \
+    --output "${OUTPUT_ROOT}/collect/grpo_groups.jsonl" \
+    --summary-out "${OUTPUT_ROOT}/collect/collect_summary.json"
 fi
 
-GROUPS_PATH="${COLLECT_DIR}/grpo_groups.jsonl"
-if [[ ! -f "${GROUPS_PATH}" ]]; then
-  echo "missing groups: ${GROUPS_PATH}" >&2
-  exit 2
+GROUPS_PATH="${OUTPUT_ROOT}/collect/grpo_groups.jsonl"
+if [[ "${STAGE}" == "live_collect" && -n "${SHARD_ID}" ]]; then
+  # Per-shard job: train is a separate merge+gpu_train stage.
+  GROUPS_PATH="${COLLECT_DIR}/grpo_groups.jsonl"
+fi
+if [[ ! -f "${GROUPS_PATH}" && "${STAGE}" != "merge_collect" ]]; then
+  # For non-shard all/smoke, groups live under COLLECT_DIR.
+  if [[ -f "${COLLECT_DIR}/grpo_groups.jsonl" ]]; then
+    GROUPS_PATH="${COLLECT_DIR}/grpo_groups.jsonl"
+  else
+    echo "missing groups: ${GROUPS_PATH}" >&2
+    exit 2
+  fi
 fi
 
 if [[ "${STAGE}" == "gpu_train" || "${STAGE}" == "all" || "${STAGE}" == "smoke" ]]; then
@@ -123,6 +163,10 @@ if [[ "${STAGE}" == "gpu_train" || "${STAGE}" == "all" || "${STAGE}" == "smoke" 
   L2_STABLE_FLAGS=()
   if [[ "${MODE}" == "joint_l1" ]]; then
     L2_STABLE_FLAGS+=(--l2-stable)
+  fi
+  # Prefer merged groups when present (shard fan-out).
+  if [[ -f "${OUTPUT_ROOT}/collect/grpo_groups.jsonl" ]]; then
+    GROUPS_PATH="${OUTPUT_ROOT}/collect/grpo_groups.jsonl"
   fi
   "${PYTHON}" -m trainer.grpo.train_verified \
     --groups "${GROUPS_PATH}" \
@@ -137,5 +181,7 @@ if [[ "${STAGE}" == "gpu_train" || "${STAGE}" == "all" || "${STAGE}" == "smoke" 
     "${GPU_FLAGS[@]}" \
     "${L2_STABLE_FLAGS[@]}"
 fi
+
+echo "OUTPUT_ROOT=${OUTPUT_ROOT}"
 
 echo "OUTPUT_ROOT=${OUTPUT_ROOT}"

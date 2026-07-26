@@ -200,6 +200,40 @@ def test_policy_safe_view_and_score_trace() -> None:
     assert scored.spec_version.startswith("video-skills/verified-reward")
 
 
+def test_filter_dirty_samples_and_quality_metrics() -> None:
+    from trainer.grpo.quality import (
+        filter_groups_for_training,
+        is_dirty_rollout,
+        summarize_group_quality,
+    )
+
+    example = {
+        "example_id": "cg_bench:dirty",
+        "dataset": "cg_bench",
+        "video_id": "vid_d",
+        "question": {"answer": {"label": "A"}},
+        "metadata": {"clue_memory_graph": _minimal_clue("vid_d")},
+    }
+
+    def _mixed_rollout(ex, clue):
+        seed = int((ex.get("metadata") or {}).get("grpo_seed") or 0)
+        out = _smoke_rollout(ex, clue)
+        if seed % 4 == 1:
+            out["final_answer"] = None
+            out["metadata"]["milestone_events"] = []
+            out["metadata"]["final_used_milestone_keys"] = []
+        return out
+
+    group = collect_grpo_group(example, rollout_fn=_mixed_rollout, k=4, base_seed=10)
+    assert any(is_dirty_rollout(r) for r in group.rollouts)
+    raw_q = summarize_group_quality([group])
+    assert raw_q["dirty_samples"] >= 1
+    cleaned = filter_groups_for_training([group], drop_dirty=True, min_k=2)
+    assert len(cleaned) == 1
+    assert all(not is_dirty_rollout(r) for r in cleaned[0].rollouts)
+    assert len(cleaned[0].rollouts) >= 2
+
+
 def test_grpo_live_skill_backend_is_llm_for_answer_critical_skills() -> None:
     from atomic_skills.skill_backends import SkillBackendMode
     from trainer.grpo.live_rollout import _GRPO_LLM_SKILLS, _grpo_skill_backend_config
