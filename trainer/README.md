@@ -52,12 +52,20 @@ trainer/
     isolation.py
     advantages.py
     collect_rollouts.py
+    quality.py              # 脏样本过滤 + 多样性/验收门指标
+    merge_shard_groups.py
     train_verified.py       # CPU smoke 或 --gpu FA2 训练
 
 scripts/grpo/
   install_flash_attn.sh
   run_grpo_worker.sh
   submit_grpo_a6000.sh
+  submit_grpo_shard_fanout.sh
+
+scripts/opd/
+  run_opd_collect_worker.sh
+  submit_opd_collect_a6000.sh
+  gate_teacher_calibration.py
 ```
 
 ## GRPO 模式
@@ -81,23 +89,29 @@ gamma A6000 多为 **4 卡/节点** → 8 卡 ≈ 2 节点。QoS：`default`=1 G
 |---|---|---|
 | smoke | 1×A6000 | `PROFILE=smoke` 或 `bash ... smoke` |
 | 正式 GRPO（现栈） | 8×A6000 | 默认非-smoke，或 `PROFILE=8gpu` |
-| fan-out collect | 6×1 卡作业 + 1–2 卡 train | 见 `submit_grpo_a6000.sh` 注释 |
+| fan-out collect | N×1 卡 shard + merge + 1 卡 train | `submit_grpo_shard_fanout.sh` |
 | 本地采样加速 spike | 4 rollout + 2 train + 2 备用 | 需另装 vLLM / ms-swift·verl 后再接 |
 
 ```bash
 # smoke：1×A6000
 bash scripts/grpo/submit_grpo_a6000.sh smoke
 
-# 正式：8×A6000（huge-long，2 nodes）
+# 近端扩量：4 shard × LIMIT=8 ≈ 32 examples（推荐，先别上 8 卡单作业）
+SHARD_COUNT=4 LIMIT=8 K=4 TRAIN_AFTER=1 \
+  bash scripts/grpo/submit_grpo_shard_fanout.sh
+
+# 正式：8×A6000（huge-long，2 nodes）— 验收门过后再用
 PROFILE=8gpu LIVE=1 LIMIT=64 K=8 WALLTIME=12:00:00 \
   bash scripts/grpo/submit_grpo_a6000.sh all
 
-# 或显式
-NUM_GPUS=8 QOS=huge-long LIVE=1 bash scripts/grpo/submit_grpo_a6000.sh all
-
 # 仅 GPU 训练
 STAGE=gpu_train bash scripts/grpo/submit_grpo_a6000.sh gpu_train
+
+# OPD real-teacher collect（opd_pool + 校准门）
+LIMIT=16 bash scripts/opd/submit_opd_collect_a6000.sh
 ```
+
+Collect 默认会：丢掉 `label=None` / `progress=0` 样本；写 `grpo_groups_raw.jsonl` + 过滤后的 `grpo_groups.jsonl`；在 summary 里报告 label/motif 多样性与验收门。`FORCE_EXPLORE=0` 可在达标后减弱种子旋转、改靠 LLM 采样。
 
 本地单元测试：
 

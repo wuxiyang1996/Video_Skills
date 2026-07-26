@@ -18,6 +18,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from trainer.grpo.advantages import grpo_surrogate_loss
 from trainer.grpo.collect_rollouts import load_grpo_groups
+from trainer.grpo.quality import filter_group_dicts_for_training, summarize_group_quality
 from trainer.grpo.types import (
     MODE_JOINT_L1,
     MODE_L2_REPAIR,
@@ -120,8 +121,12 @@ def run_grpo_smoke(
     *,
     config: GrpoTrainConfig,
     output_path: str | Path | None = None,
+    drop_dirty: bool = True,
 ) -> dict[str, Any]:
     groups = load_grpo_groups(groups_path)
+    if drop_dirty:
+        groups = filter_group_dicts_for_training(groups, drop_dirty=True, min_k=2)
+    quality = summarize_group_quality(groups)
     steps = [train_step_on_group(g, config=config) for g in groups]
     summary = {
         "n_groups": len(steps),
@@ -132,6 +137,7 @@ def run_grpo_smoke(
         "mean_policy_loss": sum(s["policy_loss"] for s in steps) / max(len(steps), 1),
         "steps": steps,
         "backend": "cpu_proxy",
+        "quality": quality,
     }
     if output_path is not None:
         Path(output_path).write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -179,6 +185,8 @@ def run_grpo_gpu(
     )
 
     groups = load_grpo_groups(groups_path)
+    groups = filter_group_dicts_for_training(groups, drop_dirty=True, min_k=2)
+    quality = summarize_group_quality(groups)
     if max_groups > 0:
         groups = groups[: int(max_groups)]
     steps: list[dict[str, Any]] = []
@@ -240,6 +248,7 @@ def run_grpo_gpu(
         "verl": False,
         "ms_swift": False,
         "adapter_paths": runtime.adapter_paths,
+        "quality": quality,
         "steps": steps,
     }
     (out_dir / "grpo_train_gpu.json").write_text(

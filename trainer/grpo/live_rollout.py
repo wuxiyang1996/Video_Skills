@@ -75,6 +75,8 @@ def make_motif_gated_rollout_fn(
     skill_temperature: float = 0.8,
     with_skill_executor: bool = True,
     rotate_motifs: bool = True,
+    force_explore: bool = True,
+    explore_top_k: int = 2,
     motif_candidate_sink_path: str | Path | None = None,
 ) -> RolloutFn:
     """Build a Motif-first rollout function for GRPO live collection.
@@ -110,11 +112,16 @@ def make_motif_gated_rollout_fn(
             vlm_client=None,
             config=_grpo_skill_backend_config(),
         )
+        # Planner reads these for seed-rotated compare explore.
+        skill_executor.grpo_force_explore = bool(force_explore)  # type: ignore[attr-defined]
+        skill_executor.grpo_explore_top_k = int(explore_top_k)  # type: ignore[attr-defined]
 
     def _rollout(example: dict[str, Any], clue: dict[str, Any]) -> dict[str, Any]:
         meta = dict(example.get("metadata") or {})
         meta["motif_enabled"] = True
         meta["motif_bank_path"] = bank
+        meta["grpo_force_explore"] = bool(force_explore)
+        meta["grpo_explore_top_k"] = int(explore_top_k)
         if sink:
             meta["motif_candidate_sink_path"] = sink
         seed = int(meta.get("grpo_seed") or 0)
@@ -126,6 +133,9 @@ def make_motif_gated_rollout_fn(
         if skill_llm is not None:
             skill_llm.temperature = float(skill_temperature)
             skill_llm.seed = seed
+        if skill_executor is not None:
+            skill_executor.grpo_force_explore = bool(force_explore)  # type: ignore[attr-defined]
+            skill_executor.grpo_explore_top_k = int(explore_top_k)  # type: ignore[attr-defined]
         example = {**example, "metadata": meta}
         return build_llm_reasoning_rollout(
             example,

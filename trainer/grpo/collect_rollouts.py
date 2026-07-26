@@ -11,6 +11,10 @@ from typing import Any, Callable, Mapping
 from trainer.closed_loop_harness import load_frozen_l1_examples
 from trainer.grpo.advantages import assign_group_advantages
 from trainer.grpo.isolation import assert_rollout_isolation, deep_isolate, fingerprint_example
+from trainer.grpo.quality import (
+    filter_groups_for_training,
+    summarize_group_quality,
+)
 from trainer.grpo.types import (
     DEFAULT_UPDATE_MODULES,
     MODE_JOINT_L1,
@@ -231,6 +235,27 @@ def main(argv: list[str] | None = None) -> int:
         default=True,
         help="Rotate forced Motif id by grpo_seed across ACTIVE bank",
     )
+    parser.add_argument(
+        "--force-explore",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Rotate among top-k scored options by grpo_seed (cold-start diversity)",
+    )
+    parser.add_argument(
+        "--explore-top-k",
+        type=int,
+        default=2,
+        help="Top-k pool size for force_explore (peaked scores may bump to 3)",
+    )
+    parser.add_argument(
+        "--drop-dirty-samples",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Drop label=None / progress=0 samples before writing train groups",
+    )
+    parser.add_argument("--min-k-after-filter", type=int, default=2)
+    parser.add_argument("--shard-id", type=int, default=None)
+    parser.add_argument("--shard-count", type=int, default=None)
     parser.add_argument("--keys-py", default="/fs/gamma-projects/vlm-robot/keys.py")
     parser.add_argument("--judge-mock", action="store_true", help="Use mock semantic judge")
     parser.add_argument("--l2-stable", action="store_true", help="Required for joint_l1 mode")
@@ -250,9 +275,17 @@ def main(argv: list[str] | None = None) -> int:
     pool = filter_examples_by_role(examples, manifest=manifest, role="grpo_pool", strict=False)
     if not pool:
         if args.smoke_mock_rollout:
-            pool = list(examples)[: int(args.limit)]
+            pool = list(examples)
         else:
             raise SystemExit("No grpo_pool examples after split filter")
+    if args.shard_count is not None:
+        shard_count = int(args.shard_count)
+        shard_id = int(args.shard_id if args.shard_id is not None else 0)
+        if shard_count < 1:
+            raise SystemExit("--shard-count must be >= 1")
+        if not (0 <= shard_id < shard_count):
+            raise SystemExit(f"--shard-id must be in [0, {shard_count})")
+        pool = [ex for i, ex in enumerate(pool) if i % shard_count == shard_id]
     pool = pool[: int(args.limit)]
     if not args.smoke_mock_rollout:
         assert_role_exclusive(pool, manifest=manifest, allowed_roles=("grpo_pool",))
@@ -273,6 +306,8 @@ def main(argv: list[str] | None = None) -> int:
             skill_temperature=float(args.skill_temperature),
             with_skill_executor=bool(args.with_skill_executor),
             rotate_motifs=bool(args.rotate_motifs),
+            force_explore=bool(args.force_explore),
+            explore_top_k=int(args.explore_top_k),
             motif_candidate_sink_path=out_dir / "motif_candidates.jsonl",
         )
         # Semantic judge: mock keeps offline/live collect fail-closed until OpenRouter judge is wired.
@@ -304,7 +339,19 @@ def main(argv: list[str] | None = None) -> int:
             flush=True,
         )
 
-    groups_path = save_grpo_groups(out_dir / "grpo_groups.jsonl", groups)
+    raw_quality = summarize_group_quality(groups)
+    raw_path = save_grpo_groups(out_dir / "grpo_groups_raw.jsonl", groups)
+    train_groups = (
+        filter_groups_for_training(
+            groups,
+            drop_dirty=bool(args.drop_dirty_samples),
+            min_k=int(args.min_k_after_filter),
+        )
+        if args.drop_dirty_samples
+        else list(groups)
+    )
+    train_quality = summarize_group_quality(train_groups)
+    groups_path = save_grpo_groups(out_dir / "grpo_groups.jsonl", train_groups)
     run_manifest = build_posttraining_manifest(
         stage="grpo_collect",
         split_manifest_path=args.split_manifest,
@@ -319,24 +366,35 @@ def main(argv: list[str] | None = None) -> int:
         extras={
             "collect_mode": collect_mode,
             "planner_model": args.planner_model if args.live else None,
-            "n_groups": len(groups),
+            "n_groups_raw": len(groups),
+            "n_groups_train": len(train_groups),
+            "shard_id": args.shard_id,
+            "shard_count": args.shard_count,
+            "force_explore": bool(args.force_explore),
+            "explore_top_k": int(args.explore_top_k),
+            "drop_dirty_samples": bool(args.drop_dirty_samples),
             "framework": "hf_peft_custom_grpo",
             "verl": False,
             "ms_swift": False,
+            "quality_raw": raw_quality,
+            "quality_train": train_quality,
         },
     )
     save_posttraining_manifest(out_dir / "posttraining_run_manifest.json", run_manifest)
 
     summary = {
-        "n_groups": len(groups),
+        "n_groups_raw": len(groups),
+        "n_groups": len(train_groups),
         "k": int(args.k),
         "mode": args.mode,
         "collect_mode": collect_mode,
         "groups_path": str(groups_path),
-        "mean_terminal_success": (
-            sum(1 for g in groups for r in g.rollouts if r.reward.terminal_success)
-            / max(sum(len(g.rollouts) for g in groups), 1)
-        ),
+        "raw_groups_path": str(raw_path),
+        "shard_id": args.shard_id,
+        "shard_count": args.shard_count,
+        "mean_terminal_success": train_quality["mean_terminal_success"],
+        "quality_raw": raw_quality,
+        "quality_train": train_quality,
     }
     (out_dir / "collect_summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"

@@ -24,13 +24,18 @@ from trainer.candidate_action_builder import (  # noqa: E402
     build_l2_candidate_actions,
     gate_candidate_set,
 )
-from trainer.closed_loop_harness import ClosedLoopHarness  # noqa: E402
+from trainer.closed_loop_harness import ClosedLoopHarness, load_frozen_l1_examples  # noqa: E402
 from trainer.exact_request_cache import ExactRequestCache  # noqa: E402
 from trainer.opd_action_distill_adapter import OpdDistillRow, save_opd_rows  # noqa: E402
+from trainer.posttraining_manifest import (  # noqa: E402
+    build_posttraining_manifest,
+    save_posttraining_manifest,
+)
+from trainer.reward import REWARD_SPEC_VERSION  # noqa: E402
+from trainer.split_filter import assert_role_exclusive, filter_examples_by_role, load_split_manifest  # noqa: E402
 from trainer.teacher_action_query import (  # noqa: E402
     make_openrouter_letter_teacher,
     order_shuffle_stability,
-    query_teacher_action_distribution,
     query_teacher_averaged,
 )
 from trainer.train_opd_kl import run_opd_smoke  # noqa: E402
@@ -41,6 +46,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--frozen-l1-glob", required=True)
     parser.add_argument("--motif-bank", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument(
+        "--split-manifest",
+        default="",
+        help="If set, keep only opd_pool examples from the split manifest",
+    )
     parser.add_argument("--limit", type=int, default=16)
     parser.add_argument("--planner-model", default="openai/gpt-oss-120b")
     parser.add_argument("--teacher-model", default="openai/gpt-4.1-mini")
@@ -52,9 +62,16 @@ def main(argv: list[str] | None = None) -> int:
     if not paths and "/**/" in args.frozen_l1_glob:
         root_s, _, suffix = args.frozen_l1_glob.partition("/**/")
         paths = sorted(Path(root_s).rglob(suffix))
-    paths = paths[: int(args.limit)]
     if not paths:
         raise SystemExit(f"No frozen L1 matched: {args.frozen_l1_glob}")
+    examples = load_frozen_l1_examples(paths)
+    if args.split_manifest:
+        manifest = load_split_manifest(args.split_manifest)
+        examples = filter_examples_by_role(examples, manifest=manifest, role="opd_pool", strict=False)
+        if not examples:
+            raise SystemExit("No opd_pool examples after split filter")
+        assert_role_exclusive(examples, manifest=manifest, allowed_roles=("opd_pool",))
+    examples = examples[: int(args.limit)]
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -96,16 +113,16 @@ def main(argv: list[str] | None = None) -> int:
     gate_failures: list[dict] = []
     teacher_errors: list[dict] = []
 
-    for i, path in enumerate(paths):
-        example = json.loads(path.read_text(encoding="utf-8"))
-        print(f"[{i+1}/{len(paths)}] {example.get('example_id')}", flush=True)
+    for i, example in enumerate(examples):
+        print(f"[{i+1}/{len(examples)}] {example.get('example_id')}", flush=True)
         state = harness.run_example(example)
         print(
             f"  motif={state.motif_online.get('selected_motif_id')} "
             f"expand={state.motif_online.get('expansion_valid')}",
             flush=True,
         )
-        oracle = {
+        # Prefer student-induced action as oracle anchor when present; else coarse fallback.
+        oracle = state.student_action or {
             "schema_version": "video-skills/l2-specialist-action-v0.1",
             "tool_name": "choose_best_coarse_candidate",
             "arguments": {"coarse_index": 1},
@@ -200,11 +217,12 @@ def main(argv: list[str] | None = None) -> int:
         / max(len(shuffle_rows), 1)
     )
     summary = {
-        "n_examples": len(paths),
+        "n_examples": len(examples),
         "n_distill_rows": len(rows),
         "gate_failures": gate_failures,
         "teacher_errors": teacher_errors,
         "teacher_model": args.teacher_model,
+        "split_manifest": args.split_manifest or None,
         "order_shuffle": {
             "n": len(shuffle_rows),
             "top1_match_rate": top1_rate,
@@ -215,10 +233,31 @@ def main(argv: list[str] | None = None) -> int:
         "kl_smoke": {k: kl.get(k) for k in ("n_rows", "n_precheck_passed", "mean_kl", "mean_jsd")},
         "distill_path": str(distill_path),
         "shuffle_rows": shuffle_rows,
+        "calibration_gates": {
+            "top1_match_ge_0_90": top1_rate >= 0.90,
+            "mean_l1_le_0_15": mean_l1 <= 0.15,
+            "n_rows_ge_1": len(rows) >= 1,
+        },
     }
     (out_dir / "collect_summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
+    if args.split_manifest:
+        manifest = build_posttraining_manifest(
+            stage="opd",
+            split_manifest_path=args.split_manifest,
+            reward_spec_version=REWARD_SPEC_VERSION,
+            teacher_model=args.teacher_model,
+            motif_bank_path=args.motif_bank,
+            candidate_order_seeds=seeds,
+            extras={
+                "planner_model": args.planner_model,
+                "n_distill_rows": len(rows),
+                "order_shuffle": summary["order_shuffle"],
+                "calibration_gates": summary["calibration_gates"],
+            },
+        )
+        save_posttraining_manifest(out_dir / "posttraining_run_manifest.json", manifest)
     print(
         json.dumps(
             {
