@@ -17,7 +17,9 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/dataset_clip_wrapper/output/opd_real_$(
 LIMIT="${LIMIT:-16}"
 TEACHER_MODEL="${TEACHER_MODEL:-openai/gpt-4.1-mini}"
 TEACHER_MODE="${TEACHER_MODE:-auto}"   # soft|ranking|auto
-RANKING_MODEL="${RANKING_MODEL:-deepseek/deepseek-v4-pro}"
+# gpt-4.1-mini is more reliable for strict JSON rankings on OpenRouter;
+# deepseek/deepseek-v4-pro remains available via RANKING_MODEL override.
+RANKING_MODEL="${RANKING_MODEL:-openai/gpt-4.1-mini}"
 RANKING_METHOD="${RANKING_METHOD:-borda}"
 PLANNER_MODEL="${PLANNER_MODEL:-openai/gpt-oss-120b}"
 KEYS_PY="${KEYS_PY:-/fs/gamma-projects/vlm-robot/keys.py}"

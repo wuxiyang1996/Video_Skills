@@ -199,6 +199,14 @@ def test_parse_ranked_letters_from_content_json() -> None:
     assert ranked == ["B", "A", "C"]
 
 
+def test_parse_ranked_letters_pads_missing_and_reads_prose() -> None:
+    letter_map = {"A": "student", "B": "oracle", "C": "stop"}
+    partial = parse_ranked_letters({"ranked_letters": ["B", "A"]}, letter_map, pad_missing=True)
+    assert partial == ["B", "A", "C"]
+    prose = parse_ranked_letters({"content": "Best order is B > A > C."}, letter_map)
+    assert prose == ["B", "A", "C"]
+
+
 def test_teacher_ranking_order_permutation_maps_back(tmp_path: Path) -> None:
     oracle = {
         "schema_version": "video-skills/l2-specialist-action-v0.1",

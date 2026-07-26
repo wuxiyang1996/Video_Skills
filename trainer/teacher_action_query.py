@@ -470,22 +470,60 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _letters_from_free_text(text: str, expected: set[str]) -> list[str]:
+    """Best-effort extract an ordered letter list from prose / A>B>C forms."""
+    blob = str(text or "")
+    if not blob:
+        return []
+    # Prefer explicit separators: A > B > C or A, B, C
+    chain = re.findall(r"\b([A-H])\b\s*(?:>|,|->|/|\|)\s*", blob.upper())
+    trail = re.findall(r"(?:>|,|->|/|\|)\s*\b([A-H])\b", blob.upper())
+    ordered = chain + ([trail[-1]] if trail and (not chain or trail[-1] != chain[-1]) else [])
+    if len(ordered) < 2:
+        ordered = re.findall(r"\b([A-H])\b", blob.upper())
+    seen: set[str] = set()
+    out: list[str] = []
+    for letter in ordered:
+        if letter in expected and letter not in seen:
+            seen.add(letter)
+            out.append(letter)
+    return out
+
+
 def parse_ranked_letters(
     raw: Mapping[str, Any],
     letter_map: Mapping[str, str],
+    *,
+    pad_missing: bool = True,
 ) -> list[str]:
-    """Parse a total letter ranking; fail closed if incomplete/invalid."""
+    """Parse a total letter ranking.
+
+    Prefer strict JSON ``ranked_letters``. If the model returns a partial list or
+    prose, optionally pad missing letters at the end (worst ranks) so Borda/BT
+    collect can proceed against flaky ranking models.
+    """
     expected = set(letter_map)
     ranked: list[str] = []
-    direct = raw.get("ranked_letters") or raw.get("ranked_labels")
+    direct = raw.get("ranked_letters") or raw.get("ranked_labels") or raw.get("ranking")
     if isinstance(direct, list):
         ranked = [str(x).strip().upper()[:1] for x in direct]
     else:
-        payload = _extract_json_object(str(raw.get("content") or raw.get("text") or ""))
+        content = str(raw.get("content") or raw.get("text") or "")
+        payload = _extract_json_object(content)
         if payload is not None:
-            vals = payload.get("ranked_letters") or payload.get("ranked_labels") or []
+            vals = (
+                payload.get("ranked_letters")
+                or payload.get("ranked_labels")
+                or payload.get("ranking")
+                or payload.get("order")
+                or []
+            )
             if isinstance(vals, list):
                 ranked = [str(x).strip().upper()[:1] for x in vals]
+            elif isinstance(vals, str):
+                ranked = _letters_from_free_text(vals, expected)
+        if not ranked:
+            ranked = _letters_from_free_text(content, expected)
     ranked = [x for x in ranked if x in expected]
     # Deduplicate preserving order.
     seen: set[str] = set()
@@ -495,14 +533,20 @@ def parse_ranked_letters(
             seen.add(letter)
             uniq.append(letter)
     missing = expected - set(uniq)
-    if missing:
+    if missing and not pad_missing:
+        preview = str(raw.get("content") or "")[:240]
         raise RuntimeError(
             "teacher ranking missing letters; fail-closed "
-            f"(missing={sorted(missing)} got={uniq})"
+            f"(missing={sorted(missing)} got={uniq} content_preview={preview!r})"
         )
-    if len(uniq) != len(expected):
+    if missing and pad_missing:
+        # Stable worst-rank pad: alphabetical among missing letters.
+        uniq.extend(sorted(missing))
+    if not uniq:
+        preview = str(raw.get("content") or "")[:240]
         raise RuntimeError(
-            f"teacher ranking length mismatch: got={uniq} expected={sorted(expected)}"
+            "teacher ranking empty; fail-closed "
+            f"(expected={sorted(expected)} content_preview={preview!r})"
         )
     return uniq
 
@@ -722,22 +766,24 @@ def mock_teacher_ranking_preferring_oracle(request: Mapping[str, Any]) -> dict[s
 def make_openrouter_ranking_teacher(
     *,
     api_key: str,
-    model: str = "deepseek/deepseek-v4-pro",
+    model: str = "openai/gpt-4.1-mini",
     api_base: str = "https://openrouter.ai/api/v1/chat/completions",
     timeout_s: int = 120,
-    max_tokens: int = 256,
+    max_tokens: int = 1024,
 ) -> TeacherFn:
     """TeacherFn that requests a full letter ranking as strict JSON (no logprobs)."""
     import requests
 
     def _teacher(request: Mapping[str, Any]) -> dict[str, Any]:
         messages = list(request.get("messages") or [])
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "temperature": 0.0,
             "max_tokens": int(max_tokens),
             "messages": messages,
         }
+        # Prefer JSON object when the provider supports it; ignore if rejected.
+        payload["response_format"] = {"type": "json_object"}
         response = requests.post(
             api_base,
             headers={
@@ -747,17 +793,44 @@ def make_openrouter_ranking_teacher(
             json=payload,
             timeout=timeout_s,
         )
+        if response.status_code == 400 and "response_format" in (response.text or ""):
+            payload.pop("response_format", None)
+            response = requests.post(
+                api_base,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=timeout_s,
+            )
         if not response.ok:
             raise RuntimeError(
                 f"ranking teacher HTTP {response.status_code}: {response.text[:500]}"
             )
         body = response.json()
-        content = (((body.get("choices") or [{}])[0].get("message") or {}).get("content")) or ""
+        message = ((body.get("choices") or [{}])[0].get("message") or {})
+        content = message.get("content") or ""
+        # Some reasoning models put text in a list of parts.
+        if isinstance(content, list):
+            content = "".join(
+                str(part.get("text") or "") if isinstance(part, dict) else str(part)
+                for part in content
+            )
+        if not content and message.get("reasoning"):
+            content = str(message.get("reasoning"))
         parsed = _extract_json_object(str(content)) or {}
-        ranked = parsed.get("ranked_letters") or parsed.get("ranked_labels") or []
+        ranked = (
+            parsed.get("ranked_letters")
+            or parsed.get("ranked_labels")
+            or parsed.get("ranking")
+            or []
+        )
         if not isinstance(ranked, list):
             ranked = []
         ranked_letters = [str(x).strip().upper()[:1] for x in ranked if str(x).strip()]
+        if not ranked_letters:
+            ranked_letters = _letters_from_free_text(str(content), set(LETTERS))
         chosen = ranked_letters[0] if ranked_letters else None
         return {
             "letter": chosen,

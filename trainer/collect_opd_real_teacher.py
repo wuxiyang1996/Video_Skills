@@ -188,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--teacher-model", default="openai/gpt-4.1-mini")
     parser.add_argument(
         "--ranking-model",
-        default="deepseek/deepseek-v4-pro",
+        default="openai/gpt-4.1-mini",
         help="OpenRouter model for structured ranking fallback",
     )
     parser.add_argument(
