@@ -244,8 +244,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--explore-top-k",
         type=int,
-        default=2,
-        help="Top-k pool size for force_explore (peaked scores may bump to 3)",
+        default=3,
+        help="Top-k pool size for force_explore (peaked scores may bump further)",
     )
     parser.add_argument(
         "--drop-dirty-samples",
