@@ -124,11 +124,17 @@ class SkillExecutor:
         if not prompt:
             return self._execute_rule(skill_id, args=args, graph=graph)
 
-        response = self.llm_client.reason(prompt)
+        try:
+            response = self.llm_client.reason(prompt)
+        except Exception as exc:  # noqa: BLE001 — keep GRPO collect alive on flaky OpenRouter
+            rule_result = self._execute_rule(skill_id, args=args, graph=graph)
+            rule_result.messages.append(f"llm_exception_fallback_to_rule:{type(exc).__name__}")
+            return rule_result
 
         if response.get("parse_error"):
             rule_result = self._execute_rule(skill_id, args=args, graph=graph)
-            rule_result.messages.append("llm_parse_error_fallback_to_rule")
+            msg = "llm_timeout_fallback_to_rule" if response.get("timeout") else "llm_parse_error_fallback_to_rule"
+            rule_result.messages.append(msg)
             return rule_result
 
         return self._llm_response_to_result(skill_id, response, args, graph)
@@ -476,6 +482,15 @@ class SkillExecutor:
             kwargs["counter"] = args.get("counterevidence", [])
         elif skill_id == "compare_hypotheses":
             kwargs["hypotheses"] = args.get("scored_hypotheses", [])
+        elif skill_id == "generate_answer_hypotheses":
+            kwargs["question"] = args.get("question_text", "")
+            kwargs["options"] = args.get("options") or []
+            kwargs["seed"] = (
+                args.get("seed")
+                or args.get("grpo_seed")
+                or getattr(self.llm_client, "seed", None)
+                or 0
+            )
         elif skill_id == "localize_clue":
             kwargs["role"] = args.get("role_constraint", "")
             kwargs["question"] = args.get("question_context", "")
@@ -641,15 +656,126 @@ class SkillExecutor:
             }, support_refs + counter_refs, confidence=support_score, ok=support_score > 0)
 
         elif skill_id == "compare_hypotheses":
-            best_label = response.get("best_label", "")
+            best_label = str(response.get("best_label") or "").strip()
             margin = float(response.get("margin", 0.0))
-            return make_result(skill_id, {
-                "best_hypothesis": {"option_label": best_label, "overall_score": margin},
-                "eliminated_hypotheses": [],
-                "decision_reason": response.get("reasoning", ""),
-                "score_margin": margin,
-                "backend": "llm",
-            }, confidence=margin, ok=bool(best_label))
+            scored = list(args.get("scored_hypotheses") or [])
+            policy = args.get("decision_policy") if isinstance(args.get("decision_policy"), dict) else {}
+            # If scored options are near-tied, rotate with explore_seed instead of
+            # letting a single LLM label collapse all K samples.
+            if policy.get("explore_seed") is not None and scored:
+                scores = [
+                    float(item.get("overall_score") or 0.0)
+                    for item in scored
+                    if isinstance(item, dict)
+                ]
+                tie_eps = float(policy.get("tie_epsilon", 0.2))
+                if scores and sum(1 for s in scores if max(scores) - s <= tie_eps) > 1:
+                    from .reasoning_graph_assembly.skills import compare_hypotheses as _rule_compare
+
+                    explored = _rule_compare(scored, decision_policy=policy)
+                    out = dict(explored.outputs or {})
+                    out["backend"] = "llm+explore"
+                    out["llm_best_label"] = best_label
+                    out["llm_margin"] = margin
+                    out["llm_reasoning"] = response.get("reasoning", "")
+                    best_row = out.get("best_hypothesis") or {}
+                    refs = list(best_row.get("support_refs") or [])
+                    return make_result(
+                        skill_id,
+                        out,
+                        refs,
+                        confidence=float(best_row.get("overall_score") or margin or 0.0),
+                        ok=bool(best_row.get("option_label") or best_row.get("claim_text")),
+                    )
+            best: dict[str, Any] | None = None
+            for item in scored:
+                if not isinstance(item, dict):
+                    continue
+                hyp = item.get("hypothesis") if isinstance(item.get("hypothesis"), dict) else {}
+                label = str(item.get("option_label") or hyp.get("option_label") or "").strip()
+                if best_label and label == best_label:
+                    best = dict(item)
+                    break
+            if best is None and scored:
+                # Fall back to highest overall_score among provided scored hypotheses.
+                best = max(
+                    (item for item in scored if isinstance(item, dict)),
+                    key=lambda item: float(item.get("overall_score") or 0.0),
+                    default=None,
+                )
+            if best is None:
+                return make_result(
+                    skill_id,
+                    {
+                        "best_hypothesis": {"option_label": best_label, "overall_score": margin},
+                        "eliminated_hypotheses": [],
+                        "decision_reason": response.get("reasoning", ""),
+                        "score_margin": margin,
+                        "backend": "llm",
+                    },
+                    confidence=margin,
+                    ok=bool(best_label),
+                )
+            best = dict(best)
+            best["option_label"] = best.get("option_label") or best_label or (
+                (best.get("hypothesis") or {}).get("option_label") if isinstance(best.get("hypothesis"), dict) else None
+            )
+            best["overall_score"] = float(best.get("overall_score") or margin or 0.0)
+            best["backend"] = "llm"
+            refs = list(best.get("support_refs") or [])
+            return make_result(
+                skill_id,
+                {
+                    "best_hypothesis": best,
+                    "eliminated_hypotheses": [
+                        item
+                        for item in scored
+                        if isinstance(item, dict) and item is not best
+                    ],
+                    "decision_reason": response.get("reasoning", ""),
+                    "score_margin": margin,
+                    "backend": "llm",
+                },
+                refs,
+                confidence=float(best.get("overall_score") or margin or 0.0),
+                ok=bool(best.get("option_label") or best.get("claim_text")),
+            )
+
+        elif skill_id == "generate_answer_hypotheses":
+            # Start from deterministic option→hypothesis mapping, then apply LLM rank/priors.
+            rule = self._execute_rule(skill_id, args=args, graph=graph)
+            hypotheses = list((rule.outputs or {}).get("hypotheses") or [])
+            ranked = [str(x).strip() for x in (response.get("ranked_labels") or []) if str(x).strip()]
+            priors = response.get("priors") if isinstance(response.get("priors"), dict) else {}
+            by_label = {
+                str(h.get("option_label") or "").strip(): h
+                for h in hypotheses
+                if isinstance(h, dict)
+            }
+            ordered: list[dict[str, Any]] = []
+            for label in ranked:
+                if label in by_label:
+                    hyp = dict(by_label.pop(label))
+                    if label in priors:
+                        try:
+                            hyp["prior_score"] = float(priors[label])
+                        except (TypeError, ValueError):
+                            pass
+                    ordered.append(hyp)
+            ordered.extend(by_label.values())
+            if not ordered:
+                ordered = [h for h in hypotheses if isinstance(h, dict)]
+            return make_result(
+                skill_id,
+                {
+                    "hypotheses": ordered,
+                    "ranked_labels": ranked,
+                    "priors": priors,
+                    "backend": "llm",
+                },
+                confidence=0.8,
+                ok=bool(ordered),
+            )
 
         elif skill_id == "localize_clue":
             refs = response.get("best_refs", [])

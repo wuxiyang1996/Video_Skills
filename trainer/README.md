@@ -2,18 +2,26 @@
 
 本目录存放 Motif 门控的 OPD，以及带验证奖励的 GRPO / RLVR 代码。
 
-## 框架选择（verl / ms-swift）
+## 框架 / 环境选择（verl / ms-swift / vllm）
 
-**首轮正式 GRPO 不引入 verl，也不把训练主循环迁到 ms-swift。**
+**推荐专用 conda 环境 `video-skills-grpo`（HF/PEFT + FA2）。不装 verl / ms-swift / vllm。**
 
 | 选项 | 结论 | 原因 |
 |---|---|---|
-| 自定义 HF + PEFT | **采用** | 已有 SFT 栈、多 LoRA、字典序 verified reward、Motif dual-loop 都在本仓库；易审计 |
-| FlashAttention-2 | **必须** | A6000 上 GRPO / LoRA 默认 `flash_attention_2`；缺包则 fail-closed |
-| ms-swift | 不用作 GRPO 主框架 | 当前 venv 只借其 PyTorch；自定义 reward / Motif / 多 LoRA 不适配 |
-| verl | 暂不采用 | 适合多机标准 scalar GRPO；我们的 env+字典序 reward+双环 Motif 改造成本过高 |
+| `conda/envs/video-skills-grpo` | **采用** | 干净隔离；torch2.6/cu124 + FA2 + transformers/peft |
+| FlashAttention-2 | **必须** | Dao-AILab 预编译 wheel；缺包 fail-closed |
+| `.venv-qwen35-serve` | 仅回退 | 旧 serve venv；worker 在新 env 不存在时才用 |
+| vllm | spike 候选 | 仅当改成本地 policy 采样时；按 **8×A6000** 预算试 DP |
+| ms-swift / verl | 待 spike | 文档有 vLLM GRPO / multi-turn；迁主环前先测吞吐与字典序 reward 编码 |
 
-若以后要多机扩展，再评估把 **采样并行** 交给 verl，reward 仍走本仓库 `trainer.reward`。
+创建环境：
+
+```bash
+bash scripts/grpo/create_conda_env.sh
+# 激活
+source /fs/gamma-projects/vlm-robot/conda/etc/profile.d/conda.sh
+conda activate /fs/gamma-projects/vlm-robot/conda/envs/video-skills-grpo
+```
 
 ## 目录结构
 
@@ -65,20 +73,29 @@ scripts/grpo/
 (硬可行性, 终局成功, 可验证原子进度, 证据检查, -成本)
 ```
 
-## A6000 启动
+## A6000 启动（默认预算 8 卡）
+
+gamma A6000 多为 **4 卡/节点** → 8 卡 ≈ 2 节点。QoS：`default`=1 GPU；`huge-long`≤8 GPU；`gamma-huge-long`≤16 GPU。
+
+| 用途 | 建议占用 | 提交 |
+|---|---|---|
+| smoke | 1×A6000 | `PROFILE=smoke` 或 `bash ... smoke` |
+| 正式 GRPO（现栈） | 8×A6000 | 默认非-smoke，或 `PROFILE=8gpu` |
+| fan-out collect | 6×1 卡作业 + 1–2 卡 train | 见 `submit_grpo_a6000.sh` 注释 |
+| 本地采样加速 spike | 4 rollout + 2 train + 2 备用 | 需另装 vLLM / ms-swift·verl 后再接 |
 
 ```bash
-# 1) 安装 FlashAttention-2（在 GPU 节点上；submit 脚本默认会装）
-sbatch --partition=gamma --account=gamma --gres=gpu:rtxa6000:1 --cpus-per-task=4 --mem=32G \
-  --wrap 'bash /fs/gamma-projects/vlm-robot/Video_Skills/scripts/grpo/install_flash_attn.sh'
-
-# 2) smoke：mock 采集 + GPU GRPO（强制 FA2）
+# smoke：1×A6000
 bash scripts/grpo/submit_grpo_a6000.sh smoke
 
-# 3) live 采集 + GPU 训练
-LIVE=1 LIMIT=16 K=4 bash scripts/grpo/submit_grpo_a6000.sh all
+# 正式：8×A6000（huge-long，2 nodes）
+PROFILE=8gpu LIVE=1 LIMIT=64 K=8 WALLTIME=12:00:00 \
+  bash scripts/grpo/submit_grpo_a6000.sh all
 
-# 4) 仅 GPU 训练（已有 collect 产物时，把 GROUPS 放到 OUTPUT_ROOT/collect）
+# 或显式
+NUM_GPUS=8 QOS=huge-long LIVE=1 bash scripts/grpo/submit_grpo_a6000.sh all
+
+# 仅 GPU 训练
 STAGE=gpu_train bash scripts/grpo/submit_grpo_a6000.sh gpu_train
 ```
 
@@ -90,7 +107,7 @@ pytest tests/posttraining -q
 
 ## 正式跑检查清单
 
-1. `.venv-qwen35-serve` 可 `import flash_attn`
+1. `video-skills-grpo` 可 `import flash_attn`
 2. L2 / Repair adapter 路径存在
 3. `split_manifest_v1.json` 的 `grpo_pool` 可过滤到样本
 4. live 模式需要 OpenRouter key（`--keys-py`）

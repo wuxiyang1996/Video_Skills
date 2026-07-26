@@ -65,6 +65,55 @@ def test_partial_progress_cannot_beat_terminal_success() -> None:
     assert partial_only.rank_key < correct.rank_key
 
 
+def test_synthesize_milestones_from_live_planner_nodes() -> None:
+    from trainer.reward.bridge import build_ledger_from_rollout, synthesize_milestone_events_from_rollout
+
+    rollout = {
+        "acceptance_status": "accepted_strong",
+        "nodes": [
+            {
+                "node_id": "n1",
+                "skill_id": "retrieve_by_event",
+                "step_id": "m3",
+                "status": "verified",
+                "evidence_refs": ["ref:a", "ref:b"],
+            },
+            {
+                "node_id": "n2",
+                "skill_id": "compare_hypotheses",
+                "step_id": "m7",
+                "status": "verified",
+                "evidence_refs": ["ref:a"],
+            },
+            {
+                "node_id": "n3",
+                "skill_id": "verify_claim_support",
+                "step_id": "m8",
+                "status": "verified",
+                "evidence_refs": ["ref:a", "ref:b"],
+            },
+            {
+                "node_id": "n4",
+                "skill_id": "commit_answer",
+                "step_id": "m9",
+                "status": "verified",
+                "evidence_refs": ["ref:a"],
+            },
+        ],
+        "verified_evidence_pack": {
+            "claim_text": "option A",
+            "support_refs": ["ref:a"],
+        },
+    }
+    events, used = synthesize_milestone_events_from_rollout(rollout)
+    assert any(e["kind"] == "retrieval" and e["key"] == "ref:a" for e in events)
+    assert "retrieval:ref:a" in used
+    ledger, _blocked = build_ledger_from_rollout(rollout)
+    # unused retrieval:ref:b revoked; used retrieval + compose/verify kept
+    assert ledger.progress_counts()["retrieval"] >= 1
+    assert ledger.progress_total() >= 1
+
+
 def test_duplicate_milestones_and_unused_revoked() -> None:
     ledger = ledger_from_events(
         [

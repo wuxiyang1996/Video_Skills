@@ -138,6 +138,15 @@ _SKILL_LLM_PROMPTS: dict[str, str] = {
         "Hypotheses: {hypotheses}\n"
         "Answer with JSON: {{\"best_label\": \"...\", \"margin\": 0.0-1.0, \"reasoning\": \"...\"}}"
     ),
+    "generate_answer_hypotheses": (
+        "You are ranking multiple-choice options for a video question. "
+        "Do NOT invent new options; only reorder / soft-score the given labels.\n"
+        "Question: {question}\n"
+        "Options: {options}\n"
+        "Sample seed (for diversity): {seed}\n"
+        "Answer with JSON: {{\"ranked_labels\": [\"A\", \"B\", ...], "
+        "\"priors\": {{\"A\": 0.0-1.0, ...}}, \"reasoning\": \"...\"}}"
+    ),
     "localize_clue": (
         "Which of these evidence candidates best serves the role '{role}' for the question '{question}'?\n"
         "Candidates: {candidates}\n"

@@ -133,6 +133,101 @@ def maybe_judge_claim(
     return aggregate_dual_views(views) if len(views) > 1 else views[0]
 
 
+# Live Motif/planner rollouts historically omit explicit milestone_events.
+# Map verified skill nodes → kinds conservatively (refs required for retrieval).
+_SKILL_TO_MILESTONE_KIND: dict[str, str] = {
+    "retrieve_by_event": "retrieval",
+    "retrieve_by_entity": "retrieval",
+    "retrieve_by_time": "retrieval",
+    "retrieve_evidence_for_hypothesis": "retrieval",
+    "parse_question_target": "inference",
+    "propose_evidence_roles": "inference",
+    "generate_answer_hypotheses": "inference",
+    "score_hypothesis_support": "inference",
+    "compare_hypotheses": "compose",
+    "compose_evidence_chain": "compose",
+    "verify_claim_support": "verify",
+    "diagnose_failure": "repair",
+    "patch_plan": "repair",
+    "re_verify": "repair",
+}
+
+
+def synthesize_milestone_events_from_rollout(
+    rollout: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Derive grounded milestone events + final_used keys from live planner traces.
+
+    Skill invocation alone does not score. Retrieval milestones require evidence refs
+    on a verified/ok node; only support_refs used by the final pack stay after revoke.
+    """
+    events: list[dict[str, Any]] = []
+    final_used: list[str] = []
+    seen: set[str] = set()
+
+    nodes = list(rollout.get("nodes") or [])
+    for i, node in enumerate(nodes):
+        if not isinstance(node, Mapping):
+            continue
+        status = str(node.get("status") or "").lower()
+        if status not in {"verified", "ok", "success"}:
+            continue
+        skill = str(node.get("skill_id") or "")
+        kind = _SKILL_TO_MILESTONE_KIND.get(skill)
+        if not kind:
+            continue
+        refs = [str(r) for r in (node.get("evidence_refs") or []) if r]
+        if kind == "retrieval":
+            for ref in refs:
+                key = ref
+                dedup = f"{kind}:{key}"
+                if dedup in seen:
+                    continue
+                seen.add(dedup)
+                events.append(
+                    {
+                        "kind": kind,
+                        "key": key,
+                        "step_index": i,
+                        "grounded": True,
+                        "detail": {"skill_id": skill, "ref": ref},
+                    }
+                )
+        else:
+            # Non-retrieval: one milestone per successful skill node, only if grounded
+            # by refs or by being a verify/compose/repair step that completed.
+            key = str(node.get("step_id") or node.get("node_id") or f"{skill}:{i}")
+            grounded = bool(refs) or kind in {"verify", "compose", "repair"}
+            if not grounded:
+                continue
+            dedup = f"{kind}:{key}"
+            if dedup in seen:
+                continue
+            seen.add(dedup)
+            events.append(
+                {
+                    "kind": kind,
+                    "key": key,
+                    "step_index": i,
+                    "grounded": True,
+                    "detail": {"skill_id": skill, "refs": refs},
+                }
+            )
+
+    pack = rollout.get("verified_evidence_pack") or {}
+    support_refs = [str(r) for r in (pack.get("support_refs") or []) if r]
+    for ref in support_refs:
+        final_used.append(f"retrieval:{ref}")
+    # Keep verify/compose milestones that contributed to a strong/weak accepted pack.
+    acceptance = str(rollout.get("acceptance_status") or "")
+    if acceptance.startswith("accepted") and support_refs:
+        for ev in events:
+            if ev["kind"] in {"verify", "compose"}:
+                final_used.append(f"{ev['kind']}:{ev['key']}")
+
+    return events, final_used
+
+
 def build_ledger_from_rollout(
     rollout: Mapping[str, Any],
     *,
@@ -144,10 +239,21 @@ def build_ledger_from_rollout(
     final_used = list(meta.get("final_used_milestone_keys") or rollout.get("final_used_milestone_keys") or [])
     contradicted = list(meta.get("contradicted_milestone_keys") or [])
 
+    if not events:
+        synth_events, synth_used = synthesize_milestone_events_from_rollout(rollout)
+        events = synth_events
+        if not final_used:
+            final_used = synth_used
+
     blocked_strong = False
     # Optional semantic gate on a commit claim.
     claim = meta.get("commit_claim") or rollout.get("commit_claim")
     evidence = meta.get("commit_evidence") or rollout.get("commit_evidence") or []
+    if not claim:
+        pack = rollout.get("verified_evidence_pack") or {}
+        claim = pack.get("claim_text")
+        if not evidence:
+            evidence = [{"ref": r} for r in (pack.get("support_refs") or []) if r]
     if claim and judge_fn is not None:
         question_text = str(((rollout.get("question") or {}).get("question_text")) or "")
         judged = maybe_judge_claim(
