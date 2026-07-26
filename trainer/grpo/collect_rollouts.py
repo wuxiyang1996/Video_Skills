@@ -78,6 +78,7 @@ def collect_grpo_group(
         meta["grpo_mode"] = mode
         isolated["metadata"] = meta
         clue = meta.get("clue_memory_graph") or {}
+        print(f"[grpo-collect]   sample {i+1}/{k} seed={seed}", flush=True)
         rollout = rollout_fn(isolated, clue if isinstance(clue, dict) else {})
         motif_online = (rollout.get("metadata") or {}).get("motif_online") or {}
         if require_motif_attempt and not motif_online.get("motif_retrieval_attempted"):
@@ -90,6 +91,14 @@ def collect_grpo_group(
             clue_graph=clue if isinstance(clue, dict) else {},
             gold_answer=gold,
             judge_fn=judge_fn,
+        )
+        fa = rollout.get("final_answer")
+        label = fa.get("label") if isinstance(fa, dict) else fa
+        print(
+            f"[grpo-collect]   sample {i+1}/{k} done "
+            f"label={label} term={reward.terminal_success} "
+            f"progress={reward.progress_total} motif={motif_online.get('selected_motif_id')}",
+            flush=True,
         )
         policy_view = policy_safe_rollout_view(rollout)
         raw_rollouts.append(rollout)
@@ -203,6 +212,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--smoke-mock-rollout", action="store_true")
     parser.add_argument("--live", action="store_true", help="Motif-gated live planner rollouts")
     parser.add_argument("--planner-model", default="openai/gpt-oss-120b")
+    parser.add_argument("--skill-model", default="qwen/qwen3.5-9b")
+    parser.add_argument(
+        "--skill-temperature",
+        type=float,
+        default=0.7,
+        help="LLM skill sampling temperature (needed for K-sample diversity)",
+    )
+    parser.add_argument(
+        "--with-skill-executor",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="LLM SkillExecutor for answer-critical skills (default on for --live)",
+    )
+    parser.add_argument(
+        "--rotate-motifs",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Rotate forced Motif id by grpo_seed across ACTIVE bank",
+    )
     parser.add_argument("--keys-py", default="/fs/gamma-projects/vlm-robot/keys.py")
     parser.add_argument("--judge-mock", action="store_true", help="Use mock semantic judge")
     parser.add_argument("--l2-stable", action="store_true", help="Required for joint_l1 mode")
@@ -240,19 +268,25 @@ def main(argv: list[str] | None = None) -> int:
         rollout_fn = make_motif_gated_rollout_fn(
             motif_bank_path=args.motif_bank,
             planner_model=args.planner_model,
+            skill_model=args.skill_model,
             keys_py=args.keys_py,
+            skill_temperature=float(args.skill_temperature),
+            with_skill_executor=bool(args.with_skill_executor),
+            rotate_motifs=bool(args.rotate_motifs),
             motif_candidate_sink_path=out_dir / "motif_candidates.jsonl",
         )
         # Semantic judge: mock keeps offline/live collect fail-closed until OpenRouter judge is wired.
         judge_fn = mock_semantic_judge
-        collect_mode = "live_motif"
+        collect_mode = "live_motif_llm_skills" if args.with_skill_executor else "live_motif"
     else:
         rollout_fn = _default_mock_rollout
         judge_fn = mock_semantic_judge
         collect_mode = "smoke_mock"
 
     groups: list[GrpoGroup] = []
-    for example in pool:
+    for idx, example in enumerate(pool):
+        eid = example.get("example_id") or (example.get("metadata") or {}).get("example_id")
+        print(f"[grpo-collect] {idx+1}/{len(pool)} example={eid} k={args.k} mode={collect_mode}", flush=True)
         groups.append(
             collect_grpo_group(
                 example,
@@ -262,6 +296,12 @@ def main(argv: list[str] | None = None) -> int:
                 mode=args.mode,
                 judge_fn=judge_fn,
             )
+        )
+        term = sum(1 for r in groups[-1].rollouts if r.reward.terminal_success)
+        print(
+            f"[grpo-collect] done example={eid} "
+            f"terminal_success={term}/{len(groups[-1].rollouts)}",
+            flush=True,
         )
 
     groups_path = save_grpo_groups(out_dir / "grpo_groups.jsonl", groups)

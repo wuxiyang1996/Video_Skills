@@ -198,3 +198,115 @@ def test_policy_safe_view_and_score_trace() -> None:
     scored = score_rollout_trace(rollout, clue_graph=clue, gold_answer={"label": "A"})
     assert scored.hard_feasible
     assert scored.spec_version.startswith("video-skills/verified-reward")
+
+
+def test_grpo_live_skill_backend_is_llm_for_answer_critical_skills() -> None:
+    from atomic_skills.skill_backends import SkillBackendMode
+    from trainer.grpo.live_rollout import _GRPO_LLM_SKILLS, _grpo_skill_backend_config
+
+    cfg = _grpo_skill_backend_config()
+    for skill in _GRPO_LLM_SKILLS:
+        assert cfg.mode_for(skill) == SkillBackendMode.LLM
+    assert "compare_hypotheses" in _GRPO_LLM_SKILLS
+    assert "generate_answer_hypotheses" in _GRPO_LLM_SKILLS
+    assert "score_hypothesis_support" in _GRPO_LLM_SKILLS
+    assert cfg.mode_for("retrieve_by_event") == SkillBackendMode.RULE
+    assert cfg.mode_for("commit_answer") == SkillBackendMode.RULE
+
+
+def test_generate_answer_hypotheses_llm_applies_rank_and_priors() -> None:
+    from atomic_skills.skill_backends import SkillBackendConfig, SkillBackendMode
+    from atomic_skills.skill_executor import SkillExecutor
+
+    ex = SkillExecutor(
+        llm_client=None,
+        config=SkillBackendConfig(default_mode=SkillBackendMode.RULE),
+    )
+    args = {
+        "question_text": "What color is the car?",
+        "options": [
+            {"label": "A", "text": "red"},
+            {"label": "B", "text": "blue"},
+            {"label": "C", "text": "green"},
+        ],
+    }
+    result = ex._llm_response_to_result(
+        "generate_answer_hypotheses",
+        {
+            "ranked_labels": ["C", "A", "B"],
+            "priors": {"C": 0.9, "A": 0.4, "B": 0.1},
+            "reasoning": "prefer green",
+        },
+        args,
+        graph=None,
+    )
+    hyps = result.outputs["hypotheses"]
+    assert [h["option_label"] for h in hyps] == ["C", "A", "B"]
+    assert hyps[0]["prior_score"] == pytest.approx(0.9)
+
+
+def test_compare_hypotheses_near_tie_explore_seed_rotates() -> None:
+    from atomic_skills.reasoning_graph_assembly.skills import compare_hypotheses
+
+    scored = [
+        {"option_label": "A", "overall_score": 0.50, "support_refs": ["n1"]},
+        {"option_label": "B", "overall_score": 0.48, "support_refs": ["n2"]},
+        {"option_label": "C", "overall_score": 0.10, "support_refs": ["n3"]},
+    ]
+    a = compare_hypotheses(scored, decision_policy={"explore_seed": 0, "tie_epsilon": 0.15})
+    b = compare_hypotheses(scored, decision_policy={"explore_seed": 1, "tie_epsilon": 0.15})
+    assert a.outputs["best_hypothesis"]["option_label"] == "A"
+    assert b.outputs["best_hypothesis"]["option_label"] == "B"
+    assert a.outputs["decision_reason"] == "near_tie_explore_seed"
+
+
+def test_compare_hypotheses_force_explore_rotates_top2_even_if_peaked() -> None:
+    from atomic_skills.reasoning_graph_assembly.skills import compare_hypotheses
+
+    scored = [
+        {"option_label": "A", "overall_score": 0.90, "support_refs": ["n1"]},
+        {"option_label": "B", "overall_score": 0.20, "support_refs": ["n2"]},
+    ]
+    a = compare_hypotheses(
+        scored, decision_policy={"explore_seed": 0, "force_explore": True, "explore_top_k": 2}
+    )
+    b = compare_hypotheses(
+        scored, decision_policy={"explore_seed": 1, "force_explore": True, "explore_top_k": 2}
+    )
+    assert a.outputs["best_hypothesis"]["option_label"] == "A"
+    assert b.outputs["best_hypothesis"]["option_label"] == "B"
+    assert b.outputs["decision_reason"] == "force_explore_seed"
+
+
+def test_compare_hypotheses_llm_merges_full_scored_row() -> None:
+    from atomic_skills.skill_backends import SkillBackendConfig, SkillBackendMode
+    from atomic_skills.skill_executor import SkillExecutor
+
+    ex = SkillExecutor(
+        llm_client=None,
+        config=SkillBackendConfig(default_mode=SkillBackendMode.RULE),
+    )
+    scored = [
+        {
+            "option_label": "A",
+            "overall_score": 0.2,
+            "support_refs": ["n1"],
+            "hypothesis": {"option_label": "A", "claim_text": "red"},
+        },
+        {
+            "option_label": "B",
+            "overall_score": 0.8,
+            "support_refs": ["n2"],
+            "hypothesis": {"option_label": "B", "claim_text": "blue"},
+        },
+    ]
+    result = ex._llm_response_to_result(
+        "compare_hypotheses",
+        {"best_label": "A", "margin": 0.3, "reasoning": "pick A"},
+        {"scored_hypotheses": scored},
+        graph=None,
+    )
+    best = result.outputs["best_hypothesis"]
+    assert best["option_label"] == "A"
+    assert best["support_refs"] == ["n1"]
+    assert best["backend"] == "llm"

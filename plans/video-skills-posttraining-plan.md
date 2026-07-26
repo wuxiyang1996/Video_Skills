@@ -13,6 +13,7 @@
 - Repair：独立 LoRA，路线为 `SFT → complete-action OPD → verified RL`；与 L2 联合 rollout，但权重分离。
 - Verifier：[`runtime_verifier.py`](../dataset_clip_wrapper/verification/runtime_verifier.py) 保持冻结的确定性硬门；9B semantic verifier 采用反事实 SFT + OPD + calibration，GPT-5-mini 只升级处理校准后仍模糊的案例。learned verifier 与 teacher 都不直接产生主 RL reward。
 - Motif：**必选核心模块**。9B online manager 采用 lifecycle/retrieval SFT + action-level OPD；每次在线 L2 推理都必须检索 Motif bank，经可选 GPT-5-mini rerank 后展开为 atomic skills，再执行并重新验证。检索失败或 motif 无效时允许显式 fallback，但不能跳过检索步骤。GPT-5-mini 负责异步 candidate extraction/curation，promotion 仍由 evidence audit、跨视频支持和 paired rollout 门控。
+- **GRPO 算力**：正式 verified RL 默认 **8×A6000**（§7.0）；框架加速（vLLM / ms-swift / verl）按 §7.A 做 profile→spike→迁主环门槛，不预先否定也不默认迁栈。
 
 ### SFT / OPD / RL 的能力边界
 
@@ -349,15 +350,75 @@ GRPO 的 rollout key 更新为
 
 ## 7. 实现首轮 GRPO / RLVR
 
-- **框架**：首轮采用本仓库自定义 **HF + PEFT + FlashAttention-2** GRPO（见 [`trainer/grpo/`](../trainer/grpo/) 与 [`scripts/grpo/`](../scripts/grpo/)）。**不**把主训练环迁到 verl 或 ms-swift；ms-swift 环境仅可复用其 PyTorch，verl 留待多机扩展时再评估。A6000 正式跑必须 `attn_implementation=flash_attention_2`，缺 `flash_attn` 则 fail-closed。
-- 新增 [`trainer/grpo/collect_rollouts.py`](../trainer/grpo/collect_rollouts.py)，在冻结 L1 + OPD 后 controller 上，对每个 `grpo_pool` state **先强制 accelerate Motif retrieve/expand**，再采样 K 条完整 episode/action continuation；episode 内允许 dual-loop repair 二次检索，但必须把 `motif_phase` / repair / mine 字段写入 trace；K 个 sample 必须 deep-isolate。`--live` 接入 Motif 门控 `build_llm_reasoning_rollout`。
-- 新增 [`trainer/grpo/train_verified.py`](../trainer/grpo/train_verified.py)，按同 prompt rollout group 计算 rank/group-relative advantage；将每个 verified milestone 的增量作为对应 action 之后的 return-to-go credit，同时保持终局字典序优先级。默认 mode=`l2_repair` 只更新 L2+Repair LoRA；`joint_l1` 仅在 L2+Repair 稳定门通过后以更小 `l1_lr_scale` 联合更新 L1，且不得同时更新 Verifier/Motif。`--gpu` 走 FlashAttention-2 PEFT 反传。
+### 7.0 算力预算（默认 8×A6000）
+
+GRPO / RLVR 正式阶段默认按 **8×A6000** 规划，不再以单卡为正式吞吐假设。
+
+| 项 | 约定 |
+|---|---|
+| 卡型 | `gpu:rtxa6000`（gamma；节点多为 **4 卡/节点**，8 卡 ≈ **2 节点**） |
+| Smoke | 1×A6000，`--qos=default`（1 GPU / 32G） |
+| 正式 / 加速实验 | 8×A6000，`--qos=huge-long`（≤8 GPU / 256G）或 `--qos=gamma-huge-long`（≤16 GPU / 512G） |
+| Env | `conda/envs/video-skills-grpo`（torch2.6/cu124 + FA2）；提交见 [`scripts/grpo/submit_grpo_a6000.sh`](../scripts/grpo/submit_grpo_a6000.sh)（`PROFILE=8gpu`） |
+| SFT 并行 | 五 LoRA SFT 仍按 [`video-skills-sft-gpu-plan.md`](video-skills-sft-gpu-plan.md)；与 GRPO 抢卡时 GRPO 正式轮优先占满 8×A6000 |
+
+**近端拓扑（现栈，API Motif planner + 本地 PEFT 更新）——默认先用：**
+
+| 角色 | 卡数 | 说明 |
+|---|---|---|
+| live / `grpo_pool` shard collect | 6 | 多作业 fan-out（`SHARD_ID`/`SHARD_COUNT`），产物汇入同一 `OUTPUT_ROOT` |
+| GPU GRPO train | 1 | `train_verified.py --gpu`，FA2 + L2/Repair LoRA |
+| 弹性 | 1 | judge 缓存预热、OPD soft-logit、失败重跑或第二 train 队列 |
+
+**加速 spike 拓扑（仅当改为本地 policy 采样后试）——按 8 卡试，未定论：**
+
+| 角色 | 卡数 | 说明 |
+|---|---|---|
+| vLLM / rollout server | 4 | 优先 TP=1、DP=4；OOM 再试 TP=2 |
+| train + ref logprob | 2 | FSDP/PEFT 或单卡 train + 单卡 ref |
+| 备用 / 第二 collect | 2 | 排队抖动、重跑、对比 HF generate |
+
+提交示例：
+
+```bash
+PROFILE=smoke bash scripts/grpo/submit_grpo_a6000.sh smoke
+PROFILE=8gpu LIVE=1 LIMIT=64 K=8 WALLTIME=12:00:00 \
+  bash scripts/grpo/submit_grpo_a6000.sh all
+```
+
+### 7.A 框架与加速评估（vLLM / ms-swift / verl）
+
+目标是 **在不破坏字典序 verified reward 与 Motif dual-loop 的前提下尝试加速**；结论必须由 profile + spike 决定，计划不预先否定任一框架。
+
+**当前主环（已落地）：** 自定义 **HF + PEFT + FlashAttention-2**（[`trainer/grpo/`](../trainer/grpo/)）。正式跑必须 `attn_implementation=flash_attention_2`，缺包 fail-closed。
+
+**文档对照（2026-07 查阅，接入前再复核版本）：**
+
+| 框架 | 文档中与加速相关的能力 | 与本仓库的契合点 / 开放问题 |
+|---|---|---|
+| **vLLM** | 高吞吐本地 generate；ms-swift/verl 均以其为 rollout backend | 只有 student 改为本地 9B+LoRA 采样时才可能吃到加速；当前 live collect 若仍走 OpenRouter Motif planner，则 GPU 采样加速有限 |
+| **ms-swift** | `--use_vllm` colocate/server（`swift rollout`）；LoRA weight-sync；自定义 ORM / AsyncORM；`MultiTurnScheduler` 做 tool/multi-turn | reward 接口为标量 float（可多 `reward_funcs`+weights）；**无原生字典序 rank_key**；Motif dual-loop、L2+Repair 双 adapter 切换需用 plugin 验证 |
+| **verl** | `rollout.name=vllm` + GRPO + LoRA 示例；`custom_reward_function`→float；Agent Loop / multi-turn tools（Agent Loop 标 alpha） | 多卡异步编排贴合 8×A6000；同样需把 lex reward 编码成标量或改 advantage；token 一致性与双 LoRA 是否可支持待 spike |
+
+**建议决策顺序（在 8×A6000 预算内执行）：**
+
+1. **Profile**：一次 live collect + train，拆开 API planner / judge / 本地 logprob 墙钟占比。若 API 占主导，优先并行 collect 与 judge 缓存，而不是换训练框架。
+2. **vLLM 吞吐 spike（1–2 天）**：同 prompt、K=8，对比 HF generate vs vLLM（Qwen3.5-9B + 当前 LoRA）；记录 tokens/s、显存、与 FA2 版本兼容性。未过则不引入 ms-swift/verl。
+3. **编排 spike（可选）**：若本地采样明显更快，再分别用 ms-swift `MultiTurnScheduler`+reward plugin，或 verl `AgentLoopBase`，把现有 Motif controller / `score_rollout_trace` 挂进去；在 4+2+2 拓扑上跑小 `grpo_pool`。
+4. **迁主环门槛**：相对现栈，在相同 8 卡预算下 wall-clock 有稳定提升；字典序排序与现 `group_rank_advantages` 一致（或文档化可接受的标量编码）；Motif 强制检索、isolation、fail-closed judge 不退化；L2+Repair 更新语义可复现。任一门未过则 **继续自研主环**，只保留已验证的 vLLM 采样后端（若有）。
+
+**不得为加速而放松的约束：** reward 仍优先字典序 / group rank，禁止用可调 magic weights 替代终局优先；Motif 检索不可跳过；policy 不可见 hidden judge/gold；双 view 分歧与缺 logprob 继续 fail-closed。
+
+### 7.B 采集 / 训练实现
+
+- [`trainer/grpo/collect_rollouts.py`](../trainer/grpo/collect_rollouts.py)：在冻结 L1 + OPD 后 controller 上，对每个 `grpo_pool` state **先强制 Motif retrieve/expand**，再采样 K 条完整 episode/action continuation；episode 内允许 dual-loop repair 二次检索，但必须把 `motif_phase` / repair / mine 字段写入 trace；K 个 sample 必须 deep-isolate。`--live` 接入 Motif 门控 `build_llm_reasoning_rollout`。8 卡近端阶段优先 **shard fan-out** 吃满 collect 预算。
+- [`trainer/grpo/train_verified.py`](../trainer/grpo/train_verified.py)：按同 prompt rollout group 计算 rank/group-relative advantage；将每个 verified milestone 的增量作为对应 action 之后的 return-to-go credit，同时保持终局字典序优先级。默认 mode=`l2_repair` 只更新 L2+Repair LoRA；`joint_l1` 仅在 L2+Repair 稳定门通过后以更小 `l1_lr_scale` 联合更新 L1，且不得同时更新 Verifier/Motif。`--gpu` 走 FlashAttention-2 PEFT 反传。
 - **GRPO-ready 约束（dual loop 不得破坏）**：主 reward 仍只来自 [`verified_reward.py`](../trainer/verified_reward.py) 的 hard gates、terminal outcome、verified atomic progress、evidence 与 cost；`candidate_mined`、motif lifecycle label、teacher preference、裸 skill-call count **不得**进入正 reward；在线 mine 只写 `candidate`，不自动 promote；accelerate 检索池仍排除 candidate/shadow。
 - 所有 reward 输入必须来自 [`runtime_verifier.py`](../dataset_clip_wrapper/verification/runtime_verifier.py)、frozen semantic judge、[`run_repair_protocol.py`](../dataset_clip_wrapper/verification/run_repair_protocol.py)、执行日志和 hidden evaluator；不允许 policy 看见 judge verdict/rationale、gold 或这些 hidden reward 字段。
 - 增加 KL-to-OPD/SFT policy 的安全约束，只用于防止初期策略崩塌；其系数按 `dev_tune` 的执行成功率与 KL 曲线调整，而非 test accuracy。
 - 只有在 L2+Repair 稳定后，才进行小学习率 joint L1 实验；不得同时更新 learned verifier。
 
-退出门：相对 OPD checkpoint，`video_only` dev 上 verified answer success 有稳定提升；schema/leakage/ref validity 不退化；错误 strong commit 率不升；平均重复调用、无效 hop 与 repair loop 不升；收益不是由更多预算或 milestone farming 换取。必须做 terminal-only 与 terminal+verified-progress reward ablation；若 partial credit 只提升过程指标而不提升终局成功或样本效率，则移除对应 milestone。连续评估无提升则回滚到 OPD checkpoint，不通过增加不可验证的人工过程奖励“救”训练。
+退出门：相对 OPD checkpoint，`video_only` dev 上 verified answer success 有稳定提升；schema/leakage/ref validity 不退化；错误 strong commit 率不升；平均重复调用、无效 hop 与 repair loop 不升；收益不是由更多预算或 milestone farming 换取。必须做 terminal-only 与 terminal+verified-progress reward ablation；若 partial credit 只提升过程指标而不提升终局成功或样本效率，则移除对应 milestone。连续评估无提升则回滚到 OPD checkpoint，不通过增加不可验证的人工过程奖励“救”训练。加速框架的采用与否 **不替代** 上述质量退出门。
 
 ## 8. Reward-hacking 审计与测试
 
@@ -420,3 +481,10 @@ the chat template is the official thinking-off prompt shape, not active CoT.
 - 小包（smoke / Repair / Verifier / Motif）→ `gamma` A6000；大包（L1/L2）→ L40S，忙则 scavenger A100/H100/H200 + checkpoint
 - 长作业 / 多卡并行包 → `--qos=gamma-huge-long`
 - 提交：`bash scripts/sft_pilot/submit_five_lora_sft.sh smoke|pilot|pack_smoke|pack_pilot`
+
+**GRPO / RLVR（§7.0）另计，默认预算 8×A6000：**
+
+- Smoke：1×A6000 / `default`；正式：8×A6000 / `huge-long` 或 `gamma-huge-long`（≈2 节点）
+- 近端：6 collect + 1 train + 1 弹性；加速 spike（本地采样时）：4 rollout + 2 train/ref + 2 备用
+- 与五 LoRA SFT 抢同一批 A6000 时，**GRPO 正式轮优先占满 8 卡**；SFT 小包可错开或改 scavenger
+- 提交：`PROFILE=8gpu bash scripts/grpo/submit_grpo_a6000.sh all`（详见 §7.0 / `trainer/README.md`）

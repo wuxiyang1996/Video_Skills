@@ -763,6 +763,9 @@ def execute_reasoning_plan(
                 # deterministic branch split and aggregate option scores, then
                 # keep the LLM verifier for the final support check.
                 backend_safe = False
+            if skill_id == "compare_hypotheses":
+                # Need scored_hypotheses from prior steps before LLM compare.
+                backend_safe = False
             if mode in (SkillBackendMode.LLM, SkillBackendMode.VLM):
                 has_client = (
                     (mode == SkillBackendMode.LLM and skill_executor.llm_client)
@@ -795,7 +798,8 @@ def execute_reasoning_plan(
                             "backend": mode.value,
                             "llm_usage": dict(getattr(usage_client, "last_response_metadata", {}) or {}),
                         })
-                        continue
+                        # Fall through to the deterministic rule path instead of
+                        # skipping the skill entirely (needed for GRPO collect).
 
         executor = REASONING_SKILL_EXECUTORS[skill_id]
 
@@ -957,8 +961,9 @@ def execute_reasoning_plan(
                             evidence_graph=graph,
                         )
                 else:
-                    scored = []
-                    refs: list[str] = []
+                    # Rule-score all options first; optionally LLM-rescore only top-2
+                    # (full LLM-per-option is too slow for GRPO K-sample collect).
+                    rule_rows: list[dict[str, Any]] = []
                     for index, hypothesis in enumerate(hypotheses):
                         support = []
                         if isinstance(support_by_hypothesis, list) and index < len(support_by_hypothesis):
@@ -967,24 +972,59 @@ def execute_reasoning_plan(
                             support = support_arg.get("support_refs") or support_arg.get("evidence_refs") or []
                         else:
                             support = _refs(support_arg)
-                        if llm_score_each:
+                        rule_partial = executor(
+                            hypothesis,
+                            support_evidence=support,
+                            counterevidence=_refs(counter),
+                            evidence_graph=graph,
+                        )
+                        rule_scored = rule_partial.outputs.get("scored_hypothesis") or {}
+                        # Soft prior from generate_answer_hypotheses (LLM rank) if present.
+                        prior = 0.0
+                        if isinstance(hypothesis, dict) and hypothesis.get("prior_score") is not None:
+                            try:
+                                prior = 0.15 * float(hypothesis.get("prior_score") or 0.0)
+                            except (TypeError, ValueError):
+                                prior = 0.0
+                        rule_rows.append(
+                            {
+                                "index": index,
+                                "hypothesis": hypothesis,
+                                "support": support,
+                                "rule_partial": rule_partial,
+                                "rule_scored": rule_scored,
+                                "score": float(rule_scored.get("overall_score") or 0.0) + prior,
+                            }
+                        )
+                    top_llm = set()
+                    if llm_score_each and rule_rows:
+                        ranked = sorted(rule_rows, key=lambda row: row["score"], reverse=True)
+                        top_llm = {row["index"] for row in ranked[: min(2, len(ranked))]}
+                    scored = []
+                    refs: list[str] = []
+                    for row in rule_rows:
+                        if llm_score_each and row["index"] in top_llm:
                             partial = skill_executor.execute(
                                 "score_hypothesis_support",
                                 args={
-                                    "hypothesis": hypothesis,
-                                    "support_evidence": support,
+                                    "hypothesis": row["hypothesis"],
+                                    "support_evidence": row["support"],
                                     "counterevidence": _refs(counter),
                                 },
                                 graph=graph,
                             )
                         else:
-                            partial = executor(
-                                hypothesis,
-                                support_evidence=support,
-                                counterevidence=_refs(counter),
-                                evidence_graph=graph,
-                            )
-                        scored.append(partial.outputs.get("scored_hypothesis") or {})
+                            partial = row["rule_partial"]
+                        item = partial.outputs.get("scored_hypothesis") or {}
+                        if isinstance(row["hypothesis"], dict) and row["hypothesis"].get("prior_score") is not None:
+                            try:
+                                item = dict(item)
+                                item["overall_score"] = float(item.get("overall_score") or 0.0) + 0.15 * float(
+                                    row["hypothesis"].get("prior_score") or 0.0
+                                )
+                            except (TypeError, ValueError):
+                                pass
+                        scored.append(item)
                         refs.extend(partial.evidence_refs)
                     refs = list(dict.fromkeys(refs))
                     result = make_result(
@@ -1008,10 +1048,40 @@ def execute_reasoning_plan(
                             scored.extend(item for item in outputs["scored_hypotheses"] if isinstance(item, dict))
                         elif isinstance(outputs.get("scored_hypothesis"), dict):
                             scored.append(outputs["scored_hypothesis"])
-                result = executor(
-                    scored,
-                    decision_policy=resolved_args.get("decision_policy") if isinstance(resolved_args.get("decision_policy"), dict) else None,
+                decision_policy = (
+                    dict(resolved_args["decision_policy"])
+                    if isinstance(resolved_args.get("decision_policy"), dict)
+                    else {}
                 )
+                if skill_executor is not None and getattr(skill_executor.llm_client, "seed", None) is not None:
+                    decision_policy.setdefault("explore_seed", int(skill_executor.llm_client.seed))
+                    decision_policy.setdefault("tie_epsilon", 0.2)
+                    # GRPO K-samples need within-group label diversity even when
+                    # rule scores are peaked; force rotate among top-2.
+                    decision_policy.setdefault("force_explore", True)
+                    decision_policy.setdefault("explore_top_k", 2)
+                force_explore = bool(decision_policy.get("force_explore"))
+                use_llm_compare = False
+                # Skip LLM compare under force_explore — seed rotation on scored
+                # hypotheses is enough for diversity and avoids OpenRouter hangs.
+                if skill_executor is not None and not force_explore:
+                    from atomic_skills.skill_backends import SkillBackendMode
+
+                    use_llm_compare = (
+                        skill_executor.config.mode_for("compare_hypotheses") == SkillBackendMode.LLM
+                        and bool(skill_executor.llm_client)
+                    )
+                if use_llm_compare:
+                    result = skill_executor.execute(
+                        "compare_hypotheses",
+                        args={
+                            "scored_hypotheses": scored,
+                            "decision_policy": decision_policy or None,
+                        },
+                        graph=graph,
+                    )
+                else:
+                    result = executor(scored, decision_policy=decision_policy or None)
             elif skill_id == "bridge_evidence_hops":
                 source = resolved_args.get("source_evidence") or []
                 if isinstance(source, dict):

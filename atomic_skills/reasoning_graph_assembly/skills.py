@@ -533,12 +533,56 @@ def compare_hypotheses(
     candidates = [item for item in scored_hypotheses if isinstance(item, dict)]
     if not candidates:
         return make_result("compare_hypotheses", ok=False, failure_code="no_hypotheses")
-    margin = float((decision_policy or {}).get("min_margin", 0.0))
-    ranked = sorted(candidates, key=lambda item: item.get("overall_score", item.get("support_score", 0.0)), reverse=True)
+    policy = decision_policy or {}
+    margin = float(policy.get("min_margin", 0.0))
+    ranked = sorted(
+        candidates,
+        key=lambda item: item.get("overall_score", item.get("support_score", 0.0)),
+        reverse=True,
+    )
     best = ranked[0]
-    second_score = ranked[1].get("overall_score", ranked[1].get("support_score", 0.0)) if len(ranked) > 1 else 0.0
-    best_score = best.get("overall_score", best.get("support_score", 0.0))
-    refs = list(dict.fromkeys(ref for item in ranked for ref in item.get("support_refs", []) + item.get("counterevidence_refs", [])))
+    best_score = float(best.get("overall_score", best.get("support_score", 0.0)) or 0.0)
+    # Exploration for GRPO K-samples via explore_seed (typically grpo_seed).
+    # - default: rotate among near-tied candidates within tie_epsilon
+    # - force_explore: always rotate among top-k (guarantees label diversity)
+    explore_seed = policy.get("explore_seed")
+    tie_eps = float(policy.get("tie_epsilon", 0.15))
+    force_explore = bool(policy.get("force_explore", False))
+    explore_top_k = max(1, int(policy.get("explore_top_k", 2)))
+    decision_reason = "highest_support_margin"
+    if explore_seed is not None and len(ranked) > 1:
+        if force_explore:
+            pool = ranked[: min(explore_top_k, len(ranked))]
+        elif tie_eps > 0:
+            pool = [
+                item
+                for item in ranked
+                if best_score - float(item.get("overall_score", item.get("support_score", 0.0)) or 0.0)
+                <= tie_eps
+            ]
+        else:
+            pool = [ranked[0]]
+        if len(pool) > 1:
+            best = pool[int(explore_seed) % len(pool)]
+            best_score = float(best.get("overall_score", best.get("support_score", 0.0)) or 0.0)
+            decision_reason = "force_explore_seed" if force_explore else "near_tie_explore_seed"
+    second_score = (
+        ranked[1].get("overall_score", ranked[1].get("support_score", 0.0)) if len(ranked) > 1 else 0.0
+    )
+    if best is not ranked[0] and len(ranked) > 1:
+        # Recompute margin vs the strongest non-chosen candidate.
+        others = [item for item in ranked if item is not best]
+        second_score = max(
+            (float(item.get("overall_score", item.get("support_score", 0.0)) or 0.0) for item in others),
+            default=0.0,
+        )
+    refs = list(
+        dict.fromkeys(
+            ref
+            for item in ranked
+            for ref in item.get("support_refs", []) + item.get("counterevidence_refs", [])
+        )
+    )
     eliminated = [
         {
             "option_label": item.get("option_label"),
@@ -546,19 +590,22 @@ def compare_hypotheses(
             "reason": "lower_support_or_more_counterevidence",
             "overall_score": item.get("overall_score", 0.0),
         }
-        for item in ranked[1:]
+        for item in ranked
+        if item is not best
     ]
     return make_result(
         "compare_hypotheses",
         {
             "best_hypothesis": best,
             "eliminated_hypotheses": eliminated,
-            "decision_reason": "highest_support_margin",
-            "score_margin": best_score - second_score,
+            "decision_reason": decision_reason,
+            "score_margin": best_score - float(second_score or 0.0),
         },
         refs,
-        ok=best_score > 0 and (best_score - second_score) >= margin,
-        failure_code=None if best_score > 0 and (best_score - second_score) >= margin else "ambiguous_hypotheses",
+        ok=best_score > 0 and (best_score - float(second_score or 0.0)) >= margin,
+        failure_code=None
+        if best_score > 0 and (best_score - float(second_score or 0.0)) >= margin
+        else "ambiguous_hypotheses",
         confidence=max(0.0, min(1.0, best_score)),
     )
 

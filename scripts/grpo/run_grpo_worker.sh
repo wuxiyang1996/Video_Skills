@@ -3,9 +3,16 @@
 set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-/fs/gamma-projects/vlm-robot/Video_Skills}"
-VENV_ROOT="${VENV_ROOT:-${REPO_ROOT}/.venv-qwen35-serve}"
+CONDA_ENV="${CONDA_ENV:-/fs/gamma-projects/vlm-robot/conda/envs/video-skills-grpo}"
+# Prefer dedicated conda env; fall back to legacy serve venv.
+if [[ -n "${GRPO_PYTHON:-}" && -x "${GRPO_PYTHON}" ]]; then
+  PYTHON="${GRPO_PYTHON}"
+elif [[ -x "${CONDA_ENV}/bin/python" ]]; then
+  PYTHON="${CONDA_ENV}/bin/python"
+else
+  PYTHON="${REPO_ROOT}/.venv-qwen35-serve/bin/python"
+fi
 HF_HOME="${HF_HOME:-/fs/gamma-projects/vlm-robot/Multi-hop-Reasoning-VLM-Agent/.hf_cache}"
-PYTHON="${VENV_ROOT}/bin/python"
 
 STAGE="${STAGE:-smoke}"   # smoke|live_collect|gpu_train|all
 SPLIT_MANIFEST="${SPLIT_MANIFEST:-${REPO_ROOT}/dataset_clip_wrapper/output/sft_cold_start/split_manifest_v1.json}"
@@ -14,15 +21,19 @@ MOTIF_BANK="${MOTIF_BANK:-${REPO_ROOT}/motif/output/pilot_online_motif_bank.json
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_ROOT}/dataset_clip_wrapper/output/grpo_a6000_$(date +%Y%m%d)}"
 L2_ADAPTER="${L2_ADAPTER:-${REPO_ROOT}/dataset_clip_wrapper/output/sft_training/five_lora_pipeline_20260725/pilot/l2/pilot/adapter}"
 REPAIR_ADAPTER="${REPAIR_ADAPTER:-${REPO_ROOT}/dataset_clip_wrapper/output/sft_training/five_lora_pipeline_20260725/pilot/repair/pilot/adapter}"
-L1_ADAPTER="${L1_ADAPTER:-${REPO_ROOT}/dataset_clip_wrapper/output/sft_training/five_lora_pipeline_20260725/pilot_l1_full/l1/pilot/adapter}"
+L1_ADAPTER="${L1_ADAPTER:-${REPO_ROOT}/dataset_clip_wrapper/output/sft_training/five_lora_pipeline_20260725/pilot/l1/pilot/adapter}"
 MODE="${MODE:-l2_repair}"
 K="${K:-4}"
 LIMIT="${LIMIT:-8}"
 MAX_GROUPS="${MAX_GROUPS:-0}"
-INSTALL_FLASH_ATTN="${INSTALL_FLASH_ATTN:-1}"
+INSTALL_FLASH_ATTN="${INSTALL_FLASH_ATTN:-0}"
 ALLOW_SDPA_FALLBACK="${ALLOW_SDPA_FALLBACK:-0}"
 LIVE="${LIVE:-0}"
 PLANNER_MODEL="${PLANNER_MODEL:-openai/gpt-oss-120b}"
+SKILL_MODEL="${SKILL_MODEL:-qwen/qwen3.5-9b}"
+SKILL_TEMPERATURE="${SKILL_TEMPERATURE:-0.7}"
+WITH_SKILL_EXECUTOR="${WITH_SKILL_EXECUTOR:-1}"
+ROTATE_MOTIFS="${ROTATE_MOTIFS:-1}"
 KEYS_PY="${KEYS_PY:-/fs/gamma-projects/vlm-robot/keys.py}"
 
 export HF_HOME
@@ -43,7 +54,9 @@ if [[ ! -x "${PYTHON}" ]]; then
 fi
 
 if [[ "${INSTALL_FLASH_ATTN}" == "1" ]]; then
-  bash "${REPO_ROOT}/scripts/grpo/install_flash_attn.sh"
+  # Install FA2 into whichever python this worker selected.
+  VENV_ROOT="$(dirname "$(dirname "${PYTHON}")")" \
+    bash "${REPO_ROOT}/scripts/grpo/install_flash_attn.sh"
 fi
 
 ATTN_ARGS=()
@@ -58,18 +71,19 @@ COLLECT_DIR="${OUTPUT_ROOT}/collect"
 TRAIN_DIR="${OUTPUT_ROOT}/train_${MODE}"
 mkdir -p "${COLLECT_DIR}" "${TRAIN_DIR}"
 
-if [[ "${STAGE}" == "smoke" || "${STAGE}" == "all" ]]; then
-  "${PYTHON}" -m trainer.grpo.collect_rollouts \
-    --frozen-l1-glob "${FROZEN_L1_GLOB}" \
-    --split-manifest "${SPLIT_MANIFEST}" \
-    --output-dir "${COLLECT_DIR}" \
-    --motif-bank "${MOTIF_BANK}" \
-    --k "${K}" --limit "${LIMIT}" \
-    --mode "${MODE}" \
-    --smoke-mock-rollout
-fi
-
+# Collect: live takes precedence over mock when LIVE=1 on stage=all.
 if [[ "${STAGE}" == "live_collect" || ( "${STAGE}" == "all" && "${LIVE}" == "1" ) ]]; then
+  SKILL_FLAGS=()
+  if [[ "${WITH_SKILL_EXECUTOR}" == "1" ]]; then
+    SKILL_FLAGS+=(--with-skill-executor)
+  else
+    SKILL_FLAGS+=(--no-with-skill-executor)
+  fi
+  if [[ "${ROTATE_MOTIFS}" == "1" ]]; then
+    SKILL_FLAGS+=(--rotate-motifs)
+  else
+    SKILL_FLAGS+=(--no-rotate-motifs)
+  fi
   "${PYTHON}" -m trainer.grpo.collect_rollouts \
     --frozen-l1-glob "${FROZEN_L1_GLOB}" \
     --split-manifest "${SPLIT_MANIFEST}" \
@@ -79,8 +93,20 @@ if [[ "${STAGE}" == "live_collect" || ( "${STAGE}" == "all" && "${LIVE}" == "1" 
     --mode "${MODE}" \
     --live \
     --planner-model "${PLANNER_MODEL}" \
+    --skill-model "${SKILL_MODEL}" \
+    --skill-temperature "${SKILL_TEMPERATURE}" \
     --keys-py "${KEYS_PY}" \
-    --judge-mock
+    --judge-mock \
+    "${SKILL_FLAGS[@]}"
+elif [[ "${STAGE}" == "smoke" || "${STAGE}" == "all" ]]; then
+  "${PYTHON}" -m trainer.grpo.collect_rollouts \
+    --frozen-l1-glob "${FROZEN_L1_GLOB}" \
+    --split-manifest "${SPLIT_MANIFEST}" \
+    --output-dir "${COLLECT_DIR}" \
+    --motif-bank "${MOTIF_BANK}" \
+    --k "${K}" --limit "${LIMIT}" \
+    --mode "${MODE}" \
+    --smoke-mock-rollout
 fi
 
 GROUPS_PATH="${COLLECT_DIR}/grpo_groups.jsonl"
