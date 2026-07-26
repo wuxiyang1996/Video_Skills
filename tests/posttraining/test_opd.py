@@ -7,11 +7,19 @@ from trainer.closed_loop_harness import ClosedLoopHarness
 from trainer.exact_request_cache import ExactRequestCache
 from trainer.opd_action_distill_adapter import OpdDistillRow, load_opd_rows, save_opd_rows
 from trainer.teacher_action_query import (
+    aggregate_rankings_to_action_probs,
     average_action_probs,
+    borda_scores_from_rankings,
     map_candidates_to_letters,
     mock_teacher_preferring_oracle,
+    mock_teacher_ranking_preferring_oracle,
+    parse_ranked_letters,
     query_teacher_action_distribution,
     query_teacher_averaged,
+    query_teacher_ranking_averaged,
+    query_teacher_ranking_distribution,
+    soft_calibration_gates,
+    soft_calibration_passed,
 )
 from trainer.train_opd_kl import run_opd_smoke
 
@@ -148,5 +156,143 @@ def test_opd_distill_and_kl_smoke(tmp_path: Path) -> None:
     save_opd_rows(path, [row])
     assert len(load_opd_rows(path)) == 1
     report = run_opd_smoke(path, output_path=tmp_path / "smoke.json")
+    assert report["n_rows"] == 1
+    assert report["mean_kl"] is not None
+
+
+def test_soft_calibration_gates() -> None:
+    ok = soft_calibration_gates(top1_match_rate=0.95, mean_l1=0.10, n_rows=8)
+    assert soft_calibration_passed(ok)
+    bad = soft_calibration_gates(top1_match_rate=0.125, mean_l1=1.34, n_rows=8)
+    assert not soft_calibration_passed(bad)
+    assert bad["top1_match_ge_0_90"] is False
+    assert bad["mean_l1_le_0_15"] is False
+
+
+def test_borda_and_bt_ranking_aggregation() -> None:
+    rankings = [
+        ["oracle", "student", "stop"],
+        ["oracle", "stop", "student"],
+        ["student", "oracle", "stop"],
+    ]
+    ids = ["oracle", "student", "stop"]
+    borda = borda_scores_from_rankings(rankings, action_ids=ids)
+    assert borda["oracle"] > borda["student"] >= borda["stop"]
+    probs_borda = aggregate_rankings_to_action_probs(
+        rankings, action_ids=ids, method="borda", temperature=1.0
+    )
+    assert abs(sum(probs_borda.values()) - 1.0) < 1e-6
+    assert max(probs_borda, key=probs_borda.get) == "oracle"
+    probs_bt = aggregate_rankings_to_action_probs(
+        rankings, action_ids=ids, method="bt", temperature=1.0
+    )
+    assert abs(sum(probs_bt.values()) - 1.0) < 1e-6
+    assert max(probs_bt, key=probs_bt.get) == "oracle"
+
+
+def test_parse_ranked_letters_from_content_json() -> None:
+    letter_map = {"A": "student", "B": "oracle", "C": "stop"}
+    ranked = parse_ranked_letters(
+        {"content": '```json\n{"ranked_letters": ["B", "A", "C"]}\n```'},
+        letter_map,
+    )
+    assert ranked == ["B", "A", "C"]
+
+
+def test_teacher_ranking_order_permutation_maps_back(tmp_path: Path) -> None:
+    oracle = {
+        "schema_version": "video-skills/l2-specialist-action-v0.1",
+        "tool_name": "choose_best_coarse_candidate",
+        "arguments": {"coarse_index": 2},
+    }
+    action_set = build_l2_candidate_actions(state_id="s_rank", oracle_action=oracle)
+    state = {"example_id": "e", "task_family": "causal", "question": {"question_text": "q"}}
+    cache = ExactRequestCache(tmp_path / "rank_cache.json", {"model": "mock_ranking"})
+
+    d0 = query_teacher_ranking_distribution(
+        action_set,
+        state=state,
+        teacher_fn=mock_teacher_ranking_preferring_oracle,
+        order_seed=0,
+        cache=cache,
+        method="borda",
+    )
+    d1 = query_teacher_ranking_distribution(
+        action_set,
+        state=state,
+        teacher_fn=mock_teacher_ranking_preferring_oracle,
+        order_seed=99,
+        cache=cache,
+        method="borda",
+    )
+    assert d0.teacher_mode == "ranking_borda"
+    assert d0.ranked_action_ids[0] == "oracle"
+    assert d1.ranked_action_ids[0] == "oracle"
+    assert max(d0.action_probs, key=d0.action_probs.get) == "oracle"
+    assert max(d1.action_probs, key=d1.action_probs.get) == "oracle"
+
+    avg, dists = query_teacher_ranking_averaged(
+        action_set,
+        state=state,
+        teacher_fn=mock_teacher_ranking_preferring_oracle,
+        order_seeds=[0, 7, 99],
+        cache=cache,
+        method="borda",
+    )
+    assert len(dists) == 3
+    assert max(avg, key=avg.get) == "oracle"
+    assert abs(sum(avg.values()) - 1.0) < 1e-6
+
+    avg_bt, _ = query_teacher_ranking_averaged(
+        action_set,
+        state=state,
+        teacher_fn=mock_teacher_ranking_preferring_oracle,
+        order_seeds=[0, 7, 99],
+        cache=cache,
+        method="bt",
+    )
+    assert max(avg_bt, key=avg_bt.get) == "oracle"
+
+
+def test_opd_distill_from_ranking_teacher(tmp_path: Path) -> None:
+    oracle = {
+        "schema_version": "video-skills/l2-specialist-action-v0.1",
+        "tool_name": "choose_best_coarse_candidate",
+        "arguments": {"coarse_index": 1},
+    }
+    action_set = build_l2_candidate_actions(state_id="s_rank_row", oracle_action=oracle)
+    precheck = gate_candidate_set(action_set)
+    avg, dists = query_teacher_ranking_averaged(
+        action_set,
+        state={"example_id": "e"},
+        teacher_fn=mock_teacher_ranking_preferring_oracle,
+        order_seeds=[1, 2],
+        method="borda",
+    )
+    teacher = dists[0]
+    teacher.action_probs = dict(avg)
+    teacher.teacher_mode = "ranking_borda"
+    from trainer.closed_loop_harness import HarnessState
+
+    state = HarnessState(
+        state_id="s_rank_row",
+        example_id="e",
+        dataset="cg_bench",
+        task_family="causal",
+        question={"question_text": "q"},
+        l1_graph_summary={"node_count": 0, "edge_count": 0},
+        motif_online={"motif_retrieval_attempted": True},
+    )
+    row = OpdDistillRow.from_parts(
+        state=state,
+        action_set=action_set,
+        teacher=teacher,
+        precheck={**precheck, "teacher_mode": "ranking_borda"},
+    )
+    path = tmp_path / "opd_rank.jsonl"
+    save_opd_rows(path, [row])
+    loaded = load_opd_rows(path)
+    assert loaded[0]["teacher"]["teacher_mode"] == "ranking_borda"
+    report = run_opd_smoke(path, output_path=tmp_path / "smoke_rank.json")
     assert report["n_rows"] == 1
     assert report["mean_kl"] is not None
