@@ -7,7 +7,7 @@ from pathlib import Path
 from .base import DatasetAdapter
 from .cg_bench import CGBenchAdapter
 from .siv_bench import SIVBenchAdapter
-from .streaming_video import OVOBenchAdapter, VideoMMEAdapter
+from .streaming_video import OVOBenchAdapter, StreamingBenchAdapter, VideoMMEAdapter
 from .video_holmes import VideoHolmesAdapter
 from .vrbench import VRBenchAdapter
 
@@ -27,4 +27,6 @@ def get_adapter(dataset: DatasetName, dataset_root: Path, split: str = "train") 
         return OVOBenchAdapter(dataset_root, split=split)
     if dataset == "videomme":
         return VideoMMEAdapter(dataset_root, split=split)
+    if dataset == "streaming_bench":
+        return StreamingBenchAdapter(dataset_root, split=split)
     raise ValueError(f"unsupported dataset: {dataset}")

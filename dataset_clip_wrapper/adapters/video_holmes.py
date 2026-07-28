@@ -12,14 +12,22 @@ from .base import DatasetAdapter, RawDatasetItem
 def parse_time_range(value: str | None) -> dict[str, float] | None:
   if not value:
     return None
-  value = value.strip()
+  value = value.strip().replace("：", ":").replace("；", ":").replace(";", ":")
   if "-" in value:
     start, end = value.split("-", 1)
   else:
     start = end = value
 
-  def to_seconds(part: str) -> float:
-    pieces = [float(p) for p in part.strip().split(":")]
+  def to_seconds(part: str) -> float | None:
+    part = part.strip()
+    if not part:
+      return None
+    try:
+      pieces = [float(p) for p in part.split(":") if p.strip()]
+    except ValueError:
+      return None
+    if not pieces:
+      return None
     if len(pieces) == 3:
       return pieces[0] * 3600 + pieces[1] * 60 + pieces[2]
     if len(pieces) == 2:
@@ -28,6 +36,14 @@ def parse_time_range(value: str | None) -> dict[str, float] | None:
 
   start_s = to_seconds(start)
   end_s = to_seconds(end)
+  if start_s is None and end_s is None:
+    return None
+  if start_s is None:
+    start_s = end_s
+  if end_s is None:
+    end_s = start_s
+  if start_s is None or end_s is None:
+    return None
   if end_s < start_s:
     start_s, end_s = end_s, start_s
   if start_s == end_s:

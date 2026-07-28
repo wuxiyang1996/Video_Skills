@@ -114,9 +114,15 @@ def _clip_is_visible_for_example(result: Any, example: dict[str, Any], visible_u
     clip = result.clip
     video = example.get("video") or {}
     video_id = str(video.get("video_id") or "")
+    video_path = str(video.get("primary_path") or "")
     example_id = str(example.get("example_id") or "")
-    if clip.video_id and video_id and clip.video_id != video_id:
+    # Prefer path match so StreamingBench video_id collisions stay correct.
+    if clip.video_path and video_path:
+        if clip.video_path != video_path:
+            return False
+    elif clip.video_id and video_id and clip.video_id != video_id:
         return False
+    # Example binding only for legacy per-QA indexes that set example_id.
     if clip.example_id and example_id and clip.example_id != example_id:
         return False
     if visible_until_s is not None and clip.start_s > visible_until_s:
@@ -134,6 +140,15 @@ def _retrieve_visible(
     pool_k: int,
 ) -> list[Any]:
     from .schemas import RetrievedClip
+
+    # Prefer video-local search for per-video FAISS refs.
+    if hasattr(store, "search_in_video"):
+        return store.search_in_video(
+            query_embedding,
+            example=example,
+            topk=top_k,
+            visible_until_s=visible_until_s,
+        )
 
     raw = store.search(query_embedding, topk=max(top_k, pool_k))
     filtered = [
@@ -287,16 +302,19 @@ def _build_answer_prompt(example: dict[str, Any], retrieved: list[Any], visible_
 
 
 class LocalTextQwen:
-    def __init__(self, model_path: str, *, max_new_tokens: int) -> None:
+    def __init__(self, model_path: str, *, max_new_tokens: int, device: str | None = None) -> None:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
+        from .embeddings import resolve_torch_device
+
         self.max_new_tokens = max_new_tokens
+        self.device = resolve_torch_device(device)
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path,
             torch_dtype=torch.bfloat16,
-            device_map="auto",
+            device_map={"": self.device},
             trust_remote_code=True,
             low_cpu_mem_usage=True,
         )
@@ -310,7 +328,8 @@ class LocalTextQwen:
             {"role": "user", "content": prompt},
         ]
         text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = self.tokenizer([text], return_tensors="pt").to(self.model.device)
+        inputs = self.tokenizer([text], return_tensors="pt")
+        inputs = {key: value.to(self.device) for key, value in inputs.items()}
         with torch.inference_mode():
             output_ids = self.model.generate(**inputs, max_new_tokens=self.max_new_tokens, do_sample=False)
         generated = output_ids[:, inputs["input_ids"].shape[-1] :]
@@ -336,11 +355,31 @@ def _qwen_answer(
 
 
 def _build_embedder(args: argparse.Namespace, store: Any) -> Any:
-    from .embeddings import CLIPVideoTextEmbedder, HashingTextEmbedder
+    from .embeddings import CLIPVideoTextEmbedder, HashingTextEmbedder, Qwen3VLVLLMEmbedder
 
     backend = args.embedding_backend or store.manifest.get("embedding_backend") or "hashing_text"
+    embed_device = args.embed_device
     if backend == "clip":
-        return CLIPVideoTextEmbedder(model_name=args.clip_model or store.manifest["embedding_model"])
+        return CLIPVideoTextEmbedder(
+            model_name=args.clip_model or store.manifest["embedding_model"],
+            device=embed_device,
+        )
+    if backend == "qwen3_vl":
+        return Qwen3VLVLLMEmbedder(
+            model_name=args.qwen3_vl_model or store.manifest["embedding_model"],
+            dtype=args.qwen3_vl_dtype,
+            device=embed_device,
+            instruction=args.qwen3_instruction,
+            gpu_memory_utilization=args.qwen3_vl_gpu_memory_utilization,
+        )
+    if backend == "qwen3_text_caption":
+        return Qwen3VLVLLMEmbedder(
+            model_name=args.qwen3_vl_model or store.manifest["embedding_model"],
+            dtype=args.qwen3_vl_dtype,
+            device=embed_device,
+            instruction=args.qwen3_instruction,
+            gpu_memory_utilization=args.qwen3_vl_gpu_memory_utilization,
+        )
     if backend != "hashing_text":
         raise ValueError(f"unsupported embedding backend for query: {backend}")
     return HashingTextEmbedder(dim=int(store.manifest["dim"]))
@@ -413,7 +452,8 @@ def metric_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
             "parsed": len(parsed),
             "parse_rate": (len(parsed) / len(ok_rows)) if ok_rows else 0.0,
             "correct": len(correct),
-            "accuracy": (len(correct) / len(ok_rows)) if ok_rows else 0.0,
+            "accuracy": (len(correct) / total) if total else 0.0,
+            "accuracy_on_successful": (len(correct) / len(ok_rows)) if ok_rows else 0.0,
             "accuracy_on_parsed": (len(correct) / len(parsed)) if parsed else 0.0,
             "avg_total_s": statistics.fmean(latencies) if latencies else None,
         }
@@ -432,6 +472,8 @@ def write_run_config(args: argparse.Namespace, output_dir: Path, store: Any, emb
         "index_dir": str(args.index_dir),
         "index_manifest": store.manifest,
         "query_embedding_model": getattr(embedder, "name", None),
+        "embed_device": getattr(embedder, "device", None),
+        "answer_device": args.answer_device,
         "answer_backend": args.answer_backend,
         "model": args.model if args.answer_backend == "local_qwen" else None,
         "iterations": args.iterations,
@@ -440,8 +482,10 @@ def write_run_config(args: argparse.Namespace, output_dir: Path, store: Any, emb
         "pool_k": args.pool_k,
         "include_embeddings": args.include_embeddings,
         "streaming_policy": {
-            "same_example_only": True,
+            "index_granularity": (store.manifest or {}).get("index_granularity"),
+            "same_example_only": "only when indexed clip.example_id is set (legacy)",
             "same_video_only": True,
+            "video_local_search": True,
             "no_future_leak": "clip.start_s <= visible_until_s",
         },
         "env": {
@@ -464,15 +508,37 @@ def main() -> int:
     parser.add_argument("--limit-per-dataset", type=int, default=5)
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--num-shards", type=int, default=1)
-    parser.add_argument("--videomme-observation-end-s", type=float, default=60.0)
+    parser.add_argument(
+        "--videomme-observation-end-s",
+        type=float,
+        default=None,
+        help="Optional adapted-protocol cutoff. Omit it for full-video VideoMME.",
+    )
     parser.add_argument("--window-s", type=float, default=None)
     parser.add_argument("--overlap-s", type=float, default=None)
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--per-iteration-top-k", type=int, default=4)
     parser.add_argument("--final-top-k", type=int, default=8)
     parser.add_argument("--pool-k", type=int, default=128)
-    parser.add_argument("--embedding-backend", default=None, choices=["hashing_text", "clip"])
+    parser.add_argument("--embedding-backend", default=None, choices=["hashing_text", "clip", "qwen3_vl", "qwen3_text_caption"])
     parser.add_argument("--clip-model", default=None)
+    parser.add_argument("--qwen3-vl-model", default=None)
+    parser.add_argument("--qwen3-vl-dtype", default="bfloat16")
+    parser.add_argument("--qwen3-vl-gpu-memory-utilization", type=float, default=None)
+    parser.add_argument(
+        "--qwen3-instruction",
+        default="Represent the input for retrieving relevant video clips for a question.",
+    )
+    parser.add_argument(
+        "--embed-device",
+        default=None,
+        help="Torch device for the retrieval embedder (e.g. cuda:0).",
+    )
+    parser.add_argument(
+        "--answer-device",
+        default=None,
+        help="Torch device for local Qwen3.5 answering (e.g. cuda:1).",
+    )
     parser.add_argument("--answer-backend", default="heuristic", choices=["heuristic", "local_qwen"])
     parser.add_argument("--model", default="/mnt/is_data/xwu/video_skills/data/models/qwen35_9b/Qwen3.5-9B")
     parser.add_argument("--max-new-tokens", type=int, default=128)
@@ -498,7 +564,11 @@ def main() -> int:
 
     store = FaissClipStore.load(args.index_dir)
     embedder = _build_embedder(args, store)
-    qwen = LocalTextQwen(args.model, max_new_tokens=args.max_new_tokens) if args.answer_backend == "local_qwen" else None
+    qwen = (
+        LocalTextQwen(args.model, max_new_tokens=args.max_new_tokens, device=args.answer_device)
+        if args.answer_backend == "local_qwen"
+        else None
+    )
     write_run_config(args, args.output_dir, store, embedder)
 
     print(f"started_at={time.strftime('%Y-%m-%dT%H:%M:%S%z')}", flush=True)

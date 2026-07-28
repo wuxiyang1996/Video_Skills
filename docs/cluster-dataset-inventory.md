@@ -53,6 +53,68 @@ and the corresponding file exists at:
 /net/nj-storage02/mnt/tank/datasets/WHB139426-Grounded-VideoLLM/webvid-703k/videos/034101_034150/1012406735.mp4
 ```
 
+## StreamingBench
+
+StreamingBench is part of the StreamBridge paper's streaming evaluation suite
+alongside OVO-Bench. The official CSV annotations are staged locally; the video
+archives are large and should be downloaded through the provided shared-storage
+staging job.
+
+Expected location once staged:
+
+```text
+/mnt/is_data/xwu/video_skills/data/datasets/StreamingBench
+```
+
+Expected annotation/media layouts supported by the adapter:
+
+```text
+StreamingBench/questions_real.json
+StreamingBench/questions_omni.json
+StreamingBench/questions_sqa.json
+StreamingBench/questions_proactive.json
+StreamingBench/questions_proactive_50.json
+StreamingBench/src/data/questions_*.json
+StreamingBench/questions.json
+StreamingBench/*.jsonl
+StreamingBench/*.parquet
+StreamingBench/videos/
+StreamingBench/src/data/videos/
+StreamingBench/{real,omni,sqa,proactive}/
+StreamingBench/data/{real,omni,sqa,proactive}/
+```
+
+Current status:
+
+- Official CSV annotations are staged under
+  `/mnt/is_data/xwu/video_skills/data/datasets/StreamingBench/StreamingBench`.
+- Adapter code is wired as `streaming_bench` and reads the official CSV files.
+- CLI choices include `streaming_bench`.
+- `baseline/qwen35_streaming_eval.py` can accept `--datasets streaming_bench`.
+- Full video staging can be launched with:
+
+```bash
+cd /home/xwu/atomic_skills_for_video
+sbatch scripts/stage_streaming_bench.sbatch
+```
+
+- Tiny synthetic adapter smoke passed for both root-level and `src/data`
+  question files at:
+
+```text
+/mnt/is_data/xwu/video_skills/outputs/atomic_skills_for_video/streaming_bench_adapter_smoke/streaming_bench_canonical_2files.jsonl
+```
+
+Official/HF dataset reference:
+
+```text
+https://huggingface.co/datasets/mjuicem/StreamingBench
+```
+
+The HF page reports about `4,550` rows and about `203GB` total file size, so
+download/staging should be done explicitly on shared storage rather than in this
+repo or `/home/xwu`.
+
 ## OVO-Bench Notes
 
 Verified OVO-Bench path:

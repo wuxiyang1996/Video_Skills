@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
-"""Evaluate Dispider as an end-to-end streaming VideoLLM baseline.
+"""Evaluate the official Dispider model with a visible-prefix adaptation.
 
 This runner keeps the same records/metrics shape as qwen35_streaming_eval.py,
-but delegates generation to the official Dispider inference wrapper. Because
-Dispider accepts a video file path rather than (path, start, end) media records,
-the runner materializes a visible video prefix per example under output_dir.
-That preserves the streaming no-future-leak boundary.
+but delegates generation to Dispider's official quick-start inference wrapper.
+Because Dispider accepts a video file path rather than (path, start, end) media
+records, the runner materializes a visible video prefix per example under
+output_dir. That preserves the streaming no-future-leak boundary.
+
+This is not the official VideoMME benchmark protocol in
+``dispider/eval/model_videomme_long.py`` and does not reproduce Dispider's
+asynchronous proactive streaming evaluation. Report it as
+``official_model_adapted_protocol``, not ``official_upstream``.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -162,7 +168,8 @@ def metric_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
             "parsed": len(parsed),
             "parse_rate": (len(parsed) / len(ok_rows)) if ok_rows else 0.0,
             "correct": len(correct),
-            "accuracy": (len(correct) / len(ok_rows)) if ok_rows else 0.0,
+            "accuracy": (len(correct) / total) if total else 0.0,
+            "accuracy_on_successful": (len(correct) / len(ok_rows)) if ok_rows else 0.0,
             "accuracy_on_parsed": (len(correct) / len(parsed)) if parsed else 0.0,
             "avg_generate_s": statistics.fmean(latencies) if latencies else None,
         }
@@ -207,6 +214,19 @@ def _source_video_path(example: dict[str, Any]) -> str | None:
 def _video_duration_s(example: dict[str, Any]) -> float | None:
     value = (example.get("video") or {}).get("duration_s")
     return float(value) if isinstance(value, (int, float)) else None
+
+
+def _media_cache_name(example_id: str, source_path: str, visible_until_s: float | None) -> str:
+    source = Path(source_path).resolve()
+    try:
+        stat = source.stat()
+        source_version = f"{stat.st_size}:{stat.st_mtime_ns}"
+    except OSError:
+        source_version = "unavailable"
+    identity = f"{source}:{source_version}:{visible_until_s!r}:h264-crf23-noaudio"
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+    cutoff = "full" if visible_until_s is None else f"{visible_until_s:.3f}s"
+    return f"{_safe_filename(example_id)}__{_safe_filename(cutoff)}__{digest}.mp4"
 
 
 def materialize_visible_prefix(
@@ -281,7 +301,13 @@ def load_dispider(dispider_repo: str, model_path: str) -> tuple[Any, float]:
 def write_run_config(args: argparse.Namespace, output_dir: Path) -> None:
     payload = {
         "runner": "dispider_streaming_eval.py",
-        "baseline": "Dispider end-to-end streaming VideoLLM",
+        "baseline": "Dispider visible-prefix protocol adaptation",
+        "alignment_class": "official_model_adapted_protocol",
+        "upstream_entrypoint": "inference.videoStream",
+        "not_equivalent_to": [
+            "Dispider official VideoMME evaluation (dispider/eval/model_videomme_long.py)",
+            "Dispider asynchronous proactive streaming evaluation",
+        ],
         "datasets": list(args.datasets),
         "model": args.model,
         "dispider_repo": args.dispider_repo,
@@ -315,7 +341,12 @@ def main() -> int:
     parser.add_argument("--limit-per-dataset", type=int, default=5)
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--num-shards", type=int, default=1)
-    parser.add_argument("--videomme-observation-end-s", type=float, default=60.0)
+    parser.add_argument(
+        "--videomme-observation-end-s",
+        type=float,
+        default=None,
+        help="Optional adapted-protocol cutoff. Omit it to use full VideoMME videos.",
+    )
     parser.add_argument("--ffmpeg-bin", default="ffmpeg")
     parser.add_argument("--overwrite-media-cache", action="store_true")
     args = parser.parse_args()
@@ -359,12 +390,37 @@ def main() -> int:
                 "video_id": (example.get("video") or {}).get("video_id"),
                 "task_family": example.get("task_family"),
                 "model": args.model,
-                "baseline": "dispider",
+                "baseline": "dispider_visible_prefix_adaptation",
+                "alignment_class": "official_model_adapted_protocol",
                 "input_mode": "visible_prefix_video",
                 "visible_until_s": visible_until_s,
                 "gold_label": gold,
                 "gold_text": ((example.get("question") or {}).get("answer") or {}).get("text"),
             }
+            if (example.get("question") or {}).get("answer_format") != "multiple_choice" or not options:
+                record = {
+                    **base_record,
+                    "ok": False,
+                    "error": (
+                        "this runner supports multiple-choice QA only; "
+                        "proactive/open-text tasks require their official evaluator"
+                    ),
+                    "timing_s": {"load": load_s},
+                }
+                records.append(record)
+                _json_dump_line(records_handle, record)
+                continue
+            anchor = (example.get("question") or {}).get("time_anchor_s")
+            if dataset in {"ovo_bench", "streaming_bench"} and not isinstance(anchor, (int, float)):
+                record = {
+                    **base_record,
+                    "ok": False,
+                    "error": "streaming time anchor is missing; refusing full-video fallback",
+                    "timing_s": {"load": load_s},
+                }
+                records.append(record)
+                _json_dump_line(records_handle, record)
+                continue
             if not source_path:
                 record = {**base_record, "ok": False, "error": "source video path not found", "timing_s": {"load": load_s}}
                 records.append(record)
@@ -372,7 +428,11 @@ def main() -> int:
                 continue
 
             prompt = build_dispider_prompt(example, visible_until_s)
-            video_path = media_cache / dataset / f"{_safe_filename(example_id)}.mp4"
+            video_path = media_cache / dataset / _media_cache_name(
+                example_id,
+                source_path,
+                visible_until_s,
+            )
             start = time.perf_counter()
             try:
                 visible_video = materialize_visible_prefix(

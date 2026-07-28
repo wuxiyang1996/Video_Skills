@@ -18,7 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dataset",
         required=True,
-        choices=["video_holmes", "cg_bench", "vrbench", "siv_bench", "ovo_bench", "videomme"],
+        choices=["video_holmes", "cg_bench", "vrbench", "siv_bench", "ovo_bench", "videomme", "streaming_bench"],
     )
     parser.add_argument(
         "--dataset-root",

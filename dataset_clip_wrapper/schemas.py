@@ -26,7 +26,15 @@ class BenchmarkProfile(str, Enum):
     LONG_COARSE_FINE = "long_coarse_fine"
 
 
-DatasetName = Literal["video_holmes", "cg_bench", "vrbench", "siv_bench", "ovo_bench", "videomme"]
+DatasetName = Literal[
+    "video_holmes",
+    "cg_bench",
+    "vrbench",
+    "siv_bench",
+    "ovo_bench",
+    "videomme",
+    "streaming_bench",
+]
 
 
 @dataclass
@@ -129,6 +137,7 @@ class ClipPolicyConfig:
             "vrbench": VideoRegime.LONG,
             "ovo_bench": VideoRegime.STREAMING,
             "videomme": VideoRegime.SHORT,
+            "streaming_bench": VideoRegime.STREAMING,
         }[dataset]
         return cls.for_regime(inferred)
 

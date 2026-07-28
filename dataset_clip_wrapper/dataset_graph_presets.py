@@ -11,6 +11,7 @@ DATASET_DEFAULT_REGIME: dict[DatasetName, VideoRegime] = {
     "vrbench": VideoRegime.LONG,
     "ovo_bench": VideoRegime.STREAMING,
     "videomme": VideoRegime.SHORT,
+    "streaming_bench": VideoRegime.STREAMING,
 }
 
 DATASET_TASK_FAMILY: dict[DatasetName, str] = {
@@ -20,9 +21,10 @@ DATASET_TASK_FAMILY: dict[DatasetName, str] = {
     "vrbench": "long_video_temporal_chain_qa",
     "ovo_bench": "streaming_video_realtime_qa",
     "videomme": "short_video_whole_video_qa",
+    "streaming_bench": "streaming_video_realtime_qa",
 }
 
-SHORT_MULTI_HOP_DATASETS: tuple[DatasetName, ...] = ("video_holmes", "videomme", "ovo_bench")
+SHORT_MULTI_HOP_DATASETS: tuple[DatasetName, ...] = ("video_holmes", "videomme", "ovo_bench", "streaming_bench")
 LONG_COARSE_FINE_DATASETS: tuple[DatasetName, ...] = ("cg_bench", "vrbench")
 
 PROFILE_TASK_FAMILY: dict[BenchmarkProfile, str] = {
@@ -38,6 +40,7 @@ DATASET_HIDDEN_SOURCES: dict[DatasetName, list[str]] = {
     "vrbench": ["official_answer", "reasoning_process", "video_summary"],
     "ovo_bench": ["official_answer"],
     "videomme": ["official_answer"],
+    "streaming_bench": ["official_answer"],
 }
 
 # Layer-1 index characteristics per dataset under each regime.
@@ -71,6 +74,11 @@ DATASET_LAYER1_PROFILE: dict[DatasetName, dict[str, str]] = {
         "short": "whole_video + 4s fine windows for short VideoMME-style records",
         "long": "hierarchical if full VideoMME long videos are supplied",
         "streaming": "not the default; VideoMME is single-turn/offline in StreamBridge",
+    },
+    "streaming_bench": {
+        "short": "not the default; StreamingBench is timestamped streaming QA",
+        "long": "not the default; StreamingBench is evaluated with streaming visibility",
+        "streaming": "fixed_window online index with question timestamps from StreamingBench records",
     },
 }
 
@@ -122,7 +130,7 @@ def clip_policy_for(dataset: DatasetName, regime: VideoRegime, *, duration_s: fl
             if duration_s is not None and policy.observation_end_s is None:
                 policy.observation_end_s = duration_s
             return policy
-        if dataset == "ovo_bench":
+        if dataset in {"ovo_bench", "streaming_bench"}:
             policy = ClipPolicyConfig.for_regime(
                 VideoRegime.STREAMING,
                 duration_s=duration_s,

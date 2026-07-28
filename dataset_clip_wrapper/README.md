@@ -26,6 +26,13 @@ Streaming video benchmarks:
   `/net/nj-storage02/mnt/tank/datasets/WHB139426-Grounded-VideoLLM/videomme`
   paired with
   `/mnt/is_data/xwu/video_skills/code/ml-streambridge/assets/videomme.json`.
+- `streaming_bench` — StreamingBench timestamped streaming QA records. The
+  adapter expects official/HF data under
+  `/mnt/is_data/xwu/video_skills/data/datasets/StreamingBench`, with annotations
+  such as `questions_*.json`, `questions.json`, JSONL, or Parquet files. It
+  supports both root-level media folders and the official preprocessed
+  `src/data/videos/` layout. StreamingBench is not currently downloaded on the
+  cluster; the adapter and CLI wiring are ready once the data lands.
 
 See [cluster dataset inventory](../docs/cluster-dataset-inventory.md) for the
 verified shared-storage paths, StreamQA-120K training source, and current
@@ -190,6 +197,15 @@ python -m dataset_clip_wrapper.run_llm_pipeline \
   --clip-schema-backend video_tools \
   --clip-schema-max-clips 2 \
   --limit 1
+
+# StreamingBench wrapper smoke after downloading official/HF data
+python -m dataset_clip_wrapper.cli \
+  --dataset streaming_bench \
+  --dataset-root /mnt/is_data/xwu/video_skills/data/datasets \
+  --regime streaming \
+  --mode video_only \
+  --limit 1 \
+  --output /mnt/is_data/xwu/video_skills/outputs/atomic_skills_for_video/streaming_bench_smoke.jsonl
 
 # Staged/resumable runner: writes intermediate clip schemas, L1, and L2 files
 python -m dataset_clip_wrapper.run_staged_llm_pipeline \
