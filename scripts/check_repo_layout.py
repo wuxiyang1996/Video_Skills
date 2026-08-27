@@ -36,6 +36,7 @@ KNOWN_TOP_LEVEL = {
     "labeling",
     "motif",
     "out",
+    "plans",
     "pyproject.toml",
     "rag",
     "readme.md",
