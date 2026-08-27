@@ -105,6 +105,7 @@ class OpenRouterClient:
         self.reasoning = reasoning
         self.timeout_s = timeout_s
         self.last_response_metadata: dict[str, Any] = {}
+        self.is_openrouter_endpoint = "openrouter.ai" in api_base.lower()
 
     @staticmethod
     def _message_text_chars(messages: list[dict[str, Any]]) -> int:
@@ -140,6 +141,11 @@ class OpenRouterClient:
             "cache_hit": False,
         }
 
+    @staticmethod
+    def _is_qwen_reasoning_model(model: str) -> bool:
+        lower = (model or "").lower()
+        return any(token in lower for token in ("qwen3", "qwen-3", "qwen3.5", "qwq"))
+
     def chat(self, messages: list[dict[str, Any]], *, response_format: dict[str, Any] | None = None) -> str:
         payload: dict[str, Any] = {
             "model": self.model,
@@ -148,10 +154,17 @@ class OpenRouterClient:
         }
         if self.max_tokens is not None:
             payload["max_tokens"] = self.max_tokens
-        if self.reasoning is not None:
+        if self.reasoning is not None and self.is_openrouter_endpoint:
             payload["reasoning"] = self.reasoning
-        if response_format is not None:
+        if response_format is not None and self.is_openrouter_endpoint:
             payload["response_format"] = response_format
+        # Hard-disable Qwen3/3.5 thinking for controller / structured-JSON calls.
+        if self._is_qwen_reasoning_model(self.model):
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+            extra_body = payload.setdefault("extra_body", {})
+            if isinstance(extra_body, dict):
+                extra_body["enable_thinking"] = False
+                extra_body.setdefault("chat_template_kwargs", {"enable_thinking": False})
         self.last_response_metadata = self._base_request_metadata(messages)
         try:
             with _total_timeout(self.timeout_s):
@@ -164,7 +177,12 @@ class OpenRouterClient:
                     json=payload,
                     timeout=self.timeout_s,
                 )
-                response.raise_for_status()
+                if not response.ok:
+                    body = response.text[:1000]
+                    raise requests.HTTPError(
+                        f"{response.status_code} error from {self.api_base}: {body}",
+                        response=response,
+                    )
                 response_payload = response.json()
         except TimeoutError:
             self.last_response_metadata["timeout_count"] = 1
@@ -187,7 +205,12 @@ class OpenRouterClient:
                 f"finish_reason={response_payload['choices'][0].get('finish_reason')}, "
                 f"reasoning_preview={repr(message.get('reasoning'))[:300]}"
             )
-        return content.strip()
+        # Strip residual think blocks if a server ignored enable_thinking=False.
+        text = content.strip()
+        if "<think>" in text:
+            text = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.DOTALL)
+            text = re.sub(r"<think>[\s\S]*$", "", text, flags=re.DOTALL).strip()
+        return text
 
     def chat_json(
         self,

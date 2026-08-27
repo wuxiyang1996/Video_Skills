@@ -47,6 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--keys-py", default="/fs/gamma-projects/vlm-robot/keys.py")
 
     parser.add_argument("--clip-schema-model", default="qwen/qwen3.5-9b")
+    parser.add_argument(
+        "--clip-schema-api-base",
+        default="https://openrouter.ai/api/v1/chat/completions",
+        help="Chat-completions endpoint; use a local OpenAI-compatible server for local Qwen.",
+    )
     parser.add_argument("--clip-schema-backend", default="qwen", choices=["qwen", "video_tools"])
     parser.add_argument("--clip-schema-max-clips", type=int, default=3)
     parser.add_argument("--clip-schema-frames", type=int, default=4)
@@ -135,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
         clip_schema=ClipSchemaConfig(
             backend=args.clip_schema_backend,
             model=args.clip_schema_model,
+            api_base=args.clip_schema_api_base,
             keys_py_path=args.keys_py,
             max_clips=args.clip_schema_max_clips,
             request_frames=args.clip_schema_frames,

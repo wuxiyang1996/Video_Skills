@@ -13,6 +13,17 @@ This document is the cleanup map: it names the current path for new work and
 marks older directories that should not receive new L1/L2 controller-training
 code unless they are explicitly revived.
 
+High-level control is split into three agents:
+
+```text
+Agent 1: L1 Graph Crafter
+Agent 2: L2 Recursive Reasoning / Answer Agent
+Agent 3: Motif Extraction and Management Agent
+```
+
+See `docs/three-agent-architecture.md` for the ownership and training/eval
+boundary.
+
 ## Active Path
 
 These directories are the current supported path for video-only graph creation,
@@ -20,7 +31,7 @@ verification, repair, demo export, and controller-training data.
 
 | Path | Status | Purpose |
 |------|--------|---------|
-| `dataset_clip_wrapper/` | Active | Dataset adapters, video-only perception, L1 clue graph, L2 reasoning/repair/verification, expert demo export, training trace export. |
+| `dataset_clip_wrapper/` | Active | Dataset adapters, video-only perception, L1 clue graph, L2 reasoning/repair/verification, expert demo export, training trace export, and motif bank mining. |
 | `atomic_skills/` | Active | Frozen evidence-graph and reasoning-graph atomic skill basis used by L1/L2 graph protocols. |
 | `video_skills/` | Active | Canonical runtime contracts, memory, retriever, verifier, harness, rule controller, and `ReasoningTrace` schema. |
 | `trainer/` | Active but mixed | Existing SFT/GRPO infrastructure. New L1/L2 controller SFT should consume `dataset_clip_wrapper.export_reasoning_traces` output before deeper trainer refactors. |
@@ -28,7 +39,8 @@ verification, repair, demo export, and controller-training data.
 | `docs/` | Active docs | L1/L2 graph schema, implementation status, MDP framing, repo bundle map, and cleanup notes. |
 | `tests/video_skills/` | Active tests | Runtime contract/harness/memory/verifier tests. |
 | `dataset_clip_wrapper/tests/` | Active tests | L1/L2 wrapper, graph, repair, manifest, and training-export smoke tests. |
-| `dataset_clip_wrapper/motifs/` | Active optional layer | Motif bank, lifecycle, retrieval, transfer checks, and deterministic L1/L2 motif mining over accepted rollout graphs. |
+| `dataset_clip_wrapper/motifs/` | Active optional layer | Motif bank, lifecycle, Qwen/GPT-OSS motif agent, and deterministic L1/L2 motif mining over accepted rollout graphs. |
+| `motif/` | Transitional | Parallel motif package still used by some SFT/GRPO scripts and `tests/motif/`. Canonical Motif Agent lives under `dataset_clip_wrapper/motifs/`. |
 
 Composed motifs are optional verified subgraph priors that expand into frozen
 atomic skills; they are not new primitive tools and should not depend on
@@ -91,6 +103,16 @@ default.
 | `.env.example` | Active template | Example environment variables only. |
 | `.env` | Local secret file | Must remain untracked. |
 
+## Motif Layer
+
+Composed-motif work lives under `dataset_clip_wrapper/motifs/`. Motifs are
+optional verified subgraph priors that expand into frozen atomic skills. They
+are not new primitive tools, callable skill agents, or hidden evidence.
+
+The package currently has two layers: deterministic bank/lifecycle mining, and
+a Qwen3.5/GPT-OSS motif agent that proposes, curates, and stores expandable
+templates. Deterministic mining remains a seed/fallback/audit path.
+
 ## Cleanup Rules Going Forward
 
 - New L1 graph code goes in `dataset_clip_wrapper/l1_clue_graph/`.
@@ -100,7 +122,8 @@ default.
   `dataset_clip_wrapper/verification/`.
 - New expert-demo export code goes in `dataset_clip_wrapper/expert_demos/`.
 - New controller-training adapters go in `dataset_clip_wrapper/training/`.
-- New motif mining, promotion, registry, and expansion code goes in
+- New split/manifest code goes in `dataset_clip_wrapper/manifests/`.
+- New motif mining, promotion, registry, agent, and expansion code goes in
   `dataset_clip_wrapper/motifs/`. Motifs must expand into existing atomic skill
   graph fragments before execution.
 - New runtime contracts, harness, memory, retriever, or verifier code goes in
@@ -117,8 +140,8 @@ default.
 
 ## Next Cleanup Steps
 
-1. Extend `dataset_clip_wrapper/motifs/` from deterministic mining into
-   canonicalization, expansion validation, and promotion gates.
+1. Keep both motif layers in `dataset_clip_wrapper/motifs/`: deterministic
+   bank/lifecycle mining and the Qwen/GPT-OSS propose-curate agent.
 2. Add a real L1/L2 controller SFT trainer entrypoint under `trainer/`.
 3. Convert current compact demo bank into `ReasoningTrace` and SFT chat JSONL
    using `dataset_clip_wrapper.export_reasoning_traces`.

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 import signal
+import threading
 from contextlib import contextmanager
 from typing import Any
 
@@ -21,7 +22,9 @@ import requests
 
 @contextmanager
 def _total_timeout(seconds: int):
-    if seconds <= 0:
+    # SIGALRM is process-main-thread only. Background workers remain bounded by
+    # the requests connect/read timeout passed by SkillModelClient._post.
+    if seconds <= 0 or threading.current_thread() is not threading.main_thread():
         yield
         return
 
@@ -70,6 +73,7 @@ class SkillModelClient:
         max_tokens: int = 512,
         temperature: float = 0.0,
         timeout_s: int = 60,
+        seed: int | None = None,
     ):
         self.model = model
         self.api_key = api_key
@@ -77,6 +81,7 @@ class SkillModelClient:
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.timeout_s = timeout_s
+        self.seed = seed
         self.last_response_metadata: dict[str, Any] = {}
 
     def _post(self, messages: list[dict[str, Any]]) -> str:
@@ -90,6 +95,8 @@ class SkillModelClient:
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
         }
+        if self.seed is not None:
+            payload["seed"] = int(self.seed)
 
         prompt_chars = sum(len(str(message.get("content") or "")) for message in messages)
         self.last_response_metadata = {
@@ -101,19 +108,31 @@ class SkillModelClient:
             "timeout_count": 0,
             "compact_retry_count": 0,
         }
-        with _total_timeout(self.timeout_s):
-            resp = requests.post(
-                self.api_base,
-                headers=headers,
-                json=payload,
-                timeout=self.timeout_s,
-            )
-            resp.raise_for_status()
+        try:
+            with _total_timeout(self.timeout_s):
+                resp = requests.post(
+                    self.api_base,
+                    headers=headers,
+                    json=payload,
+                    timeout=self.timeout_s,
+                )
+                resp.raise_for_status()
             data = resp.json()
-        content = data["choices"][0]["message"].get("content") or ""
-        content = content.strip()
-        self.last_response_metadata["output_chars"] = len(content)
-        return content
+            content = data["choices"][0]["message"].get("content") or ""
+            content = content.strip()
+            usage = data.get("usage") or {}
+            self.last_response_metadata.update({
+                "output_chars": len(content),
+                "prompt_tokens": usage.get("prompt_tokens"),
+                "completion_tokens": usage.get("completion_tokens"),
+                "total_tokens": usage.get("total_tokens"),
+                "finish_reason": data["choices"][0].get("finish_reason"),
+            })
+            return content
+        except (TimeoutError, requests.Timeout, requests.ConnectionError, requests.HTTPError) as exc:
+            self.last_response_metadata["timeout_count"] = int(self.last_response_metadata.get("timeout_count") or 0) + 1
+            self.last_response_metadata["error"] = f"{type(exc).__name__}: {exc}"
+            raise
 
     def reason(self, prompt: str, *, system: str = "You are a precise video reasoning assistant. Answer in JSON only.") -> dict[str, Any]:
         """Send a reasoning prompt and parse JSON response."""
@@ -121,7 +140,12 @@ class SkillModelClient:
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
         ]
-        raw = self._post(messages)
+        try:
+            raw = self._post(messages)
+        except (TimeoutError, requests.Timeout, requests.ConnectionError, requests.HTTPError, requests.RequestException) as exc:
+            self.last_response_metadata["timeout_count"] = int(self.last_response_metadata.get("timeout_count") or 0) + 1
+            self.last_response_metadata["error"] = f"{type(exc).__name__}: {exc}"
+            return {"parse_error": True, "timeout": True, "error": str(exc)}
         try:
             return _parse_json_from_text(raw)
         except (json.JSONDecodeError, ValueError):

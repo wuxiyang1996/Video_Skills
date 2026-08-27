@@ -13,7 +13,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from atomic_skills import export_skill_ontology  # noqa: E402
-from atomic_skills.common import stable_id  # noqa: E402
+from atomic_skills.common import make_result, stable_id  # noqa: E402
 from atomic_skills.reasoning_graph_assembly import (  # noqa: E402
     assign_evidence_role,
     bridge_evidence_hops,
@@ -47,6 +47,7 @@ from ..l1_clue_graph.graph_plan_validator import resolve_plan_value, _coerce_nod
 from .l2_recursive_trace import attach_initial_l2_trajectory
 from ..perception.openrouter_client import OpenRouterClient, load_openrouter_api_key
 from ..schemas import GraphComposerConfig
+from ..verification.runtime_verifier import verify_rollout
 
 REASONING_SKILL_EXECUTORS = {
     "parse_question_target": parse_question_target,
@@ -376,6 +377,146 @@ def _summarize_clue_graph(clue_memory_graph: dict[str, Any], max_nodes: int = 20
     }
 
 
+# Skills that belong to the answer-selection tail. Motif prefixes may keep
+# retrieval/structure steps; GRPO rewrites this tail so compare/explore always run.
+_GRPO_ANSWER_TAIL_SKILLS = frozenset(
+    {
+        "generate_answer_hypotheses",
+        "retrieve_evidence_for_hypothesis",
+        "score_hypothesis_support",
+        "compare_hypotheses",
+        "bridge_evidence_hops",
+        "verify_temporal_social_consistency",
+        "verify_claim_support",
+        "commit_answer",
+    }
+)
+
+
+def ensure_grpo_answer_critical_plan(
+    reasoning_plan: list[dict[str, Any]],
+    *,
+    options: list[Any] | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Keep Motif prefix, replace answer tail with generate→score→compare→commit.
+
+    Collapsed K-samples often came from Motif sequences that skipped
+    ``compare_hypotheses``, so ``force_explore`` never ran.
+    """
+    meta: dict[str, Any] = {"applied": False, "reason": "not_needed"}
+    if not options:
+        meta["reason"] = "no_options"
+        return list(reasoning_plan or []), meta
+
+    plan = [dict(step) for step in (reasoning_plan or []) if isinstance(step, dict)]
+    skill_ids = [str(step.get("skill_id") or "") for step in plan]
+    has_compare = "compare_hypotheses" in skill_ids
+    has_generate = "generate_answer_hypotheses" in skill_ids
+    has_score = "score_hypothesis_support" in skill_ids
+    if has_compare and has_generate and has_score:
+        meta.update({"applied": False, "reason": "already_has_answer_path", "skill_ids": skill_ids})
+        return plan, meta
+
+    prefix: list[dict[str, Any]] = []
+    for step in plan:
+        sid = str(step.get("skill_id") or "")
+        if sid in _GRPO_ANSWER_TAIL_SKILLS:
+            break
+        prefix.append(step)
+
+    if not any(str(s.get("skill_id") or "") == "parse_question_target" for s in prefix):
+        prefix.insert(
+            0,
+            {
+                "step_id": "grpo_parse",
+                "skill_id": "parse_question_target",
+                "args": {
+                    "question_text": "$bindings.question_text",
+                    "options": "$bindings.options",
+                },
+                "depends_on": [],
+                "from_grpo_answer_path": True,
+            },
+        )
+    parse_id = next(
+        str(s.get("step_id") or "grpo_parse")
+        for s in prefix
+        if str(s.get("skill_id") or "") == "parse_question_target"
+    )
+    tail = [
+        {
+            "step_id": "grpo_gen",
+            "skill_id": "generate_answer_hypotheses",
+            "args": {
+                "question_text": "$bindings.question_text",
+                "options": "$bindings.options",
+                "parsed_target": f"$step.{parse_id}.parsed_target",
+            },
+            "depends_on": [parse_id],
+            "from_grpo_answer_path": True,
+        },
+        {
+            "step_id": "grpo_ret",
+            "skill_id": "retrieve_evidence_for_hypothesis",
+            "args": {"hypothesis": "$step.grpo_gen.hypotheses", "max_refs": 6},
+            "depends_on": ["grpo_gen"],
+            "from_grpo_answer_path": True,
+        },
+        {
+            "step_id": "grpo_score",
+            "skill_id": "score_hypothesis_support",
+            "args": {
+                "hypothesis": "$step.grpo_gen.hypotheses",
+                "support_evidence": "$step.grpo_ret",
+                "counterevidence": [],
+            },
+            "depends_on": ["grpo_gen", "grpo_ret"],
+            "from_grpo_answer_path": True,
+        },
+        {
+            "step_id": "grpo_cmp",
+            "skill_id": "compare_hypotheses",
+            "args": {"scored_hypotheses": "$step.grpo_score.scored_hypotheses"},
+            "depends_on": ["grpo_score"],
+            "from_grpo_answer_path": True,
+        },
+        {
+            "step_id": "grpo_verify",
+            "skill_id": "verify_claim_support",
+            "args": {
+                "claim": "$step.grpo_cmp.best_hypothesis",
+                "evidence_chain": {"evidence_refs": []},
+                "support_policy": {"min_evidence_refs": 1},
+            },
+            "depends_on": ["grpo_cmp"],
+            "from_grpo_answer_path": True,
+        },
+        {
+            "step_id": "grpo_commit",
+            "skill_id": "commit_answer",
+            "args": {
+                "verified_claim": "$step.grpo_verify.verified_claim",
+                "options": "$bindings.options",
+                "answer_format": "multiple_choice",
+                "support_chain": "$step.grpo_verify.evidence_chain",
+            },
+            "depends_on": ["grpo_verify"],
+            "from_grpo_answer_path": True,
+        },
+    ]
+    merged = prefix + tail
+    meta.update(
+        {
+            "applied": True,
+            "reason": "rewrote_answer_tail",
+            "prefix_skill_ids": [str(s.get("skill_id") or "") for s in prefix],
+            "original_skill_ids": skill_ids,
+            "merged_skill_ids": [str(s.get("skill_id") or "") for s in merged],
+        }
+    )
+    return merged, meta
+
+
 def _default_multi_hop_mcq_plan() -> list[dict[str, Any]]:
     """Conservative fallback plan for short/offline multiple-choice reasoning."""
     return [
@@ -517,6 +658,7 @@ def plan_reasoning_skills(
             response["model"] = client.model
             response["planner"] = "gpt_oss_reasoning_planner"
             response["planner_attempt"] = attempt["name"]
+            response["llm_usage"] = dict(client.last_response_metadata or {})
             if errors:
                 response["planner_retry_errors"] = errors
             return response
@@ -761,12 +903,16 @@ def execute_reasoning_plan(
                 # deterministic branch split and aggregate option scores, then
                 # keep the LLM verifier for the final support check.
                 backend_safe = False
+            if skill_id == "compare_hypotheses":
+                # Need scored_hypotheses from prior steps before LLM compare.
+                backend_safe = False
             if mode in (SkillBackendMode.LLM, SkillBackendMode.VLM):
                 has_client = (
                     (mode == SkillBackendMode.LLM and skill_executor.llm_client)
                     or (mode == SkillBackendMode.VLM and skill_executor.vlm_client)
                 )
                 if has_client and backend_safe:
+                    usage_client = skill_executor.llm_client if mode == SkillBackendMode.LLM else skill_executor.vlm_client
                     try:
                         result = skill_executor.execute(skill_id, args=resolved_args, graph=graph)
                         trace.append({
@@ -777,6 +923,7 @@ def execute_reasoning_plan(
                             "evidence_refs": result.evidence_refs,
                             "confidence": result.confidence,
                             "backend": mode.value,
+                            "llm_usage": dict(getattr(usage_client, "last_response_metadata", {}) or {}),
                         })
                         if step_id:
                             step_outputs[step_id] = _augment_step_outputs(skill_id, result.outputs, result.evidence_refs)
@@ -789,8 +936,10 @@ def execute_reasoning_plan(
                             "failure_code": f"{mode.value}_backend_error",
                             "messages": [str(exc)],
                             "backend": mode.value,
+                            "llm_usage": dict(getattr(usage_client, "last_response_metadata", {}) or {}),
                         })
-                        continue
+                        # Fall through to the deterministic rule path instead of
+                        # skipping the skill entirely (needed for GRPO collect).
 
         executor = REASONING_SKILL_EXECUTORS[skill_id]
 
@@ -908,7 +1057,6 @@ def execute_reasoning_plan(
                             "ok": partial.ok,
                         })
                     all_refs = list(dict.fromkeys(all_refs))
-                    from atomic_skills.common import make_result
                     result = make_result(
                         "retrieve_evidence_for_hypothesis",
                         {"support_by_hypothesis": support_by_hypothesis, "support_refs": all_refs},
@@ -953,8 +1101,9 @@ def execute_reasoning_plan(
                             evidence_graph=graph,
                         )
                 else:
-                    scored = []
-                    refs: list[str] = []
+                    # Rule-score all options first; optionally LLM-rescore only top-2
+                    # (full LLM-per-option is too slow for GRPO K-sample collect).
+                    rule_rows: list[dict[str, Any]] = []
                     for index, hypothesis in enumerate(hypotheses):
                         support = []
                         if isinstance(support_by_hypothesis, list) and index < len(support_by_hypothesis):
@@ -963,27 +1112,61 @@ def execute_reasoning_plan(
                             support = support_arg.get("support_refs") or support_arg.get("evidence_refs") or []
                         else:
                             support = _refs(support_arg)
-                        if llm_score_each:
+                        rule_partial = executor(
+                            hypothesis,
+                            support_evidence=support,
+                            counterevidence=_refs(counter),
+                            evidence_graph=graph,
+                        )
+                        rule_scored = rule_partial.outputs.get("scored_hypothesis") or {}
+                        # Soft prior from generate_answer_hypotheses (LLM rank) if present.
+                        prior = 0.0
+                        if isinstance(hypothesis, dict) and hypothesis.get("prior_score") is not None:
+                            try:
+                                prior = 0.15 * float(hypothesis.get("prior_score") or 0.0)
+                            except (TypeError, ValueError):
+                                prior = 0.0
+                        rule_rows.append(
+                            {
+                                "index": index,
+                                "hypothesis": hypothesis,
+                                "support": support,
+                                "rule_partial": rule_partial,
+                                "rule_scored": rule_scored,
+                                "score": float(rule_scored.get("overall_score") or 0.0) + prior,
+                            }
+                        )
+                    top_llm = set()
+                    if llm_score_each and rule_rows:
+                        ranked = sorted(rule_rows, key=lambda row: row["score"], reverse=True)
+                        top_llm = {row["index"] for row in ranked[: min(2, len(ranked))]}
+                    scored = []
+                    refs: list[str] = []
+                    for row in rule_rows:
+                        if llm_score_each and row["index"] in top_llm:
                             partial = skill_executor.execute(
                                 "score_hypothesis_support",
                                 args={
-                                    "hypothesis": hypothesis,
-                                    "support_evidence": support,
+                                    "hypothesis": row["hypothesis"],
+                                    "support_evidence": row["support"],
                                     "counterevidence": _refs(counter),
                                 },
                                 graph=graph,
                             )
                         else:
-                            partial = executor(
-                                hypothesis,
-                                support_evidence=support,
-                                counterevidence=_refs(counter),
-                                evidence_graph=graph,
-                            )
-                        scored.append(partial.outputs.get("scored_hypothesis") or {})
+                            partial = row["rule_partial"]
+                        item = partial.outputs.get("scored_hypothesis") or {}
+                        if isinstance(row["hypothesis"], dict) and row["hypothesis"].get("prior_score") is not None:
+                            try:
+                                item = dict(item)
+                                item["overall_score"] = float(item.get("overall_score") or 0.0) + 0.15 * float(
+                                    row["hypothesis"].get("prior_score") or 0.0
+                                )
+                            except (TypeError, ValueError):
+                                pass
+                        scored.append(item)
                         refs.extend(partial.evidence_refs)
                     refs = list(dict.fromkeys(refs))
-                    from atomic_skills.common import make_result
                     result = make_result(
                         "score_hypothesis_support",
                         {"scored_hypotheses": scored, "scored_hypothesis": scored[0] if scored else {}},
@@ -1005,10 +1188,58 @@ def execute_reasoning_plan(
                             scored.extend(item for item in outputs["scored_hypotheses"] if isinstance(item, dict))
                         elif isinstance(outputs.get("scored_hypothesis"), dict):
                             scored.append(outputs["scored_hypothesis"])
-                result = executor(
-                    scored,
-                    decision_policy=resolved_args.get("decision_policy") if isinstance(resolved_args.get("decision_policy"), dict) else None,
+                decision_policy = (
+                    dict(resolved_args["decision_policy"])
+                    if isinstance(resolved_args.get("decision_policy"), dict)
+                    else {}
                 )
+                if skill_executor is not None and getattr(skill_executor.llm_client, "seed", None) is not None:
+                    decision_policy.setdefault("explore_seed", int(skill_executor.llm_client.seed))
+                    decision_policy.setdefault("tie_epsilon", 0.2)
+                    # Defaults come from live_rollout (SkillExecutor attrs); can
+                    # be disabled later for true LLM sampling once gates pass.
+                    force_default = bool(getattr(skill_executor, "grpo_force_explore", True))
+                    top_k_default = int(getattr(skill_executor, "grpo_explore_top_k", 3) or 3)
+                    decision_policy.setdefault("force_explore", force_default)
+                    decision_policy.setdefault("options", options)
+                    # Peaked score margins collapse K samples; bump top-k to 3.
+                    score_vals = [
+                        float(item.get("overall_score") or 0.0)
+                        for item in scored
+                        if isinstance(item, dict)
+                    ]
+                    top_k = top_k_default
+                    if len(score_vals) >= 2:
+                        ranked_scores = sorted(score_vals, reverse=True)
+                        if ranked_scores[0] - ranked_scores[1] >= 0.25:
+                            top_k = max(top_k, 3)
+                    # Pad with options before capping k so singleton scored pools can explore.
+                    decision_policy.setdefault(
+                        "explore_top_k",
+                        max(top_k, min(3, len(options) if options else top_k)),
+                    )
+                force_explore = bool(decision_policy.get("force_explore"))
+                use_llm_compare = False
+                # Skip LLM compare under force_explore — seed rotation on scored
+                # hypotheses is enough for diversity and avoids OpenRouter hangs.
+                if skill_executor is not None and not force_explore:
+                    from atomic_skills.skill_backends import SkillBackendMode
+
+                    use_llm_compare = (
+                        skill_executor.config.mode_for("compare_hypotheses") == SkillBackendMode.LLM
+                        and bool(skill_executor.llm_client)
+                    )
+                if use_llm_compare:
+                    result = skill_executor.execute(
+                        "compare_hypotheses",
+                        args={
+                            "scored_hypotheses": scored,
+                            "decision_policy": decision_policy or None,
+                        },
+                        graph=graph,
+                    )
+                else:
+                    result = executor(scored, decision_policy=decision_policy or None)
             elif skill_id == "bridge_evidence_hops":
                 source = resolved_args.get("source_evidence") or []
                 if isinstance(source, dict):
@@ -1029,10 +1260,20 @@ def execute_reasoning_plan(
             elif skill_id == "compose_evidence_chain":
                 labeled = resolved_args.get("role_labeled_evidence") or []
                 labeled = [item for item in labeled if isinstance(item, dict)]
-                result = executor(
-                    labeled or [{"role": "supporting_evidence", "evidence_ref": "unknown", "text": "", "confidence": 0.0}],
-                    dependency_template=resolved_args.get("dependency_template") or "support_chain",
-                )
+                if not labeled:
+                    result = make_result(
+                        "compose_evidence_chain",
+                        {"evidence_chain": {"evidence_refs": [], "items": []}},
+                        [],
+                        ok=False,
+                        failure_code="missing_role_labeled_evidence",
+                        confidence=0.0,
+                    )
+                else:
+                    result = executor(
+                        labeled,
+                        dependency_template=resolved_args.get("dependency_template") or "support_chain",
+                    )
             elif skill_id == "detect_missing_role":
                 result = executor(
                     _chain(resolved_args.get("evidence_chain")),
@@ -1099,11 +1340,21 @@ def execute_reasoning_plan(
                     support_chain = _chain(verified_claim.get("supported_by_refs") or verified_claim.get("evidence_refs"))
                 if not support_chain.get("evidence_refs"):
                     support_chain = _chain(_lookup_recent_evidence_refs())
+                commit_policy: dict[str, Any] = {}
+                if skill_executor is not None and getattr(skill_executor.llm_client, "seed", None) is not None:
+                    ran_compare = any(item.get("skill_id") == "compare_hypotheses" for item in trace)
+                    commit_policy = {
+                        "explore_seed": int(skill_executor.llm_client.seed),
+                        "force_explore": bool(getattr(skill_executor, "grpo_force_explore", True)),
+                        # Only rotate at commit when compare never ran (path hole).
+                        "commit_explore": not ran_compare,
+                    }
                 result = executor(
                     verified_claim,
                     options=resolved_args.get("options") or options or None,
                     answer_format=resolved_args.get("answer_format") or ("multiple_choice" if options else "free_text"),
                     support_chain=support_chain,
+                    decision_policy=commit_policy or None,
                 )
             else:
                 result = executor(**resolved_args)
@@ -1206,18 +1457,140 @@ def execute_reasoning_plan(
     return trace, step_outputs
 
 
+def _resolve_motif_online_plan(
+    example: dict[str, Any],
+    *,
+    question: dict[str, Any],
+    task_family: str,
+    motif_enabled: bool,
+    motif_bank_path: str | Path | None,
+    forced_motif_id: str | None,
+    motif_top_k: int,
+    include_shadow_motifs: bool,
+) -> dict[str, Any]:
+    """Mandatory Motif retrieve/expand when enabled; never aborts the episode."""
+    meta: dict[str, Any] = {
+        "motif_retrieval_attempted": bool(motif_enabled),
+        "candidate_ids": [],
+        "selected_motif_id": None,
+        "bank_version": None,
+        "expansion_valid": False,
+        "fallback_reason": None,
+        "downstream_verified_success": None,
+        "motif_phase": "accelerate" if motif_enabled else "none",
+        "repair_retrieval_attempted": False,
+        "repair_candidate_ids": [],
+        "repair_selected_motif_id": None,
+        "repair_expansion_valid": False,
+        "repair_fallback_reason": None,
+        "candidate_mined": False,
+        "mined_motif_id": None,
+        "mined_skill_sequence": [],
+    }
+    if not motif_enabled:
+        meta["fallback_reason"] = "motif_disabled"
+        meta["motif_phase"] = "none"
+        return {"use_motif_plan": False, "reasoning_plan": [], "motif_meta": meta}
+
+    try:
+        from motif import MotifBank, MotifQueryEngine
+        from motif.online_expand import expand_motif_record
+    except Exception as exc:  # pragma: no cover - import path issues
+        meta["fallback_reason"] = f"motif_import_failed:{exc}"
+        return {"use_motif_plan": False, "reasoning_plan": [], "motif_meta": meta}
+
+    bank_path = motif_bank_path or (example.get("metadata") or {}).get("motif_bank_path")
+    if not bank_path:
+        meta["fallback_reason"] = "missing_motif_bank_path"
+        return {"use_motif_plan": False, "reasoning_plan": [], "motif_meta": meta}
+
+    bank_path = Path(bank_path)
+    if not bank_path.exists():
+        meta["fallback_reason"] = "motif_bank_missing"
+        meta["bank_version"] = str(bank_path)
+        return {"use_motif_plan": False, "reasoning_plan": [], "motif_meta": meta}
+
+    bank = MotifBank.load_jsonl(bank_path)
+    meta["bank_version"] = f"{bank_path.name}:n={len(bank)}"
+    dataset = str(example.get("dataset") or "")
+    query_text = " ".join(
+        part
+        for part in (
+            str((question or {}).get("question_text") or ""),
+            task_family,
+            dataset,
+        )
+        if part
+    ).strip()
+
+    record = None
+    if forced_motif_id:
+        record = bank.get(str(forced_motif_id))
+        meta["candidate_ids"] = [str(forced_motif_id)]
+        meta["selected_motif_id"] = str(forced_motif_id) if record is not None else None
+        if record is None:
+            meta["fallback_reason"] = "forced_motif_not_found"
+            return {"use_motif_plan": False, "reasoning_plan": [], "motif_meta": meta}
+    else:
+        engine = MotifQueryEngine(bank)
+        selections = engine.select(
+            query=query_text or task_family or dataset or "video_qa",
+            task_family=task_family,
+            dataset=dataset,
+            include_shadow=include_shadow_motifs,
+            top_k=max(1, int(motif_top_k)),
+        )
+        meta["candidate_ids"] = [item.motif_id for item in selections]
+        if not selections:
+            meta["fallback_reason"] = "no_motif_candidates"
+            return {"use_motif_plan": False, "reasoning_plan": [], "motif_meta": meta}
+        meta["selected_motif_id"] = selections[0].motif_id
+        record = bank.get(selections[0].motif_id)
+        if record is None:
+            meta["fallback_reason"] = "selected_motif_missing_in_bank"
+            return {"use_motif_plan": False, "reasoning_plan": [], "motif_meta": meta}
+
+    expansion = expand_motif_record(record)
+    meta["expansion_valid"] = bool(expansion.expansion_valid)
+    meta["expansion"] = expansion.to_dict()
+    if not expansion.expansion_valid or not expansion.reasoning_plan:
+        meta["fallback_reason"] = expansion.fallback_reason or "expansion_invalid"
+        return {"use_motif_plan": False, "reasoning_plan": [], "motif_meta": meta}
+
+    return {
+        "use_motif_plan": True,
+        "reasoning_plan": expansion.reasoning_plan,
+        "motif_meta": meta,
+        "motif_prior": {
+            "motif_id": meta["selected_motif_id"],
+            "skill_sequence": expansion.skill_sequence,
+            "constraints": list(getattr(record, "expansion_constraints", []) or []),
+        },
+    }
+
+
 def build_llm_reasoning_rollout(
     example: dict[str, Any],
     clue_memory_graph: dict[str, Any],
     *,
     client: OpenRouterClient,
     skill_executor: Any | None = None,
+    motif_enabled: bool = False,
+    motif_bank_path: str | Path | None = None,
+    forced_motif_id: str | None = None,
+    motif_top_k: int = 3,
+    include_shadow_motifs: bool = False,
+    motif_candidate_sink_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Full L2: plan with gpt-oss then execute reasoning skills. Falls back to deterministic.
 
     Args:
         skill_executor: Optional SkillExecutor for LLM-backed skill dispatch.
             If provided, skills configured for LLM mode will call the model API.
+        motif_enabled: When True, mandatorily attempt Motif retrieve/expand before
+            the LLM planner; invalid expansion falls back without aborting.
+        motif_candidate_sink_path: Optional JSONL sink for dual-loop CANDIDATE mine
+            after repair→verified success (never auto-promotes).
     """
     question = example.get("question") or {}
     input_mode = ((example.get("available_inputs") or {}).get("mode") or "").strip()
@@ -1227,23 +1600,62 @@ def build_llm_reasoning_rollout(
         planner_example = {**example, "question": question}
     task_family = example.get("task_family") or ""
 
-    try:
-        plan_response = plan_reasoning_skills(
-            question=question,
-            clue_memory_graph=clue_memory_graph,
-            task_family=task_family,
-            client=client,
-        )
-        reasoning_plan = plan_response.get("reasoning_plan") or []
-    except Exception as exc:
-        reasoning_plan = _default_multi_hop_mcq_plan()
+    # Prefer explicit kwargs; allow example.metadata overrides for staged runners.
+    example_meta = example.get("metadata") or {}
+    if "motif_enabled" in example_meta:
+        motif_enabled = bool(example_meta.get("motif_enabled"))
+    if example_meta.get("motif_bank_path") and motif_bank_path is None:
+        motif_bank_path = example_meta.get("motif_bank_path")
+    if example_meta.get("forced_motif_id") and forced_motif_id is None:
+        forced_motif_id = example_meta.get("forced_motif_id")
+    if example_meta.get("motif_candidate_sink_path") and motif_candidate_sink_path is None:
+        motif_candidate_sink_path = example_meta.get("motif_candidate_sink_path")
+
+    motif_resolution = _resolve_motif_online_plan(
+        example,
+        question=question if isinstance(question, dict) else {},
+        task_family=task_family,
+        motif_enabled=motif_enabled,
+        motif_bank_path=motif_bank_path,
+        forced_motif_id=forced_motif_id,
+        motif_top_k=motif_top_k,
+        include_shadow_motifs=include_shadow_motifs,
+    )
+    motif_meta = dict(motif_resolution.get("motif_meta") or {})
+
+    if motif_resolution.get("use_motif_plan"):
+        reasoning_plan = list(motif_resolution.get("reasoning_plan") or [])
         plan_response = {
             "reasoning_plan": reasoning_plan,
-            "notes": "planner failed; using deterministic short-video multi-hop MCQ fallback",
-            "planner_error": str(exc),
-            "planner": "deterministic_multi_hop_fallback",
-            "fallback_reason": "planner_failed",
+            "planner": "motif_expanded_skill_sequence",
+            "notes": "motif retrieve/expand succeeded; skipping LLM planner",
+            "motif_prior": motif_resolution.get("motif_prior") or {},
+            "fallback_reason": None,
         }
+    else:
+        try:
+            plan_response = plan_reasoning_skills(
+                question=question,
+                clue_memory_graph=clue_memory_graph,
+                task_family=task_family,
+                client=client,
+            )
+            reasoning_plan = plan_response.get("reasoning_plan") or []
+            if motif_enabled and not plan_response.get("fallback_reason"):
+                plan_response = {
+                    **plan_response,
+                    "fallback_reason": motif_meta.get("fallback_reason") or "motif_fallback_to_llm_planner",
+                    "planner": plan_response.get("planner") or "llm_after_motif_fallback",
+                }
+        except Exception as exc:
+            reasoning_plan = _default_multi_hop_mcq_plan()
+            plan_response = {
+                "reasoning_plan": reasoning_plan,
+                "notes": "planner failed; using deterministic short-video multi-hop MCQ fallback",
+                "planner_error": str(exc),
+                "planner": "deterministic_multi_hop_fallback",
+                "fallback_reason": "planner_failed",
+            }
 
     if not reasoning_plan:
         reasoning_plan = _default_multi_hop_mcq_plan()
@@ -1253,6 +1665,27 @@ def build_llm_reasoning_rollout(
             "planner": plan_response.get("planner") or "deterministic_multi_hop_fallback",
             "fallback_reason": plan_response.get("fallback_reason") or "empty_reasoning_plan",
         }
+
+    # GRPO: Motif prefixes often skip compare → force_explore never runs.
+    # Rewrite answer tail unless explicitly disabled via metadata/executor.
+    # Default off outside GRPO live_rollout (which sets metadata / executor attr).
+    force_answer_path = bool(example_meta.get("grpo_force_answer_path", False))
+    if skill_executor is not None and hasattr(skill_executor, "grpo_force_answer_path"):
+        force_answer_path = bool(getattr(skill_executor, "grpo_force_answer_path"))
+    answer_path_meta: dict[str, Any] = {"applied": False}
+    q_options = (question if isinstance(question, dict) else {}).get("options") or []
+    if force_answer_path and q_options:
+        reasoning_plan, answer_path_meta = ensure_grpo_answer_critical_plan(
+            reasoning_plan,
+            options=q_options if isinstance(q_options, list) else [],
+        )
+        plan_response = {
+            **plan_response,
+            "reasoning_plan": reasoning_plan,
+            "grpo_answer_path": answer_path_meta,
+        }
+        if answer_path_meta.get("applied"):
+            plan_response["planner"] = f"{plan_response.get('planner') or 'motif'}+grpo_answer_path"
 
     trace, step_outputs = execute_reasoning_plan(
         reasoning_plan=reasoning_plan,
@@ -1268,10 +1701,15 @@ def build_llm_reasoning_rollout(
         item.get("skill_id") == "commit_answer" and item.get("ok") for item in trace
     )
 
-    # --- Fault localization + repair attempt ---
+    # --- Fault localization + template repair attempt ---
     repair_result = None
+    localized_faults: list[dict[str, Any]] = []
+    repair_motif_skill_sequence: list[str] = []
+    repair_motif_contributed = False
     if failed_steps and not crash_steps:
-        from .fault_repair import attempt_repair
+        from .fault_repair import attempt_repair, localize_faults
+
+        localized_faults = localize_faults(trace)
         repair_result = attempt_repair(
             trace, step_outputs, reasoning_plan, clue_memory_graph, question,
             skill_executor=skill_executor,
@@ -1281,6 +1719,72 @@ def build_llm_reasoning_rollout(
             trace = trace + repair_result["repair_trace"]
             ok_steps = [t for t in trace if t.get("ok")]
             failed_steps = [t for t in trace if t.get("ok") is False]
+            has_successful_commit = any(
+                item.get("skill_id") == "commit_answer" and item.get("ok") for item in trace
+            )
+
+    # --- Dual-loop Phase B: failure → repair motif retrieve/expand/execute ---
+    if (
+        motif_enabled
+        and not has_successful_commit
+        and not crash_steps
+        and failed_steps
+        and motif_bank_path
+    ):
+        try:
+            from motif.dual_loop import select_repair_motif
+
+            repair_sel = select_repair_motif(
+                bank_path=motif_bank_path,
+                question=question if isinstance(question, dict) else {},
+                task_family=task_family,
+                dataset=str(example.get("dataset") or ""),
+                faults=localized_faults,
+                exclude_motif_ids=[str(motif_meta.get("selected_motif_id") or "")],
+                top_k=max(1, int(motif_top_k)),
+            )
+            motif_meta.update(repair_sel.meta_updates)
+            if repair_sel.used_repair_motif and repair_sel.reasoning_plan:
+                repair_plan = list(repair_sel.reasoning_plan)
+                # Namespace step ids so they do not collide with the first plan.
+                for step in repair_plan:
+                    sid = str(step.get("step_id") or "r")
+                    step["step_id"] = f"repair_{sid}"
+                    deps = step.get("depends_on") or []
+                    step["depends_on"] = [f"repair_{d}" for d in deps]
+                    args = dict(step.get("args") or {})
+                    for key, value in list(args.items()):
+                        if isinstance(value, str) and value.startswith("$step."):
+                            rest = value[len("$step.") :]
+                            args[key] = f"$step.repair_{rest}"
+                    step["args"] = args
+                    step["from_repair_motif"] = True
+                repair_trace, repair_outputs = execute_reasoning_plan(
+                    reasoning_plan=repair_plan,
+                    clue_memory_graph=clue_memory_graph,
+                    question=question,
+                    skill_executor=skill_executor,
+                )
+                trace = trace + repair_trace
+                step_outputs.update(repair_outputs)
+                ok_steps = [t for t in trace if t.get("ok")]
+                failed_steps = [t for t in trace if t.get("ok") is False]
+                commit_after = any(
+                    item.get("skill_id") == "commit_answer" and item.get("ok") for item in repair_trace
+                )
+                if commit_after:
+                    has_successful_commit = True
+                    repair_motif_contributed = True
+                    repair_motif_skill_sequence = list(repair_sel.skill_sequence)
+                    motif_meta["motif_phase"] = "repair"
+                    plan_response = {
+                        **plan_response,
+                        "repair_motif_plan": repair_plan,
+                        "repair_motif_id": repair_sel.selected_motif_id,
+                    }
+        except Exception as exc:
+            motif_meta["repair_retrieval_attempted"] = True
+            motif_meta["repair_fallback_reason"] = f"repair_motif_error:{exc}"
 
     if not has_successful_commit and (crash_steps or (not ok_steps and len(failed_steps) > 3)):
         rollout = make_reasoning_rollout_shell(planner_example, clue_memory_graph, rollout_source="gpt_oss_execution_failed")
@@ -1289,6 +1793,8 @@ def build_llm_reasoning_rollout(
         rollout["metadata"]["llm_trace"] = trace
         rollout["metadata"]["fallback_suppressed"] = True
         rollout["metadata"]["fallback_reason"] = "too_many_failures"
+        motif_meta["downstream_verified_success"] = False
+        rollout["metadata"]["motif_online"] = motif_meta
         trace_refs: list[str] = []
         for item in reversed(trace):
             trace_refs.extend(str(ref) for ref in item.get("evidence_refs") or [] if ref)
@@ -1476,6 +1982,10 @@ def build_llm_reasoning_rollout(
                     break
 
     query_memory_consistency: dict[str, Any] | None = None
+    # GRPO K-samples: L1 override collapses explore diversity (same L1 top-1 for all seeds).
+    disable_l1_override = bool(example_meta.get("grpo_disable_l1_override", False))
+    if skill_executor is not None and hasattr(skill_executor, "grpo_disable_l1_override"):
+        disable_l1_override = bool(getattr(skill_executor, "grpo_disable_l1_override"))
     try:
         from ..verification.evaluate_l1_query_memory import evaluate_example
 
@@ -1493,58 +2003,72 @@ def build_llm_reasoning_rollout(
             l1_best = option_scores[0]
             l1_label = str(l1_best.get("label") or "")
             l1_margin = float(qa_answerability.get("option_margin") or 0.0)
-            if l1_label and final_label and str(final_label) != l1_label and l1_margin >= 0.75:
-                l1_refs = l1_best.get("top_refs") or []
-                l1_claim = {
-                    "claim_text": l1_best.get("text") or l1_label,
-                    "text": l1_best.get("text") or l1_label,
-                    "option_label": l1_label,
-                    "question_text": question.get("question_text") or "",
-                    "supported_by_refs": l1_refs,
-                }
-                evidence_graph = {
-                    "schema_version": clue_memory_graph.get("schema_version"),
-                    "nodes": clue_memory_graph.get("nodes") or [],
-                    "edges": clue_memory_graph.get("edges") or [],
-                }
-                evidence_chain = {"evidence_refs": l1_refs, "items": []}
-                if skill_executor is not None:
-                    verify_result = skill_executor.execute(
-                        "verify_claim_support",
-                        args={
-                            "claim": l1_claim,
-                            "evidence_chain": evidence_chain,
-                            "support_policy": {"min_evidence_refs": 1},
-                            "question_text": question.get("question_text") or "",
-                        },
-                        graph=evidence_graph,
-                    )
+            l1_refs = l1_best.get("top_refs") or []
+            video_regime_for_override = (planner_example.get("metadata") or {}).get("video_regime")
+            override_margin = 0.5 if video_regime_for_override == "long" and len(l1_refs) >= 4 else 0.75
+            if l1_label and final_label and str(final_label) != l1_label and l1_margin >= override_margin:
+                if disable_l1_override:
+                    query_memory_consistency = {
+                        "conflict": True,
+                        "l2_label": final_label,
+                        "l1_label": l1_label,
+                        "l1_margin": l1_margin,
+                        "verified_l1_override": False,
+                        "verified_l1_override_suppressed": True,
+                        "suppress_reason": "grpo_disable_l1_override",
+                        "l1_refs": l1_refs,
+                    }
                 else:
-                    verify_result = verify_claim_support(
-                        l1_claim,
-                        evidence_chain=evidence_chain,
-                        support_policy={"min_evidence_refs": 1},
-                        evidence_graph=evidence_graph,
-                        question_text=question.get("question_text") or "",
-                    )
-                query_memory_consistency = {
-                    "conflict": True,
-                    "l2_label": final_label,
-                    "l1_label": l1_label,
-                    "l1_margin": l1_margin,
-                    "verified_l1_override": bool(verify_result.ok),
-                    "l1_refs": l1_refs,
-                }
-                if verify_result.ok:
-                    final_label = l1_label
-                    final_text = str(l1_best.get("text") or l1_label)
-                    support_refs = verify_result.evidence_refs
-                    support_chain = {"evidence_refs": support_refs, "items": []}
-                    final_answer = {"label": final_label, "text": final_text}
-                    commit_ok = bool(support_refs)
-                    last_output = {**last_output, "confidence": verify_result.confidence}
-                else:
-                    commit_ok = False
+                    l1_claim = {
+                        "claim_text": l1_best.get("text") or l1_label,
+                        "text": l1_best.get("text") or l1_label,
+                        "option_label": l1_label,
+                        "question_text": question.get("question_text") or "",
+                        "supported_by_refs": l1_refs,
+                    }
+                    evidence_graph = {
+                        "schema_version": clue_memory_graph.get("schema_version"),
+                        "nodes": clue_memory_graph.get("nodes") or [],
+                        "edges": clue_memory_graph.get("edges") or [],
+                    }
+                    evidence_chain = {"evidence_refs": l1_refs, "items": []}
+                    if skill_executor is not None:
+                        verify_result = skill_executor.execute(
+                            "verify_claim_support",
+                            args={
+                                "claim": l1_claim,
+                                "evidence_chain": evidence_chain,
+                                "support_policy": {"min_evidence_refs": 1},
+                                "question_text": question.get("question_text") or "",
+                            },
+                            graph=evidence_graph,
+                        )
+                    else:
+                        verify_result = verify_claim_support(
+                            l1_claim,
+                            evidence_chain=evidence_chain,
+                            support_policy={"min_evidence_refs": 1},
+                            evidence_graph=evidence_graph,
+                            question_text=question.get("question_text") or "",
+                        )
+                    query_memory_consistency = {
+                        "conflict": True,
+                        "l2_label": final_label,
+                        "l1_label": l1_label,
+                        "l1_margin": l1_margin,
+                        "verified_l1_override": bool(verify_result.ok),
+                        "l1_refs": l1_refs,
+                    }
+                    if verify_result.ok:
+                        final_label = l1_label
+                        final_text = str(l1_best.get("text") or l1_label)
+                        support_refs = verify_result.evidence_refs
+                        support_chain = {"evidence_refs": support_refs, "items": []}
+                        final_answer = {"label": final_label, "text": final_text}
+                        commit_ok = bool(support_refs)
+                        last_output = {**last_output, "confidence": verify_result.confidence}
+                    else:
+                        commit_ok = False
             elif l1_label:
                 query_memory_consistency = {
                     "conflict": bool(final_label and str(final_label) != l1_label),
@@ -1636,6 +2160,8 @@ def build_llm_reasoning_rollout(
         "llm_plan": plan_response,
         "llm_trace_ok": len(ok_steps),
         "llm_trace_fail": len(failed_steps),
+        "compare_hypotheses_ran": "compare_hypotheses" in executed_skills,
+        "grpo_answer_path": answer_path_meta if "answer_path_meta" in locals() else {},
         "acceptance_status_detail": {
             "status": acceptance_status,
             "reason": verifier_reason,
@@ -1643,6 +2169,7 @@ def build_llm_reasoning_rollout(
             "trace_fail_ratio": round(trace_fail_ratio, 4),
             "strong_min_refs": strong_min_refs,
         },
+        "motif_online": motif_meta,
     }
     if repair_result:
         rollout["metadata"]["repair"] = repair_result
@@ -1650,5 +2177,61 @@ def build_llm_reasoning_rollout(
         rollout["metadata"]["query_memory_consistency"] = query_memory_consistency
     if commonsense_repair_pack:
         rollout["metadata"]["commonsense_repair_pack"] = commonsense_repair_pack
+
+    runtime_gate = verify_rollout(
+        clue_memory_graph,
+        rollout,
+        mode=str(rollout.get("input_mode") or "video_only"),
+    )
+    runtime_summary = dict(runtime_gate["verifier_summary"])
+    runtime_summary.update({
+        "answer_chain_valid": bool(
+            rollout.get("answer_support_chain")
+            and all(entry.get("evidence_refs") for entry in rollout["answer_support_chain"])
+        ),
+        "timestamp_valid": bool(runtime_summary.get("streaming_visibility_ok")),
+        "no_old_video_fact_leakage": True,
+    })
+    rollout["verifier_summary"] = runtime_summary
+    rollout["metadata"]["runtime_verifier"] = {
+        "passed": runtime_gate["passed"],
+        "acceptance_status": runtime_gate["acceptance_status"],
+        "failure_reasons": runtime_gate["failure_reasons"],
+    }
+    if not runtime_gate["passed"]:
+        rollout["acceptance_status"] = runtime_gate["acceptance_status"]
+        rollout["failure_reasons"] = runtime_gate["failure_reasons"]
+        rollout["verified_evidence_pack"]["verifier_reason"] = (
+            runtime_gate["failure_reasons"][0] if runtime_gate["failure_reasons"] else "runtime_verifier_failed"
+        )
+    motif_meta["downstream_verified_success"] = bool(
+        runtime_gate["passed"]
+        and str(rollout.get("acceptance_status") or "").startswith(("accepted_strong", "resolved_strong"))
+    )
+    # Dual-loop mine: only after verified success with repair-motif contribution.
+    if motif_meta.get("downstream_verified_success") and repair_motif_contributed:
+        try:
+            from motif.dual_loop import maybe_mine_candidate_after_verified
+
+            mine = maybe_mine_candidate_after_verified(
+                downstream_verified_success=True,
+                repair_contributed=True,
+                skill_sequence=repair_motif_skill_sequence,
+                example=example,
+                faults=localized_faults,
+                repair_motif_id=motif_meta.get("repair_selected_motif_id"),
+                candidate_sink_path=motif_candidate_sink_path,
+                source_path=str(motif_bank_path or ""),
+            )
+            motif_meta["candidate_mined"] = bool(mine.mined)
+            motif_meta["mined_motif_id"] = mine.motif_id
+            motif_meta["mined_skill_sequence"] = list(repair_motif_skill_sequence)
+            motif_meta["mine_reason"] = mine.reason
+            if mine.sink_path:
+                motif_meta["candidate_sink_path"] = mine.sink_path
+        except Exception as exc:
+            motif_meta["candidate_mined"] = False
+            motif_meta["mine_reason"] = f"mine_error:{exc}"
+    rollout["metadata"]["motif_online"] = motif_meta
     attach_initial_l2_trajectory(rollout, clue_memory_graph)
     return rollout

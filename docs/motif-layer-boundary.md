@@ -5,16 +5,27 @@ Last updated: 2026-07-06
 This document fixes the cleanup decision for composed motifs and the older
 `skill_agents/` stack in the L1/L2 controller-training branch.
 
+In the three-agent architecture, this document defines Agent 3: the Motif
+Extraction and Management Agent. Agent 3 uses a Qwen3.5/GPT-OSS agent pipeline
+to inspect accepted L2 traces, propose reusable motifs, curate candidates, and
+manage motif promotion, but it does not answer questions directly.
+
 ## Decision
 
 Keep composed motifs as an optional L1/L2 planning layer, but implement that
 layer as new, small code aligned with the current graph schemas. Do not make
 `skill_agents/` the motif runtime or a required dependency of the L1/L2 path.
 
+Agent 3 is therefore an LLM-backed registry/mining/management agent, not a
+runtime black-box skill executor. The deterministic miner is a seed/fallback
+and audit path, not the full Motif Agent.
+
 ```text
 accepted SkillGraphRollout
-  -> motif miner
+  -> Qwen3.5 motif proposal agent
+  -> GPT-OSS motif curator
   -> candidate motif registry
+  -> deterministic seed/audit checks
   -> promotion gates
   -> motif retrieval as planning prior
   -> atomic graph expansion
@@ -54,6 +65,30 @@ A motif is not:
 
 Every runtime use must expand into frozen atomic skill nodes before execution.
 
+## Agent Pipeline
+
+Agent 3 follows the old skill-bank-agent shape, but on the current L1/L2 graph
+schema:
+
+```text
+accepted rollout
+  -> extractor agent proposes motif candidates
+  -> curator agent approves / defers / vetoes candidates
+  -> motif bank stores support stats and expansion templates
+  -> promotion gates decide candidate vs promoted
+```
+
+The intended model split is:
+
+| Stage | Default model | Role |
+|-------|---------------|------|
+| Motif proposal | `qwen/qwen3.5` | Read compact accepted rollout traces and propose reusable graph motifs. |
+| Motif curation | `openai/gpt-oss-120b` | Filter proposals for reuse, leakage risk, expansion safety, and bank fit. |
+| Deterministic seed/audit | local code | Extract trajectory/repair path seeds and provide offline fallback. |
+
+This borrows the persistent bank and curator idea from the old `skill_agents/`
+pipeline, but not the old package as a runtime dependency.
+
 ## Online Extraction Policy
 
 Online motif extraction is allowed only as candidate mining:
@@ -62,8 +97,9 @@ Online motif extraction is allowed only as candidate mining:
 L2 rollout
   -> final verifier result
   -> accepted graph only
+  -> compact accepted trace for Qwen/GPT-OSS motif agents
   -> canonicalize entity/time/option labels
-  -> mine small connected atomic subgraphs
+  -> propose/curate reusable graph motifs
   -> update candidate statistics
 ```
 
@@ -91,14 +127,22 @@ The first implementation lives under:
 
 ```text
 dataset_clip_wrapper/motifs/
+  agent.py
   __init__.py
   bank.py
   lifecycle.py
   mine_existing_l1_l2.py
   miner.py
+  instance_miner.py
   retrieval.py
   schemas.py
   transfer.py
+  llm_agent.py
+  registry.py
+  promotion.py
+  expansion.py
+  canonicalize.py
+  build_motif_bank.py
 ```
 
 Expected ownership:
@@ -112,9 +156,13 @@ Expected ownership:
 | `transfer.py` | Compare baseline and motif-assisted runs on held-out examples. |
 | `miner.py` | Extract first-pass candidate motifs from accepted L1/L2 rollout graphs. |
 | `mine_existing_l1_l2.py` | CLI for mining motif candidates from saved JSON/JSONL outputs. |
-
-Future extensions should add canonicalization, promotion-gate, and expansion
-modules once candidate motifs need to become runtime planning priors.
+| `agent.py` | High-level Motif Agent orchestration with `hybrid`, `llm`, and `deterministic` modes. |
+| `llm_agent.py` | Qwen3.5/GPT-OSS extractor-curator adapter for motif proposal and bank-maintenance decisions. |
+| `canonicalize.py` | Replace surface entities, timestamps, option labels, and dataset-specific terms with abstract roles. |
+| `instance_miner.py` | Deterministic seed/fallback extraction of trajectory-round and repair-subgraph path candidates. |
+| `registry.py` | Store support, failure, dataset, task-family, example refs, and LLM curator metadata. |
+| `promotion.py` | Apply support, verifier, confusion, leakage, and expansion gates. |
+| `expansion.py` | Instantiate promoted motifs on current evidence and expand them into atomic skill nodes. |
 
 ## Relationship To skill_agents/
 

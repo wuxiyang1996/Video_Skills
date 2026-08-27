@@ -26,6 +26,38 @@ HIDDEN_SOURCE_TYPES = frozenset({
 })
 
 
+def _iter_refs(value: Any) -> list[str]:
+    """Normalize model-emitted evidence refs into scalar node ids."""
+    refs: list[str] = []
+
+    def visit(item: Any) -> None:
+        if item is None:
+            return
+        if isinstance(item, str):
+            if item:
+                refs.append(item)
+            return
+        if isinstance(item, (int, float, bool)):
+            refs.append(str(item))
+            return
+        if isinstance(item, list):
+            for child in item:
+                visit(child)
+            return
+        if isinstance(item, dict):
+            for key in ("node_id", "evidence_ref", "ref", "id"):
+                if item.get(key):
+                    visit(item.get(key))
+                    return
+            for key in ("evidence_refs", "supported_by_refs", "support_refs", "clue_refs"):
+                if item.get(key):
+                    visit(item.get(key))
+                    return
+
+    visit(value)
+    return refs
+
+
 def _check_schema_valid(clue_graph: dict[str, Any], rollout: dict[str, Any]) -> list[str]:
     """Basic structural checks without jsonschema dependency."""
     errors: list[str] = []
@@ -48,12 +80,12 @@ def _check_evidence_ref_existence(rollout: dict[str, Any], clue_graph: dict[str,
     clue_node_ids = {n.get("node_id") for n in clue_graph.get("nodes", []) if n.get("node_id")}
     errors: list[str] = []
     for node in rollout.get("nodes", []):
-        for ref in node.get("evidence_refs") or []:
+        for ref in _iter_refs(node.get("evidence_refs")):
             if ref and ref not in clue_node_ids:
                 errors.append(f"rollout node {node.get('node_id')} refs missing L1 node: {ref}")
                 break
     for claim in rollout.get("claims") or []:
-        for ref in claim.get("supported_by_refs") or []:
+        for ref in _iter_refs(claim.get("supported_by_refs")):
             if ref and ref not in clue_node_ids:
                 errors.append(f"claim {claim.get('claim_id')} refs missing L1 node: {ref}")
                 break
@@ -74,7 +106,7 @@ def _check_hidden_supervision_leakage(
             errors.append(f"L1 leaked hidden source: {node.get('source_type')} ({node.get('node_id')})")
             break
     for node in rollout.get("nodes", []):
-        for ref in node.get("evidence_refs") or []:
+        for ref in _iter_refs(node.get("evidence_refs")):
             clue_node = next((n for n in clue_graph.get("nodes", []) if n.get("node_id") == ref), None)
             if clue_node and clue_node.get("source_type") in HIDDEN_SOURCE_TYPES:
                 errors.append(f"L2 node {node.get('node_id')} cites hidden source via {ref}")

@@ -11,6 +11,14 @@ new L1/L2 clue-graph protocol with the older Video_Skills runtime and several
 earlier training/skill-agent experiments, so code cleanup should still proceed
 by classification first and deletion later.
 
+The target control split is three high-level agents:
+
+- L1 Graph Crafter for visible evidence graph construction.
+- L2 Recursive Reasoning / Answer Agent for reasoning graph construction,
+  verifier use, bounded repair, and final answer/abstain.
+- Motif Extraction and Management Agent for mining and promoting reusable
+  atomic-subgraph priors from accepted rollouts.
+
 ## What Is Clean Enough Now
 
 - `dataset_clip_wrapper/` has bundle boundaries for perception, L1 graph, L2

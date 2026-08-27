@@ -62,6 +62,34 @@ This relaunch changes the implementation surface:
 - Treat composed skills as optional motifs that expand into atomic skill nodes,
   not as new primitive actions.
 
+## 1.1 Three High-Level Agents
+
+The schema is designed around three high-level agents. They share frozen atomic
+skills and typed graph contracts, but they own different objects.
+
+```text
+video + question
+  -> Agent 1: L1 Graph Crafter
+  -> Agent 2: L2 Recursive Reasoning / Answer Agent
+  -> Agent 3: Motif Extraction and Management Agent
+```
+
+| Agent | Main object | Writes | Must not do |
+|-------|-------------|--------|-------------|
+| L1 Graph Crafter | `ClueMemoryGraph` / evidence graph | visible video evidence nodes, edges, retrieval indexes, answerability gaps | commit answers or copy hidden GT into visible evidence |
+| L2 Recursive Reasoning / Answer Agent | `SkillGraphRollout`, `l2_trajectory`, `repair_subgraph` | reasoning nodes, claims, verifier calls, bounded repair rounds, final answer or abstain | invent evidence, bypass verifier, run unbounded recursion |
+| Motif Extraction and Management Agent | `CompositeMotif` registry | Qwen3.5/GPT-OSS motif proposals, curator decisions, support stats, promotion decisions, atomic expansion templates | create new atomic skills, execute as a black-box skill agent, mine held-out test data |
+
+The current implementation has Agent 1 as the L1 perception/clue-graph stack
+and Agent 2 as GPT-OSS L2 planning plus bounded recursive repair traces. Agent
+3 is implemented under `dataset_clip_wrapper/motifs/` as a Qwen3.5/GPT-OSS
+motif proposal and curation layer with deterministic seed/fallback mining.
+
+Agent 2 may later be trained with RLVR-style progressive rewards, but held-out
+evaluation remains hard 0/1 or True/False. Agent 3 may use accepted training
+rollouts to update motif statistics, but it must not use held-out test examples
+for motif thresholds or store hidden GT as motif content.
+
 ## 2. File Layout
 
 Recommended persisted files:
@@ -1105,8 +1133,8 @@ setting where clue intervals and reasoning chains are hidden labels.
 
 ## 14. Composed Motif Extraction
 
-Yes, we should design an extraction module for composed skills, but the object
-being extracted should be a verified sub-graph motif rather than a new tool.
+The extraction module for composed skills should extract verified sub-graph
+motifs rather than new tools.
 
 The extraction target is:
 
@@ -1115,7 +1143,9 @@ frequent verified atomic-skill subgraph
   + reusable evidence roles
   + argument-binding template
   + typical failure/repair pattern
-  -> CompositeMotif
+  -> Qwen3.5 motif proposal
+  -> GPT-OSS curator decision
+  -> CompositeMotif candidate or promoted record
 ```
 
 The extraction target is not:
@@ -1129,7 +1159,24 @@ old-video fact memory
 
 ### 14.1 Inputs
 
-Motif extraction consumes accepted `SkillGraphRollout` objects only:
+Motif extraction consumes accepted `SkillGraphRollout` objects only. The
+primary implementation is agentic, following the old skill-bank-agent
+propose -> curate -> bank-maintenance pipeline shape on the current L1/L2
+schema:
+
+```text
+accepted rollout
+  -> compact rollout summary
+  -> Qwen3.5 proposal agent
+  -> GPT-OSS curator
+  -> JSONL motif bank
+  -> promotion gates
+```
+
+The deterministic miner is retained as seed/fallback/audit for trajectory-round
+paths and repair-subgraph paths; it is not the full Motif Agent.
+
+Accepted statuses:
 
 ```text
 accepted_gold

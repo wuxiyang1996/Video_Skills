@@ -8,6 +8,7 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,7 @@ from .llm_pipeline import (
     _resolve_perception_spans,
     _subtitle_context_for_clip,
 )
-from ..perception.clip_policy import segment_coarse_index
+from ..perception.clip_policy import segment_coarse_index, segment_perception_clips
 from ..dataset_graph_presets import apply_profile_defaults, clip_policy_for, regime_for_dataset, retrieval_for
 from ..perception.openrouter_client import OpenRouterClient, load_openrouter_api_key
 from ..pipeline import build_canonical_example
@@ -106,10 +107,21 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--mode", default="video_only", choices=["expert_demo", "video_only"])
     parser.add_argument("--limit", type=int, default=1)
+    parser.add_argument("--start-index", type=int, default=0, help="Skip this many selected examples or unique videos.")
+    parser.add_argument(
+        "--unique-videos",
+        action="store_true",
+        help="Process only the first QA encountered for each video id.",
+    )
     parser.add_argument("--output", default="dataset_clip_wrapper/output/staged_llm_pipeline.jsonl")
     parser.add_argument("--stage-dir", default="dataset_clip_wrapper/output/staged")
     parser.add_argument("--keys-py", default="/fs/gamma-projects/vlm-robot/keys.py")
     parser.add_argument("--force", action="store_true", help="Ignore cached stage files and rebuild.")
+    parser.add_argument(
+        "--continue-on-item-error",
+        action="store_true",
+        help="Log a failed example and continue the lane; a later resumable attempt can retry it.",
+    )
     parser.add_argument(
         "--rebuild-from-stages",
         action="store_true",
@@ -132,6 +144,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument("--clip-schema-model", default="qwen/qwen3.5-9b")
+    parser.add_argument(
+        "--clip-schema-api-base",
+        default="https://openrouter.ai/api/v1/chat/completions",
+        help="Chat-completions endpoint; use a local OpenAI-compatible server for local Qwen.",
+    )
     parser.add_argument("--clip-schema-backend", default="qwen", choices=["qwen", "video_tools"])
     parser.add_argument("--clip-schema-max-clips", type=int, default=999)
     parser.add_argument("--clip-schema-frames", type=int, default=1)
@@ -158,7 +175,34 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--graph-deterministic", action="store_true")
     parser.add_argument("--skip-l2-planner", action="store_true")
+    parser.add_argument(
+        "--motif-enabled",
+        action="store_true",
+        help="Mandate Motif retrieve/expand before L2 planner (fallback on failure).",
+    )
+    parser.add_argument(
+        "--motif-bank",
+        default=None,
+        help="Path to motif bank JSONL used for online retrieve/expand.",
+    )
+    parser.add_argument("--forced-motif-id", default=None, help="Force a motif_id instead of retrieval.")
+    parser.add_argument("--motif-top-k", type=int, default=3)
+    parser.add_argument(
+        "--include-shadow-motifs",
+        action="store_true",
+        help="Allow SHADOW motifs in online retrieval (pilot only).",
+    )
+    parser.add_argument(
+        "--reuse-frozen-l1",
+        action="store_true",
+        help="Prefer cached 04_l1_example.json / clue graph; only re-run L2+Motif when possible.",
+    )
     parser.add_argument("--skill-model", default="qwen/qwen3.5-9b")
+    parser.add_argument(
+        "--skill-api-base",
+        default="https://openrouter.ai/api/v1/chat/completions",
+        help="OpenAI-compatible endpoint for atomic skills; local Qwen avoids remote rate limits.",
+    )
     parser.add_argument("--llm-skill-scope", default="all", choices=["all", "verifier"])
     parser.add_argument("--disable-llm-skills", action="store_true")
     parser.add_argument("--disable-vlm-skills", action="store_true")
@@ -166,6 +210,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--retrieval-topk", type=int, default=2)
     parser.add_argument("--retrieval-mode", default="lexical", choices=["lexical", "sequential"])
     parser.add_argument("--query-time-retrieval", action="store_true")
+    parser.add_argument(
+        "--llm-coarse-selector",
+        action="store_true",
+        help="Use GPT-OSS to choose coarse indices from visible summaries; retain lexical retrieval as fallback.",
+    )
     parser.add_argument("--no-time-anchor-expansion", action="store_true")
     parser.add_argument("--index-fine-expansion", default=None, choices=["none", "all", "retrieval_gated"])
     return parser
@@ -207,6 +256,7 @@ def _config_from_args(args: argparse.Namespace) -> WrapperConfig:
         clip_schema=ClipSchemaConfig(
             backend=args.clip_schema_backend,
             model=args.clip_schema_model,
+            api_base=args.clip_schema_api_base,
             keys_py_path=args.keys_py,
             max_clips=args.clip_schema_max_clips,
             request_frames=args.clip_schema_frames,
@@ -224,6 +274,7 @@ def _config_from_args(args: argparse.Namespace) -> WrapperConfig:
         ),
         skill_execution=SkillExecutionConfig(
             skill_model=args.skill_model,
+            skill_api_base=args.skill_api_base,
             enable_llm_skills=not args.disable_llm_skills,
             enable_vlm_skills=not args.disable_vlm_skills,
             llm_skill_scope=args.llm_skill_scope,
@@ -233,6 +284,12 @@ def _config_from_args(args: argparse.Namespace) -> WrapperConfig:
         run_clip_schema=True,
         run_graph_compose=True,
         run_l2_llm_planner=not args.skip_l2_planner,
+        motif_enabled=bool(args.motif_enabled),
+        motif_bank_path=args.motif_bank,
+        forced_motif_id=args.forced_motif_id,
+        motif_top_k=int(args.motif_top_k),
+        include_shadow_motifs=bool(args.include_shadow_motifs),
+        reuse_frozen_l1_example=bool(args.reuse_frozen_l1),
     )
 
 
@@ -381,6 +438,123 @@ def _produce_or_resume_coarse_summaries(
         fill_missing=fill_missing,
         workers=workers,
     )
+
+
+def _produce_or_resume_coarse_selection(
+    *,
+    item: Any,
+    config: WrapperConfig,
+    coarse_schemas: list[dict[str, Any]],
+    stage_path: Path,
+    force: bool,
+) -> dict[str, Any]:
+    if stage_path.exists() and not force:
+        cached = _read_json(stage_path)
+        if isinstance(cached, dict):
+            return cached
+
+    catalog = []
+    for index, schema in enumerate(coarse_schemas):
+        catalog.append({
+            "coarse_index": index,
+            "time_span": schema.get("time_span"),
+            "scene_description": str(schema.get("scene_description") or "")[:500],
+            "observable_facts": [
+                str(fact.get("text") or "")[:240]
+                for fact in schema.get("observable_facts", [])[:8]
+                if isinstance(fact, dict)
+            ],
+            "events": [
+                str(event.get("description") or "")[:240]
+                for event in schema.get("events", [])[:6]
+                if isinstance(event, dict)
+            ],
+            "searchable_phrases": [str(value)[:120] for value in schema.get("searchable_phrases", [])[:12]],
+        })
+    question = {
+        "question_text": item.question.get("question_text"),
+        "options": [
+            {"label": option.get("label"), "text": option.get("text")}
+            for option in item.question.get("options", [])
+            if isinstance(option, dict)
+        ],
+    }
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "coarse_clip_selection",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "selected_coarse_indices": {"type": "array", "items": {"type": "integer"}},
+                    "rationale_short": {"type": "string"},
+                },
+                "required": ["selected_coarse_indices", "rationale_short"],
+            },
+        },
+    }
+    try:
+        api_key = load_openrouter_api_key(
+            keys_py_path=config.graph_composer.keys_py_path or config.backbone.keys_py_path,
+            env_var=config.graph_composer.api_key_env,
+        )
+        client = OpenRouterClient(
+            model=config.graph_composer.model,
+            api_key=api_key,
+            api_base=config.graph_composer.api_base,
+            temperature=0.0,
+            max_tokens=500,
+            reasoning={"effort": "minimal", "exclude": True},
+            timeout_s=config.graph_composer.timeout_s,
+        )
+        payload = client.chat_json(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are the Video_Skills L2 retrieval controller. Select the coarse video windows most likely "
+                        "to contain direct visual evidence for the question. Use only the supplied visible summaries. "
+                        "Options are hypotheses, not facts. Return the atomic selection action as JSON."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {"question": question, "topk": config.retrieval.topk, "coarse_summary_catalog": catalog},
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                },
+            ],
+            response_format=response_format,
+        )
+        selected = []
+        for value in payload.get("selected_coarse_indices", []):
+            index = int(value)
+            if 0 <= index < len(coarse_schemas) and index not in selected:
+                selected.append(index)
+            if len(selected) >= config.retrieval.topk:
+                break
+        if not selected:
+            raise ValueError("GPT-OSS coarse selector returned no valid indices")
+        result = {
+            "ok": True,
+            "mode": "gpt_oss_atomic_select_coarse",
+            "selected_coarse_indices": selected,
+            "rationale_short": payload.get("rationale_short"),
+            "llm_usage": client.last_response_metadata,
+        }
+    except Exception as exc:
+        result = {
+            "ok": False,
+            "mode": "lexical_fallback_after_gpt_oss_error",
+            "selected_coarse_indices": [],
+            "error": str(exc),
+        }
+    _write_json(stage_path, result)
+    return result
 
 
 def _anchor_repass_spans(
@@ -559,6 +733,11 @@ def _compose_l1_and_l2(
 
     clue_graph = extract_clue_memory_graph(example, mode=config.mode)
     example["metadata"]["clue_memory_graph"] = clue_graph
+    example["metadata"]["motif_enabled"] = bool(config.motif_enabled)
+    if config.motif_bank_path:
+        example["metadata"]["motif_bank_path"] = config.motif_bank_path
+    if config.forced_motif_id:
+        example["metadata"]["forced_motif_id"] = config.forced_motif_id
 
     if config.run_l2_llm_planner:
         from ..l2_reasoning_graph.reasoning_planner import build_llm_reasoning_rollout
@@ -574,7 +753,17 @@ def _compose_l1_and_l2(
             timeout_s=config.graph_composer.timeout_s,
         )
         skill_exec = _build_skill_executor(api_key, config)
-        rollout = build_llm_reasoning_rollout(example, clue_graph, client=l2_client, skill_executor=skill_exec)
+        rollout = build_llm_reasoning_rollout(
+            example,
+            clue_graph,
+            client=l2_client,
+            skill_executor=skill_exec,
+            motif_enabled=bool(config.motif_enabled),
+            motif_bank_path=config.motif_bank_path,
+            forced_motif_id=config.forced_motif_id,
+            motif_top_k=int(config.motif_top_k),
+            include_shadow_motifs=bool(config.include_shadow_motifs),
+        )
     else:
         rollout = build_reasoning_rollout(example, clue_graph, rollout_source="staged_llm_pipeline")
     example["metadata"]["reasoning_rollout"] = rollout
@@ -593,6 +782,7 @@ def _run_item(
     retry_non_backbone_clip_schemas: bool,
     fill_missing_clip_schemas: bool,
     build_coarse_summary_index: bool,
+    llm_coarse_selector: bool,
     clip_schema_workers: int,
     anchor_repass_frames: int,
     anchor_repass_window_s: float,
@@ -602,6 +792,52 @@ def _run_item(
     example_stage_dir.mkdir(parents=True, exist_ok=True)
 
     final_path = example_stage_dir / "final_example.json"
+    frozen_l1_path = example_stage_dir / "04_l1_example.json"
+    if (
+        config.reuse_frozen_l1_example
+        and frozen_l1_path.exists()
+        and config.run_l2_llm_planner
+        and not force
+    ):
+        example = _read_json(frozen_l1_path)
+        clue_graph = (example.get("metadata") or {}).get("clue_memory_graph") or {}
+        if clue_graph:
+            from ..l2_reasoning_graph.reasoning_planner import build_llm_reasoning_rollout
+
+            keys_py = config.graph_composer.keys_py_path or config.backbone.keys_py_path
+            api_key = load_openrouter_api_key(keys_py_path=keys_py, env_var=config.graph_composer.api_key_env)
+            l2_client = OpenRouterClient(
+                model=config.graph_composer.model,
+                api_key=api_key,
+                max_tokens=1800,
+                reasoning={"effort": "minimal", "exclude": True},
+                timeout_s=config.graph_composer.timeout_s,
+            )
+            example.setdefault("metadata", {})
+            example["metadata"]["motif_enabled"] = bool(config.motif_enabled)
+            if config.motif_bank_path:
+                example["metadata"]["motif_bank_path"] = config.motif_bank_path
+            if config.forced_motif_id:
+                example["metadata"]["forced_motif_id"] = config.forced_motif_id
+            skill_exec = _build_skill_executor(api_key, config)
+            rollout = build_llm_reasoning_rollout(
+                example,
+                clue_graph,
+                client=l2_client,
+                skill_executor=skill_exec,
+                motif_enabled=bool(config.motif_enabled),
+                motif_bank_path=config.motif_bank_path,
+                forced_motif_id=config.forced_motif_id,
+                motif_top_k=int(config.motif_top_k),
+                include_shadow_motifs=bool(config.include_shadow_motifs),
+            )
+            example["metadata"]["reasoning_rollout"] = rollout
+            example["metadata"]["reasoning_rollout_shell"] = rollout
+            example["metadata"]["reused_frozen_l1"] = True
+            _write_json(example_stage_dir / "05_l2_rollout.json", rollout)
+            _write_json(final_path, example)
+            return example
+
     if final_path.exists() and not force and not rebuild_from_stages and not retry_failed_clip_schemas:
         return _read_json(final_path)
 
@@ -644,6 +880,32 @@ def _run_item(
         visible_segments=retrieval_segments,
         mode=config.mode,
     )
+    if llm_coarse_selector and coarse_schemas and config.retrieval.query_in_video_only:
+        selection = _produce_or_resume_coarse_selection(
+            item=item,
+            config=config,
+            coarse_schemas=coarse_schemas,
+            stage_path=example_stage_dir / "00c_coarse_selection.json",
+            force=force,
+        )
+        if selection.get("ok") and selection.get("selected_coarse_indices"):
+            selected = [int(value) for value in selection["selected_coarse_indices"]]
+            perception = segment_perception_clips(
+                duration_s,
+                clip_policy,
+                regime=config.regime,
+                selected_coarse_indices=selected,
+            )
+            perception_spans = [span for span in perception if span.granularity == "fine"]
+            lexical_fallback = perception_meta.get("retrieval") or {}
+            perception_meta["retrieval"] = {
+                **selection,
+                "topk": config.retrieval.topk,
+                "lexical_fallback": lexical_fallback,
+            }
+            perception_meta["perception_clip_count"] = len(perception_spans)
+        else:
+            perception_meta["llm_coarse_selector"] = selection
     derived = _derived_clips_for_spans(video_id=item.video_id, primary_path=primary_path, spans=perception_spans)
     example["metadata"]["perception"] = perception_meta
     _write_json(example_stage_dir / "00_shell.json", example)
@@ -747,26 +1009,75 @@ def main(argv: list[str] | None = None) -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if args.force and output_path.exists():
         output_path.unlink()
+    existing_rows = _read_jsonl(output_path)
+    rows_by_example_id: dict[str, dict[str, Any]] = {}
+    for row in existing_rows:
+        if isinstance(row, dict) and row.get("example_id"):
+            rows_by_example_id[str(row["example_id"])] = row
+    if len(rows_by_example_id) != len(existing_rows):
+        _write_jsonl(output_path, list(rows_by_example_id.values()))
+    existing_output_ids = set(rows_by_example_id)
+
+    source_items = adapter.iter_items(limit=None)
+    if args.unique_videos:
+        selected_items = []
+        seen_video_ids: set[str] = set()
+        for item in source_items:
+            video_id = str(item.video_id)
+            if video_id in seen_video_ids:
+                continue
+            seen_video_ids.add(video_id)
+            if len(seen_video_ids) <= args.start_index:
+                continue
+            selected_items.append(item)
+            if len(selected_items) >= config.limit:
+                break
+    else:
+        selected_items = list(islice(source_items, args.start_index, args.start_index + config.limit))
 
     written = 0
-    for item in adapter.iter_items(limit=config.limit):
-        example = _run_item(
-            item,
-            config=config,
-            root_stage_dir=Path(args.stage_dir),
-            force=args.force,
-            rebuild_from_stages=args.rebuild_from_stages,
-            retry_failed_clip_schemas=args.retry_failed_clip_schemas,
-            retry_non_backbone_clip_schemas=args.retry_non_backbone_clip_schemas,
-            fill_missing_clip_schemas=not args.no_fill_missing_clip_schemas,
-            build_coarse_summary_index=_coarse_summary_index_enabled(args, config),
-            clip_schema_workers=args.clip_schema_workers,
-            anchor_repass_frames=args.anchor_repass_frames,
-            anchor_repass_window_s=args.anchor_repass_window_s,
-            anchor_repass_enabled=not args.no_anchor_repass,
-        )
-        _append_jsonl(output_path, example)
-        written += 1
+    failed = 0
+    for item in selected_items:
+        try:
+            example = _run_item(
+                item,
+                config=config,
+                root_stage_dir=Path(args.stage_dir),
+                force=args.force,
+                rebuild_from_stages=args.rebuild_from_stages,
+                retry_failed_clip_schemas=args.retry_failed_clip_schemas,
+                retry_non_backbone_clip_schemas=args.retry_non_backbone_clip_schemas,
+                fill_missing_clip_schemas=not args.no_fill_missing_clip_schemas,
+                build_coarse_summary_index=_coarse_summary_index_enabled(args, config),
+                llm_coarse_selector=args.llm_coarse_selector,
+                clip_schema_workers=args.clip_schema_workers,
+                anchor_repass_frames=args.anchor_repass_frames,
+                anchor_repass_window_s=args.anchor_repass_window_s,
+                anchor_repass_enabled=not args.no_anchor_repass,
+            )
+        except Exception as exc:
+            if not args.continue_on_item_error:
+                raise
+            failed += 1
+            print(
+                json.dumps({
+                    "event": "item_failed",
+                    "example_id": str(getattr(item, "example_id", "") or ""),
+                    "error_type": type(exc).__name__,
+                    "error": str(exc)[:1000],
+                }, ensure_ascii=False),
+                flush=True,
+            )
+            continue
+        example_id = str(example.get("example_id") or "")
+        if example_id in existing_output_ids:
+            rows_by_example_id[example_id] = example
+            _write_jsonl(output_path, list(rows_by_example_id.values()))
+        else:
+            _append_jsonl(output_path, example)
+            existing_output_ids.add(example_id)
+            rows_by_example_id[example_id] = example
+            written += 1
         print(
             json.dumps(
                 {
@@ -780,7 +1091,7 @@ def main(argv: list[str] | None = None) -> int:
             ),
             flush=True,
         )
-    print(json.dumps({"written": written, "output": str(output_path)}, indent=2))
+    print(json.dumps({"written": written, "failed": failed, "output": str(output_path)}, indent=2))
     return 0
 
 

@@ -130,6 +130,35 @@
       "required": ["node_id", "node_type"],
       "properties": {
         "node_id": {"type": "string"},
+        "local_node_id": {
+          "type": "string",
+          "description": "Composer-local node identifier, scoped by local_id_clip_id."
+        },
+        "local_id_clip_id": {"type": "string"},
+        "mention_id": {"type": "string"},
+        "state_id": {"type": "string"},
+        "subject_mention_id": {"type": "string"},
+        "subject_ref": {"type": "string"},
+        "attribute": {"type": "string"},
+        "value": {"type": "string"},
+        "participant_refs": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "participant_mention_ids": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "embedding_ref": {"$ref": "#/$defs/embedding_ref"},
+        "entity_type": {"type": "string"},
+        "attributes": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
         "node_type": {
           "enum": [
             "clip",
@@ -141,6 +170,7 @@
             "entity_mention",
             "event",
             "state",
+            "clue",
             "episodic_text",
             "semantic_text",
             "face",
@@ -162,15 +192,18 @@
         "modality": {"type": ["string", "null"]},
         "source_type": {"type": ["string", "null"]},
         "trust_level": {
-          "enum": ["gold", "strong", "weak", "derived", "model_labeled"]
+          "type": ["string", "null"],
+          "enum": ["gold", "strong", "weak", "derived", "model_labeled", null]
         },
         "discovery_status": {
+          "type": ["string", "null"],
           "enum": [
             "provided_supervision",
             "provided_visible_context",
             "discovered_runtime",
             "derived_runtime",
-            "hidden_eval_only"
+            "hidden_eval_only",
+            null
           ]
         },
         "visibility": {
@@ -188,6 +221,28 @@
       },
       "additionalProperties": true
     },
+    "embedding_ref": {
+      "type": "object",
+      "required": [
+        "path",
+        "model",
+        "dimension",
+        "dtype",
+        "normalized",
+        "row_index",
+        "checksum"
+      ],
+      "properties": {
+        "path": {"type": "string"},
+        "model": {"const": "Qwen/Qwen3-VL-Embedding-2B"},
+        "dimension": {"const": 2048},
+        "dtype": {"const": "float32"},
+        "normalized": {"const": true},
+        "row_index": {"type": "integer", "minimum": 0},
+        "checksum": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
     "clue_edge": {
       "type": "object",
       "required": ["edge_id", "src", "dst", "edge_type"],
@@ -201,7 +256,19 @@
             "temporal_overlap",
             "temporal_inside",
             "entity_mention",
+            "state_of",
             "same_entity",
+            "same_object",
+            "same_place",
+            "reappears",
+            "before_after",
+            "state_change",
+            "supports_observation",
+            "contrasts_observation",
+            "located_in",
+            "causal_hint",
+            "social_cue",
+            "dialogue_speaker",
             "face_voice_equivalence",
             "derived_from",
             "supports",

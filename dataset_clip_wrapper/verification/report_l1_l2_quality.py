@@ -85,7 +85,10 @@ def _repair_needed(
     qa_answerability: dict[str, Any],
     l2_status: str,
     clip_stats: dict[str, int],
+    correct_eval_only: bool | None = None,
 ) -> bool:
+    if correct_eval_only is False:
+        return True
     if clip_stats["fine_errors"] or clip_stats["coarse_errors"]:
         return True
     if l1_quality.get("grade") == "low":
@@ -116,16 +119,22 @@ def summarize_example(example: dict[str, Any], *, source_path: str, topk: int) -
         or detail.get("reason")
         or (failure_reasons[0] if failure_reasons else status)
     )
+    final_answer = rollout.get("final_answer") or {}
+    gold = (example.get("question") or {}).get("answer") or {}
+    final_label = final_answer.get("label") if isinstance(final_answer, dict) else None
+    gold_label = gold.get("label") if isinstance(gold, dict) else None
+    correct_eval_only = (
+        bool(str(final_label) == str(gold_label))
+        if final_label is not None and gold_label is not None
+        else None
+    )
     repair_needed = _repair_needed(
         l1_quality=l1_quality,
         qa_answerability=qa_answerability,
         l2_status=status,
         clip_stats=clip_stats,
+        correct_eval_only=correct_eval_only,
     )
-    final_answer = rollout.get("final_answer") or {}
-    gold = (example.get("question") or {}).get("answer") or {}
-    final_label = final_answer.get("label") if isinstance(final_answer, dict) else None
-    gold_label = gold.get("label") if isinstance(gold, dict) else None
 
     return {
         "dataset": example.get("dataset"),
@@ -149,7 +158,7 @@ def summarize_example(example: dict[str, Any], *, source_path: str, topk: int) -
             "acceptance_status": status,
             "final_answer": final_answer,
             "gold_eval_only": gold,
-            "correct_eval_only": bool(final_label and gold_label and str(final_label) == str(gold_label)),
+            "correct_eval_only": correct_eval_only,
             "support_ref_count": len(support_refs),
             "trace_ok": (rollout.get("metadata") or {}).get("llm_trace_ok"),
             "trace_fail": (rollout.get("metadata") or {}).get("llm_trace_fail"),
