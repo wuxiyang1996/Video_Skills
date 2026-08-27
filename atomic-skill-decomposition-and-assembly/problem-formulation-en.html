@@ -9,7 +9,7 @@
 <body>
   <header class="doc-header">
     <h1>Atomic Skill Decomposition and Assembly: From Reasoning Chains to Reusable Atomic Skills</h1>
-    <p class="meta">Last updated: <time datetime="2026-07-22">2026-07-22</time></p>
+    <p class="meta">Last updated: <time datetime="2026-08-27">2026-08-27</time></p>
     <nav class="lang-nav">
       <a href="problem-formulation-zh.html">Chinese</a> |
       <a href="atomic-skills-v1.md">Atomic skills v1</a> |
@@ -200,6 +200,7 @@ VerifyEvidence(answer, frames)</pre>
           <li><strong>Repair is the controller’s meta-skill:</strong> on failure, replace arguments, insert missing hops, swap skills, re-query evidence, or rewire edges — not regenerate the whole answer.</li>
           <li><strong>First-paper minimal basis:</strong> perception-tool keeps only reliable tool calls; memory skills focus on evidence-backed store/query; reasoning skills focus on temporal / causal / state / evidence-chain composition.</li>
         </ul>
+        <p class="idea-notes"><strong>Frozen code basis (as of 2026-08-27):</strong> the live library is 34 snake_case skills in <code>atomic_skills/registry.py</code> — 9 evidence-graph-construction + 25 reasoning-graph-assembly — not the three-type PascalCase examples above. The three-type split remains the design taxonomy; the registry is the frozen controller-visible basis. Verification and repair stay cross-cutting, not extra domain skills.</p>
       </details>
     </article>
 
@@ -1066,7 +1067,7 @@ Output: repaired graph G'
       <h3 class="idea-title">Video-understanding benchmark data ready (datasets/)</h3>
       <details class="foldable idea-details" open>
         <summary>Show full description</summary>
-        <p class="idea-body"><strong>Unified data root:</strong> <code>/fs/gamma-projects/vlm-robot/datasets/</code>. All five video-understanding benchmarks live here, aligned with card 028 role split. Agent loaders live under <code>Multi-hop-Reasoning-VLM-Agent/visual_reasoning_wrapper/benchmarks/</code>; unified eval entry is <code>vlm_wrapper/eval/run_eval.py</code>.</p>
+        <p class="idea-body"><strong>Unified data root:</strong> <code>/fs/gamma-projects/vlm-robot/datasets/</code>. Current loaders live in <code>dataset_clip_wrapper/adapters/</code> (not the old <code>Multi-hop-Reasoning-VLM-Agent</code> / <code>run_eval.py</code> path). The video-only primary track is Video-Holmes, VideoMME, OVO-Bench, CG-Bench, and VRBench. SIV-Bench is a video-only stress test, not a primary success metric. M3-Bench stays deferred until a memory-graph reader exists.</p>
         <table class="scorecard">
           <thead><tr><th>Benchmark</th><th>Paper role</th><th>Local path</th><th>Data status</th><th>Loader</th><th>Eval command</th></tr></thead>
           <tbody>
@@ -1075,57 +1076,67 @@ Output: repaired graph G'
               <td>Primary</td>
               <td><code>datasets/Video-Holmes</code></td>
               <td>503 mp4, ~12G; gold multi-hop reasoning chains</td>
-              <td><code>video_holmes.py</code></td>
+              <td><code>adapters/video_holmes.py</code></td>
               <td><code>--benchmark video_holmes</code></td>
             </tr>
             <tr>
-              <td><strong>SIV-Bench</strong></td>
-              <td>Secondary (ToM / social)</td>
-              <td><code>datasets/SIV-Bench</code></td>
-              <td>8376 mp4, ~43G; origin / added / removed subtitle conditions</td>
-              <td><code>siv_bench.py</code></td>
-              <td><code>--benchmark siv_bench</code></td>
+              <td><strong>VideoMME</strong></td>
+              <td>Primary (short video)</td>
+              <td><code>datasets/</code> VideoMME</td>
+              <td>Registered in adapters; eval-only for SFT (held out of five-LoRA train)</td>
+              <td><code>adapters/streaming_video.py</code> (<code>VideoMMEAdapter</code>)</td>
+              <td><code>--benchmark videomme</code></td>
             </tr>
             <tr>
-              <td><strong>VRBench</strong></td>
-              <td>Validation (long video + process-level)</td>
-              <td><code>datasets/VRBench</code></td>
-              <td>960 mp4, ~395G; timestamped reasoning-step labels</td>
-              <td><code>vrbench.py</code></td>
-              <td><code>--benchmark vrbench</code></td>
+              <td><strong>OVO-Bench</strong></td>
+              <td>Primary (streaming eval)</td>
+              <td><code>datasets/</code> OVO-Bench</td>
+              <td>Registered in adapters; eval-only for SFT (held out of five-LoRA train)</td>
+              <td><code>adapters/streaming_video.py</code> (<code>OVOBenchAdapter</code>)</td>
+              <td><code>--benchmark ovo_bench</code></td>
             </tr>
             <tr>
               <td><strong>CG-Bench</strong></td>
-              <td>Optional (evidence attribution)</td>
+              <td>Primary (clue-grounded evidence)</td>
               <td><code>datasets/CG-Bench</code></td>
               <td>1219 full + 12129 clue clips, ~386G; clue_acc / long_acc / miou</td>
-              <td><code>cg_bench.py</code></td>
+              <td><code>adapters/cg_bench.py</code></td>
               <td><code>--benchmark cg_bench</code></td>
             </tr>
             <tr>
+              <td><strong>VRBench</strong></td>
+              <td>Validation / OOD (long video + process-level)</td>
+              <td><code>datasets/VRBench</code></td>
+              <td>960 mp4, ~395G; timestamped reasoning-step labels; eval-only for SFT</td>
+              <td><code>adapters/vrbench.py</code></td>
+              <td><code>--benchmark vrbench</code></td>
+            </tr>
+            <tr>
+              <td><strong>SIV-Bench</strong></td>
+              <td>Stress test (ToM / social; not a primary success metric)</td>
+              <td><code>datasets/SIV-Bench</code></td>
+              <td>8376 mp4, ~43G; many questions need dialogue / intent not visible without audio</td>
+              <td><code>adapters/siv_bench.py</code></td>
+              <td><code>--benchmark siv_bench</code></td>
+            </tr>
+            <tr>
               <td><strong>M3-Bench</strong></td>
-              <td>Optional (memory reasoning)</td>
+              <td>Deferred (memory reasoning)</td>
               <td><code>datasets/M3-Bench</code></td>
-              <td>robot 100 + web 852/920, ~412G; web subset still filling</td>
-              <td>Pending <code>run_eval</code> hookup</td>
-              <td>Data ready; loader pending</td>
+              <td>robot 100 + web 852/920, ~412G; no adapter until a memory-graph reader exists</td>
+              <td>Not registered</td>
+              <td>Deferred</td>
             </tr>
           </tbody>
         </table>
-        <p class="idea-body"><strong>Agent data symlinks (<code>Multi-hop-Reasoning-VLM-Agent/data/</code>):</strong></p>
-        <ul class="key-points">
-          <li><code>Video-Holmes</code> → <code>datasets/Video-Holmes</code></li>
-          <li><code>SIV-Bench</code> → <code>datasets/SIV-Bench</code></li>
-          <li><code>VRBench</code> → <code>datasets/VRBench</code></li>
-          <li>CG-Bench / M3-Bench loaders resolve <code>datasets/</code> absolute paths directly; no symlink needed.</li>
-        </ul>
         <p class="idea-body"><strong>Known gaps:</strong></p>
         <ul class="key-points">
-          <li><strong>M3-Bench web:</strong> 852/920 downloaded; remaining YouTube videos can be filled or skipped at eval time.</li>
-          <li><strong>M3-Bench loader:</strong> not registered in <code>run_eval.py</code> yet; hook up next if appendix needs memory-based QA comparison.</li>
-          <li><strong>Typed-trace layer:</strong> none of the five benchmarks provide skill-graph trace supervision; still need a lightweight custom eval layer (see card 022).</li>
+          <li><strong>SFT hold-out:</strong> VRBench, VideoMME, and OVO-Bench stay evaluation-only; five-LoRA SFT currently uses CG-Bench + Video-Holmes.</li>
+          <li><strong>SIV-Bench:</strong> under video-only (no audio/ASR) it tests honest abstain / repair, not headline accuracy.</li>
+          <li><strong>M3-Bench:</strong> data exists locally; loader remains deferred with the memory-graph reader.</li>
+          <li><strong>Typed-trace layer:</strong> none of these benchmarks provide skill-graph trace supervision; still need a lightweight custom eval layer (see card 022).</li>
         </ul>
-        <p class="idea-notes"><strong>Notes:</strong> ~1.2T total. Core trio (Video-Holmes + SIV-Bench + VRBench) are readable and pass loader smoke tests; CG-Bench full/clue videos extracted; ready to start P0 experiments.</p>
+        <p class="idea-notes"><strong>Notes:</strong> ~1.2T total under <code>datasets/</code>. P5 video-only batch used Video-Holmes, VideoMME, OVO-Bench, CG-Bench, and VRBench (see card 033).</p>
       </details>
     </article>
 
@@ -1222,7 +1233,7 @@ measure:
       <h3 class="idea-title">SFT v3 implementation status: five independent Qwen3.5-9B LoRA datasets</h3>
       <details class="foldable idea-details" open>
         <summary>Show full description</summary>
-        <p class="idea-body"><strong>Status as of 2026-07-23:</strong> the five specialist datasets are built, audited, and kept separate for five LoRA adapters. Actual five-adapter training has <strong>not started yet</strong>. The next experiment is to train each adapter independently on Qwen3.5-9B, then compare specialist routing / composition against the earlier shared-LoRA baseline.</p>
+        <p class="idea-body"><strong>Status as of 2026-08-27:</strong> the five specialist datasets remain the SFT v3 package below. A five-adapter trainer now exists at <code>dataset_clip_wrapper/training/train_lora_sft.py</code> with launch scripts under <code>scripts/sft_pilot/</code>. GRPO and OPD live under <code>trainer/grpo/</code>, <code>scripts/grpo/</code>, and <code>scripts/opd/</code> as scaffolding and smoke tests, not a finished closed-loop controller.</p>
         <p class="code-caption">Final data root</p>
         <pre class="code-block">dataset_clip_wrapper/output/sft_cold_start/
   specialist_sft_v3_20260722/five_lora/</pre>
@@ -1260,6 +1271,37 @@ measure:
       </details>
     </article>
 
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-033" data-status="active">
+      <h3 class="idea-title">Current runtime on merged main (2026-08-27)</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body"><strong>Status:</strong> the living line (motif → integration → cleanup) is now on <code>main</code>. Design in cards 001–032 still holds; this card is the implementation snapshot of the merged tree.</p>
+        <p class="code-caption">Live runtime path</p>
+        <pre class="code-block">Qwen clip schemas
+  -> L1 clue-memory graph
+  -> L2 retrieval / reasoning
+  -> verifier
+  -> bounded repair
+  -> optional motif curation</pre>
+        <table class="scorecard">
+          <thead><tr><th>Layer</th><th>Current code</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td>Atomic basis</td><td><code>atomic_skills/registry.py</code></td><td>34 snake_case skills: 9 graph-construction + 25 reasoning-assembly</td></tr>
+            <tr><td>Adapters</td><td><code>dataset_clip_wrapper/adapters/</code></td><td>Video-Holmes, VideoMME, OVO-Bench, CG-Bench, VRBench, SIV-Bench</td></tr>
+            <tr><td>P5 video-only batch</td><td><code>docs/implementation-status.md</code></td><td>15/15 L1 high; L2 <code>accepted_strong</code> 12/15; 3 still <code>needs_more_evidence</code></td></tr>
+            <tr><td>Five LoRAs</td><td><code>dataset_clip_wrapper/training/train_lora_sft.py</code> + <code>scripts/sft_pilot/</code></td><td>Trainer and launch scripts exist; dataset counts stay in card 032</td></tr>
+            <tr><td>GRPO / OPD</td><td><code>trainer/grpo/</code>, <code>scripts/grpo/</code>, <code>scripts/opd/</code></td><td>Scaffolding and smoke tests; not a finished closed-loop controller</td></tr>
+          </tbody>
+        </table>
+        <ul class="key-points">
+          <li><strong>Specialist path:</strong> Qwen3.5-9B LoRAs. Older cards still say 8B as historical design language; do not treat that as the current specialist size.</li>
+          <li><strong>Primary eval track:</strong> Video-Holmes, VideoMME, OVO-Bench, CG-Bench, VRBench. SIV-Bench is a video-only stress test. M3-Bench stays deferred.</li>
+          <li><strong>Still open:</strong> full VLM/ASR/tracker perception, embedding coarse retrieval, gated L2 claim/compose SFT, fine-grained repair traces, GRPO closed loop; consolidate top-level <code>motif/</code> into <code>dataset_clip_wrapper/motifs/</code>.</li>
+        </ul>
+        <p class="idea-notes"><strong>Notes:</strong> use this card for “what the merged repo actually runs.” Do not rewrite every historical design card to match path renames.</p>
+      </details>
+    </article>
+
     <article class="idea" data-id="atomic-skill-decomposition-and-assembly-021" data-status="open">
       <h3 class="idea-title">Open questions</h3>
       <details class="foldable idea-details" open>
@@ -1289,8 +1331,13 @@ measure:
   <section class="changelog">
     <h2>Discussion log</h2>
     <ol>
+      <li><time datetime="2026-08-27">2026-08-27</time> — Synced both problem-formulation pages with merged <code>main</code>: loaders now <code>dataset_clip_wrapper/adapters/</code> (VideoMME / OVO-Bench added; SIV as stress test); SFT trainer exists while GRPO/OPD stays scaffolding; added card 033 for live runtime, 34 frozen skills, and P5 12/15 <code>accepted_strong</code>.</li>
       <li><time datetime="2026-07-23">2026-07-23</time> — Removed the obsolete shared-LoRA quota from the independent L1 adapter. All 15,690 visibility-gated L1 actions are retained (12,686 train / 3,004 dev), while normalized skill-family weights prevent 8,205 create-node rows from dominating rare patch, segment, and skip actions. All 17,096 five-adapter rows pass the actual Qwen3.5-9B 16k tokenizer audit.</li>
       <li><time datetime="2026-07-22">2026-07-22</time> — Added and post-audit cleaned SFT v3: five separate Qwen3.5-9B LoRA datasets are ready (L1 1,709; L2 867; Verifier 92; Repair 127; Motif 320). Removed L2 length shortcuts, invisible / malformed L1 endpoints, Repair decision-copy leakage, and unobservable Motif targets; training remains not started.</li>
+    </ol>
+    <details class="foldable changelog-archive">
+      <summary>Earlier entries (24)</summary>
+      <ol>
       <li><time datetime="2026-06-30">2026-06-30</time> — Added Trace-to-Skill Fitting update: demonstrations induce candidate operation clusters; compact atomic basis is selected by coverage / confusion / cost and frozen before controller training; discovered reusable skills are composite motifs that expand into frozen atomics, not online-created primitives.</li>
       <li><time datetime="2026-06-30">2026-06-30</time> — Added optional motif card: composed skills are not a core first-paper mechanism; verified reasoning motifs serve only as assembly / repair priors, carry no current-video facts, and must expand into frozen atomic skill graphs before execution and verification.</li>
       <li><time datetime="2026-06-26">2026-06-26</time> — Added card 029: five video-understanding benchmarks deployed under <code>datasets/</code> (Video-Holmes / SIV-Bench / VRBench / CG-Bench / M3-Bench) with local paths, sizes, loaders, and <code>run_eval.py</code> entry points; card 022 cross-ref to 028/029; open-questions benchmark list updated.</li>
@@ -1309,10 +1356,6 @@ measure:
       <li><time datetime="2026-06-15">2026-06-15</time> — Tightened 8B role: compact model as memory-skill graph generator / controller / repair policy, not independent long-video reasoner; signals from teacher demos, answer anchors, evidence feedback, executors, verifiers, failures. Updated thesis, single policy, method, training, reward, positioning, eval, strength, first-paper scope.</li>
       <li><time datetime="2026-06-15">2026-06-15</time> — Addressed benchmark gap (#3): candidate benchmark card (LongVidSearch, Video-Holmes, MA-EgoQA, EgoLife; web-agent video likely out of scope); anchor first paper on egocentric + social / temporal multi-hop; typed skill-graph trace + memory-update / repair eval layer still to build as first-class contribution.</li>
       <li><time datetime="2026-06-15">2026-06-15</time> — Repositioned contribution to <strong>MemorySkillGraph</strong>: memory as substrate, neural-symbolic memory skills as OS. Added contribution boundary, five memory skill types, typed/verifiable examples, method pipeline, memory-operation reward/repair, M3-Agent distinction, agent-memory related work, three experiment setups, first-paper scope (query + verify + reason; forgetting/compression/diffusion later).</li>
-    </ol>
-    <details class="foldable changelog-archive">
-      <summary>Earlier entries (6)</summary>
-      <ol>
         <li><time datetime="2026-06-15">2026-06-15</time> — Major refactor to SkillGraph-RL proposal: typed-skill schema, skill-graph + typed edges, neural-symbolic split, unified single policy, 5-stage training, training signals, verified-RL / VLM post-training relation, related-work map, positioning, strength assessment.</li>
         <li><time datetime="2026-06-15">2026-06-15</time> — Added LensWalk related work: active reason-plan-observe shows strong reasoner helps weak observer more; supports large-teacher / compact-student split.</li>
         <li><time datetime="2026-06-15">2026-06-15</time> — Added 7B/8B rationale: compact model is trainable, cheaper, deployable student policy; compare to 72B-only / hybrid baselines.</li>

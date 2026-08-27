@@ -9,7 +9,7 @@
 <body>
   <header class="doc-header">
     <h1>Atomic Skill Decomposition and Assembly：从推理链到可复用原子技能</h1>
-    <p class="meta">最后更新：<time datetime="2026-07-22">2026-07-22</time></p>
+    <p class="meta">最后更新：<time datetime="2026-08-27">2026-08-27</time></p>
     <nav class="lang-nav">
       <a href="problem-formulation-en.html">English</a> |
       <a href="atomic-skills-v1.md">Atomic skills v1</a> |
@@ -200,6 +200,7 @@ VerifyEvidence(answer, frames)</pre>
           <li><strong>Repair 是 controller 的 meta-skill：</strong>失败时替换参数、插入 missing hop、换 skill、重查 evidence 或重连 edge，而不是重新生成整条答案。</li>
           <li><strong>第一篇最小基底：</strong>perception-tool 只保留可靠工具调用；memory skills 聚焦 evidence-backed store/query；reasoning skills 聚焦 temporal / causal / state / evidence-chain composition。</li>
         </ul>
+        <p class="idea-notes"><strong>冻结代码基底（截至 2026-08-27）：</strong>当前库是 <code>atomic_skills/registry.py</code> 中的 34 个 snake_case skills——9 个 evidence-graph-construction + 25 个 reasoning-graph-assembly——不是上面三类 PascalCase 示例。三类划分仍是设计 taxonomy；registry 才是冻结的、controller 可见的基底。Verification 和 repair 仍是横切机制，不是额外的 domain skills。</p>
       </details>
     </article>
 
@@ -1066,7 +1067,7 @@ Output: repaired graph G'
       <h3 class="idea-title">视频理解 benchmark 数据就绪（datasets/）</h3>
       <details class="foldable idea-details" open>
         <summary>展开完整描述</summary>
-        <p class="idea-body"><strong>统一数据根目录：</strong><code>/fs/gamma-projects/vlm-robot/datasets/</code>。五个视频理解 benchmark 已全部迁入该目录，与卡片 028 的论文角色分工一一对应。Agent 侧通过 <code>Multi-hop-Reasoning-VLM-Agent/visual_reasoning_wrapper/benchmarks/</code> 加载，统一评测入口为 <code>vlm_wrapper/eval/run_eval.py</code>。</p>
+        <p class="idea-body"><strong>统一数据根目录：</strong><code>/fs/gamma-projects/vlm-robot/datasets/</code>。当前 loader 在 <code>dataset_clip_wrapper/adapters/</code>（不再走旧的 <code>Multi-hop-Reasoning-VLM-Agent</code> / <code>run_eval.py</code>）。video-only 主力评测轨是 Video-Holmes、VideoMME、OVO-Bench、CG-Bench 和 VRBench。SIV-Bench 是 video-only 压力测试，不是主成功指标。M3-Bench 在 memory-graph reader 就绪前继续推迟。</p>
         <table class="scorecard">
           <thead><tr><th>Benchmark</th><th>论文角色</th><th>本地路径</th><th>数据状态</th><th>Loader</th><th>评测命令</th></tr></thead>
           <tbody>
@@ -1075,57 +1076,67 @@ Output: repaired graph G'
               <td>主力</td>
               <td><code>datasets/Video-Holmes</code></td>
               <td>503 个 mp4，约 12G；含金标准多跳推理链标注</td>
-              <td><code>video_holmes.py</code></td>
+              <td><code>adapters/video_holmes.py</code></td>
               <td><code>--benchmark video_holmes</code></td>
             </tr>
             <tr>
-              <td><strong>SIV-Bench</strong></td>
-              <td>辅助（ToM / 社交）</td>
-              <td><code>datasets/SIV-Bench</code></td>
-              <td>8376 个 mp4，约 43G；含 origin / added / removed 字幕条件</td>
-              <td><code>siv_bench.py</code></td>
-              <td><code>--benchmark siv_bench</code></td>
+              <td><strong>VideoMME</strong></td>
+              <td>主力（短视频）</td>
+              <td><code>datasets/</code> VideoMME</td>
+              <td>已在 adapters 注册；SFT 评测专用（不进 five-LoRA 训练集）</td>
+              <td><code>adapters/streaming_video.py</code>（<code>VideoMMEAdapter</code>）</td>
+              <td><code>--benchmark videomme</code></td>
             </tr>
             <tr>
-              <td><strong>VRBench</strong></td>
-              <td>验证（长视频 + process-level）</td>
-              <td><code>datasets/VRBench</code></td>
-              <td>960 个 mp4，约 395G；含时间戳推理步骤标注</td>
-              <td><code>vrbench.py</code></td>
-              <td><code>--benchmark vrbench</code></td>
+              <td><strong>OVO-Bench</strong></td>
+              <td>主力（流式评测）</td>
+              <td><code>datasets/</code> OVO-Bench</td>
+              <td>已在 adapters 注册；SFT 评测专用（不进 five-LoRA 训练集）</td>
+              <td><code>adapters/streaming_video.py</code>（<code>OVOBenchAdapter</code>）</td>
+              <td><code>--benchmark ovo_bench</code></td>
             </tr>
             <tr>
               <td><strong>CG-Bench</strong></td>
-              <td>可选（证据归因）</td>
+              <td>主力（线索接地证据）</td>
               <td><code>datasets/CG-Bench</code></td>
               <td>1219 全长 + 12129 clue 片段，约 386G；支持 clue_acc / long_acc / miou</td>
-              <td><code>cg_bench.py</code></td>
+              <td><code>adapters/cg_bench.py</code></td>
               <td><code>--benchmark cg_bench</code></td>
             </tr>
             <tr>
+              <td><strong>VRBench</strong></td>
+              <td>验证 / OOD（长视频 + process-level）</td>
+              <td><code>datasets/VRBench</code></td>
+              <td>960 个 mp4，约 395G；含时间戳推理步骤标注；SFT 评测专用</td>
+              <td><code>adapters/vrbench.py</code></td>
+              <td><code>--benchmark vrbench</code></td>
+            </tr>
+            <tr>
+              <td><strong>SIV-Bench</strong></td>
+              <td>压力测试（ToM / 社交；不是主成功指标）</td>
+              <td><code>datasets/SIV-Bench</code></td>
+              <td>8376 个 mp4，约 43G；不少题依赖对话 / 意图，无音频时不可见</td>
+              <td><code>adapters/siv_bench.py</code></td>
+              <td><code>--benchmark siv_bench</code></td>
+            </tr>
+            <tr>
               <td><strong>M3-Bench</strong></td>
-              <td>可选（记忆推理）</td>
+              <td>推迟（记忆推理）</td>
               <td><code>datasets/M3-Bench</code></td>
-              <td>robot 100 + web 852/920，约 412G；web 子集仍在补齐</td>
-              <td>待接入 <code>run_eval</code></td>
-              <td>数据已就位，loader 待接</td>
+              <td>robot 100 + web 852/920，约 412G；memory-graph reader 就绪前不注册 adapter</td>
+              <td>未注册</td>
+              <td>推迟</td>
             </tr>
           </tbody>
         </table>
-        <p class="idea-body"><strong>Agent 数据 symlink（<code>Multi-hop-Reasoning-VLM-Agent/data/</code>）：</strong></p>
-        <ul class="key-points">
-          <li><code>Video-Holmes</code> → <code>datasets/Video-Holmes</code></li>
-          <li><code>SIV-Bench</code> → <code>datasets/SIV-Bench</code></li>
-          <li><code>VRBench</code> → <code>datasets/VRBench</code></li>
-          <li>CG-Bench / M3-Bench 由 loader 直接解析 <code>datasets/</code> 绝对路径，无需 symlink。</li>
-        </ul>
         <p class="idea-body"><strong>已知缺口：</strong></p>
         <ul class="key-points">
-          <li><strong>M3-Bench web：</strong>852/920 已下载，剩余 YouTube 视频可继续补齐或评测时跳过。</li>
-          <li><strong>M3-Bench loader：</strong>尚未注册到 <code>run_eval.py</code>；若 appendix 需要 memory-based QA 对比，下一步接 loader。</li>
-          <li><strong>typed-trace 层：</strong>五个 benchmark 均不提供 skill-graph trace 监督；仍需自建轻量评测层（见卡片 022）。</li>
+          <li><strong>SFT hold-out：</strong>VRBench、VideoMME、OVO-Bench 保持评测专用；five-LoRA SFT 当前只用 CG-Bench + Video-Holmes。</li>
+          <li><strong>SIV-Bench：</strong>在 video-only（无音频 / ASR）下用来测诚实 abstain / repair，不当 headline accuracy。</li>
+          <li><strong>M3-Bench：</strong>本地数据已在；loader 与 memory-graph reader 一并推迟。</li>
+          <li><strong>typed-trace 层：</strong>这些 benchmark 均不提供 skill-graph trace 监督；仍需自建轻量评测层（见卡片 022）。</li>
         </ul>
-        <p class="idea-notes"><strong>备注：</strong>总占用约 1.2T。核心 trio（Video-Holmes + SIV-Bench + VRBench）已全部可读、可跑 loader smoke test；CG-Bench full/clue 视频解压完成；可直接启动 P0 实验。</p>
+        <p class="idea-notes"><strong>备注：</strong><code>datasets/</code> 总占用约 1.2T。P5 video-only batch 使用 Video-Holmes、VideoMME、OVO-Bench、CG-Bench 和 VRBench（见卡片 033）。</p>
       </details>
     </article>
 
@@ -1222,7 +1233,7 @@ measure:
       <h3 class="idea-title">SFT v3 落地状态：五套独立 Qwen3.5-9B LoRA 数据</h3>
       <details class="foldable idea-details" open>
         <summary>展开完整描述</summary>
-        <p class="idea-body"><strong>截至 2026-07-23：</strong>五套 specialist 数据已经构建、审计完毕，并保持为五个相互独立的 LoRA adapter 数据集。五个 adapter 的正式训练<strong>尚未开始</strong>。下一步是在 Qwen3.5-9B 上分别训练，再把 specialist routing / composition 与之前的 shared-LoRA baseline 对比。</p>
+        <p class="idea-body"><strong>截至 2026-08-27：</strong>五套 specialist 数据仍是下面的 SFT v3 包。五个 adapter 的训练器已经存在：<code>dataset_clip_wrapper/training/train_lora_sft.py</code>，启动脚本在 <code>scripts/sft_pilot/</code>。GRPO 和 OPD 在 <code>trainer/grpo/</code>、<code>scripts/grpo/</code> 和 <code>scripts/opd/</code>，目前是 scaffolding 和 smoke tests，还不是完整 closed-loop controller。</p>
         <p class="code-caption">最终数据目录</p>
         <pre class="code-block">dataset_clip_wrapper/output/sft_cold_start/
   specialist_sft_v3_20260722/five_lora/</pre>
@@ -1260,6 +1271,37 @@ measure:
       </details>
     </article>
 
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-033" data-status="active">
+      <h3 class="idea-title">合并后 main 上的当前 runtime（2026-08-27）</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body"><strong>状态：</strong>活线（motif → integration → cleanup）已经合入 <code>main</code>。卡片 001–032 的设计仍然成立；本卡片是合并后代码树的实现快照。</p>
+        <p class="code-caption">当前 runtime 路径</p>
+        <pre class="code-block">Qwen clip schemas
+  -> L1 clue-memory graph
+  -> L2 retrieval / reasoning
+  -> verifier
+  -> bounded repair
+  -> optional motif curation</pre>
+        <table class="scorecard">
+          <thead><tr><th>层级</th><th>当前代码</th><th>状态</th></tr></thead>
+          <tbody>
+            <tr><td>Atomic basis</td><td><code>atomic_skills/registry.py</code></td><td>34 个 snake_case skills：9 个 graph-construction + 25 个 reasoning-assembly</td></tr>
+            <tr><td>Adapters</td><td><code>dataset_clip_wrapper/adapters/</code></td><td>Video-Holmes、VideoMME、OVO-Bench、CG-Bench、VRBench、SIV-Bench</td></tr>
+            <tr><td>P5 video-only batch</td><td><code>docs/implementation-status.md</code></td><td>L1 15/15 high；L2 <code>accepted_strong</code> 12/15；3 条仍为 <code>needs_more_evidence</code></td></tr>
+            <tr><td>Five LoRAs</td><td><code>dataset_clip_wrapper/training/train_lora_sft.py</code> + <code>scripts/sft_pilot/</code></td><td>训练器和启动脚本已存在；数据量见卡片 032</td></tr>
+            <tr><td>GRPO / OPD</td><td><code>trainer/grpo/</code>、<code>scripts/grpo/</code>、<code>scripts/opd/</code></td><td>scaffolding 和 smoke tests；还不是完整 closed-loop controller</td></tr>
+          </tbody>
+        </table>
+        <ul class="key-points">
+          <li><strong>Specialist 路径：</strong>Qwen3.5-9B LoRAs。更早卡片里的 8B 是历史设计用语，不是当前 specialist 尺寸。</li>
+          <li><strong>主力评测轨：</strong>Video-Holmes、VideoMME、OVO-Bench、CG-Bench、VRBench。SIV-Bench 是 video-only 压力测试。M3-Bench 继续推迟。</li>
+          <li><strong>仍开放：</strong>完整 VLM/ASR/tracker perception、embedding coarse retrieval、gated L2 claim/compose SFT、细粒度 repair traces、GRPO closed loop；把顶层 <code>motif/</code> 并入 <code>dataset_clip_wrapper/motifs/</code>。</li>
+        </ul>
+        <p class="idea-notes"><strong>备注：</strong>用本卡片回答“合并后的仓库实际在跑什么”。不要为了路径改名去改写每一张历史设计卡片。</p>
+      </details>
+    </article>
+
     <article class="idea" data-id="atomic-skill-decomposition-and-assembly-021" data-status="open">
       <h3 class="idea-title">开放问题</h3>
       <details class="foldable idea-details" open>
@@ -1289,8 +1331,13 @@ measure:
   <section class="changelog">
     <h2>讨论记录</h2>
     <ol>
+      <li><time datetime="2026-08-27">2026-08-27</time> — 同步更新中英问题表述页，使其对上已合并的 <code>main</code>：loader 改为 <code>dataset_clip_wrapper/adapters/</code>（加入 VideoMME / OVO-Bench；SIV 作为压力测试）；SFT 训练器已存在，GRPO/OPD 仍是 scaffolding；新增卡片 033，记录当前 runtime、34 个冻结 skills，以及 P5 的 12/15 <code>accepted_strong</code>。</li>
       <li><time datetime="2026-07-23">2026-07-23</time> — 移除独立 L1 adapter 中遗留的 shared-LoRA 配额，保留全部 15,690 条通过可见性门禁的 L1 action（12,686 train / 3,004 dev）；同时用归一化 skill-family 权重避免 8,205 条 create-node 样本压制稀缺的 patch、segment 和 skip action。五路共 17,096 条样本全部通过实际 Qwen3.5-9B 16k tokenizer 审计。</li>
       <li><time datetime="2026-07-22">2026-07-22</time> — 新增并完成审计后清洗的 SFT v3：五套独立 Qwen3.5-9B LoRA 数据已就绪（L1 1,709；L2 867；Verifier 92；Repair 127；Motif 320）。已移除 L2 长度捷径、L1 不可见 / 损坏 endpoint、Repair 决策复制泄漏和 Motif 不可观测 target；正式训练仍未开始。</li>
+    </ol>
+    <details class="foldable changelog-archive">
+      <summary>更早的条目（24）</summary>
+      <ol>
       <li><time datetime="2026-06-30">2026-06-30</time> — 新增 Trace-to-Skill Fitting 更新：demonstrations 诱导 candidate operation clusters；紧凑 atomic basis 由 coverage / confusion / cost 选择并在 controller 训练前冻结；可发现的新技能是能展开成冻结 atomics 的 composite motifs，而不是在线创建的新 primitives。</li>
       <li><time datetime="2026-06-30">2026-06-30</time> — 新增可选 motif 卡片：composed skills 不作为第一篇核心机制；verified reasoning motifs 只作为 assembly / repair prior，不携带当前视频事实，执行和验证前必须展开成冻结的 atomic skill graph。</li>
       <li><time datetime="2026-06-26">2026-06-26</time> — 新增卡片 029：五个视频理解 benchmark 统一落地到 <code>datasets/</code>（Video-Holmes / SIV-Bench / VRBench / CG-Bench / M3-Bench），记录本地路径、数据量、loader 与 <code>run_eval.py</code> 入口；卡片 022 增加指向 028/029 的交叉引用；开放问题 benchmark 列表同步更新。</li>
@@ -1309,10 +1356,6 @@ measure:
       <li><time datetime="2026-06-15">2026-06-15</time> — 收紧 8B 角色：紧凑模型不再表述为独立长视频 reasoner，而是 memory-skill graph generator / controller / repair policy；训练信号来自 teacher demonstrations、ground-truth answer anchors、evidence feedback、executors、verifiers 和 failures。相应更新 thesis、单一 policy、方法、训练配方、reward 解释、positioning、评测、强度评估与第一篇收敛。</li>
       <li><time datetime="2026-06-15">2026-06-15</time> — 回应 benchmark gap（#3）：新增候选 benchmark 卡片（LongVidSearch 多跳证据、Video-Holmes 长程 social reasoning、MA-EgoQA social / ToM / temporal、EgoLife egocentric 长程数据；web-agent video 标为大概率超出范围），把第一篇锚定在 egocentric + social / temporal 多跳，并指出 typed skill-graph trace 监督加 memory-update / repair 评测层仍需自建、且可作为一等贡献。</li>
       <li><time datetime="2026-06-15">2026-06-15</time> — 把贡献从“video reasoning 的 skill graph”重新定位为 <strong>MemorySkillGraph</strong>：记忆是 substrate，神经符号 memory skills 是其上的操作系统。新增贡献边界（vs 存储系统）、五类 memory skills、typed/verifiable memory-skill 示例、基于 memory substrate 的方法主线、memory-operation reward / 修复、与 M3-Agent 的区别及 agent-memory related-work 类、三类实验设定，以及推荐的第一篇收敛（query + verify + reason；遗忘 / 压缩 / diffusion field 留后）。</li>
-    </ol>
-    <details class="foldable changelog-archive">
-      <summary>更早的条目（6）</summary>
-      <ol>
         <li><time datetime="2026-06-15">2026-06-15</time> — 大幅重构为 SkillGraph-RL proposal：typed-skill schema、skill-graph + typed edges、neural-symbolic 拆分、单一 policy 统一、5 阶段训练、训练信号来源、verified-RL / VLM post-training 关系、related-work map、positioning、强度评估。</li>
         <li><time datetime="2026-06-15">2026-06-15</time> — 新增 LensWalk 相关工作：active reason-plan-observe 显示强 reasoner 对弱 observer 帮助更大，支持 large-teacher / compact-student 拆分。</li>
         <li><time datetime="2026-06-15">2026-06-15</time> — 新增 7B/8B 使用理由：紧凑模型是可训练、更便宜、可部署的 student policy，需与 72B-only / hybrid baseline 对比。</li>
