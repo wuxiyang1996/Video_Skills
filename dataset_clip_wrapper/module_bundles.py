@@ -150,6 +150,7 @@ MODULE_BUNDLES: tuple[ModuleBundle, ...] = (
             "training.stepwise_sft_adapter",
             "training.train_lora_sft",
             "training.verifier_sft_adapter",
+            "training.verify_sft_pilot_artifacts",
             "export_l1_builder_sft",
             "export_l1_patch_sft",
             "export_l2_retrieval_sft",
