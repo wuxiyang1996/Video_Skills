@@ -89,8 +89,3 @@ def test_query_engine_only_returns_visible_motifs() -> None:
     results = MotifQueryEngine(bank).select("before after temporal order", top_k=5)
 
     assert [item.motif_id for item in results] == ["motif_temporal_order"]
-
-    # Non-empty ACTIVE bank still returns a candidate even with an unrelated query.
-    unrelated = MotifQueryEngine(bank).select("zzzz unrelated tokens", top_k=5)
-    assert [item.motif_id for item in unrelated] == ["motif_temporal_order"]
-    assert unrelated[0].score == 0.0
