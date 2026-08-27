@@ -1,0 +1,289 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/wuxiyang1996/Video_Skills/schemas/clue_memory_graph.schema.json",
+  "title": "ClueMemoryGraph",
+  "description": "Layer-1 perception / clue-memory graph. Question-agnostic video index built from clips, observations, entities, and events.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "graph_id",
+    "example_id",
+    "dataset",
+    "video_regime",
+    "input_mode",
+    "clip_policy",
+    "nodes",
+    "edges"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "video-skills-relaunch/v0.1"
+    },
+    "graph_id": {"type": "string"},
+    "example_id": {"type": "string"},
+    "dataset": {
+      "enum": ["video_holmes", "siv_bench", "cg_bench", "vrbench", "ovo_bench", "videomme"]
+    },
+    "video_id": {"type": "string"},
+    "video_regime": {
+      "enum": ["short", "long", "streaming"]
+    },
+    "input_mode": {
+      "enum": ["expert_demo", "video_only"]
+    },
+    "layer": {
+      "const": "clue_memory"
+    },
+    "clip_policy": {"$ref": "#/$defs/clip_policy"},
+    "retrieval": {"$ref": "#/$defs/retrieval_config"},
+    "observation_end_s": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Streaming / partial-video visibility cutoff. Nodes with time_span.end_s > observation_end_s are hidden in video_only."
+    },
+    "index_stats": {"$ref": "#/$defs/index_stats"},
+    "perception": {"$ref": "#/$defs/perception_metadata"},
+    "nodes": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/clue_node"}
+    },
+    "edges": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/clue_edge"}
+    },
+    "trust_policy": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "time_span": {
+      "type": "object",
+      "required": ["start_s", "end_s"],
+      "properties": {
+        "start_s": {"type": "number", "minimum": 0},
+        "end_s": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "clip_policy": {
+      "type": "object",
+      "required": ["strategy"],
+      "properties": {
+        "strategy": {
+          "enum": ["whole_video", "fixed_window", "hierarchical", "coarse_only", "shot_boundary", "scene_boundary", "adaptive"]
+        },
+        "window_s": {"type": ["number", "null"], "minimum": 0},
+        "overlap_s": {"type": ["number", "null"], "minimum": 0},
+        "coarse_window_s": {"type": ["number", "null"], "minimum": 0},
+        "fine_window_s": {"type": ["number", "null"], "minimum": 0},
+        "index_fine_expansion": {
+          "enum": ["none", "all", "retrieval_gated"]
+        },
+        "online": {"type": "boolean"},
+        "observation_end_s": {"type": ["number", "null"], "minimum": 0},
+        "duration_s": {"type": ["number", "null"], "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "retrieval_config": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "topk": {"type": "integer", "minimum": 1},
+        "threshold": {"type": "number", "minimum": 0},
+        "mode": {"enum": ["lexical", "sequential", "embedding"]}
+      },
+      "additionalProperties": true
+    },
+    "index_stats": {
+      "type": "object",
+      "properties": {
+        "index_clip_count": {"type": "integer", "minimum": 0},
+        "coarse_clip_count": {"type": "integer", "minimum": 0},
+        "fine_clip_count": {"type": "integer", "minimum": 0},
+        "perception_clip_count": {"type": ["integer", "null"], "minimum": 0},
+        "observation_count": {"type": "integer", "minimum": 0},
+        "event_count": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "perception_metadata": {
+      "type": "object",
+      "properties": {
+        "clip_schema_model": {"type": ["string", "null"]},
+        "graph_composer_model": {"type": ["string", "null"]},
+        "backbone": {"type": ["string", "null"]},
+        "build_phase": {
+          "enum": ["index_only", "perception_partial", "perception_full"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "clue_node": {
+      "type": "object",
+      "required": ["node_id", "node_type"],
+      "properties": {
+        "node_id": {"type": "string"},
+        "local_node_id": {
+          "type": "string",
+          "description": "Composer-local node identifier, scoped by local_id_clip_id."
+        },
+        "local_id_clip_id": {"type": "string"},
+        "mention_id": {"type": "string"},
+        "state_id": {"type": "string"},
+        "subject_mention_id": {"type": "string"},
+        "subject_ref": {"type": "string"},
+        "attribute": {"type": "string"},
+        "value": {"type": "string"},
+        "participant_refs": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "participant_mention_ids": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "embedding_ref": {"$ref": "#/$defs/embedding_ref"},
+        "entity_type": {"type": "string"},
+        "attributes": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "node_type": {
+          "enum": [
+            "clip",
+            "observation",
+            "dialogue_span",
+            "subtitle_span",
+            "caption_span",
+            "entity",
+            "entity_mention",
+            "event",
+            "state",
+            "clue",
+            "episodic_text",
+            "semantic_text",
+            "face",
+            "voice",
+            "question_requirement",
+            "required_modality",
+            "answerability_gap",
+            "visual_social_cue",
+            "l2_repair_reminder"
+          ]
+        },
+        "video_id": {"type": ["string", "null"]},
+        "time_span": {"$ref": "#/$defs/time_span"},
+        "granularity": {
+          "enum": ["whole", "coarse", "fine"]
+        },
+        "parent_clip_id": {"type": ["string", "null"]},
+        "text": {"type": ["string", "null"]},
+        "modality": {"type": ["string", "null"]},
+        "source_type": {"type": ["string", "null"]},
+        "trust_level": {
+          "type": ["string", "null"],
+          "enum": ["gold", "strong", "weak", "derived", "model_labeled", null]
+        },
+        "discovery_status": {
+          "type": ["string", "null"],
+          "enum": [
+            "provided_supervision",
+            "provided_visible_context",
+            "discovered_runtime",
+            "derived_runtime",
+            "hidden_eval_only",
+            null
+          ]
+        },
+        "visibility": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "source_ids": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "embedding_ref": {
+      "type": "object",
+      "required": [
+        "path",
+        "model",
+        "dimension",
+        "dtype",
+        "normalized",
+        "row_index",
+        "checksum"
+      ],
+      "properties": {
+        "path": {"type": "string"},
+        "model": {"const": "Qwen/Qwen3-VL-Embedding-2B"},
+        "dimension": {"const": 2048},
+        "dtype": {"const": "float32"},
+        "normalized": {"const": true},
+        "row_index": {"type": "integer", "minimum": 0},
+        "checksum": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "clue_edge": {
+      "type": "object",
+      "required": ["edge_id", "src", "dst", "edge_type"],
+      "properties": {
+        "edge_id": {"type": "string"},
+        "src": {"type": "string"},
+        "dst": {"type": "string"},
+        "edge_type": {
+          "enum": [
+            "temporal_next",
+            "temporal_overlap",
+            "temporal_inside",
+            "entity_mention",
+            "state_of",
+            "same_entity",
+            "same_object",
+            "same_place",
+            "reappears",
+            "before_after",
+            "state_change",
+            "supports_observation",
+            "contrasts_observation",
+            "located_in",
+            "causal_hint",
+            "social_cue",
+            "dialogue_speaker",
+            "face_voice_equivalence",
+            "derived_from",
+            "supports",
+            "retrieval_score",
+            "requires_evidence",
+            "limits_answerability",
+            "weak_visual_context",
+            "partially_supports_requirement",
+            "repair_reminder_for"
+          ]
+        },
+        "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "payload": {"type": "object", "additionalProperties": true}
+      },
+      "additionalProperties": true
+    }
+  }
+}

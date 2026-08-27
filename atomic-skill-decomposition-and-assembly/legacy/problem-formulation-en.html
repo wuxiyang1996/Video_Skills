@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MemorySkillGraph — Problem Formulation</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>MemorySkillGraph: Neural-Symbolic Memory Skills for Long-Horizon Multimodal Reasoning</h1>
+    <p class="meta">Last updated: <time datetime="2026-06-15">2026-06-15</time></p>
+    <nav class="lang-nav">
+      <a href="problem-formulation-zh.html">Chinese</a> |
+      <a href="../continuous-memory-model-and-retrieval/problem-formulation-en.html">Companion: continuous memory</a> |
+      <a href="../../.cursor/skills/nec-brainstorming/ideas/index.html">Brainstorming hub</a>
+    </nav>
+  </header>
+
+  <section class="project" data-project="atomic-skill-decomposition-and-assembly" id="problem-formulation">
+    <h2>Research track</h2>
+    <p class="project-summary">We do not propose a new memory store, and we do not claim an 8B model independently solves long-horizon video reasoning. We train a compact controller to assemble and repair executable memory-skill graphs that organize teacher demonstrations, tool execution, verification, retrieval, and ground-truth answer feedback over long-term multimodal memory.</p>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-001" data-status="active">
+      <h3 class="idea-title">Core thesis (one line)</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body"><strong>MemorySkillGraph: Neural-Symbolic Skill Assembly for Long-Horizon Multimodal Memory Reasoning</strong> (mechanism: failure-aware training of a compact memory-program generator).</p>
+        <p class="idea-body">We formulate long-horizon multimodal memory reasoning as <strong>neural-symbolic skill assembly over an external memory substrate</strong>. Instead of training an 8B model to answer long-video questions directly, we train it to generate and locally repair typed memory-skill programs. Teacher demonstrations, executors, verifiers, retrieved evidence, and benchmark ground-truth answers provide supervision and evaluation; the compact model learns the control policy that organizes these components.</p>
+        <ul class="key-points">
+          <li><strong>Memory is the substrate.</strong> Neural-symbolic skills are the operating system over memory.</li>
+          <li><strong>From:</strong> memory as a passive retrieval database.</li>
+          <li><strong>To:</strong> memory as an executable neural-symbolic workspace where agents query, store, verify, and reason via typed atomic skills.</li>
+          <li><strong>Role of 8B:</strong> not final reasoner; it is a program generator / controller / repair policy.</li>
+          <li><strong>One-line takeaway:</strong> don't teach the small model to answer directly; teach it to assemble an <em>executable, verifiable, repairable</em> memory program that guides retrieval, verification, and answer generation.</li>
+        </ul>
+        <ul class="idea-tags">
+          <li>neural-symbolic</li>
+          <li>memory skills</li>
+          <li>skill graph</li>
+          <li>verifier-grounded process RL</li>
+          <li>long-horizon multimodal</li>
+        </ul>
+        <p class="idea-notes"><strong>Notes:</strong> Name candidates — <em>MemorySkillGraph</em> (primary), <em>MemSkill: Neural-Symbolic Memory Skills for Multimodal Agents</em> (short), <em>VideoMemSkill</em> (if video-leaning). Avoid claiming "8B reasons over long videos"; claim "8B learns memory-program assembly and repair from teacher demonstrations, ground-truth answers, evidence feedback, and failures."</p>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-002" data-status="active">
+      <h3 class="idea-title">Contribution boundary: operation, not storage</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body"><strong>Do not claim</strong> "we propose a new memory storage architecture" — M3-Agent, ReMEmbR, MemoryBank, HippoRAG, GraphRAG, MemGPT, and LangMem already cover memory storage / graphs / retrieval. <strong>Do claim</strong> "we propose a neural-symbolic memory skill interface and assembly framework." The memory backend can be an M3-Agent-like graph, FAISS / vector DB, or event-state graph; the contribution is how an agent <em>operates</em> over it.</p>
+        <table class="scorecard">
+          <thead><tr><th>Direction</th><th>They do</th><th>We do</th></tr></thead>
+          <tbody>
+            <tr><td>Vector memory / RAG</td><td>retrieve relevant chunks</td><td>typed skills control query, verification, reasoning</td></tr>
+            <tr><td>Memory graph</td><td>store entity / event / relation</td><td>run verifiable operations over the graph</td></tr>
+            <tr><td>Agent memory systems</td><td>auto write / retrieve memory</td><td>formalize write / update / consolidate / forget / reason as executable skills</td></tr>
+            <tr><td>Skill agents</td><td>skills for action / tool use</td><td>skills specifically for memory operations and memory-grounded reasoning</td></tr>
+          </tbody>
+        </table>
+        <ul class="key-points">
+          <li><strong>Existing:</strong> memory as storage / retrieval.</li>
+          <li><strong>Ours:</strong> memory as executable skill operations.</li>
+          <li><strong>Clean positioning:</strong> Neural-Symbolic Memory Skills for Long-Horizon Multimodal Agents.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-003" data-status="active">
+      <h3 class="idea-title">What we are actually doing</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body">Current VLMs answer through <code>video/image + question → free-form CoT → answer</code>. That pipeline has five recurring failures:</p>
+        <ol class="problem-list">
+          <li><strong>Intermediate steps are not executable</strong> — they are prose, not operations.</li>
+          <li><strong>Visual / memory evidence is not inspectable</strong> — claims do not point back to frames, clips, or memory nodes.</li>
+          <li><strong>Errors cannot be localized</strong> — a wrong answer gives no failing step.</li>
+          <li><strong>Temporal / causal constraints are easily talked over</strong> by fluent language.</li>
+          <li><strong>Self-correction rewrites the whole answer</strong> instead of fixing the broken step.</li>
+        </ol>
+        <p class="idea-body">We replace the free-form reasoning chain with an <strong>executable neural-symbolic memory-skill graph</strong>:</p>
+        <figure class="memory-figure">
+          <figcaption>Figure: from CoT pipeline to memory-skill-graph pipeline.</figcaption>
+          <ol class="memory-flow">
+            <li><strong>Query + history</strong><span>multimodal input + memory state</span></li>
+            <li><strong>Typed skill graph</strong><span>assemble memory operators</span></li>
+            <li><strong>Execute nodes</strong><span>query / write / reason over memory</span></li>
+            <li><strong>Verify</strong><span>node / edge / evidence checks</span></li>
+            <li><strong>Answer + learn</strong><span>repair and learn from failed programs</span></li>
+          </ol>
+        </figure>
+        <ul class="key-points">
+          <li><strong>Shift:</strong> free-form reasoning chain → executable neural-symbolic memory-skill graph.</li>
+          <li><strong>Real target:</strong> not "the model uses tools," but "the model learns to compose, execute, verify, and repair programs over memory."</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-004" data-status="active">
+      <h3 class="idea-title">Atomic skill = typed symbolic operator</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body">An atomic skill is <strong>not</strong> a natural-language prompt step. It is a typed symbolic operator with explicit inputs, outputs, preconditions, effects, an executor, a verifier, and failure codes. The controller learns to compose these operators, not to invent them online. Memory operation is therefore not free-form writing; it is typed, constrained, executable, and verifiable.</p>
+        <p class="code-caption">Skill schema</p>
+        <pre class="code-block">skill = {
+  name,
+  input_types,
+  output_types,
+  preconditions,
+  effects,
+  executor,     # neural / tool call that runs the skill
+  verifier,     # checks the result is grounded and valid
+  failure_codes # typed reasons the skill can fail
+}</pre>
+        <p class="code-caption">Example operator</p>
+        <pre class="code-block">DetectContact(entity_a, entity_b, time_span)
+  Inputs:        Entity × Entity × TimeSpan
+  Outputs:       ContactEvent
+  Preconditions: visible(entity_a, time_span)
+                 visible(entity_b, time_span)
+  Effects:       contact_event(entity_a, entity_b, time_span)
+  Verifier:      visual proximity + temporal overlap
+                 + motion / state change</pre>
+        <ul class="key-points">
+          <li><strong>Small, stable basis:</strong> fewer typed operators beat many vague tools; never hand-write one skill per task.</li>
+          <li><strong>Evidence first:</strong> every input / output / evidence binds back to memory or raw clips.</li>
+          <li><strong>Structured returns:</strong> timestamp range, entity ids, modality, confidence, clip pointer, graph node ids, compact rationale.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-005" data-status="active">
+      <h3 class="idea-title">The skill graph (why it beats linear CoT)</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body">A skill graph has atomic skills as <strong>nodes</strong> and dependencies as <strong>edges</strong>. Edges are not just sequence; they carry typed dependency relations.</p>
+        <p class="code-caption">Example: "Why did the cup fall?"</p>
+        <pre class="code-block">LocalizeEvent(cup_falling)
+   ↓
+TrackEntity(cup)
+   ↓
+TrackEntity(hand)
+   ↓
+DetectContact(hand, cup)
+   ↓
+CompareState(cup, before, after)
+   ↓
+InferCausalRelation(contact, falling)
+   ↓
+VerifyEvidence(answer, frames)</pre>
+        <ul class="key-points">
+          <li><strong>Edge types:</strong> data, temporal, causal, evidence, memory dependency.</li>
+          <li><strong>Why stronger than linear CoT / tool chains:</strong> multi-hop structure is explicit, branchable, inspectable, and gives verifiers clean boundaries to score.</li>
+        </ul>
+        <ul class="idea-tags">
+          <li>typed edges</li>
+          <li>multi-hop</li>
+          <li>temporal / causal</li>
+          <li>inspectable</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-006" data-status="active">
+      <h3 class="idea-title">Where neural-symbolic lives</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body">This framing is <strong>neural-guided symbolic program assembly</strong>, not free-form imagination. The split is explicit:</p>
+        <ol class="problem-list">
+          <li><strong>Symbolic part:</strong> typed memory skills, preconditions / effects, skill-graph structure, type constraints, temporal / causal constraints, symbolic executor, hard verifier.</li>
+          <li><strong>Neural part:</strong> <code>observer</code> (perceive objects / events / time spans), <code>reasoner</code> (select skill), <code>argument binder</code> (bind object / timestamp / evidence / memory node), <code>graph assembler</code> (produce the program), <code>soft verifier</code> (judge grounding / contact / causality), <code>repair policy</code> (fix failed programs).</li>
+        </ol>
+        <ul class="key-points">
+          <li><strong>Hard checks (symbolic):</strong> types, preconditions, temporal order, evidence pointers exist.</li>
+          <li><strong>Soft checks (neural):</strong> does the clip / memory node actually support the claim.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-007" data-status="active">
+      <h3 class="idea-title">The five families of memory skills</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body">Keep the basis small and memory-operating (not generic video skills). Five families:</p>
+        <ol class="problem-list">
+          <li><strong>A — Perception-to-memory (write observation into memory):</strong> <code>ExtractEntity</code>, <code>ExtractEvent</code>, <code>ExtractState</code>, <code>ExtractEvidence</code>, <code>StoreMemory</code>. → raw video/audio → structured memory records.</li>
+          <li><strong>B — Memory query (find in memory):</strong> <code>RetrieveEntity</code>, <code>RetrieveEvent</code>, <code>RetrieveState</code>, <code>RetrieveEvidence</code>, <code>QueryTemporalChain</code>, <code>QueryRelationalNeighborhood</code>. → query → relevant memory subgraph / clips / evidence.</li>
+          <li><strong>C — Update / consolidation (merge, compress):</strong> <code>ResolveCoreference</code>, <code>MergeDuplicateMemory</code>, <code>UpdateState</code>, <code>ConsolidateEpisodes</code>, <code>CompressSubgraph</code>. → reduce duplication, keep long-term consistency, form higher-level semantic memory.</li>
+          <li><strong>D — Verification (is the memory trustworthy):</strong> <code>VerifyEvidence</code>, <code>VerifyTemporalOrder</code>, <code>VerifyStateTransition</code>, <code>CheckContradiction</code>, <code>CheckMemoryGrounding</code>. → prevent hallucinated / stale memory and wrong entity linking.</li>
+          <li><strong>E — Memory reasoning (reason over memory):</strong> <code>InferTemporalRelation</code>, <code>InferCausalRelation</code>, <code>ComparePastAndCurrentState</code>, <code>FindPrecedingCause</code>, <code>ExplainEventFromMemory</code>, <code>AnswerFromEvidence</code>. → memory subgraph → answer / explanation / action decision.</li>
+        </ol>
+        <ul class="key-points">
+          <li><strong>Key:</strong> these are <em>memory-operating</em> skills, not ordinary video skills.</li>
+          <li><strong>Perception / relation operators</strong> (e.g. <code>TrackEntity</code>, <code>DetectContact</code>) live inside families A and E as executors.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-008" data-status="active">
+      <h3 class="idea-title">Typed + verifiable memory skill examples</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="code-caption">Query skill</p>
+        <pre class="code-block">RetrieveEvent(event_description, time_range)
+  Input types:   event_description: Text
+                 time_range: TimeRange | None
+  Output types:  event_nodes: List[EventNode]
+  Preconditions: memory_graph_available
+                 query_is_grounded
+  Effects:       candidate_event_nodes_available
+  Verifier:      event node has evidence pointer
+                 timestamp overlaps requested range
+                 event description matches query</pre>
+        <p class="code-caption">Write skill</p>
+        <pre class="code-block">StoreMemory(event, evidence)
+  Input types:   event: Event
+                 evidence: EvidenceSpan
+  Output:        memory_node_id
+  Preconditions: evidence_span_valid
+                 event grounded in observation
+  Effects:       event node stored in memory graph
+                 supported_by(event, evidence) edge created
+  Verifier:      stored node has timestamp
+                 stored node has evidence pointer
+                 no duplicate conflict with existing memory</pre>
+        <ul class="key-points">
+          <li><strong>Memory operation is not free-form writing:</strong> it is typed, constrained, executable, and verifiable.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-009" data-status="active">
+      <h3 class="idea-title">One compact policy: program assembly, not direct reasoning</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body">Decision from discussion: <strong>do not build two separately-trained agents, and do not frame 8B as the final semantic reasoner.</strong> Decomposition, assembly, and repair are phases of one compact controller. Memory write / update / merge / forget / query are atomic skills inside the same typed action space. The learned contribution is a single policy that generates and repairs typed memory-skill programs over the memory substrate.</p>
+        <p class="idea-body"><strong>Keep the write/read boundary, not two models.</strong> Separation was motivated by (a) pollution and (b) different clocks. (a) is solved by interface discipline: only evidence-backed observations may be committed; reasoning-time hypotheses cannot. (b) only forces real separation in streaming.</p>
+        <figure class="memory-figure">
+          <figcaption>Figure: one policy, execution depends on the setting.</figcaption>
+          <ol class="memory-flow">
+            <li><strong>Offline (short video)</strong><span>one interleaved loop: write pass, then read / assemble</span></li>
+            <li><strong>Streaming</strong><span>same weights, two execution contexts: background writer + foreground reasoner sharing one store</span></li>
+            <li><strong>Write discipline</strong><span>only evidence-grounded commits; no speculative writes</span></li>
+          </ol>
+        </figure>
+        <ul class="key-points">
+          <li><strong>Policy level:</strong> unify — memory ops are skills in one typed action space.</li>
+          <li><strong>Execution level:</strong> offline = one loop; streaming = two runtime contexts of one policy.</li>
+          <li><strong>8B does:</strong> choose skills, bind arguments, decide retrieval / verification steps, and repair failed graphs.</li>
+          <li><strong>8B does not do:</strong> raw video perception, open-ended causal / social reasoning, or final answer adjudication by itself.</li>
+          <li><strong>Supervision machinery:</strong> ground-truth answers, teacher demonstrations / corrections, executors, retrieved evidence, and verifiers.</li>
+          <li><strong>Upside:</strong> cheaper reusable control policy; the expensive teacher is used to demonstrate, correct, and evaluate rather than plan every inference step forever.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-010" data-status="active">
+      <h3 class="idea-title">Method main line</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <ol class="problem-list">
+          <li><strong>Step 1 — Maintain an external memory substrate</strong> (graph, or vector+graph hybrid): <code>M_t = (V_t, E_t, X_t)</code> where <code>V_t</code> = entity / event / state / evidence nodes, <code>E_t</code> = temporal / relational / support edges, <code>X_t</code> = raw evidence pointers, embeddings, metadata.</li>
+          <li><strong>Step 2 — Define neural-symbolic memory skills</strong> <code>S_mem = {s_1..s_K}</code>, each <code>s_i = ⟨input types, output types, preconditions, effects, executor, verifier⟩</code>.</li>
+          <li><strong>Step 3 — Assemble task-specific memory programs.</strong> Given query <code>q</code>, the 8B controller does not answer directly; it emits a program <code>P_q = [s_1(args_1)..s_T(args_T)]</code> or a graph <code>G_q = (V_skills, E_dependencies)</code>.</li>
+          <li><strong>Step 4 — Execute and verify.</strong> Each step reads / writes memory and is checked: <code>M_t, state_i = Execute(s_i, M_t, state_{i-1})</code>; <code>Verify(s_i, M_t, evidence)</code>.</li>
+          <li><strong>Step 5 — Answer grounded in memory evidence:</strong> the final answer comes from retrieved memory subgraph + raw evidence pointers and is checked against benchmark ground truth during training / evaluation.</li>
+        </ol>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-011" data-status="active">
+      <h3 class="idea-title">Training recipe (5 stages)</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <ol class="problem-list">
+          <li><strong>Stage 1 — SFT over teacher memory-operation traces.</strong> Teacher produces <code>question + memory state → skill graph → evidence chain → answer</code>. Keep traces that reach the ground-truth answer and pass basic evidence / format checks. The 8B learns DSL format, decomposition, argument binding, and evidence citation — not free-form video reasoning.</li>
+          <li><strong>Stage 2 — Subproblem curriculum.</strong> Decompose into verifiable subproblems (retrieval, coreference, state comparison, temporal / causal relation, evidence verification). Train short programs first.</li>
+          <li><strong>Stage 3 — 8B rollout of multiple memory programs.</strong> <code>P_1..P_K ~ π_θ(P | q, M_t)</code>; different programs retrieve different events, bind different entities, cite different evidence, or choose different verification paths.</li>
+          <li><strong>Stage 4 — Score with ground truth + process feedback.</strong> Use answer correctness as the endpoint anchor, evidence-chain recall when available, hard validity checks, and teacher / verifier feedback as noisy process signals. The objective is valid executable program &gt; invalid / unsupported program, not just correct &gt; wrong answer.</li>
+          <li><strong>Stage 5 — Local repair / learn from failures.</strong> Input <code>bad program + failure feedback</code> → output <code>repaired program</code>: replace argument, insert missing node, delete redundant node, rewire edge, change evidence span.</li>
+        </ol>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-012" data-status="active">
+      <h3 class="idea-title">Memory-operation reward and repair</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="code-caption">Memory program reward sketch</p>
+        <pre class="code-block">R(P) =  retrieval_correctness
+      + evidence_support
+      + temporal_consistency
+      + state_consistency
+      + memory_update_validity
+      - contradiction
+      + answer_correctness</pre>
+        <p class="idea-body"><strong>Important interpretation.</strong> <code>answer_correctness</code> is the benchmark ground-truth endpoint; it filters and anchors the rollout. The other terms are process signals used to explain why a program worked or failed. They do not require the 8B to decide the final answer by itself.</p>
+        <p class="code-caption">Preference pairs (P_good &gt; P_bad)</p>
+        <pre class="code-block">P_bad:  retrieves wrong person due to entity confusion
+P_good: ResolveCoreference -> RetrieveEvent -> VerifyEvidence -> Answer
+
+P_bad:  stores an ungrounded event without evidence pointer
+P_good: ExtractEvent -> VerifyEvidence -> StoreMemory</pre>
+        <p class="code-caption">Local repair example</p>
+        <pre class="code-block">Failure:
+  RetrieveEvent returned an event AFTER the target event,
+  violating the temporal constraint.
+Repair:
+  add QueryTemporalChain + filter events before target timestamp.</pre>
+        <ul class="key-points">
+          <li><strong>Novelty:</strong> learning from <em>failed memory operations</em>, not just wrong answers.</li>
+          <li><strong>Precise learning target:</strong> <code>bad program + feedback → repaired program</code>, not <code>video → answer</code>.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-013" data-status="active">
+      <h3 class="idea-title">Training signal: where it comes from</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body">To claim a <em>learning</em> contribution we train one compact agent — the memory-skill program controller. It is not the final reasoner; it learns to generate and repair skill graphs. Signals, ranked by how real and defensible they are:</p>
+        <ol class="problem-list">
+          <li><strong>Tool + environment feedback (free, per-step, the backbone):</strong> every typed skill returns structured success/failure (empty retrieval, type mismatch, duplicate conflict, missing evidence). Dense process supervision, zero human labels.</li>
+          <li><strong>Evidence-chain recall on existing multi-hop benchmarks (most discriminative):</strong> reward the correct evidence chain, not just the answer. A prompt-only 72B can get the answer right via an ungrounded path; this catches it.</li>
+          <li><strong>Outcome reward (answer correctness):</strong> benchmark ground truth; sparse but reliable endpoint signal. It says whether the final answer is right, not whether every graph step is right.</li>
+          <li><strong>Teacher demonstrations and corrections:</strong> large models provide candidate graphs, repairs, and preference labels. Teacher output is supervision, not proof; it should be filtered by ground-truth answer and evidence checks.</li>
+          <li><strong>On-policy correction (cleanest learning story):</strong> the 8B visits its own error states and the teacher / verifier corrects the program on those exact states — this is what makes it more than offline distillation.</li>
+          <li><strong>Auto-generated counterfactual negatives:</strong> corrupt good traces (wrong order, bad binding, broken evidence pointer, skipped hop) and train preference.</li>
+        </ol>
+        <p class="idea-body"><strong>The honesty trap.</strong> If trained <em>only</em> by offline SFT on teacher traces, a reviewer correctly says "you just distilled 72B into 8B." Escape it with ground-truth filtering, evidence-chain metrics, on-policy failure correction, repair success, cost/latency gains, and transfer.</p>
+        <ul class="key-points">
+          <li><strong>Train:</strong> the controller (program assembly + argument binding + verification choice + repair).</li>
+          <li><strong>Do not train as the contribution:</strong> the memory writer — SFT from teacher deltas and freeze.</li>
+          <li><strong>Justifying experiment:</strong> frozen teacher-planner vs trained 8B program controller, identical tools + memory, scored on answer + process metrics.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-014" data-status="active">
+      <h3 class="idea-title">Relation to LLM verified RL / process reward</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body">Mainstream LLM verified RL is <code>question → reasoning chain → answer → verifier → reward</code>, historically with sparse outcome reward. Verifiable Process Reward work argues that when intermediate actions can be checked by a symbolic / algorithmic oracle, the oracle becomes dense turn-level supervision and fixes long-horizon credit assignment — depending on verifier quality.</p>
+        <p class="idea-body"><strong>Our insight:</strong> free-form CoT steps are unstable and hard to verify; memory-skill steps are <em>typed operators</em>, naturally suited to process-level verified reward.</p>
+        <ul class="key-points">
+          <li><strong>Free-form CoT:</strong> step is hard to define / verify.</li>
+          <li><strong>MemorySkillGraph:</strong> node / edge / argument / evidence are all verifiable → node-, edge-, subgraph-motif-, and answer-level reward.</li>
+        </ul>
+        <details class="foldable related-work">
+          <summary>Related work</summary>
+          <ul class="related-work-list">
+            <li><a href="https://arxiv.org/abs/2411.15124" target="_blank" rel="noopener">RLVR / Tülu 3</a> — <span class="relevance">RL from verifiable rewards; backbone for verifier-driven post-training.</span></li>
+            <li><a href="https://arxiv.org/abs/2305.20050" target="_blank" rel="noopener">Process Reward Models</a> — <span class="relevance">Step-level reward; motivates scoring per node/edge.</span></li>
+            <li><a href="https://arxiv.org/abs/2402.03300" target="_blank" rel="noopener">GRPO (DeepSeekMath)</a> — <span class="relevance">Group-relative optimization over rollouts; lifted to program-level rollouts.</span></li>
+            <li><a href="https://arxiv.org/abs/2305.18290" target="_blank" rel="noopener">DPO</a> — <span class="relevance">Preference optimization; basis for "valid &gt; invalid" program training.</span></li>
+          </ul>
+        </details>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-015" data-status="active">
+      <h3 class="idea-title">Insights from recent VLM reasoning / post-training</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <ol class="problem-list">
+          <li><strong>Visual-RFT / VLM-R1:</strong> multiple rollouts + verifiable reward + GRPO beats SFT-only; task-specific rule-based rewards (e.g. IoU). → sample multiple memory programs, execute / verify, GRPO over the program policy, design skill-specific verifiers.</li>
+          <li><strong>Point-RFT / grounded CoT:</strong> text-only CoT causes hallucination; grounded CoT lifts ChartQA 70.88% → 90.04%. → not every sentence is grounded, but every skill node's input / output / evidence is.</li>
+          <li><strong>Critic-V:</strong> Reasoner + Critic; DPO-trained critics catch VLM errors. → our critic operates at node / edge / evidence level.</li>
+          <li><strong>Self-correction / learn-from-failure:</strong> must be trained, not just prompted. → "wrong answer → correct answer" becomes "failed memory program → repaired program."</li>
+          <li><strong>PRM / VPR:</strong> dense verifier-grounded rewards improve long-horizon credit assignment. → memory skills supply natural step boundaries.</li>
+        </ol>
+        <details class="foldable related-work">
+          <summary>Related work</summary>
+          <ul class="related-work-list">
+            <li><a href="https://arxiv.org/abs/2503.01785" target="_blank" rel="noopener">Visual-RFT</a> — <span class="relevance">Verifiable-reward RFT for LVLMs; template for program-level rollout.</span></li>
+            <li><a href="https://github.com/om-ai-lab/VLM-R1" target="_blank" rel="noopener">VLM-R1</a> — <span class="relevance">R1-style RL for VLMs; verifiable-reward post-training infrastructure.</span></li>
+            <li><a href="https://arxiv.org/abs/2411.18203" target="_blank" rel="noopener">Critic-V</a> — <span class="relevance">Reasoner + Critic for multimodal reasoning; node/edge/evidence-level critique.</span></li>
+          </ul>
+        </details>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-016" data-status="active">
+      <h3 class="idea-title">Difference from M3-Agent + related-work map</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body"><strong>M3-Agent</strong> = build a multimodal long-term memory graph + retrieve + iterative thinking/control. <strong>Ours</strong> = given / maintain a memory substrate + define neural-symbolic memory skills + assemble executable memory programs + verify query/store/reasoning steps + train from failed memory operations.</p>
+        <p class="idea-body"><strong>M3-Agent asks how to build and retrieve multimodal memory; we ask how an agent should operate over memory through typed, executable, verifiable skills.</strong> M3-Agent's focus is the memory <em>system</em>; ours is the memory <em>operation policy</em>.</p>
+        <p class="idea-body"><strong>Related-work map (7 families, our position in each):</strong></p>
+        <ol class="problem-list">
+          <li><strong>A. Skill library / composition agents</strong> (Voyager, SayCan, Code as Policies) → fixed typed skill basis + learned graph assembly.</li>
+          <li><strong>B. Neural-symbolic planning / program induction</strong> (LLM+P, NS-CL, program-of-thought) → query → skill graph → evidence-grounded execution.</li>
+          <li><strong>C. VLM reasoning post-training</strong> (Visual-RFT, VLM-R1, Reason-RFT) → target shifts from free-form CoT to executable skill graph.</li>
+          <li><strong>D. Grounded reasoning / grounded CoT</strong> (Point-RFT, Argus) → sentence-level → skill-node-level grounding.</li>
+          <li><strong>E. Critic / self-correction / learn-from-failure</strong> (Critic-V) → response correction → program repair.</li>
+          <li><strong>F. LLM verified RL / process reward</strong> (RLVR, PRM, VPR) → free-form step reward → typed node/edge/subgraph reward.</li>
+          <li><strong>G. Agent memory systems</strong> (M3-Agent, ReMEmbR, MemoryBank, HippoRAG, GraphRAG, MemGPT, LangMem) → memory as storage/retrieval → memory as executable skill operations.</li>
+        </ol>
+        <details class="foldable related-work">
+          <summary>Related work</summary>
+          <ul class="related-work-list">
+            <li><a href="https://arxiv.org/abs/2305.16291" target="_blank" rel="noopener">Voyager</a> — <span class="relevance">Executable skill library from environment feedback.</span></li>
+            <li><a href="https://arxiv.org/abs/2204.01691" target="_blank" rel="noopener">SayCan</a> — <span class="relevance">Predefined skills + affordance grounding.</span></li>
+            <li><a href="https://arxiv.org/abs/2209.07753" target="_blank" rel="noopener">Code as Policies</a> — <span class="relevance">Executable programs over primitive APIs.</span></li>
+            <li><a href="https://arxiv.org/abs/2304.11477" target="_blank" rel="noopener">LLM+P</a> — <span class="relevance">LLM proposal + symbolic planner.</span></li>
+            <li><a href="https://nvidia-ai-iot.github.io/remembr/" target="_blank" rel="noopener">ReMEmbR</a> — <span class="relevance">Embodied long-term memory: VLM captions + vector DB + LLM agent retrieval.</span></li>
+            <li><a href="https://arxiv.org/abs/2305.10250" target="_blank" rel="noopener">MemoryBank</a> — <span class="relevance">Long-term memory mechanism for LLM agents.</span></li>
+            <li><a href="https://arxiv.org/abs/2405.14831" target="_blank" rel="noopener">HippoRAG</a> — <span class="relevance">Graph-based long-term memory retrieval inspired by the hippocampus.</span></li>
+            <li><a href="https://arxiv.org/abs/2404.16130" target="_blank" rel="noopener">GraphRAG</a> — <span class="relevance">Graph-structured retrieval-augmented generation.</span></li>
+            <li><a href="https://arxiv.org/abs/2310.08560" target="_blank" rel="noopener">MemGPT</a> — <span class="relevance">OS-style memory management for LLMs (paging context vs external store).</span></li>
+            <li><a href="https://arxiv.org/abs/2603.24558" target="_blank" rel="noopener">LensWalk</a> — <span class="relevance">Active reason-plan-observe; strong reasoner guides weak observer.</span></li>
+          </ul>
+        </details>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-017" data-status="active">
+      <h3 class="idea-title">Strongest paper positioning</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="positioning">We formulate long-horizon multimodal memory reasoning as neural-symbolic skill assembly over an external memory substrate. Instead of training a compact model to answer long-video questions directly, we train it to assemble and repair executable memory-skill programs that guide retrieval, verification, and answer generation. Teacher demonstrations, benchmark ground-truth answers, evidence chains, executors, and verifiers provide supervision and evaluation. We turn memory from a passive retrieval database into an executable neural-symbolic workspace, and train a small controller to operate that workspace.</p>
+        <ul class="key-points">
+          <li><strong>Strongest one-liner:</strong> we do not train the 8B to answer directly; we train it to assemble and repair executable memory-skill graphs that let teacher / executors / verifiers retrieve evidence and reach the ground-truth answer.</li>
+          <li><strong>Why stronger:</strong> avoids the crowded "another memory graph" lane and is clearly distinct from M3-Agent-style memory systems.</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-018" data-status="active">
+      <h3 class="idea-title">Evaluation &amp; strongest experiment setup</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body">Report process metrics, not just fluency. Do not cover all memory operations at once — first version focuses on three task families:</p>
+        <ol class="problem-list">
+          <li><strong>Task 1 — Long-video memory QA:</strong> can the agent find past events, cite correct evidence, answer cross-time questions?</li>
+          <li><strong>Task 2 — Memory update consistency:</strong> after new observations, is memory updated correctly, are duplicate entities merged, are contradictory states avoided?</li>
+          <li><strong>Task 3 — Failure repair:</strong> given wrong retrieval / wrong write / wrong temporal chain, can it repair via verifier feedback?</li>
+        </ol>
+        <p class="idea-body"><strong>Baselines:</strong> RAG over captions, GraphRAG, M3-Agent-like retrieval, CoT over retrieved memory, flat memory tools, linear memory-skill chain, ours (memory-skill graph), ours + verifier / post-training.</p>
+        <p class="idea-body"><strong>Metrics:</strong> answer accuracy, evidence-chain recall / precision, retrieval correctness, hop / node success, trace correctness, memory-update validity, contradiction rate, abstention calibration, repair success, tool-call cost.</p>
+        <p class="idea-body"><strong>The justifying experiment:</strong> frozen teacher-planner vs trained 8B program controller under identical tools + memory; the compact policy is justified only if it reaches similar answer/evidence quality with lower cost, better repair, better transfer, or better process metrics.</p>
+        <p class="idea-notes"><strong>Notes:</strong> needs a benchmark that can score memory-operation correctness, not only final answers — see the next card for candidate datasets and the gap they leave open.</p>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-022" data-status="active">
+      <h3 class="idea-title">Candidate benchmarks &amp; egocentric focus</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body"><strong>These partly close the benchmark gap (#3) — but not fully.</strong> They give strong evaluation targets and, in some cases, multi-hop / evidence annotations; what they do <em>not</em> give is typed skill-graph trace supervision (nodes, args, evidence pointers, temporal anchors) or a score for memory-update / repair correctness. So we still need a lightweight typed-trace + memory-operation eval layer on top — and that layer can itself be a first-class contribution.</p>
+        <p class="idea-body"><strong>Egocentric long-term video is the natural first home.</strong> First-person, long-horizon streams are heavy on coreference, state tracking, and social / theory-of-mind reasoning — exactly the memory operations we formalize ("who did I talk to between picking up the phone and pocketing it?"). Recommend anchoring the first paper on egocentric + social / temporal multi-hop rather than generic web video.</p>
+        <p class="idea-body"><strong>Mapping to the three task families:</strong></p>
+        <ol class="problem-list">
+          <li><strong>Multi-hop evidence QA (Task 1):</strong> LongVidSearch (multi-hop evidence reasoning), Video-Holmes (complex long-term reasoning).</li>
+          <li><strong>Social / ToM / temporal reasoning:</strong> MA-EgoQA (social interaction, task coordination, theory-of-mind, temporal, environment), Video-Holmes (social reasoning).</li>
+          <li><strong>Long-term egocentric substrate / data source:</strong> EgoLife (long-term first-person data to build the memory store, update-consistency, and repair tasks on).</li>
+        </ol>
+        <ul class="key-points">
+          <li><strong>Closes:</strong> evaluation targets + some evidence-chain annotation (esp. LongVidSearch).</li>
+          <li><strong>Still missing:</strong> typed skill-graph trace labels + memory-update / repair correctness scoring → build a thin annotation / eval layer.</li>
+          <li><strong>Scope flag:</strong> web-agent video is likely out of scope (not egocentric persistent memory); keep only as a stretch comparison.</li>
+        </ul>
+        <details class="foldable related-work">
+          <summary>Related work</summary>
+          <ul class="related-work-list">
+            <li><a href="https://arxiv.org/abs/2505.21374" target="_blank" rel="noopener">Video-Holmes</a> — <span class="relevance">Complex, long-term social reasoning over video; strong target for multi-hop social QA.</span></li>
+            <li><a href="https://github.com/EvolvingLMMs-Lab/EgoLife" target="_blank" rel="noopener">EgoLife</a> — <span class="relevance">Long-term egocentric data; natural substrate for memory store / update / repair tasks.</span></li>
+            <li><a href="https://arxiv.org/pdf/2603.09827" target="_blank" rel="noopener">MA-EgoQA</a> — <span class="relevance">Egocentric social interaction, task coordination, theory-of-mind, temporal, and environment interaction.</span></li>
+            <li><a href="https://github.com/yrywill/LongVidSearch" target="_blank" rel="noopener">LongVidSearch</a> — <span class="relevance">Multi-hop evidence reasoning over long video; closest to evidence-chain supervision.</span></li>
+            <li><a href="https://arxiv.org/pdf/2410.19100" target="_blank" rel="noopener">Web-agent video</a> — <span class="relevance">Possibly out of scope; not egocentric persistent memory — keep as a maybe.</span></li>
+          </ul>
+        </details>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-019" data-status="active">
+      <h3 class="idea-title">Honest strength assessment</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <table class="scorecard">
+          <thead><tr><th>Version</th><th>Score</th></tr></thead>
+          <tbody>
+            <tr><td>Memory graph as backend only</td><td>8 / 10</td></tr>
+            <tr><td>Neural-symbolic memory skills</td><td>8.2 / 10</td></tr>
+            <tr><td>+ verified process training</td><td>8.5 / 10</td></tr>
+            <tr><td>If experiments prove query/store/reason/repair all clearly more stable</td><td>strong conference paper</td></tr>
+          </tbody>
+        </table>
+        <p class="idea-body"><strong>Strengths:</strong> more credible than claiming 8B directly reasons over long videos; avoids the crowded "another memory graph" lane; clearly distinct from M3-Agent-style systems; natural fit with verified-RL / process-reward trend; typed/verifiable structure suits long-horizon memory reasoning; can learn from failed memory operations.</p>
+        <p class="idea-body"><strong>Biggest risks:</strong> if 8B only imitates teacher graphs, the story collapses to compression; scope still too large; doing store/update/merge/forget all at once is hard; unreliable verifier → reward hacking; needs a benchmark that evaluates memory-operation correctness; if the graph is just JSON-CoT, novelty is insufficient.</p>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-020" data-status="active">
+      <h3 class="idea-title">Recommended first-paper convergence</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body"><strong>Do not do all memory skills in the first paper.</strong> Focus on <em>query + verify + reasoning over memory</em>; treat store / update as auxiliary, not headline.</p>
+        <p class="idea-body"><strong>Main contributions:</strong></p>
+        <ol class="problem-list">
+          <li>A typed memory-skill DSL.</li>
+          <li>Neural-symbolic assembly of memory query / reasoning programs.</li>
+          <li>Verifier-grounded process training over memory operations.</li>
+          <li>Local repair of failed memory queries / reasoning chains.</li>
+        </ol>
+        <p class="idea-body"><strong>Do not claim:</strong> 8B is a better long-video reasoner than a teacher model. <strong>Do claim:</strong> 8B learns a reusable program-assembly and repair policy that organizes retrieval, verification, and answer generation over memory.</p>
+        <p class="idea-body"><strong>Defer to a second paper:</strong> forgetting policy, memory compression, lifelong memory consolidation, diffusion memory field, fully autonomous memory evolution.</p>
+        <p class="idea-notes"><strong>Final framing:</strong> not a new memory graph, and not an 8B long-video reasoner; a compact controller learns to assemble and repair executable neural-symbolic memory programs using teacher demonstrations, ground-truth answers, evidence feedback, and failure traces.</p>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-023" data-status="active">
+      <h3 class="idea-title">ICLR readiness: framing is enabling condition, not headline</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body"><strong>Honest scope of this fix.</strong> Reframing does <em>not</em> raise the underlying research quality — it adds zero data. It is <strong>necessary but not sufficient</strong>: its only job is to stop a good result from being misjudged as "another neural-symbolic / another memory graph" in the reviewer's first five minutes. Expected effect ≈ <strong>+0.5–1</strong>, concentrated on <em>not being killed in the borderline band</em>, not on turning a 6 into an 8. If the two P0 tables fail, framing cannot save the paper; the real quality is decided by experiments.</p>
+        <p class="idea-body"><strong>Neural-symbolic = foundation, not signboard.</strong> "Neural-symbolic skill assembly" is an old banner (NS-CL, neural module networks, ViperGPT, VisProg, LLM+P, program-of-thought); leading with it re-invites the novelty-attribution attack and the "how symbolic is it really?" critique (executor + soft verifier are VLMs). Keep it as the <em>enabling condition</em>: because memory ops are typed symbolic operators with checkable preconditions / evidence pointers, every step is verifiable — and that is precisely what makes <strong>failure-aware verified process RL + program repair</strong> possible, which free-form CoT cannot support.</p>
+        <p class="code-caption">Headline wording (sell the RL + repair, use NS as the "because")</p>
+        <pre class="code-block">Because memory operations can be cast as typed symbolic operators
+with checkable preconditions and evidence pointers, every reasoning
+step becomes verifiable. We exploit this to train a compact controller
+with failure-aware verified process reward and program repair —
+something free-form CoT cannot support.</pre>
+        <p class="idea-body"><strong>Four design decisions to lock BEFORE running experiments</strong> (these are framing / design problems experiments cannot fix):</p>
+        <ol class="problem-list">
+          <li><strong>One-line novelty</strong> = failure-aware verified process RL + repair over <em>typed memory ops</em>; demote "skill graph" to carrier.</li>
+          <li><strong>Three-layer verifier, reward only on hard + anchor:</strong> hard (types, timestamps, preconditions, evidence-pointer existence, contradictions) + benchmark anchor (answer correctness, evidence-chain recall) carry the reward; soft / teacher verifiers are noisy preference only, never in the hard reward. Structurally kills the circularity / reward-hacking critique.</li>
+          <li><strong>Decouple eval from supervision:</strong> the teacher that generates traces must not be the grader; evidence-chain uses benchmark-native labels; self-built typed-trace eval scores only hard constraints.</li>
+          <li><strong>Cut scope</strong> to <em>query + verify + repair over a teacher-built memory</em>; defer store / update / merge / forget / streaming to paper 2.</li>
+        </ol>
+        <p class="idea-body"><strong>Minimal but decisive experiment set</strong> (run the P0 pair as a go/no-go gate before building the full pipeline):</p>
+        <table class="scorecard">
+          <thead><tr><th>Priority</th><th>Experiment</th><th>Claim it proves</th></tr></thead>
+          <tbody>
+            <tr><td>P0</td><td><code>SFT-only</code> vs <code>+ on-policy repair</code></td><td>not mere teacher distillation</td></tr>
+            <tr><td>P0</td><td><code>graph</code> vs <code>linear tool chain</code> (matched)</td><td>graph structure has measurable gain</td></tr>
+            <tr><td>P1</td><td><code>no-verifier</code> ablation</td><td>verified process RL helps</td></tr>
+            <tr><td>P1</td><td>vs M3-Agent / GraphRAG / CoT-over-retrieval</td><td>beats strong baselines</td></tr>
+            <tr><td>P2</td><td>cost / latency / teacher-fallback rate</td><td>8B is actually cheaper</td></tr>
+          </tbody>
+        </table>
+        <ul class="key-points">
+          <li><strong>Most discriminative metrics:</strong> evidence-chain recall (catches ungrounded-but-correct teacher paths) + repair success rate (the unique selling point).</li>
+          <li><strong>Litmus for elevating neural-symbolic:</strong> a <code>no-symbolic-constraint</code> / <code>hard-verifier-off</code> ablation — if symbolic checks give measurable gains (errors caught, invalid programs cut, repair enabled), NS earns a louder role; if not, it is just JSON-schema validation and must stay a detail.</li>
+          <li><strong>Go/no-go:</strong> if on-policy repair does not clearly beat SFT-only, or graph does not beat linear chain, redesign the story before investing in the full pipeline.</li>
+        </ul>
+        <p class="idea-notes"><strong>One line:</strong> lock the four design decisions, gate on the two P0 tables, then scale. Framing removes a risk that buries good results; it does not create them.</p>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-024" data-status="active">
+      <h3 class="idea-title">Substantive reframe to raise true quality (and the experiments it demands)</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <p class="idea-body"><strong>Two kinds of reframe — only one raises true quality.</strong></p>
+        <ol class="problem-list">
+          <li><strong>Cosmetic reframe (re-wording):</strong> new headline, demote neural-symbolic, prettier positioning. Changes perception only → does <em>not</em> raise true quality (see card 023).</li>
+          <li><strong>Substantive reframe (re-defining the research question / unit of contribution):</strong> changes <em>what you measure and claim</em>, therefore changes which experiments you run → <strong>this is the only lever besides running experiments that raises true quality.</strong> No free lunch: it redirects effort, it does not replace it — but it aims the same work at a higher-ceiling target.</li>
+        </ol>
+        <p class="idea-body"><strong>Four substantive reframes (by leverage):</strong></p>
+        <ol class="problem-list">
+          <li><strong>From "a system" to "a phenomenon" (biggest lever).</strong> Not "MemorySkillGraph does memory reasoning" but "<em>when and why does learning from failed memory programs beat distillation / SFT?</em>" Turns an engineering paper into a science paper whose product is a finding, not a leaderboard rank.</li>
+          <li><strong>From "win the benchmark" to "prove a property."</strong> Target transfer / compositional generalization / reliability that <em>only</em> the typed-verifiable-repair structure enables. Property-centric framing forces experiments that yield a principle — the path from recipe to principle.</li>
+          <li><strong>From "repair is a stage" to "repair is the central object."</strong> Make <code>bad program + feedback → repaired program</code> the headline mechanism the whole paper studies in depth, instead of diluting across five skill families. This is the least-objectable novelty; concentrate it.</li>
+          <li><strong>From "self-built eval is a burden" to "the eval protocol is a first-class contribution."</strong> "First protocol that scores memory-operation correctness + repair." Its quality is independent of whether the method wins → a quality floor that does not depend on experiment luck.</li>
+        </ol>
+        <p class="idea-body"><strong>Recommended combo:</strong> main reframe = #1 + #3 (a phenomenon study centered on the repair mechanism); #2 as the key experiment (transfer proof); #4 as the quality floor (released eval protocol).</p>
+        <p class="idea-body"><strong>Do we need more experiments? Yes — as redirection, not volume.</strong> Keep the P0 pair (card 023) as the go/no-go gate; add the principle-level experiments below; drop anything that is just "another win table." Net ≈ +4, with discipline (each transfer / streaming setup is costly).</p>
+        <table class="scorecard">
+          <thead><tr><th>Reframe</th><th>New experiment (beyond card 023)</th><th>What it yields</th></tr></thead>
+          <tbody>
+            <tr><td>#1 phenomenon</td><td>Matched-budget dose–response: repair-data vs SFT-data scaling curve; on-policy vs offline failure source</td><td>finding: <em>when / why</em> repair &gt; SFT</td></tr>
+            <tr><td>#2 property</td><td>short→long &amp; offline→streaming transfer; held-out skill-composition generalization</td><td>principle: structure enables transfer</td></tr>
+            <tr><td>#3 repair-centric</td><td>repair success by failure-code; local single-node repair vs full re-generation; repair transfer to unseen failure types</td><td>mechanism depth</td></tr>
+            <tr><td>reliability</td><td>hallucination / contradiction-rate reduction vs strong baselines</td><td>measurable reliability gain</td></tr>
+            <tr><td>#4 benchmark</td><td>protocol reliability: human–verifier agreement, inter-annotator agreement, verifier false-accept rate</td><td>eval validity (win-independent quality floor)</td></tr>
+          </tbody>
+        </table>
+        <ul class="key-points">
+          <li><strong>Discipline:</strong> more experiments only help if each produces a finding or a property; pure additional win tables do not raise true quality.</li>
+          <li><strong>Sequence:</strong> P0 gate → repair dose–response (#1/#3) → transfer (#2) → reliability + protocol release (#4).</li>
+        </ul>
+        <p class="idea-notes"><strong>One line:</strong> reframe the work from "a memory system that wins" to "a phenomenon study of repair-as-learning-signal, with a transfer/reliability property and a reusable eval protocol" — same effort, higher-ceiling and partly luck-independent outputs.</p>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-021" data-status="open">
+      <h3 class="idea-title">Open questions</h3>
+      <details class="foldable idea-details" open>
+        <summary>Show full description</summary>
+        <ol class="problem-list">
+          <li>What is the minimum stable memory-skill basis (across the 5 families)?</li>
+          <li>How are typed failure labels and program-repair targets generated automatically and cheaply?</li>
+          <li>How do we keep verifiers reliable enough to avoid reward hacking?</li>
+          <li>Can a thin typed-trace + memory-operation eval layer over EgoLife / LongVidSearch / Video-Holmes / MA-EgoQA score retrieval / update / repair correctness, not just final answers?</li>
+          <li>When should a repeated verified subgraph motif become a composite memory skill?</li>
+          <li>How much can an 8B program controller learn from teacher demonstrations + ground-truth answer anchors + failure repair before needing teacher planning at inference time?</li>
+          <li>Which transfer best demonstrates the claim: short → long video, or offline → streaming memory?</li>
+          <li><strong>Teacher compression risk:</strong> how do we prove the 8B is not merely compressing teacher plans? Required ablations: teacher-only inference, 8B SFT-only, 8B + failure repair, 8B + on-policy correction, graph vs linear chain, no-verifier, and no-graph variants.</li>
+          <li><strong>Failure-data pipeline:</strong> how exactly do we create <code>bad program + feedback → repaired program</code> data? Options include corrupting teacher traces, collecting natural 8B rollout failures, executing programs, assigning failure codes, asking teacher / human for repair targets, and human spot-checking.</li>
+          <li><strong>Verifier stack:</strong> can we explicitly separate hard verifiers (types, timestamps, preconditions, evidence-pointer existence, contradictions), benchmark anchors (answer correctness, evidence-chain recall), and teacher / soft verifiers (noisy preference and repair signals, not oracle)?</li>
+          <li><strong>Trace non-uniqueness:</strong> how do we avoid treating a teacher trace as the only correct graph when many programs can reach the same answer? Should reward be over equivalence classes defined by answer, evidence chain, constraints, cost, and unsupported-claim avoidance rather than exact trace match?</li>
+          <li><strong>Graph vs linear tool chain:</strong> what measurable hypothesis proves graph structure is useful rather than JSON-CoT? Candidate claims: branching, shared evidence, typed dependencies, local node/edge repair, sub-result caching, and reusable subgraph motifs.</li>
+          <li><strong>Cost model:</strong> when is 8B actually cheaper after counting controller calls, executor calls, verifier calls, retrieved-clip tokens, and teacher fallback calls? What fallback rate keeps the method economical?</li>
+          <li><strong>Executor boundary:</strong> which skills are reliable enough for paper 1, what failure rate do they have, and which errors can repair actually fix? Be explicit that perception failures (tracking, contact, speech/person linking, temporal boundaries) are not the main contribution.</li>
+          <li><strong>First-paper scope:</strong> should paper 1 be narrowed further to <em>query + verify + repair over an existing teacher-built memory</em>, leaving store / update / merge / forget to a second paper?</li>
+        </ol>
+        <p class="idea-notes"><strong>Notes:</strong> the most urgent method questions are the failure-data generation pipeline and the non-circular verifier stack. The most urgent experimental questions are proving 8B is not only teacher-plan compression and proving graph structure beats a linear memory-tool chain.</p>
+      </details>
+    </article>
+  </section>
+
+  <section class="changelog">
+    <h2>Discussion log</h2>
+    <ol>
+      <li><time datetime="2026-06-15">2026-06-15</time> — Added a "substantive reframe" card distinguishing cosmetic reframing (perception only) from substantive reframing (re-defining the research question / unit of contribution, which actually raises true quality). Four substantive reframes — phenomenon study, prove-a-property, repair-as-central-object, eval-protocol-as-contribution — with the recommended combo (#1+#3 main, #2 key experiment, #4 quality floor), plus the principle-level experiments each reframe demands (repair dose–response, transfer / compositional generalization, repair-by-failure-code, reliability reduction, protocol-reliability), framed as redirection rather than added volume on top of the card-023 P0 gate.</li>
+      <li><time datetime="2026-06-15">2026-06-15</time> — Added an "ICLR readiness" card: framing is a necessary-but-not-sufficient fix (≈ +0.5–1, avoids being misjudged, does not raise true quality); neural-symbolic demoted to enabling condition with the headline on failure-aware verified process RL + repair; four pre-experiment design decisions (one-line novelty, three-layer verifier with reward only on hard + anchor, decouple eval from supervision, cut scope to query + verify + repair); a minimal P0–P2 experiment set with a go/no-go gate; and a no-symbolic-constraint litmus deciding whether neural-symbolic earns a louder role.</li>
+      <li><time datetime="2026-06-15">2026-06-15</time> — Expanded open questions with the remaining method and evaluation gaps: teacher-compression risk, failure-data generation pipeline, three-layer verifier stack, trace non-uniqueness, graph-vs-linear-chain hypothesis, cost model, executor reliability boundary, and whether paper 1 should narrow further to query + verify + repair over teacher-built memory.</li>
+      <li><time datetime="2026-06-15">2026-06-15</time> — Tightened the 8B role: the compact model is not framed as an independent long-video reasoner, but as a memory-skill graph generator / controller / repair policy trained from teacher demonstrations, ground-truth answer anchors, evidence feedback, executors, verifiers, and failures. Updated the thesis, single-policy card, method, training recipe, reward interpretation, positioning, evaluation, strength assessment, and first-paper convergence accordingly.</li>
+      <li><time datetime="2026-06-15">2026-06-15</time> — Addressed the benchmark gap (#3): added a candidate-benchmarks card (LongVidSearch multi-hop evidence, Video-Holmes long-term social reasoning, MA-EgoQA social / ToM / temporal, EgoLife egocentric long-term data; web-agent video flagged as likely out of scope), anchored the first paper on egocentric + social / temporal multi-hop, and noted that typed skill-graph trace supervision plus a memory-update / repair eval layer still need building and can be a first-class contribution.</li>
+      <li><time datetime="2026-06-15">2026-06-15</time> — Repositioned the contribution from "skill graph for video reasoning" to <strong>MemorySkillGraph</strong>: memory is the substrate, neural-symbolic memory skills are the operating system over it. Added contribution-boundary vs storage systems, the five families of memory skills, typed/verifiable memory-skill examples, the method main line over a memory substrate, memory-operation reward / repair, the M3-Agent distinction with an agent-memory related-work family, a 3-task experiment setup, and a recommended first-paper convergence (query + verify + reason; defer forgetting / compression / diffusion field).</li>
+    </ol>
+    <details class="foldable changelog-archive">
+      <summary>Earlier entries (6)</summary>
+      <ol>
+        <li><time datetime="2026-06-15">2026-06-15</time> — Major refactor into a SkillGraph-RL proposal: typed-skill schema, skill-graph + typed edges, neural-symbolic split, single-policy unification, 5-stage training, training-signal sourcing, verified-RL / VLM post-training relations, related-work map, positioning, strength assessment.</li>
+        <li><time datetime="2026-06-15">2026-06-15</time> — Added LensWalk related work: active reason-plan-observe shows strong reasoners help weak observers, supporting the large-teacher / compact-student split.</li>
+        <li><time datetime="2026-06-15">2026-06-15</time> — Added honest 7B/8B justification: compact models are trainable, cheaper, deployable student policies, evaluated against 72B-only and hybrid baselines.</li>
+        <li><time datetime="2026-06-15">2026-06-15</time> — Added planner / executor split: large frozen decomposer first, train 7B/8B executor, then distill decomposition into a 7B student.</li>
+        <li><time datetime="2026-06-15">2026-06-15</time> — Added M3-style memory graph training: a trainable 8B as a graph-update policy over frozen perception, with teacher deltas, reconstruction, consistency, downstream retrieval utility, and human spot checks.</li>
+        <li><time datetime="2026-06-15">2026-06-15</time> — Cleaned up the atomic-skill page into a concise formulation centered on neural-symbolic memory, small typed tools, agent boundaries, trajectory fitting, and evaluation.</li>
+      </ol>
+    </details>
+  </section>
+</body>
+</html>

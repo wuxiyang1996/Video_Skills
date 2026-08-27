@@ -118,6 +118,32 @@ Mix three sources:
 
 All examples are stored as canonical `ReasoningTrace` objects so SFT, GRPO, and reflection consume the same format.
 
+For the video-only L1/L2 graph branch, the concrete cold-start path is:
+
+```text
+Qwen/Qwen-class VLM clip schemas
+  -> GPT-OSS L1 clue-memory graph composition
+  -> GPT-OSS L2 reasoning / repair / verification trajectory
+  -> final acceptance report
+  -> compact expert-demo JSONL
+  -> canonical ReasoningTrace JSONL + compact SFT chat JSONL
+```
+
+The adapter for the final step lives in
+`dataset_clip_wrapper/training/trace_adapter.py`. It is deliberately only a
+schema bridge: it does not invent new evidence, repair answers, or inspect
+hidden supervision. This keeps the training target aligned with the runtime
+contract while preserving the video-only boundary.
+
+The recommended first training target for this branch is the **L2 controller
+policy**:
+
+- input: visible question + compact L1 evidence graph + available actions
+- output: hop decomposition, evidence selection, repair/bridge actions,
+  verifier-aware commit or abstain
+- frozen during this phase: VLM perception, L1 graph composer, verifier,
+  memory procedures, skill bank, and large teacher models
+
 #### SFT scope
 
 | Approach | When to use |

@@ -1,0 +1,690 @@
+﻿<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MemorySkillGraph — 问题表述</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>MemorySkillGraph：面向长程多模态推理的神经符号 Memory Skills</h1>
+    <p class="meta">最后更新：<time datetime="2026-06-15">2026-06-15</time></p>
+    <nav class="lang-nav">
+      <a href="problem-formulation-en.html">English</a> |
+      <a href="../continuous-memory-model-and-retrieval/problem-formulation-zh.html">配套：连续记忆</a> |
+      <a href="../../.cursor/skills/nec-brainstorming/ideas/index.html">头脑风暴首页</a>
+    </nav>
+  </header>
+
+  <section class="project" data-project="atomic-skill-decomposition-and-assembly" id="problem-formulation">
+    <h2>研究方向</h2>
+    <p class="project-summary">我们不提出新的 memory 存储，也不声称 8B 模型独立解决长程视频推理。我们训练一个紧凑 controller，让它组装和修复可执行的 memory-skill graph，把 teacher demonstrations、工具执行、验证、检索和 benchmark ground-truth answer feedback 组织到长期多模态记忆之上。</p>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-001" data-status="active">
+      <h3 class="idea-title">一句话核心</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body"><strong>MemorySkillGraph：面向长程多模态记忆推理的神经符号技能组装</strong>（机制：对紧凑 memory-program generator 做 failure-aware training）。</p>
+        <p class="idea-body">我们将长程多模态记忆推理表述为<strong>外部记忆基底上的神经符号技能组装问题</strong>。不同于训练 8B 模型直接回答长视频问题，我们训练它生成并局部修复 typed memory-skill programs。Teacher demonstrations、executors、verifiers、retrieved evidence 和 benchmark ground-truth answers 提供监督与评测；紧凑模型学的是组织这些组件的 control policy。</p>
+        <ul class="key-points">
+          <li><strong>记忆是 substrate。</strong>神经符号 skills 是记忆之上的操作系统。</li>
+          <li><strong>从：</strong>记忆作为被动检索数据库。</li>
+          <li><strong>变成：</strong>记忆作为可执行的神经符号工作空间，agent 通过类型化的原子技能对记忆进行查询、写入、验证和推理。</li>
+          <li><strong>8B 的角色：</strong>不是最终 reasoner；它是 program generator / controller / repair policy。</li>
+          <li><strong>一句话总结：</strong>不要让小模型直接回答；让它组装一个<em>可执行、可验证、可修复</em>的 memory program，用来指导检索、验证和答案生成。</li>
+        </ul>
+        <ul class="idea-tags">
+          <li>neural-symbolic</li>
+          <li>memory skills</li>
+          <li>skill graph</li>
+          <li>verifier-grounded process RL</li>
+          <li>long-horizon multimodal</li>
+        </ul>
+        <p class="idea-notes"><strong>备注：</strong>名字候选——<em>MemorySkillGraph</em>（首选）、<em>MemSkill: Neural-Symbolic Memory Skills for Multimodal Agents</em>（短）、<em>VideoMemSkill</em>（偏视频时）。避免 claim “8B reasons over long videos”；claim “8B 从 teacher demonstrations、ground-truth answers、evidence feedback 和 failures 中学习 memory-program assembly and repair”。</p>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-002" data-status="active">
+      <h3 class="idea-title">贡献边界：操作，而非存储</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body"><strong>不要 claim</strong>“我们提出一种新的 memory storage 架构”——M3-Agent、ReMEmbR、MemoryBank、HippoRAG、GraphRAG、MemGPT、LangMem 已覆盖各类 memory storage / graph / retrieval。<strong>应该 claim</strong>“我们提出一套神经符号 memory skill 接口与组装框架”。memory backend 可以是 M3-Agent-like graph、FAISS / vector DB 或 event-state graph；贡献在于 agent 如何<em>操作</em>它。</p>
+        <table class="scorecard">
+          <thead><tr><th>方向</th><th>它们做什么</th><th>我们做什么</th></tr></thead>
+          <tbody>
+            <tr><td>Vector memory / RAG</td><td>retrieve 相关 chunk</td><td>用 typed skills 控制 query、verification、reasoning</td></tr>
+            <tr><td>Memory graph</td><td>存 entity / event / relation</td><td>对 graph 执行可验证操作</td></tr>
+            <tr><td>Agent memory systems</td><td>自动写入 / 检索 memory</td><td>把写入 / 更新 / 整合 / 遗忘 / 推理形式化为可执行 skills</td></tr>
+            <tr><td>Skill agents</td><td>skills for action / tool use</td><td>专门面向 memory 操作与记忆接地推理的 skills</td></tr>
+          </tbody>
+        </table>
+        <ul class="key-points">
+          <li><strong>已有工作：</strong>memory as storage / retrieval。</li>
+          <li><strong>我们：</strong>memory as executable skill operations。</li>
+          <li><strong>最干净的定位：</strong>Neural-Symbolic Memory Skills for Long-Horizon Multimodal Agents。</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-003" data-status="active">
+      <h3 class="idea-title">我们到底想做什么</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body">现有 VLM 通常是 <code>video/image + question → 自由文本 CoT → answer</code>。这个管线有五个反复出现的问题：</p>
+        <ol class="problem-list">
+          <li><strong>中间步骤不可执行</strong>——它们是散文，不是操作。</li>
+          <li><strong>视觉 / 记忆证据不可查</strong>——claim 无法回指到帧、clip 或 memory node。</li>
+          <li><strong>错误无法定位</strong>——答错了也找不出失败的那一步。</li>
+          <li><strong>temporal / causal 约束容易被语言糊弄</strong>。</li>
+          <li><strong>self-correction 只能重写整段答案</strong>，而不是修复坏掉的那一步。</li>
+        </ol>
+        <p class="idea-body">我们用<strong>可执行的神经符号 memory-skill graph</strong> 替代自由文本 reasoning chain：</p>
+        <figure class="memory-figure">
+          <figcaption>图：从 CoT 管线到 memory-skill-graph 管线。</figcaption>
+          <ol class="memory-flow">
+            <li><strong>Query + history</strong><span>多模态输入 + memory 状态</span></li>
+            <li><strong>Typed skill graph</strong><span>组装 memory operator</span></li>
+            <li><strong>执行节点</strong><span>对 memory 做 query / write / reason</span></li>
+            <li><strong>验证</strong><span>node / edge / evidence 检查</span></li>
+            <li><strong>回答 + 学习</strong><span>修复并从失败 program 学习</span></li>
+          </ol>
+        </figure>
+        <ul class="key-points">
+          <li><strong>转变：</strong>自由文本 reasoning chain → 可执行的神经符号 memory-skill graph。</li>
+          <li><strong>真正的目标：</strong>不是“模型会用工具”，而是“模型学会在 memory 上组装、执行、验证、修复程序”。</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-004" data-status="active">
+      <h3 class="idea-title">原子技能 = typed symbolic operator</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body">原子技能<strong>不是</strong>一句自然语言 prompt 步骤，而是一个 typed symbolic operator，带明确的输入、输出、preconditions、effects、executor、verifier 和 failure codes。Controller 学的是如何组合它们，而不是在线发明。因此 memory operation 不是 free-form writing，而是 typed、constrained、executable、verifiable 的。</p>
+        <p class="code-caption">技能 schema</p>
+        <pre class="code-block">skill = {
+  name,
+  input_types,
+  output_types,
+  preconditions,
+  effects,
+  executor,     # 运行该技能的 neural / tool 调用
+  verifier,     # 检查结果是否 grounded 且合法
+  failure_codes # 该技能可能失败的 typed 原因
+}</pre>
+        <p class="code-caption">operator 示例</p>
+        <pre class="code-block">DetectContact(entity_a, entity_b, time_span)
+  Inputs:        Entity × Entity × TimeSpan
+  Outputs:       ContactEvent
+  Preconditions: visible(entity_a, time_span)
+                 visible(entity_b, time_span)
+  Effects:       contact_event(entity_a, entity_b, time_span)
+  Verifier:      视觉接近 + 时间重叠
+                 + 运动 / 状态变化</pre>
+        <ul class="key-points">
+          <li><strong>小而稳定的基底：</strong>少量 typed operator 好过大量模糊工具；绝不每个任务手写一个 skill。</li>
+          <li><strong>证据优先：</strong>每个 input / output / evidence 都回指记忆或原始 clip。</li>
+          <li><strong>结构化返回：</strong>时间区间、entity id、modality、置信度、clip 指针、graph node id、短 rationale。</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-005" data-status="active">
+      <h3 class="idea-title">Skill graph（为什么比线性 CoT 强）</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body">Skill graph 的<strong>节点</strong>是原子技能，<strong>边</strong>是依赖关系。边不只是顺序，还携带 typed 依赖关系。</p>
+        <p class="code-caption">示例：“杯子为什么掉下来了？”</p>
+        <pre class="code-block">LocalizeEvent(cup_falling)
+   ↓
+TrackEntity(cup)
+   ↓
+TrackEntity(hand)
+   ↓
+DetectContact(hand, cup)
+   ↓
+CompareState(cup, before, after)
+   ↓
+InferCausalRelation(contact, falling)
+   ↓
+VerifyEvidence(answer, frames)</pre>
+        <ul class="key-points">
+          <li><strong>边的类型：</strong>data、temporal、causal、evidence、memory dependency。</li>
+          <li><strong>为什么比线性 CoT / tool chain 强：</strong>多跳结构显式、可分支、可检查，并给 verifier 干净的打分边界。</li>
+        </ul>
+        <ul class="idea-tags">
+          <li>typed edges</li>
+          <li>multi-hop</li>
+          <li>temporal / causal</li>
+          <li>inspectable</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-006" data-status="active">
+      <h3 class="idea-title">Neural-symbolic 在哪里</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body">这个 framing 是 <strong>neural-guided symbolic program assembly</strong>，而不是自由想象。拆分是显式的：</p>
+        <ol class="problem-list">
+          <li><strong>符号部分：</strong>typed memory skills、preconditions / effects、skill-graph 结构、type 约束、temporal / causal 约束、symbolic executor、hard verifier。</li>
+          <li><strong>神经部分：</strong><code>observer</code>（感知 object / event / time span）、<code>reasoner</code>（选择 skill）、<code>argument binder</code>（绑定 object / timestamp / evidence / memory node）、<code>graph assembler</code>（生成 program）、<code>soft verifier</code>（判断 grounding / contact / causality）、<code>repair policy</code>（修复 failed program）。</li>
+        </ol>
+        <ul class="key-points">
+          <li><strong>硬检查（符号）：</strong>type、preconditions、时间顺序、evidence pointer 是否存在。</li>
+          <li><strong>软检查（神经）：</strong>clip / memory node 是否真的支撑 claim。</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-007" data-status="active">
+      <h3 class="idea-title">五类 memory skills</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body">基底要小，且是 memory-operating（不是普通 video skills）。分五类：</p>
+        <ol class="problem-list">
+          <li><strong>A — Perception-to-memory（把观察写入记忆）：</strong><code>ExtractEntity</code>、<code>ExtractEvent</code>、<code>ExtractState</code>、<code>ExtractEvidence</code>、<code>StoreMemory</code>。→ raw video/audio → 结构化 memory records。</li>
+          <li><strong>B — Memory query（从记忆中查找）：</strong><code>RetrieveEntity</code>、<code>RetrieveEvent</code>、<code>RetrieveState</code>、<code>RetrieveEvidence</code>、<code>QueryTemporalChain</code>、<code>QueryRelationalNeighborhood</code>。→ query → 相关 memory subgraph / clips / evidence。</li>
+          <li><strong>C — Update / consolidation（更新、合并、压缩）：</strong><code>ResolveCoreference</code>、<code>MergeDuplicateMemory</code>、<code>UpdateState</code>、<code>ConsolidateEpisodes</code>、<code>CompressSubgraph</code>。→ 减少重复、保持长期一致性、形成更高层语义记忆。</li>
+          <li><strong>D — Verification（记忆是否可信）：</strong><code>VerifyEvidence</code>、<code>VerifyTemporalOrder</code>、<code>VerifyStateTransition</code>、<code>CheckContradiction</code>、<code>CheckMemoryGrounding</code>。→ 防止 hallucinated / stale memory 和错误 entity linking。</li>
+          <li><strong>E — Memory reasoning（基于记忆推理）：</strong><code>InferTemporalRelation</code>、<code>InferCausalRelation</code>、<code>ComparePastAndCurrentState</code>、<code>FindPrecedingCause</code>、<code>ExplainEventFromMemory</code>、<code>AnswerFromEvidence</code>。→ memory subgraph → answer / explanation / action decision。</li>
+        </ol>
+        <ul class="key-points">
+          <li><strong>关键：</strong>它们是 <em>memory-operating</em> skills，不是普通 video skills。</li>
+          <li><strong>感知 / 关系 operator</strong>（如 <code>TrackEntity</code>、<code>DetectContact</code>）作为 executor 存在于 A 类和 E 类内部。</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-008" data-status="active">
+      <h3 class="idea-title">typed + verifiable memory skill 示例</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="code-caption">查询 skill</p>
+        <pre class="code-block">RetrieveEvent(event_description, time_range)
+  Input types:   event_description: Text
+                 time_range: TimeRange | None
+  Output types:  event_nodes: List[EventNode]
+  Preconditions: memory_graph_available
+                 query_is_grounded
+  Effects:       candidate_event_nodes_available
+  Verifier:      event node 有 evidence pointer
+                 timestamp 与请求范围重叠
+                 event description 与 query 匹配</pre>
+        <p class="code-caption">写入 skill</p>
+        <pre class="code-block">StoreMemory(event, evidence)
+  Input types:   event: Event
+                 evidence: EvidenceSpan
+  Output:        memory_node_id
+  Preconditions: evidence_span_valid
+                 event grounded in observation
+  Effects:       event node 写入 memory graph
+                 创建 supported_by(event, evidence) 边
+  Verifier:      stored node 有 timestamp
+                 stored node 有 evidence pointer
+                 与已有 memory 无重复冲突</pre>
+        <ul class="key-points">
+          <li><strong>memory operation 不是 free-form writing：</strong>它是 typed、constrained、executable、verifiable 的。</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-009" data-status="active">
+      <h3 class="idea-title">单一紧凑 policy：program assembly，而非直接推理</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body">讨论结论：<strong>不做两个分别训练的 agent，也不把 8B 表述成最终语义 reasoner。</strong>Decomposition、assembly 和 repair 是同一个紧凑 controller 的几个阶段。记忆的 write / update / merge / forget / query 是同一个 typed action space 里的原子 skill。被学习的贡献是一个生成并修复 typed memory-skill programs 的单一 policy。</p>
+        <p class="idea-body"><strong>保留写/读边界，而不是两个模型。</strong>当初想拆分是因为 (a) 污染和 (b) 不同时钟。(a) 靠接口纪律解决：只有带证据的观测才能 commit，推理时的假设不能写。(b) 只在 streaming 下才真正逼你分开。</p>
+        <figure class="memory-figure">
+          <figcaption>图：一个 policy，执行方式取决于场景。</figcaption>
+          <ol class="memory-flow">
+            <li><strong>离线（短视频）</strong><span>一个交错 loop：先写一遍，再读 / 组装</span></li>
+            <li><strong>Streaming</strong><span>同一份权重、两个执行上下文：后台 writer + 前台 reasoner 共享一个 store</span></li>
+            <li><strong>写入纪律</strong><span>只 commit 接地证据；不写推理猜测</span></li>
+          </ol>
+        </figure>
+        <ul class="key-points">
+          <li><strong>Policy 层面：</strong>统一——memory 操作就是一个 typed action space 里的 skill。</li>
+          <li><strong>执行层面：</strong>离线 = 一个 loop；streaming = 一个 policy 的两个运行时上下文。</li>
+          <li><strong>8B 做：</strong>选择 skill、绑定参数、决定检索 / 验证步骤，并修复失败 graph。</li>
+          <li><strong>8B 不做：</strong>raw video perception、开放式 causal / social reasoning，或独立裁定最终答案。</li>
+          <li><strong>监督机器：</strong>ground-truth answers、teacher demonstrations / corrections、executors、retrieved evidence 和 verifiers。</li>
+          <li><strong>上行收益：</strong>更便宜、可复用的 control policy；昂贵 teacher 用来示范、纠正和评估，而不是永远在 inference 时完整规划。</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-010" data-status="active">
+      <h3 class="idea-title">方法主线</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <ol class="problem-list">
+          <li><strong>Step 1 — 维护一个外部 memory substrate</strong>（graph，或 vector+graph hybrid）：<code>M_t = (V_t, E_t, X_t)</code>，其中 <code>V_t</code> = entity / event / state / evidence 节点，<code>E_t</code> = temporal / relational / support 边，<code>X_t</code> = 原始 evidence pointer、embedding、metadata。</li>
+          <li><strong>Step 2 — 定义神经符号 memory skills</strong> <code>S_mem = {s_1..s_K}</code>，每个 <code>s_i = ⟨input types, output types, preconditions, effects, executor, verifier⟩</code>。</li>
+          <li><strong>Step 3 — 组装 task-specific memory programs。</strong>给定 query <code>q</code>，8B controller 不直接回答，而是生成 program <code>P_q = [s_1(args_1)..s_T(args_T)]</code> 或 graph <code>G_q = (V_skills, E_dependencies)</code>。</li>
+          <li><strong>Step 4 — 执行并验证。</strong>每一步读写 memory 并被检查：<code>M_t, state_i = Execute(s_i, M_t, state_{i-1})</code>；<code>Verify(s_i, M_t, evidence)</code>。</li>
+          <li><strong>Step 5 — 答案基于 memory 证据：</strong>最终答案来自 retrieved memory subgraph + 原始 evidence pointer，并在训练 / 评测时与 benchmark ground truth 对齐检查。</li>
+        </ol>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-011" data-status="active">
+      <h3 class="idea-title">训练配方（5 阶段）</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <ol class="problem-list">
+          <li><strong>Stage 1 — 在 teacher memory-operation traces 上 SFT。</strong>Teacher 产生 <code>question + memory state → skill graph → evidence chain → answer</code>。只保留能到达 ground-truth answer 且通过基本 evidence / format 检查的 traces。8B 学 DSL 格式、decomposition、argument binding 和 evidence citation——不是学自由式视频推理。</li>
+          <li><strong>Stage 2 — Subproblem curriculum。</strong>拆成可验证 subproblem（检索、coreference、state comparison、temporal / causal relation、evidence verification）。先训短 program。</li>
+          <li><strong>Stage 3 — 8B rollout 多个 memory program。</strong><code>P_1..P_K ~ π_θ(P | q, M_t)</code>；不同 program 检索不同事件、绑定不同实体、引用不同 evidence，或选择不同 verification path。</li>
+          <li><strong>Stage 4 — 用 ground truth + process feedback 打分。</strong>用 answer correctness 作 endpoint anchor；有 evidence-chain 标注时用 evidence recall；再用 hard validity checks 和 teacher / verifier feedback 作为有噪声的过程信号。目标是 valid executable program &gt; invalid / unsupported program，而不只是 correct &gt; wrong answer。</li>
+          <li><strong>Stage 5 — 局部修复 / learn from failures。</strong>输入 <code>bad program + failure feedback</code> → 输出 <code>repaired program</code>：replace argument、insert missing node、delete redundant node、rewire edge、change evidence span。</li>
+        </ol>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-011-action-opd" data-status="active">
+      <h3 class="idea-title">Action-level OPD：蒸馏工具选择，而非 token</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body"><strong>核心修正：</strong>不需要对每个生成 token 取 teacher log-prob。我们的对象是 tool-calling / harness controller；每一步真正需要学习的是在当前 decision state 下该选哪个 memory/tool/action。因此 OPD 应该定义在 action distribution 上，而不是 vocabulary token distribution 上。</p>
+        <p class="code-caption">从 token OPD 改成 action OPD</p>
+        <pre class="code-block">token-level OPD:
+  y_t ∈ vocabulary
+  teacher gives p_T(y_t | prefix)
+  student matches token distribution
+
+action-level OPD:
+  a_t ∈ A(s_t)
+  A(s_t) = {retrieve, verify, repair, retry, reflect, stop, ...}
+  teacher gives p_T(a_t | s_t)
+  student matches action distribution</pre>
+        <p class="idea-body">这里的 <code>s_t</code> 来自 student 自己的 rollout：<code>question + memory state + previous tool calls + observations + verifier feedback</code>。所以它仍然是 on-policy：训练 states 不是 teacher demonstration，而是 student 在自己的 tool-calling chain 里走出来的状态。</p>
+        <p class="code-caption">训练流程</p>
+        <pre class="code-block">For each task x:
+  τ ~ π_student                  # student rolls out a harness trajectory
+  for each decision state s_t in τ:
+    construct candidate action set A_t
+    ask teacher to choose among A_t with constrained one-letter output
+    obtain teacher logprobs over option letters
+    update student/controller to match teacher action distribution</pre>
+        <p class="idea-body"><strong>更可靠的 teacher signal：</strong>不要让 teacher 自报 0-1 verbal score；LLM 的分数校准会随 prompt 和 state 漂移。更干净的做法是把候选动作映射成单 token 选项，让 teacher 只输出一个字母，并读取这些字母的 logprob / top_logprobs。</p>
+        <p class="code-caption">约束式 action choice</p>
+        <pre class="code-block">Choose exactly one option:
+A. retrieve_memory
+B. verify_evidence
+C. repair_program
+D. retry_with_new_query
+E. ask_for_clarification
+F. final_answer
+
+Answer with only one letter.</pre>
+        <p class="code-caption">Action OPD loss</p>
+        <pre class="code-block">π_T(a | s_t) = softmax(logp_T(letter_a | s_t) / τ_T)
+π_S(a | s_t) = softmax(logp_S(letter_a | s_t) / τ_S)
+
+L_action_OPD =
+  E_{τ ~ π_S} Σ_t w_t · KL(π_T(. | s_t) || π_S(. | s_t))</pre>
+        <ul class="key-points">
+          <li><strong>Novelty：</strong>distill test-time control policy，而不是 token reasoning traces。</li>
+          <li><strong>API 友好：</strong>teacher 只需要短输出和 top_logprobs；不依赖同 tokenizer，也不需要完整 token-level CoT logits。</li>
+          <li><strong>稳定性纪律：</strong>action label 用单 token（A/B/C/D/E/F），训练时随机打乱 option order，读取所有候选字母的 top-k logprobs；缺失候选用 floor logprob。</li>
+          <li><strong>重要状态可重复校准：</strong>对同一个 <code>s_t</code> 用不同 option order 重复数次，平均映射回真实 action 后的 logprobs，降低位置偏置。</li>
+          <li><strong>与 SOD / repair 结合：</strong><code>w_t</code> 可由 action divergence、observation quality、verifier confidence 和 failure severity 决定；JSD 可作为比 KL 更稳的 divergence 诊断。</li>
+        </ul>
+        <p class="idea-notes"><strong>一句话：</strong>Action-Level On-Policy Distillation for Test-Time Agent Control：让大 teacher 在 student-induced states 上给出工具选项的 logprob distribution，训练紧凑 controller 学会何时检索、验证、修复、重试或停止。</p>
+      </details>
+    </article>
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-012" data-status="active">
+      <h3 class="idea-title">Memory-operation reward 与修复</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="code-caption">Memory program reward 草图</p>
+        <pre class="code-block">R(P) =  retrieval_correctness
+      + evidence_support
+      + temporal_consistency
+      + state_consistency
+      + memory_update_validity
+      - contradiction
+      + answer_correctness</pre>
+        <p class="idea-body"><strong>重要解释。</strong><code>answer_correctness</code> 是 benchmark ground-truth endpoint；它负责过滤和锚定 rollout。其他项是过程信号，用来解释一个 program 为什么成功或失败。它们不要求 8B 独立裁定最终答案。</p>
+        <p class="code-caption">偏好对（P_good &gt; P_bad）</p>
+        <pre class="code-block">P_bad:  因 entity confusion 检索到错误的人
+P_good: ResolveCoreference -> RetrieveEvent -> VerifyEvidence -> Answer
+
+P_bad:  存入一个没有 evidence pointer 的 ungrounded event
+P_good: ExtractEvent -> VerifyEvidence -> StoreMemory</pre>
+        <p class="code-caption">局部修复示例</p>
+        <pre class="code-block">Failure:
+  RetrieveEvent 返回了目标事件之后的事件，
+  违反 temporal constraint。
+Repair:
+  加 QueryTemporalChain + 过滤目标时间戳之前的事件。</pre>
+        <ul class="key-points">
+          <li><strong>Novelty：</strong>从<em>失败的 memory operations</em> 中学习，而不只是从错误答案中学习。</li>
+          <li><strong>精确学习目标：</strong><code>bad program + feedback → repaired program</code>，不是 <code>video → answer</code>。</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-013" data-status="active">
+      <h3 class="idea-title">训练信号从哪里来</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body">要 claim <em>学习</em>贡献，就训一个紧凑 agent——memory-skill program controller。它不是最终 reasoner；它学习生成和修复 skill graph。信号按“有多真、多站得住脚”排序：</p>
+        <ol class="problem-list">
+          <li><strong>工具 + 环境反馈（免费、逐步、是骨架）：</strong>每个 typed skill 返回结构化成功/失败（检索为空、type 不匹配、重复冲突、缺失证据）。密集过程监督，零人工标注。</li>
+          <li><strong>现有多跳 benchmark 上的 evidence-chain recall（最有区分度）：</strong>奖励正确证据链，不只是答案。prompt-only 的 72B 能用没接地的路径答对，这能抓出来。</li>
+          <li><strong>结果 reward（答案正确性）：</strong>benchmark ground truth；稀疏但可靠的 endpoint signal。它告诉我们最终答案是否正确，但不告诉我们每个 graph step 是否正确。</li>
+          <li><strong>Teacher demonstrations and corrections：</strong>大模型提供候选 graph、repair 和 preference label。Teacher output 是监督，不是证明；需要被 ground-truth answer 和 evidence checks 过滤。</li>
+          <li><strong>On-policy correction（最干净的学习叙事）：</strong>8B 走到自己的错误状态，teacher / verifier 在这些状态上纠正 program——这让它不只是 offline distillation。</li>
+          <li><strong>自动生成的反事实负样本：</strong>破坏好 trace（顺序错、绑定错、证据指针断、跳 hop）并训 preference。</li>
+        </ol>
+        <p class="idea-body"><strong>诚实陷阱。</strong>如果<em>只</em>用 teacher trace 的离线 SFT 训，reviewer 会正确地说“你只是把 72B 蒸馏成 8B”。要逃出来，需要 ground-truth filtering、evidence-chain metrics、on-policy failure correction、repair success、cost/latency gains 和 transfer。</p>
+        <ul class="key-points">
+          <li><strong>训：</strong>controller（program assembly + argument binding + verification choice + repair）。</li>
+          <li><strong>不要当贡献训：</strong>memory writer——用 teacher deltas 做 SFT 然后冻结。</li>
+          <li><strong>能让训练成立的实验：</strong>冻结 teacher-planner vs 训练后的 8B program controller，工具 + memory 相同，按 answer + process metrics 打分。</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-014" data-status="active">
+      <h3 class="idea-title">与 LLM verified RL / process reward 的关系</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body">主流 LLM verified RL 是 <code>question → reasoning chain → answer → verifier → reward</code>，历史上多为稀疏 outcome reward。Verifiable Process Reward 工作指出：如果中间动作能被 symbolic / algorithmic oracle 验证，oracle 就能转成 dense turn-level 监督，改善 long-horizon credit assignment——取决于 verifier 质量。</p>
+        <p class="idea-body"><strong>我们的 insight：</strong>自由文本 CoT 的 step 不稳定、难验证；memory-skill 的 step 是 <em>typed operator</em>，天然适合过程级 verified reward。</p>
+        <ul class="key-points">
+          <li><strong>自由文本 CoT：</strong>step 难定义 / 难验证。</li>
+          <li><strong>MemorySkillGraph：</strong>node / edge / argument / evidence 都可验证 → node、edge、subgraph-motif、answer 级 reward。</li>
+        </ul>
+        <details class="foldable related-work">
+          <summary>相关工作</summary>
+          <ul class="related-work-list">
+            <li><a href="https://arxiv.org/abs/2411.15124" target="_blank" rel="noopener">RLVR / Tülu 3</a> — <span class="relevance">从可验证 reward 做 RL；verifier 驱动 post-training 的骨架。</span></li>
+            <li><a href="https://arxiv.org/abs/2305.20050" target="_blank" rel="noopener">Process Reward Models</a> — <span class="relevance">step 级 reward；支撑按 node/edge 打分。</span></li>
+            <li><a href="https://arxiv.org/abs/2402.03300" target="_blank" rel="noopener">GRPO（DeepSeekMath）</a> — <span class="relevance">在 rollout 上做 group-relative optimization；抬到 program 级 rollout。</span></li>
+            <li><a href="https://arxiv.org/abs/2305.18290" target="_blank" rel="noopener">DPO</a> — <span class="relevance">preference 优化；“valid &gt; invalid” program 训练的基础。</span></li>
+          </ul>
+        </details>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-015" data-status="active">
+      <h3 class="idea-title">从近期 VLM reasoning / post-training 的启发</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <ol class="problem-list">
+          <li><strong>Visual-RFT / VLM-R1：</strong>multiple rollouts + verifiable reward + GRPO 优于仅 SFT；task-specific rule-based reward（如 IoU）。→ 采样多个 memory program、执行 / 验证、对 program policy 做 GRPO，设计 skill-specific verifier。</li>
+          <li><strong>Point-RFT / grounded CoT：</strong>text-only CoT 导致 hallucination；grounded CoT 把 ChartQA 从 70.88% 提到 90.04%。→ 不是每句话绑定，而是每个 skill node 的 input / output / evidence 都绑定。</li>
+          <li><strong>Critic-V：</strong>Reasoner + Critic；DPO 训的 critic 抓 VLM 错误。→ 我们的 critic 在 node / edge / evidence 级运作。</li>
+          <li><strong>Self-correction / learn-from-failure：</strong>必须被训练，不能只靠 prompt。→“wrong answer → correct answer”变成“failed memory program → repaired program”。</li>
+          <li><strong>PRM / VPR：</strong>dense verifier-grounded reward 改善 long-horizon credit assignment。→ memory skills 天然提供 step boundary。</li>
+        </ol>
+        <details class="foldable related-work">
+          <summary>相关工作</summary>
+          <ul class="related-work-list">
+            <li><a href="https://arxiv.org/abs/2503.01785" target="_blank" rel="noopener">Visual-RFT</a> — <span class="relevance">为 LVLM 做可验证 reward RFT；program-level rollout 模板。</span></li>
+            <li><a href="https://github.com/om-ai-lab/VLM-R1" target="_blank" rel="noopener">VLM-R1</a> — <span class="relevance">R1 风格的 VLM RL；可验证 reward post-training 基础设施。</span></li>
+            <li><a href="https://arxiv.org/abs/2411.18203" target="_blank" rel="noopener">Critic-V</a> — <span class="relevance">多模态推理的 Reasoner + Critic；node/edge/evidence 级 critique。</span></li>
+          </ul>
+        </details>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-016" data-status="active">
+      <h3 class="idea-title">与 M3-Agent 的区别 + related-work map</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body"><strong>M3-Agent</strong> = 构建多模态长期 memory graph + retrieve + iterative thinking/control。<strong>我们</strong> = given / 维护一个 memory substrate + 定义神经符号 memory skills + 组装可执行 memory programs + 验证 query/store/reasoning 步骤 + 从失败的 memory operations 中训练。</p>
+        <p class="idea-body"><strong>M3-Agent 更关注如何构建和检索多模态记忆；我们关注 agent 应该如何通过类型化、可执行、可验证的技能来操作记忆。</strong>M3-Agent 重点是 memory <em>system</em>；我们重点是 memory <em>operation policy</em>。</p>
+        <p class="idea-body"><strong>Related-work map（7 类，及我们在每类的位置）：</strong></p>
+        <ol class="problem-list">
+          <li><strong>A. Skill library / composition agents</strong>（Voyager、SayCan、Code as Policies）→ fixed typed skill basis + learned graph assembly。</li>
+          <li><strong>B. Neural-symbolic planning / program induction</strong>（LLM+P、NS-CL、program-of-thought）→ query → skill graph → evidence-grounded execution。</li>
+          <li><strong>C. VLM reasoning post-training</strong>（Visual-RFT、VLM-R1、Reason-RFT）→ 目标从自由文本 CoT 变成可执行 skill graph。</li>
+          <li><strong>D. Grounded reasoning / grounded CoT</strong>（Point-RFT、Argus）→ 句子级 → skill-node 级 grounding。</li>
+          <li><strong>E. Critic / self-correction / learn-from-failure</strong>（Critic-V）→ response correction → program repair。</li>
+          <li><strong>F. LLM verified RL / process reward</strong>（RLVR、PRM、VPR）→ 自由文本 step reward → typed node/edge/subgraph reward。</li>
+          <li><strong>G. Agent memory systems</strong>（M3-Agent、ReMEmbR、MemoryBank、HippoRAG、GraphRAG、MemGPT、LangMem）→ memory as storage/retrieval → memory as executable skill operations。</li>
+        </ol>
+        <details class="foldable related-work">
+          <summary>相关工作</summary>
+          <ul class="related-work-list">
+            <li><a href="https://arxiv.org/abs/2305.16291" target="_blank" rel="noopener">Voyager</a> — <span class="relevance">从环境反馈生长可执行 skill 库。</span></li>
+            <li><a href="https://arxiv.org/abs/2204.01691" target="_blank" rel="noopener">SayCan</a> — <span class="relevance">predefined skills + affordance grounding。</span></li>
+            <li><a href="https://arxiv.org/abs/2209.07753" target="_blank" rel="noopener">Code as Policies</a> — <span class="relevance">在 primitive API 上的可执行程序。</span></li>
+            <li><a href="https://arxiv.org/abs/2304.11477" target="_blank" rel="noopener">LLM+P</a> — <span class="relevance">LLM proposal + symbolic planner。</span></li>
+            <li><a href="https://nvidia-ai-iot.github.io/remembr/" target="_blank" rel="noopener">ReMEmbR</a> — <span class="relevance">具身长期记忆：VLM caption + vector DB + LLM agent 检索。</span></li>
+            <li><a href="https://arxiv.org/abs/2305.10250" target="_blank" rel="noopener">MemoryBank</a> — <span class="relevance">LLM agent 的长期记忆机制。</span></li>
+            <li><a href="https://arxiv.org/abs/2405.14831" target="_blank" rel="noopener">HippoRAG</a> — <span class="relevance">受海马体启发的图式长期记忆检索。</span></li>
+            <li><a href="https://arxiv.org/abs/2404.16130" target="_blank" rel="noopener">GraphRAG</a> — <span class="relevance">图结构的 retrieval-augmented generation。</span></li>
+            <li><a href="https://arxiv.org/abs/2310.08560" target="_blank" rel="noopener">MemGPT</a> — <span class="relevance">OS 式的 LLM 记忆管理（context 分页 vs 外部 store）。</span></li>
+            <li><a href="https://arxiv.org/abs/2603.24558" target="_blank" rel="noopener">LensWalk</a> — <span class="relevance">active reason-plan-observe；强 reasoner 指导弱 observer。</span></li>
+          </ul>
+        </details>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-017" data-status="active">
+      <h3 class="idea-title">最强 paper positioning</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="positioning">我们将长程多模态记忆推理表述为外部记忆基底上的神经符号技能组装问题。不同于训练紧凑模型直接回答长视频问题，我们训练它组装和修复可执行的 memory-skill programs，用来指导检索、验证和答案生成。Teacher demonstrations、benchmark ground-truth answers、evidence chains、executors 和 verifiers 提供监督与评测。我们将记忆从被动检索库转化为一个可执行的神经符号工作空间，并训练一个小 controller 来操作这个 workspace。</p>
+        <ul class="key-points">
+          <li><strong>最强一句话：</strong>我们不训练 8B 直接回答；我们训练它组装和修复可执行的 memory-skill graph，让 teacher / executors / verifiers 检索证据并到达 ground-truth answer。</li>
+          <li><strong>为什么更强：</strong>避开了拥挤的“又一个 memory graph”方向，且与 M3-Agent 式 memory system 有清楚区别。</li>
+        </ul>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-018" data-status="active">
+      <h3 class="idea-title">评测 &amp; 最强实验设定</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body">报告过程指标，而不只是流畅度。不要一开始覆盖所有 memory 操作——第一版聚焦三类任务：</p>
+        <ol class="problem-list">
+          <li><strong>Task 1 — 长视频 memory QA：</strong>agent 能否查到过去事件、引用正确 evidence、回答跨时间问题？</li>
+          <li><strong>Task 2 — Memory update consistency：</strong>新观察进入后，memory 是否更新对、是否合并重复 entity、是否避免矛盾状态？</li>
+          <li><strong>Task 3 — Failure repair：</strong>给定错误检索 / 错误写入 / 错误时间链，能否通过 verifier feedback 修复？</li>
+        </ol>
+        <p class="idea-body"><strong>Baseline：</strong>RAG over captions、GraphRAG、M3-Agent-like retrieval、CoT over retrieved memory、flat memory tools、linear memory-skill chain、ours（memory-skill graph）、ours + verifier / post-training。</p>
+        <p class="idea-body"><strong>指标：</strong>answer accuracy、evidence-chain recall / precision、retrieval correctness、hop / node success、trace correctness、memory-update validity、contradiction rate、abstention calibration、repair success、tool-call cost。</p>
+        <p class="idea-body"><strong>能让训练成立的实验：</strong>冻结 teacher-planner vs 训练后的 8B program controller，工具 + memory 相同；只有紧凑 policy 以更低成本达到相近 answer/evidence 质量，或 repair 更好、迁移更好、过程指标更好，它才被 justify。</p>
+        <p class="idea-notes"><strong>备注：</strong>需要一个能评估 memory-operation correctness 的 benchmark，而不只是最终答案——见下一张卡片的候选数据集，以及它们仍然留下的 gap。</p>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-022" data-status="active">
+      <h3 class="idea-title">候选 benchmark 与 egocentric 聚焦</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body"><strong>这些部分填补了 benchmark gap（#3）——但没有完全填补。</strong>它们提供了很强的评测目标，部分还带 multi-hop / evidence 标注；但它们<em>不</em>提供 typed skill-graph trace 监督（node、arg、evidence pointer、temporal anchor），也不提供 memory-update / repair correctness 的评分。所以我们仍然需要在其上加一层轻量的 typed-trace + memory-operation 评测层——而这一层本身就可以是一等贡献。</p>
+        <p class="idea-body"><strong>Egocentric 长视频是天然的第一落点。</strong>第一人称、长程的视频流大量涉及 coreference、state tracking 和 social / theory-of-mind 推理——正是我们形式化的那些 memory 操作（“从我拿起手机到放进口袋之间，我跟谁说过话？”）。建议把第一篇锚定在 egocentric + social / temporal 多跳，而不是通用 web video。</p>
+        <p class="idea-body"><strong>映射到三类任务：</strong></p>
+        <ol class="problem-list">
+          <li><strong>多跳证据 QA（Task 1）：</strong>LongVidSearch（multi-hop evidence reasoning）、Video-Holmes（复杂长程推理）。</li>
+          <li><strong>Social / ToM / temporal 推理：</strong>MA-EgoQA（social interaction、task coordination、theory-of-mind、temporal、environment）、Video-Holmes（social reasoning）。</li>
+          <li><strong>长程 egocentric substrate / 数据源：</strong>EgoLife（长程第一人称数据，用于构建 memory store、update-consistency 和 repair 任务）。</li>
+        </ol>
+        <ul class="key-points">
+          <li><strong>填补了：</strong>评测目标 + 部分 evidence-chain 标注（尤其 LongVidSearch）。</li>
+          <li><strong>仍然缺：</strong>typed skill-graph trace 标签 + memory-update / repair correctness 评分 → 自建一层薄的标注 / 评测层。</li>
+          <li><strong>Scope 提示：</strong>web-agent video 大概率超出范围（不是 egocentric 持久记忆）；只作为 stretch 对比保留。</li>
+        </ul>
+        <details class="foldable related-work">
+          <summary>相关工作</summary>
+          <ul class="related-work-list">
+            <li><a href="https://arxiv.org/abs/2505.21374" target="_blank" rel="noopener">Video-Holmes</a> — <span class="relevance">视频上复杂、长程的 social reasoning；多跳 social QA 的强目标。</span></li>
+            <li><a href="https://github.com/EvolvingLMMs-Lab/EgoLife" target="_blank" rel="noopener">EgoLife</a> — <span class="relevance">长程 egocentric 数据；构建 memory store / update / repair 任务的天然 substrate。</span></li>
+            <li><a href="https://arxiv.org/pdf/2603.09827" target="_blank" rel="noopener">MA-EgoQA</a> — <span class="relevance">Egocentric 的 social interaction、task coordination、theory-of-mind、temporal 与 environment interaction。</span></li>
+            <li><a href="https://github.com/yrywill/LongVidSearch" target="_blank" rel="noopener">LongVidSearch</a> — <span class="relevance">长视频上的 multi-hop evidence reasoning；最接近 evidence-chain 监督。</span></li>
+            <li><a href="https://arxiv.org/pdf/2410.19100" target="_blank" rel="noopener">Web-agent video</a> — <span class="relevance">可能超出范围；不是 egocentric 持久记忆——作为 maybe 保留。</span></li>
+          </ul>
+        </details>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-019" data-status="active">
+      <h3 class="idea-title">诚实的强度评估</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <table class="scorecard">
+          <thead><tr><th>版本</th><th>评分</th></tr></thead>
+          <tbody>
+            <tr><td>只把 memory graph 当 backend</td><td>8 / 10</td></tr>
+            <tr><td>Neural-symbolic memory skills</td><td>8.2 / 10</td></tr>
+            <tr><td>+ verified process training</td><td>8.5 / 10</td></tr>
+            <tr><td>若实验能证明 query/store/reason/repair 都明显更稳</td><td>strong conference paper</td></tr>
+          </tbody>
+        </table>
+        <p class="idea-body"><strong>强的地方：</strong>比 claim “8B 直接做长视频推理”更可信；避开拥挤的“又一个 memory graph”方向；与 M3-Agent 式系统有清楚区别；和 verified-RL / process-reward trend 结合自然；typed/verifiable 结构适合长程 memory reasoning；可以从失败的 memory operations 中学习。</p>
+        <p class="idea-body"><strong>最大风险：</strong>如果 8B 只是模仿 teacher graph，故事会退化成 compression；scope 仍可能过大；store/update/merge/forget 全做会很难；verifier 不可靠会 reward hacking；需要能评估 memory-operation correctness 的 benchmark；如果 graph 只是 JSON-CoT，novelty 不够。</p>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-020" data-status="active">
+      <h3 class="idea-title">推荐的第一篇收敛</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body"><strong>第一篇不要做所有 memory skills。</strong>聚焦 <em>query + verify + reasoning over memory</em>；把 store / update 作为辅助，不主打。</p>
+        <p class="idea-body"><strong>主贡献：</strong></p>
+        <ol class="problem-list">
+          <li>一个 typed memory-skill DSL。</li>
+          <li>memory query / reasoning program 的神经符号组装。</li>
+          <li>memory operations 上的 verifier-grounded 过程训练。</li>
+          <li>失败的 memory query / reasoning chain 的局部修复。</li>
+        </ol>
+        <p class="idea-body"><strong>不要 claim：</strong>8B 是比 teacher 更强的长视频 reasoner。<strong>应该 claim：</strong>8B 学到一个可复用的 program-assembly and repair policy，用来组织 memory 上的检索、验证和答案生成。</p>
+        <p class="idea-body"><strong>留给第二篇：</strong>forgetting policy、memory compression、lifelong memory consolidation、diffusion memory field、fully autonomous memory evolution。</p>
+        <p class="idea-notes"><strong>最终定位：</strong>不是新的 memory graph，也不是 8B long-video reasoner；而是一个紧凑 controller 借助 teacher demonstrations、ground-truth answers、evidence feedback 和 failure traces，学习组装与修复可执行的神经符号 memory programs。</p>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-023" data-status="active">
+      <h3 class="idea-title">ICLR readiness：framing 是使能条件，不是招牌</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body"><strong>这个 fix 的诚实边界。</strong>重写 framing <em>不</em>提升研究本身的质量——它一行数据都没加。它是<strong>必要但不充分</strong>的：唯一作用是阻止一个好结果在 reviewer 头五分钟里被误判成“又一个 neural-symbolic / 又一个 memory graph”。预期效果约 <strong>+0.5～1</strong> 分，集中体现在<em>不在 borderline 区间被误杀</em>，而不是把 6 分抬成 8 分。如果两张 P0 表做不出来，framing 救不了论文；真实质量由实验决定。</p>
+        <p class="idea-body"><strong>Neural-symbolic = 地基，不是招牌。</strong>“neural-symbolic skill assembly” 是个老旗号（NS-CL、神经模块网络、ViperGPT、VisProg、LLM+P、program-of-thought）；用它当主标语会重新招来 novelty 归属攻击和“到底有多 symbolic？”的质疑（executor + soft verifier 都是 VLM）。把它当<em>使能条件</em>：正因为 memory 操作是带可检查 precondition / evidence pointer 的 typed symbolic operator，每一步才可验证——而这恰好是 <strong>failure-aware verified process RL + program repair</strong> 得以成立的前提，free-form CoT 做不到。</p>
+        <p class="code-caption">Headline 措辞（卖 RL + repair，把 NS 当“因为”）</p>
+        <pre class="code-block">Because memory operations can be cast as typed symbolic operators
+with checkable preconditions and evidence pointers, every reasoning
+step becomes verifiable. We exploit this to train a compact controller
+with failure-aware verified process reward and program repair —
+something free-form CoT cannot support.</pre>
+        <p class="idea-body"><strong>动手实验前必须锁死的四个设计决策</strong>（这些是 framing / 设计问题，实验解决不了）：</p>
+        <ol class="problem-list">
+          <li><strong>一句话新意</strong> = 在 <em>typed memory ops</em> 上的 failure-aware verified process RL + repair；把“skill graph”降级为载体。</li>
+          <li><strong>三层 verifier，reward 只放 hard + anchor：</strong>hard（类型、时间戳、precondition、evidence pointer 是否存在、矛盾）+ benchmark anchor（answer correctness、evidence-chain recall）承担 reward；soft / teacher verifier 只作有噪声偏好，绝不进硬 reward。从结构上消除循环 / reward-hacking 质疑。</li>
+          <li><strong>评测与监督解耦：</strong>生成 trace 的 teacher 不能当评分者；evidence-chain 用 benchmark 自带标注；自建 typed-trace eval 只评 hard 约束。</li>
+          <li><strong>砍 scope</strong> 到 <em>query + verify + repair over teacher 已建好的 memory</em>；store / update / merge / forget / streaming 留给第二篇。</li>
+        </ol>
+        <p class="idea-body"><strong>最小但致命的实验集</strong>（先把 P0 那一对当 go/no-go 闸门，再铺全量 pipeline）：</p>
+        <table class="scorecard">
+          <thead><tr><th>优先级</th><th>实验</th><th>要证明的命题</th></tr></thead>
+          <tbody>
+            <tr><td>P0</td><td><code>SFT-only</code> vs <code>+ on-policy repair</code></td><td>不是单纯 teacher 蒸馏</td></tr>
+            <tr><td>P0</td><td><code>graph</code> vs <code>linear tool chain</code>（同条件）</td><td>图结构有可测收益</td></tr>
+            <tr><td>P1</td><td><code>no-verifier</code> ablation</td><td>verified process RL 有用</td></tr>
+            <tr><td>P1</td><td>vs M3-Agent / GraphRAG / CoT-over-retrieval</td><td>打过强 baseline</td></tr>
+            <tr><td>P2</td><td>cost / latency / teacher-fallback rate</td><td>8B 真省钱</td></tr>
+          </tbody>
+        </table>
+        <ul class="key-points">
+          <li><strong>最有区分度的指标：</strong>evidence-chain recall（抓“没接地但答对”的 teacher 路径）+ repair success rate（独特卖点）。</li>
+          <li><strong>是否抬高 neural-symbolic 的判定实验：</strong><code>no-symbolic-constraint</code> / <code>hard-verifier-off</code> ablation——若符号检查带来可测收益（拦下的错误、减少的非法 program、使修复成为可能），NS 才配更响的角色；否则它只是 JSON-schema 校验，必须留作细节。</li>
+          <li><strong>Go/no-go：</strong>若 on-policy repair 没明显超过 SFT-only，或 graph 没超过 linear chain，先重设故事，再投入全量 pipeline。</li>
+        </ul>
+        <p class="idea-notes"><strong>一句话：</strong>先锁四个设计决策，用两张 P0 表当闸门，再放大规模。Framing 移除的是埋没好结果的风险，而不是创造好结果。</p>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-024" data-status="active">
+      <h3 class="idea-title">用实质 reframe 提升真实质量(及它需要的实验)</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <p class="idea-body"><strong>两种 reframe——只有一种能提升真实质量。</strong></p>
+        <ol class="problem-list">
+          <li><strong>营销式 reframe(换说法):</strong>换 headline、把 neural-symbolic 降级、写更漂亮的 positioning。只改变别人的观感 → <em>不</em>提升真实质量(见卡片 023)。</li>
+          <li><strong>实质式 reframe(重定义研究问题 / 贡献单元):</strong>改变<em>你测什么、claim 什么</em>,从而改变你做哪些实验 → <strong>这是除了跑实验之外唯一能提升真实质量的杠杆。</strong>没有免费午餐:它重定向努力,不替代努力——但能把同样的工作量瞄准更高的天花板。</li>
+        </ol>
+        <p class="idea-body"><strong>四个实质 reframe(按杠杆排序):</strong></p>
+        <ol class="problem-list">
+          <li><strong>从"做一个系统"到"研究一个现象"(最大杠杆)。</strong>不是"MemorySkillGraph 能做 memory reasoning",而是"<em>什么时候、为什么 从失败的 memory program 学修复 会胜过蒸馏 / SFT?</em>"把工程论文变成科学论文,产出是 finding 而不是 leaderboard 名次。</li>
+          <li><strong>从"赢 benchmark"到"证明一个性质(property)"。</strong>瞄准 <em>只有</em> typed-verifiable-repair 结构才能带来的 transfer / compositional generalization / reliability。property-centric framing 强迫你做出产生 principle 的实验——这是从 recipe 到 principle 的路。</li>
+          <li><strong>从"repair 是一个阶段"到"repair 是中心对象"。</strong>把 <code>bad program + feedback → repaired program</code> 作为全篇深入研究的核心机制,而不是分散在五类 skill 上稀释。这是最不易被对标掉的 novelty;要集中。</li>
+          <li><strong>从"自建 eval 是负担"到"评测协议是一等贡献"。</strong>"第一个能评分 memory-operation correctness + repair 的协议。"它的质量独立于方法是否赢 → 一条不依赖实验运气的质量下限。</li>
+        </ol>
+        <p class="idea-body"><strong>推荐组合:</strong>主 reframe = #1 + #3(围绕 repair 机制的现象研究);#2 作为关键实验(transfer 证明);#4 作为质量保底(开源评测协议)。</p>
+        <p class="idea-body"><strong>需要加实验吗?需要——作为重定向,不是堆量。</strong>P0 那一对(卡片 023)仍是 go/no-go 闸门;在其上加下面这些 principle 级实验;砍掉任何只是"再来一张胜负表"的东西。净增约 +4,但要有纪律(每个 transfer / streaming 设置都很贵)。</p>
+        <table class="scorecard">
+          <thead><tr><th>Reframe</th><th>新增实验(在卡片 023 之外)</th><th>产出什么</th></tr></thead>
+          <tbody>
+            <tr><td>#1 现象</td><td>同预算 dose–response:repair-data vs SFT-data 的 scaling 曲线;on-policy vs offline 失败来源</td><td>finding:<em>何时 / 为何</em> repair &gt; SFT</td></tr>
+            <tr><td>#2 性质</td><td>短→长 & 离线→流式 transfer;留出 skill 组合的 compositional generalization</td><td>principle:结构带来 transfer</td></tr>
+            <tr><td>#3 repair 中心</td><td>按 failure-code 的 repair 成功率;局部单节点修复 vs 整体重生成;repair 迁移到没见过的 failure type</td><td>机制深度</td></tr>
+            <tr><td>可靠性</td><td>相对强 baseline 的 hallucination / contradiction rate 下降</td><td>可测量的可靠性收益</td></tr>
+            <tr><td>#4 benchmark</td><td>协议可靠性:human–verifier 一致性、标注者间一致性、verifier false-accept rate</td><td>评测有效性(不依赖胜负的质量下限)</td></tr>
+          </tbody>
+        </table>
+        <ul class="key-points">
+          <li><strong>纪律:</strong>加实验只有在每个都能产出 finding 或 property 时才有用;纯增胜负表不提升真实质量。</li>
+          <li><strong>顺序:</strong>P0 闸门 → repair dose–response(#1/#3)→ transfer(#2)→ 可靠性 + 协议开源(#4)。</li>
+        </ul>
+        <p class="idea-notes"><strong>一句话:</strong>把这项工作从"一个会赢的 memory 系统"reframe 成"关于 repair-as-learning-signal 的现象研究,附带一个 transfer/可靠性性质和一套可复用评测协议"——同样的努力,换来天花板更高、且部分不依赖运气的产出。</p>
+      </details>
+    </article>
+
+    <article class="idea" data-id="atomic-skill-decomposition-and-assembly-021" data-status="open">
+      <h3 class="idea-title">开放问题</h3>
+      <details class="foldable idea-details" open>
+        <summary>展开完整描述</summary>
+        <ol class="problem-list">
+          <li>最小稳定的 memory-skill 基底（跨五类）应该是什么？</li>
+          <li>typed failure labels 和 program-repair 目标如何自动、廉价地生成？</li>
+          <li>如何让 verifier 足够可靠以避免 reward hacking？</li>
+          <li>在 EgoLife / LongVidSearch / Video-Holmes / MA-EgoQA 之上加一层薄的 typed-trace + memory-operation 评测层，能否评估 retrieval / update / repair correctness，而不只是最终答案？</li>
+          <li>一个重复且通过验证的 subgraph motif 何时应晋升为 composite memory skill？</li>
+          <li>8B program controller 在 inference time 仍需 teacher planning 前，能从 teacher demonstrations + ground-truth answer anchors + failure repair 中学到多少？</li>
+          <li>哪种 transfer 最能证明 claim：短 → 长视频，还是离线 → 流式记忆？</li>
+          <li><strong>Teacher compression 风险：</strong>如何证明 8B 不只是压缩 teacher plans？必需 ablation：teacher-only inference、8B SFT-only、8B + failure repair、8B + on-policy correction、graph vs linear chain、no-verifier、no-graph variants。</li>
+          <li><strong>Failure-data pipeline：</strong><code>bad program + feedback → repaired program</code> 数据到底怎么造？候选方式包括 corrupt teacher traces、收集自然 8B rollout failures、执行 programs、分配 failure codes、让 teacher / human 给 repair targets，并做人工抽检。</li>
+          <li><strong>Verifier stack：</strong>能否明确拆成 hard verifiers（type、timestamp、precondition、evidence pointer 是否存在、contradiction）、benchmark anchors（answer correctness、evidence-chain recall）和 teacher / soft verifiers（有噪声的 preference / repair signal，不是 oracle）？</li>
+          <li><strong>Trace 非唯一性：</strong>如何避免把 teacher trace 当成唯一正确 graph？是否应该基于 answer、evidence chain、constraints、cost、unsupported-claim avoidance 定义 equivalence classes，而不是 exact trace match？</li>
+          <li><strong>Graph vs linear tool chain：</strong>什么可测假设能证明 graph structure 有用，而不是 JSON-CoT？候选 claim：branching、shared evidence、typed dependencies、局部 node/edge repair、sub-result caching、可复用 subgraph motifs。</li>
+          <li><strong>Cost model：</strong>把 controller calls、executor calls、verifier calls、retrieved-clip tokens 和 teacher fallback calls 都算进去后，8B 什么时候真的更便宜？fallback rate 多少时方法仍然经济？</li>
+          <li><strong>Executor boundary：</strong>第一篇哪些 skills 足够可靠、failure rate 是多少、repair 实际能修哪些错误？需要明确 perception failures（tracking、contact、speech/person linking、temporal boundaries）不是主要贡献。</li>
+          <li><strong>第一篇 scope：</strong>是否应进一步收窄成 <em>query + verify + repair over an existing teacher-built memory</em>，把 store / update / merge / forget 留给第二篇？</li>
+        </ol>
+        <p class="idea-notes"><strong>备注：</strong>最紧急的方法问题是 failure-data generation pipeline 和非循环 verifier stack。最紧急的实验问题是证明 8B 不只是 teacher-plan compression，以及证明 graph structure 胜过 linear memory-tool chain。</p>
+      </details>
+    </article>
+  </section>
+
+  <section class="changelog">
+    <h2>讨论记录</h2>
+    <ol>
+      <li><time datetime="2026-06-23">2026-06-23</time> — 新增 action-level OPD 方法卡片：把 OPD 从 token-level logprob 改成 tool/action-level policy distillation。Student 在自己的 harness trajectory 上产生 decision states；teacher 对候选工具动作的单字母选项返回 logprob / top_logprobs；训练紧凑 controller 匹配 teacher 的 action distribution，并用随机 option order、top-k/floor logprob 和重复校准降低位置偏置与 verbal score 不可靠问题。</li>
+      <li><time datetime="2026-06-15">2026-06-15</time> — 新增“实质 reframe”卡片，区分营销式 reframe（只改观感）与实质式 reframe（重定义研究问题 / 贡献单元，才真正提升真实质量）。给出四个实质 reframe——现象研究、证明性质、repair 作为中心对象、评测协议作为贡献——及推荐组合（#1+#3 为主、#2 关键实验、#4 质量保底），并列出每个 reframe 需要的 principle 级实验（repair dose–response、transfer / compositional generalization、按 failure-code 的 repair、可靠性下降、协议可靠性），定位为在卡片 023 的 P0 闸门之上做重定向而非堆量。</li>
+      <li><time datetime="2026-06-15">2026-06-15</time> — 新增“ICLR readiness”卡片：framing 是必要但不充分的修补（约 +0.5～1，作用是防误杀，不提升真实质量）；把 neural-symbolic 降为使能条件，招牌落在 failure-aware verified process RL + repair；列出四个动手前的设计决策（一句话新意、三层 verifier 且 reward 只放 hard + anchor、评测与监督解耦、scope 砍到 query + verify + repair）；给出最小 P0–P2 实验集与 go/no-go 闸门；并用 no-symbolic-constraint 判定实验决定 neural-symbolic 是否配更响的角色。</li>
+      <li><time datetime="2026-06-15">2026-06-15</time> — 扩展开放问题，加入剩余方法与评测缺口：teacher-compression 风险、failure-data generation pipeline、三层 verifier stack、trace 非唯一性、graph-vs-linear-chain 假设、cost model、executor reliability boundary，以及第一篇是否应进一步收窄到 teacher-built memory 上的 query + verify + repair。</li>
+      <li><time datetime="2026-06-15">2026-06-15</time> — 收紧 8B 角色：紧凑模型不再表述为独立长视频 reasoner，而是 memory-skill graph generator / controller / repair policy；训练信号来自 teacher demonstrations、ground-truth answer anchors、evidence feedback、executors、verifiers 和 failures。相应更新 thesis、单一 policy、方法、训练配方、reward 解释、positioning、评测、强度评估与第一篇收敛。</li>
+      <li><time datetime="2026-06-15">2026-06-15</time> — 回应 benchmark gap（#3）：新增候选 benchmark 卡片（LongVidSearch 多跳证据、Video-Holmes 长程 social reasoning、MA-EgoQA social / ToM / temporal、EgoLife egocentric 长程数据；web-agent video 标为大概率超出范围），把第一篇锚定在 egocentric + social / temporal 多跳，并指出 typed skill-graph trace 监督加 memory-update / repair 评测层仍需自建、且可作为一等贡献。</li>
+      <li><time datetime="2026-06-15">2026-06-15</time> — 把贡献从“video reasoning 的 skill graph”重新定位为 <strong>MemorySkillGraph</strong>：记忆是 substrate，神经符号 memory skills 是其上的操作系统。新增贡献边界（vs 存储系统）、五类 memory skills、typed/verifiable memory-skill 示例、基于 memory substrate 的方法主线、memory-operation reward / 修复、与 M3-Agent 的区别及 agent-memory related-work 类、三类实验设定，以及推荐的第一篇收敛（query + verify + reason；遗忘 / 压缩 / diffusion field 留后）。</li>
+    </ol>
+    <details class="foldable changelog-archive">
+      <summary>更早的条目（6）</summary>
+      <ol>
+        <li><time datetime="2026-06-15">2026-06-15</time> — 大幅重构为 SkillGraph-RL proposal：typed-skill schema、skill-graph + typed edges、neural-symbolic 拆分、单一 policy 统一、5 阶段训练、训练信号来源、verified-RL / VLM post-training 关系、related-work map、positioning、强度评估。</li>
+        <li><time datetime="2026-06-15">2026-06-15</time> — 新增 LensWalk 相关工作：active reason-plan-observe 显示强 reasoner 对弱 observer 帮助更大，支持 large-teacher / compact-student 拆分。</li>
+        <li><time datetime="2026-06-15">2026-06-15</time> — 新增 7B/8B 使用理由：紧凑模型是可训练、更便宜、可部署的 student policy，需与 72B-only / hybrid baseline 对比。</li>
+        <li><time datetime="2026-06-15">2026-06-15</time> — 新增 planner / executor 拆分：先用大冻结 decomposer，训练 7B/8B executor，再把 decomposition 蒸馏到 7B student。</li>
+        <li><time datetime="2026-06-15">2026-06-15</time> — 新增 M3-style memory graph 训练：可训练 8B 作为冻结感知之上的 graph-update policy，信号来自 teacher deltas、重构、一致性、下游 retrieval 效用与人工抽检。</li>
+        <li><time datetime="2026-06-15">2026-06-15</time> — 清理 atomic-skill 页面为聚焦 neural-symbolic memory、小型 typed tools、agent 边界、trajectory fitting 与评测的精简表述。</li>
+      </ol>
+    </details>
+  </section>
+</body>
+</html>

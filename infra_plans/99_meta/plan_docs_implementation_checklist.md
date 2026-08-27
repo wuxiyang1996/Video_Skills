@@ -309,6 +309,20 @@ This should reduce ambiguity currently spread across other docs.
 
 ---
 
+## 8) New file: `infra_plans/03_controller/m3bench_tool_calling_plan.md`
+
+**Role:** Concretizes the controller's `[Think] → [Search] → [Think] → [Answer]` loop for M3-Bench: 8 typed tools (retrieval / perception / decision), OpenAI-style function-calling protocol, question-type → tool-chain mapping, supervision signals from `qa.reasoning` / `qa.timestamp` / `qa.before_clip`, and M3-Bench-specific anti-hacking constraints. Strictly a concretization — no new orchestration layer, no new memory store, no change to `runtime_contracts.md` types.
+
+### Open work (mirrors §8 of the new doc)
+
+- [ ] Add a `ToolSpec` table + `register_tool` API on top of `video_skills/contracts.py` (no freeze-line type changes).
+- [ ] Make the trainable 8B controller emit `tool_calls` natively; SFT cold-start uses §4 hop patterns as gold targets and `qa.reasoning` as gold CoT.
+- [ ] Propagate `before_clip` from `HopGoal` through every retrieval tool dispatch (the one required edit to `runtime_contracts.md`: add `before_clip: int | None` on `HopGoal`).
+- [ ] Add a seventh verifier check `name_space_consistency` (intermediate evidence in `character_N` space; final answer in name space).
+- [ ] Build `video_skills/adapters/m3bench_tool_calling.py` (the §7 skeleton) and `video_skills/adapters/m3agent_text_action.py` (back-compat shim for the existing M3-Agent-Control checkpoint).
+
+---
+
 ## Highest-priority edit order
 
 Suggested fastest path (updated — grounding layer done, reasoning + skills layer still pending):
@@ -321,6 +335,7 @@ Suggested fastest path (updated — grounding layer done, reasoning + skills lay
 6. Add formal SkillRecord schema to `skill_extraction_bank.md`
 7. Add `evaluation_ablation_plan.md`
 8. Execute `grounding_pipeline_execution_plan.md` Phase 0 → Phase 6 (replaces `out/claude_grounding/` with `out/grounding_v1/`)
+9. Land `m3bench_tool_calling_plan.md`'s §8 open work — start with the `register_tool` surface and the `before_clip`-on-`HopGoal` edit (smallest unblockers for the M3-Bench adapter)
 
 ---
 

@@ -2,6 +2,16 @@
 
 > **Evidence-grounded multi-hop video reasoning, orchestrated by a small trainable controller over a stable structured memory of grounded perception.**
 
+> Integration note: this branch now also contains the relaunch L1/L2
+> clue-graph, verification, repair, and training-export protocol. Start with
+> [`REPO_STRUCTURE.md`](REPO_STRUCTURE.md) for the active path, legacy paths, and
+> cleanup rules.
+>
+> Current cleanup boundary: future L1/L2 composed motifs should be implemented
+> as expandable atomic-subgraph templates under `dataset_clip_wrapper/motifs/`.
+> The older `skill_agents/` stack is legacy/reference code and is not the L1/L2
+> motif runtime.
+
 Video_Skills is a research codebase for long-horizon, evidence-grounded video understanding. The system answers questions about long, multi-character, perspective-bearing videos by:
 
 1. **Grounding** the video into a structured `SocialVideoGraph` of entities, interactions, events, and social/spatial state — using **frozen large VLMs (72B / 32B)** as visual specialists,
@@ -241,6 +251,7 @@ pytest tests/video_skills -q   # Phase-1 runtime only (58 tests, ~0.1s)
 | Work on the grounding layer | [`infra_plans/01_grounding/`](infra_plans/01_grounding/README.md) |
 | Work on memory | [`infra_plans/02_memory/`](infra_plans/02_memory/README.md) |
 | Work on the 8B controller / retriever / verifier | [`infra_plans/03_controller/`](infra_plans/03_controller/README.md) |
+| Wire M3-Bench as a multi-turn tool-calling agent | [`infra_plans/03_controller/m3bench_tool_calling_plan.md`](infra_plans/03_controller/m3bench_tool_calling_plan.md) |
 | Work on the harness / execution runtime | [`infra_plans/04_harness/`](infra_plans/04_harness/README.md) |
 | Work on reasoning skills | [`infra_plans/05_skills/`](infra_plans/05_skills/README.md) |
 | Train the 8B controller | [`infra_plans/06_training/`](infra_plans/06_training/README.md) |

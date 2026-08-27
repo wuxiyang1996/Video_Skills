@@ -1,0 +1,273 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/wuxiyang1996/Video_Skills/schemas/skill_graph_rollout.schema.json",
+  "title": "SkillGraphRollout",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "rollout_id",
+    "example_id",
+    "rollout_source",
+    "input_mode",
+    "nodes",
+    "edges",
+    "claims",
+    "answer_support_chain",
+    "final_answer",
+    "verifier_summary",
+    "acceptance_status"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "video-skills-relaunch/v0.1"
+    },
+    "rollout_id": {"type": "string"},
+    "example_id": {"type": "string"},
+    "rollout_source": {"type": "string"},
+    "input_mode": {
+      "enum": ["expert_demo", "video_only"]
+    },
+    "labeler": {
+      "type": "object",
+      "properties": {
+        "model": {"type": ["string", "null"]},
+        "prompt_version": {"type": ["string", "null"]},
+        "temperature": {"type": ["number", "null"]}
+      },
+      "additionalProperties": true
+    },
+    "used_motifs": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/used_motif"}
+    },
+    "nodes": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/skill_invocation_node"}
+    },
+    "edges": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/skill_dependency_edge"}
+    },
+    "claims": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/claim_record"}
+    },
+    "answer_support_chain": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/support_step"}
+    },
+    "final_answer": {
+      "type": "object",
+      "properties": {
+        "label": {"type": ["string", "null"]},
+        "text": {"type": ["string", "null"]},
+        "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+      },
+      "additionalProperties": true
+    },
+    "verifier_summary": {
+      "type": "object",
+      "required": [
+        "schema_valid",
+        "all_commits_have_evidence",
+        "answer_chain_valid",
+        "timestamp_valid",
+        "no_old_video_fact_leakage",
+        "no_hidden_supervision_leakage"
+      ],
+      "properties": {
+        "schema_valid": {"type": "boolean"},
+        "all_commits_have_evidence": {"type": "boolean"},
+        "answer_chain_valid": {"type": "boolean"},
+        "timestamp_valid": {"type": "boolean"},
+        "no_old_video_fact_leakage": {"type": "boolean"},
+        "no_hidden_supervision_leakage": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    },
+    "acceptance_status": {
+      "enum": [
+        "accepted_gold",
+        "accepted_strong",
+        "accepted_weak",
+        "accepted_model_labeled",
+        "rejected",
+        "pending"
+      ]
+    },
+    "layer": {
+      "const": "reasoning"
+    },
+    "video_regime": {
+      "enum": ["short", "long", "streaming"]
+    },
+    "clue_memory_ref": {
+      "type": "object",
+      "required": ["graph_id"],
+      "properties": {
+        "graph_id": {"type": "string"},
+        "index_id": {"type": ["string", "null"]},
+        "observation_end_s": {"type": ["number", "null"], "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "question": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "retrieval_budget": {
+      "type": "object",
+      "properties": {
+        "topk_coarse": {"type": "integer", "minimum": 1},
+        "max_retrieval_steps": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": true
+    },
+    "failure_reasons": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "used_motif": {
+      "type": "object",
+      "required": ["motif_id", "expanded", "instantiated_nodes"],
+      "properties": {
+        "motif_id": {"type": "string"},
+        "expanded": {"type": "boolean"},
+        "instantiated_nodes": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": true
+    },
+    "skill_invocation_node": {
+      "type": "object",
+      "required": ["node_id", "skill_id", "args", "outputs", "status"],
+      "properties": {
+        "node_id": {"type": "string"},
+        "skill_id": {"type": "string"},
+        "args": {"type": "object", "additionalProperties": true},
+        "inputs_from": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "outputs": {"type": "object", "additionalProperties": true},
+        "evidence_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "References to layer-1 clue-memory node_id or evidence_id"
+        },
+        "evidence_visibility": {
+          "enum": [
+            "provided_supervision",
+            "provided_visible_context",
+            "discovered_runtime",
+            "derived_runtime",
+            "hidden_eval_only",
+            "mixed",
+            "none"
+          ]
+        },
+        "claim_ids": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "status": {
+          "enum": [
+            "planned",
+            "executed",
+            "verified",
+            "contradicted",
+            "insufficient",
+            "repaired",
+            "failed",
+            "skipped"
+          ]
+        },
+        "verifier_result": {
+          "type": ["object", "null"],
+          "additionalProperties": true
+        },
+        "failure_code": {
+          "type": ["string", "null"]
+        },
+        "cost": {
+          "type": "object",
+          "properties": {
+            "model": {"type": ["string", "null"]},
+            "input_tokens": {"type": "integer", "minimum": 0},
+            "output_tokens": {"type": "integer", "minimum": 0},
+            "latency_ms": {"type": "integer", "minimum": 0}
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "skill_dependency_edge": {
+      "type": "object",
+      "required": ["edge_id", "src", "dst", "edge_type"],
+      "properties": {
+        "edge_id": {"type": "string"},
+        "src": {"type": "string"},
+        "dst": {"type": "string"},
+        "edge_type": {
+          "enum": [
+            "data",
+            "temporal",
+            "causal",
+            "entity",
+            "evidence",
+            "claim_support",
+            "claim_refute",
+            "repair",
+            "control",
+            "alternative"
+          ]
+        },
+        "payload": {"type": "object", "additionalProperties": true}
+      },
+      "additionalProperties": true
+    },
+    "claim_record": {
+      "type": "object",
+      "required": ["claim_id", "text", "claim_status"],
+      "properties": {
+        "claim_id": {"type": "string"},
+        "text": {"type": "string"},
+        "claim_status": {
+          "enum": ["candidate", "verified", "contradicted", "insufficient"]
+        },
+        "supported_by_refs": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "contradicted_by_refs": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "parent_claims": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": true
+    },
+    "support_step": {
+      "type": "object",
+      "required": ["node_id", "claim_id", "evidence_refs"],
+      "properties": {
+        "node_id": {"type": "string"},
+        "claim_id": {"type": "string"},
+        "evidence_refs": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}
