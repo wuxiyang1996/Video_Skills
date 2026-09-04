@@ -134,10 +134,15 @@ any candidate that overlaps an already-chosen pick (no free parameter) on the
 same heldout rankings gives segment_recall SFT 56.01→62.33, OPD 59.93→**64.89**,
 D 53.21→61.69, with precision unchanged; D's inference_shot 8.71→10.30. So the
 top-k selection step, not the scorer, was leaving ~5 points on the table for
-every model. This was observed on the already-inspected heldout; before it can
-enter the main table it must be confirmed on the 190 unread examples (or on
-dev), where the rule is applied as pre-registered. `--temporal-nms` is available
-in the evaluator, default off.
+every model. Observed first on the inspected heldout, then **confirmed on Video-Holmes dev**
+(an independent split for this rule, 21 examples), where the same untuned rule
+lifts every model: SFT 47.70→63.33, OPD 59.76→65.32, midband 59.60→67.70,
+midband+dl 56.43→69.29, D 63.73→66.11; inference_shot rises too (OPD
+3.97→7.94) and precision is flat. The gain is model-agnostic — with NMS on, D is
++0.8 over OPD on dev and −3.2 on heldout, so it does not rescue the pairwise
+adapter. The retrieval heldout has no unread portion (all 263 were scored), so
+dev is the confirmation available. `--temporal-nms` in the evaluator, default
+off, recorded in report provenance.
 Measured negatives kept so they are not re-attempted blind: middle band alone,
 middle band with decision-logit training, and rank-fusing BM25 with the reranker.
 
