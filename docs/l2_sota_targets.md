@@ -96,6 +96,19 @@ separate even then, the contribution is the perception change, not the policy.
 **OPD success criterion: beat BM25 by a clear margin on the repassed catalog**,
 not merely beat SFT.
 
+## CG catalog repair, targeted
+
+Of the 67 heldout CG videos, 28 have placeholder catalogs and they are spread
+over all eight shards of the broken lane, so the paper's CG number was gated on
+the whole lane (~35 GPU-h, repeatedly preempted on scavenger). The runner now
+takes `--example-id-allowlist`; eight per-shard jobs (`cg-held-<start>`) repair
+only those 28 examples' stage directories — 1,728 placeholder clips, ~6 GPU-h in
+jobs short enough to usually survive preemption. The full-lane jobs were
+cancelled so they cannot write the same directories concurrently; the other 172
+lane examples (training pool, not on the critical path) can be repaired later.
+Do not run `resubmit_preempted_repair.sh` while `cg-held-*` jobs are active.
+Targets: `l2_expansion_20260831/heldout_repair_targets.json`.
+
 ## Order of work
 
 1. Rebuild the CG L1 catalog (`--retry-failed-clip-schemas`).
