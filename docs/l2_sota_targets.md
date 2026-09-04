@@ -184,9 +184,13 @@ replicates the direction (direct 48.7, graph 30.8). With model, evidence and
 budget fixed, removing the decomposition raises accuracy; the graph's best
 configuration reaches parity at best. One qualification: on the second seed the
 graph is right 75% of the time *when it commits* (vs direct 48.7%), so its
-failure is coverage, not precision — whether that is complementary to direct is
-testable offline. MHR/IMC are 1–2 examples each on test; a multi-hop answer
-needs the train split. 80 of 270 heldout examples are now consumed; the 190
+failure is coverage, not precision — Tested offline: a hybrid that takes the graph's
+answer when it commits and direct's otherwise scores 48.6% vs direct 45.8%
+(+2.8 [−2.8, +8.3], not significant), and best-of-both caps at 50.0% — the
+decomposition's complementary value is at most ~4 points. **Multi-hop cannot be
+evaluated on Video-Holmes with this pipeline:** across every split with L1
+built there are 12 MHR+IMC questions in total (heldout 5+5, train-side 2);
+heldout is 260/270 SR. 80 of 270 heldout examples are now consumed; the 190
 unread must supply any final number. Still missing before this is a claim: the same-model `direct`
 control (no skill graph) and the flag-off `model` run, both in flight; and the
 190 unread heldout examples for the final number.
