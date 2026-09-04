@@ -169,6 +169,7 @@ def direct_answer(
     client: OpenRouterClient,
     example: dict[str, Any],
     indices: list[int],
+    highlight: list[int] | None = None,
 ) -> dict[str, Any]:
     """Ask the same model the same question over the same clips, with no skill graph.
 
@@ -198,6 +199,15 @@ def direct_answer(
         "clips": clips,
         "answer_format": 'reply exactly {"label": "<option letter>"}',
     }
+    if highlight:
+        # Ranks (1-based positions in `clips`) the retriever flagged as most likely
+        # to matter -- the whole catalog is still given, so retrieval can only
+        # steer attention, never remove evidence.
+        position = {index: rank for rank, index in enumerate(indices, start=1)}
+        payload["likely_key_clips"] = [position[i] for i in highlight if i in position]
+        payload["likely_key_clips_note"] = (
+            "ranks of clips a retriever flagged as most likely to matter; it may be wrong"
+        )
     text = client.chat([
         {"role": "system", "content": DIRECT_SYSTEM},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -290,6 +300,15 @@ def main(argv: list[str] | None = None) -> int:
             "never a system result."
         ),
     )
+    parser.add_argument(
+        "--highlight-from",
+        choices=("report", "bm25", "retrieval_rank", "oracle"),
+        help=(
+            "Direct condition only: also flag the top-k clips from this source as "
+            "'likely_key_clips' inside the prompt.  Meant with --indices-from all, so the "
+            "retriever steers attention over the whole catalog instead of cutting it."
+        ),
+    )
     parser.add_argument("--sample", type=int, default=40)
     parser.add_argument("--example-ids", type=Path,
                         help="Newline-separated example ids to run instead of a seeded sample (for re-running a hung tail).")
@@ -323,6 +342,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset-root", type=Path, default=Path("/fs/gamma-projects/vlm-robot/datasets"))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
+    if args.highlight_from and any(c != "direct" for c in args.conditions):
+        parser.error("--highlight-from only applies to the direct condition")
     if args.indices_from == "none" and any(c != "direct" for c in args.conditions):
         parser.error("--indices-from none is the no-evidence control; it only makes sense with --conditions direct")
 
@@ -397,25 +418,29 @@ def main(argv: list[str] | None = None) -> int:
         if not gold_label:
             return None
         supervision = supervision_index.get(supervision_key(example)) or {}
-        if args.indices_from in ("none", "all"):
-            indices = control_indices(example, args.indices_from)
-        elif condition == "oracle" or args.indices_from == "oracle":
-            indices = oracle_indices(example, supervision, args.top_k)
-        else:
+
+        def pick(source: str) -> list[int]:
+            if source in ("none", "all"):
+                return control_indices(example, source)
+            if condition == "oracle" or source == "oracle":
+                return oracle_indices(example, supervision, args.top_k)
             slate = 0 if args.temporal_nms else args.top_k   # 0 -> full ranking
-            if args.indices_from == "bm25":
+            if source == "bm25":
                 ranked = bm25_indices(example, slate)
-            elif args.indices_from == "retrieval_rank":
+            elif source == "retrieval_rank":
                 ranked = retrieval_rank_indices(example, slate) if slate else retrieval_rank_indices(example, 10**6)
             else:
                 ranked = model_indices(example_id, rankings, slate) if slate else (rankings.get(example_id) or [])
-            indices = apply_temporal_nms(example, ranked, args.top_k) if args.temporal_nms else ranked[: args.top_k]
+            return apply_temporal_nms(example, ranked, args.top_k) if args.temporal_nms else ranked[: args.top_k]
+
+        indices = pick(args.indices_from)
+        highlight = pick(args.highlight_from) if args.highlight_from else None
         if not indices and args.indices_from != "none":
             # Skipping silently hid 1,574 of 1,837 questions once; count it.
             return {"example_id": example_id, "condition": condition, "error": "no_retrieval_indices"}
         try:
             if condition == "direct":
-                rollout = _with_rate_limit_retry(lambda: direct_answer(client, example, indices))
+                rollout = _with_rate_limit_retry(lambda: direct_answer(client, example, indices, highlight))
             else:
                 isolated, graph = filter_example_for_retrieval(example, indices)
                 rollout = _with_rate_limit_retry(lambda: build_llm_reasoning_rollout(
@@ -485,6 +510,7 @@ def main(argv: list[str] | None = None) -> int:
         "planner_model": args.planner_model,
         "always_commit_mcq": bool(args.always_commit_mcq),
         "indices_from": args.indices_from,
+        "highlight_from": args.highlight_from,
         "temporal_nms": bool(args.temporal_nms),
         "note": "seeded subsample of heldout_test; the rest stays unread",
         "conditions": summary,
