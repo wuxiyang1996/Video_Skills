@@ -122,6 +122,22 @@ learned to pick fewer, surer clips at the cost of recall. The dev gain was a
 21-example artifact. **Do not ship D.** This is the third dev→heldout reversal in
 this work; 21 dev examples cannot select a checkpoint, and no further training
 variant should be judged on them.
+
+Why D lost recall: its top-4 picks are positives as often as OPD's (68.4% vs
+68.7%) but their temporal spread halves (median 37s vs 67s). The margin pairs
+are ordered by a teacher score dominated by `0.60 × inference_hit`, so every
+pair pulls toward the one inference region and nothing in the loss rewards
+covering the ~3.4 gold segments per question.
+
+**Diagnostic, not a result — untuned temporal NMS at selection time.** Skipping
+any candidate that overlaps an already-chosen pick (no free parameter) on the
+same heldout rankings gives segment_recall SFT 56.01→62.33, OPD 59.93→**64.89**,
+D 53.21→61.69, with precision unchanged; D's inference_shot 8.71→10.30. So the
+top-k selection step, not the scorer, was leaving ~5 points on the table for
+every model. This was observed on the already-inspected heldout; before it can
+enter the main table it must be confirmed on the 190 unread examples (or on
+dev), where the rule is applied as pre-registered. `--temporal-nms` is available
+in the evaluator, default off.
 Measured negatives kept so they are not re-attempted blind: middle band alone,
 middle band with decision-logit training, and rank-fusing BM25 with the reranker.
 
