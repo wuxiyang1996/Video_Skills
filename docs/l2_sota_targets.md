@@ -204,7 +204,16 @@ video (SR for 260 of 270). Stage directories are keyed by example_id, so the
 runner cannot reuse a video's cache for a sibling question on its own;
 `scripts/eval/derive_full_question_examples.py` copies each video's frozen L1
 into one example per question with no captioning. The 270 videos carry all
-1,837 test questions. 80 of 270
+1,837 test questions.
+
+**A first "full-benchmark" run measured only 263 of them.** The measurement
+script took retrieval indices from the reranker's eval report, which covers only
+the 263 original questions; the 1,574 derived siblings got no indices and were
+silently skipped, so the run reproduced the SR-subset number (direct 43.0%,
+253/5/5 SR/IMC/MHR). Skipped examples are now counted as errors, and
+`--indices-from bm25` ranks each example's own captions against its question so
+every question is covered; the reranker's own ranking over all 1,837 requires a
+pointwise build plus a GPU scoring pass, which is queued. 80 of 270
 one-question examples are consumed; the full-benchmark run must be the source
 of any final number. Still missing before this is a claim: the same-model `direct`
 control (no skill graph) and the flag-off `model` run, both in flight; and the

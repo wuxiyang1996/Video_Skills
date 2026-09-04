@@ -58,6 +58,33 @@ def model_indices(example_id: str, rankings: dict[str, list[int]], top_k: int) -
     return (rankings.get(example_id) or [])[:top_k]
 
 
+def bm25_indices(example: dict[str, Any], top_k: int) -> list[int]:
+    """Question-aware retrieval with no learning: BM25 of the question against
+    each clip's generic caption.  Used when no reranker ranking exists for an
+    example (derived sibling questions are absent from the eval report), so the
+    run covers the whole benchmark instead of silently skipping them."""
+    from dataset_clip_wrapper.training.lexical_retrieval_baseline import BM25, question_text, tokenize
+
+    schemas, _ = retrieval_catalog(example)
+    docs = [tokenize(clip_schema_text(s if isinstance(s, dict) else {})) for s in schemas]
+    query = tokenize(question_text({"question": example.get("question") or {}}))
+    if not docs or not query:
+        return []
+    bm25 = BM25(docs)
+    order = sorted(range(len(docs)), key=lambda i: (-bm25.score(i, query), i))
+    return order[:top_k]
+
+
+def retrieval_rank_indices(example: dict[str, Any], top_k: int) -> list[int]:
+    """Question-blind visual-retrieval order stored on the catalog."""
+    schemas, _ = retrieval_catalog(example)
+    ranked = sorted(
+        range(len(schemas)),
+        key=lambda i: (int((schemas[i] or {}).get("retrieval_rank") or 10**6) if isinstance(schemas[i], dict) else 10**6, i),
+    )
+    return ranked[:top_k]
+
+
 DIRECT_SYSTEM = (
     "You answer multiple-choice questions about a video using only the clip "
     "descriptions provided. Reply with JSON only."
@@ -174,6 +201,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--l1-glob", required=True)
     parser.add_argument("--eval-report", type=Path, help="ranking source for the 'model' condition")
+    parser.add_argument(
+        "--indices-from",
+        choices=("report", "bm25", "retrieval_rank"),
+        default="report",
+        help=(
+            "Where the retrieved clip indices come from.  'report' uses the reranker "
+            "ranking in --eval-report and SKIPS examples it does not cover; 'bm25' ranks "
+            "each example's own captions against its question (no learning, covers "
+            "every example); 'retrieval_rank' uses the catalog's question-blind order."
+        ),
+    )
     parser.add_argument("--sample", type=int, default=40)
     parser.add_argument("--example-ids", type=Path,
                         help="Newline-separated example ids to run instead of a seeded sample (for re-running a hung tail).")
@@ -265,13 +303,17 @@ def main(argv: list[str] | None = None) -> int:
         if not gold_label:
             return None
         supervision = supervision_index.get(supervision_key(example)) or {}
-        indices = (
-            oracle_indices(example, supervision, args.top_k)
-            if condition == "oracle"
-            else model_indices(example_id, rankings, args.top_k)
-        )
+        if condition == "oracle":
+            indices = oracle_indices(example, supervision, args.top_k)
+        elif args.indices_from == "bm25":
+            indices = bm25_indices(example, args.top_k)
+        elif args.indices_from == "retrieval_rank":
+            indices = retrieval_rank_indices(example, args.top_k)
+        else:
+            indices = model_indices(example_id, rankings, args.top_k)
         if not indices:
-            return None
+            # Skipping silently hid 1,574 of 1,837 questions once; count it.
+            return {"example_id": example_id, "condition": condition, "error": "no_retrieval_indices"}
         try:
             if condition == "direct":
                 rollout = direct_answer(client, example, indices)
@@ -343,6 +385,7 @@ def main(argv: list[str] | None = None) -> int:
         "top_k": args.top_k,
         "planner_model": args.planner_model,
         "always_commit_mcq": bool(args.always_commit_mcq),
+        "indices_from": args.indices_from,
         "note": "seeded subsample of heldout_test; the rest stays unread",
         "conditions": summary,
         "rows": rows,
