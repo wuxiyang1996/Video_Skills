@@ -113,9 +113,15 @@ not merely beat SFT.
 | + middle band + decision-logit training | 56.43 | 3.97 | worse |
 | **+ middle band + decision-logit + pairwise margin** | **63.73** | **10.32** | **+9.1 / +10.3** |
 
-The middle band contributes nothing under a pointwise objective — a graded
-target near 0.5 carries almost no gradient in a two-way cross-entropy — and only
-pays off once an ordering loss can use it. Dev only; the heldout run is queued.
+**The heldout reversed this.** On all 263 Video-Holmes heldout videos, D scores
+segment_recall 53.21 against OPD 59.93 (paired bootstrap −6.72 [−9.24, −4.25])
+and below SFT (−2.79, CI excludes 0); inference_shot_recall 8.71 vs OPD 7.92
+(+0.79 [−1.33, +2.98], not significant) and still under BM25's 10.77.
+segment_precision rose to 94.58 (+2.76 vs OPD, significant): the margin objective
+learned to pick fewer, surer clips at the cost of recall. The dev gain was a
+21-example artifact. **Do not ship D.** This is the third dev→heldout reversal in
+this work; 21 dev examples cannot select a checkpoint, and no further training
+variant should be judged on them.
 Measured negatives kept so they are not re-attempted blind: middle band alone,
 middle band with decision-logit training, and rank-fusing BM25 with the reranker.
 
