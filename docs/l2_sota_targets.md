@@ -105,7 +105,7 @@ full 1,837-question test, paired by question:
 |---|---|---|---|
 | BM25 top-4 (system, no learning) | 1,827 | 33.6 | — |
 | ~~"oracle" top-4~~ **RETRACTED** — was the video's first 4 clips (see below) | 1,827 | 30.6 | −3.0 [−5.3, −0.6] (measures "opening vs BM25", not a ceiling) |
-| BM25 top-8 | 418 | 31.8 | −1.2 [−5.0, +2.9] |
+| BM25 top-8 | 1,823 | 34.3 | +0.7 [−1.2, +2.6] |
 | no clips at all (`--indices-from none`, 300 ids) | 281 so far | 15.3 (54% abstain; ≈chance when it commits) | |
 | whole catalog (`--indices-from all`, 300 ids) | 199 so far | 33.2 | −0.5 (paired on the same 199: BM25 33.7) |
 
