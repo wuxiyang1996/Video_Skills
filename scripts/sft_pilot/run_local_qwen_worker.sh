@@ -26,6 +26,10 @@ VLLM_VENV_ROOT="${VLLM_VENV_ROOT:-${REPO_ROOT}/.venv-qwen35-vllm}"
 VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-16384}"
 VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.90}"
 VLLM_LIMIT_MM_PER_PROMPT="${VLLM_LIMIT_MM_PER_PROMPT:-16}"
+# vLLM's flashinfer path JIT-compiles an attention kernel and needs nvcc, which
+# the compute nodes do not expose; torch here is cu130, so point it at the
+# matching toolkit under /opt/common rather than the absent /usr/local/cuda.
+VLLM_CUDA_HOME="${VLLM_CUDA_HOME:-/opt/common/cuda/cuda-13.0.2}"
 CLIP_MAX_TOKENS="${CLIP_MAX_TOKENS:-1600}"
 CLIP_TIMEOUT_S="${CLIP_TIMEOUT_S:-120}"
 LLM_COARSE_SELECTOR="${LLM_COARSE_SELECTOR:-1}"
@@ -103,6 +107,11 @@ trap cleanup EXIT INT TERM
 
 cd "${REPO_ROOT}"
 if [[ "${SERVE_BACKEND}" == "vllm" ]]; then
+  if [[ -d "${VLLM_CUDA_HOME}" ]]; then
+    export CUDA_HOME="${VLLM_CUDA_HOME}"
+    export CUDA_PATH="${VLLM_CUDA_HOME}"
+    export PATH="${VLLM_CUDA_HOME}/bin:${PATH}"
+  fi
   "${VLLM_VENV_ROOT}/bin/vllm" serve "${MODEL}" \
     --host 127.0.0.1 \
     --port "${PORT}" \
