@@ -17,6 +17,7 @@ GRAPH_WORKERS="${GRAPH_WORKERS:-2}"
 SMOKE="${SMOKE:-0}"
 QUERY_TIME_RETRIEVAL="${QUERY_TIME_RETRIEVAL:-1}"
 CLIP_FRAMES="${CLIP_FRAMES:-4}"
+ANCHOR_REPASS_TOP_N="${ANCHOR_REPASS_TOP_N:-0}"
 # ``transformers serve`` runs without continuous batching, so concurrent clip
 # workers queue behind one another and blow the per-request timeout: a pilot
 # completed 7 of 98 clips in three hours, the rest timing out.  vLLM batches, and
@@ -188,6 +189,7 @@ else
       --clip-schema-max-tokens "${CLIP_MAX_TOKENS}" \
       --clip-schema-timeout-s "${CLIP_TIMEOUT_S}" \
       --clip-schema-workers "${CLIP_WORKERS}" \
+      --anchor-repass-top-n "${ANCHOR_REPASS_TOP_N}" \
       --graph-model "${GRAPH_MODEL}" \
       --graph-neighbor-workers "${GRAPH_WORKERS}" \
       --skill-model "${MODEL}" \

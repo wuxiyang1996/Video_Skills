@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from itertools import islice
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from ..adapters import get_adapter
 from ..perception.clip_schema import QwenClipSchemaProducer
@@ -264,6 +264,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--anchor-repass-frames", type=int, default=6)
     parser.add_argument("--anchor-repass-window-s", type=float, default=8.0)
+    parser.add_argument(
+        "--anchor-repass-top-n",
+        type=int,
+        default=0,
+        help=(
+            "Re-caption this many clips per question with the question in context, "
+            "chosen by ranking the question against the first-pass captions.  The "
+            "time-anchor trigger only fires when a question names a timestamp, which "
+            "reached 0.5%% of Video-Holmes candidates and none on CG-Bench.  0 keeps "
+            "the previous behaviour."
+        ),
+    )
     parser.add_argument("--no-anchor-repass", action="store_true")
 
     parser.add_argument("--graph-model", default="openai/gpt-oss-120b")
@@ -699,6 +711,67 @@ def _anchor_repass_spans(
     return selected_spans, selected_derived, anchors
 
 
+def _retrieval_repass_spans(
+    *,
+    spans: list[Any],
+    derived_clips: list[dict[str, Any]],
+    clip_schemas: list[dict[str, Any]],
+    question_text: str,
+    top_n: int,
+) -> tuple[list[Any], list[dict[str, Any]]]:
+    """Pick the clips most likely to matter for this question, for re-captioning.
+
+    The first-pass captions are written without the question in context, so they
+    describe a clip generically and have no reason to record the detail a given
+    question turns on.  Measured on the heldout set, clips overlapping a gold
+    inference span share only 11.1% of the gold wording against 8.9% for clips
+    that do not -- barely above chance, which caps every reranker over that text
+    at the same place regardless of how it is trained.
+
+    The existing repass fixes this but only fires when the question names an
+    explicit timestamp, so it reached 0.5% of Video-Holmes candidates and none on
+    CG-Bench.  Ranking the generic captions against the question instead gives
+    the repass a shortlist on every question.
+    """
+    from dataset_clip_wrapper.training.lexical_retrieval_baseline import BM25, tokenize
+
+    if top_n <= 0 or not spans:
+        return [], []
+    query = tokenize(question_text)
+    if not query:
+        return [], []
+    by_clip_id = {
+        str(schema.get("clip_id")): schema for schema in clip_schemas if schema.get("clip_id")
+    }
+    documents = []
+    for derived in derived_clips:
+        schema = by_clip_id.get(str(derived.get("clip_id"))) or {}
+        documents.append(tokenize(_clip_schema_text(schema)))
+    bm25 = BM25(documents)
+    scored = sorted(
+        range(len(derived_clips)),
+        key=lambda index: (-bm25.score(index, query), index),
+    )
+    selected_spans: list[Any] = []
+    selected_derived: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index in scored[: max(0, top_n)]:
+        clip_id = str(derived_clips[index].get("clip_id") or "")
+        if not clip_id or clip_id in seen:
+            continue
+        seen.add(clip_id)
+        selected_spans.append(spans[index])
+        selected_derived.append(derived_clips[index])
+    return selected_spans, selected_derived
+
+
+def _clip_schema_text(schema: Mapping[str, Any]) -> str:
+    """Flatten a clip schema into the text a lexical ranker can match against."""
+    from trainer.grpo.l2_dataset_rewards import _text as candidate_text
+
+    return candidate_text(schema)
+
+
 def _produce_or_resume_anchor_repass(
     *,
     item: Any,
@@ -909,6 +982,7 @@ def _run_item(
     anchor_repass_frames: int,
     anchor_repass_window_s: float,
     anchor_repass_enabled: bool,
+    anchor_repass_top_n: int = 0,
 ) -> dict[str, Any]:
     example_stage_dir = root_stage_dir / _safe_name(item.example_id)
     example_stage_dir.mkdir(parents=True, exist_ok=True)
@@ -1060,12 +1134,26 @@ def _run_item(
     )
     anchor_schemas: list[dict[str, Any]] = []
     if anchor_repass_enabled and config.mode == RuntimeMode.VIDEO_ONLY and anchor_repass_frames > config.clip_schema.request_frames:
+        question_query = _question_retrieval_query(item.question)
         anchor_spans, anchor_derived, anchors_s = _anchor_repass_spans(
             spans=perception_spans,
             derived_clips=derived,
-            question_text=_question_retrieval_query(item.question),
+            question_text=question_query,
             window_s=anchor_repass_window_s,
         )
+        retrieval_spans, retrieval_derived = _retrieval_repass_spans(
+            spans=perception_spans,
+            derived_clips=derived,
+            clip_schemas=clip_schemas,
+            question_text=question_query,
+            top_n=anchor_repass_top_n,
+        )
+        if retrieval_spans:
+            already = {str(d.get("clip_id")) for d in anchor_derived}
+            for span, derived_clip in zip(retrieval_spans, retrieval_derived):
+                if str(derived_clip.get("clip_id")) not in already:
+                    anchor_spans.append(span)
+                    anchor_derived.append(derived_clip)
         anchor_schemas = _produce_or_resume_anchor_repass(
             item=item,
             config=config,
@@ -1090,6 +1178,8 @@ def _run_item(
             "window_s": anchor_repass_window_s,
             "request_frames": anchor_repass_frames,
             "clip_schema_count": len(anchor_schemas),
+            "retrieval_top_n": anchor_repass_top_n,
+            "retrieval_selected": len(retrieval_spans),
             "stage_path": str(example_stage_dir / "02b_anchor_clip_schemas.jsonl"),
         }
     example["metadata"]["clip_schemas"] = clip_schemas
@@ -1187,6 +1277,7 @@ def main(argv: list[str] | None = None) -> int:
                 anchor_repass_frames=args.anchor_repass_frames,
                 anchor_repass_window_s=args.anchor_repass_window_s,
                 anchor_repass_enabled=not args.no_anchor_repass,
+                anchor_repass_top_n=args.anchor_repass_top_n,
             )
         except Exception as exc:
             if not args.continue_on_item_error:
