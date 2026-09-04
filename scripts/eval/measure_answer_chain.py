@@ -62,6 +62,25 @@ class _LazyExamples:
         return loaded[0]
 
 
+def _with_rate_limit_retry(call, *, attempts: int = 4, base_sleep_s: float = 10.0, sleep=None):
+    """Retry a call on HTTP 429 with exponential backoff; re-raise anything else.
+
+    A rate-limited rollout used to come back as an error row and drop out of the
+    sample with no retry.  On a multi-hour run that silently shrinks n.
+    """
+    import time as _time
+
+    sleep = sleep or _time.sleep
+    for attempt in range(attempts):
+        try:
+            return call()
+        except Exception as exc:  # noqa: BLE001 -- only 429 is retried below
+            text = f"{type(exc).__name__}: {exc}"
+            if "429" not in text or attempt == attempts - 1:
+                raise
+            sleep(base_sleep_s * (2 ** attempt))
+
+
 def oracle_indices(example: dict[str, Any], supervision: dict[str, Any], top_k: int) -> list[int]:
     """Candidates that actually overlap a gold span, best-effort up to top_k."""
     schemas, _ = retrieval_catalog(example)
@@ -347,13 +366,13 @@ def main(argv: list[str] | None = None) -> int:
             return {"example_id": example_id, "condition": condition, "error": "no_retrieval_indices"}
         try:
             if condition == "direct":
-                rollout = direct_answer(client, example, indices)
+                rollout = _with_rate_limit_retry(lambda: direct_answer(client, example, indices))
             else:
                 isolated, graph = filter_example_for_retrieval(example, indices)
-                rollout = build_llm_reasoning_rollout(
+                rollout = _with_rate_limit_retry(lambda: build_llm_reasoning_rollout(
                     isolated, graph, client=client, skill_executor=executor, motif_enabled=False,
                     commit_policy={"always_commit_mcq": True} if args.always_commit_mcq else None,
-                )
+                ))
         except Exception as exc:  # a transport failure is not an abstention
             return {"example_id": example_id, "condition": condition, "error": type(exc).__name__}
         return {"example_id": example_id, "condition": condition, **score(rollout, gold_label)}
