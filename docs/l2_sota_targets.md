@@ -187,11 +187,18 @@ graph is right 75% of the time *when it commits* (vs direct 48.7%), so its
 failure is coverage, not precision — Tested offline: a hybrid that takes the graph's
 answer when it commits and direct's otherwise scores 48.6% vs direct 45.8%
 (+2.8 [−2.8, +8.3], not significant), and best-of-both caps at 50.0% — the
-decomposition's complementary value is at most ~4 points. **Multi-hop cannot be
-evaluated on Video-Holmes with this pipeline:** across every split with L1
-built there are 12 MHR+IMC questions in total (heldout 5+5, train-side 2);
-heldout is 260/270 SR. 80 of 270 heldout examples are now consumed; the 190
-unread must supply any final number. Still missing before this is a claim: the same-model `direct`
+decomposition's complementary value is at most ~4 points. **Correction:** multi-hop is absent from *our example set*, not from the
+benchmark. Video-Holmes test has 1,837 questions across seven types — MHR 332,
+IMC 276, TCI 273, CTI 270, SR 292, TA 200, PAR 194 — so MHR+IMC is 33%. Our
+heldout L1 was built with one question per video (270 videos → 270 questions)
+and that selection is 260/270 SR. Two consequences: every Video-Holmes accuracy
+above is on an SR-dominated subset and **is not comparable to the leaderboard's
+27.8, which averages all seven types**; and because the L1 catalog is built per
+video, the existing 270 catalogs should already cover all 1,837 questions
+without new captioning — a full-benchmark evaluation is a matter of
+re-deriving examples for every question over the cached stages. 80 of 270
+one-question examples are consumed; the full-benchmark run must be the source
+of any final number. Still missing before this is a claim: the same-model `direct`
 control (no skill graph) and the flag-off `model` run, both in flight; and the
 190 unread heldout examples for the final number.
 
