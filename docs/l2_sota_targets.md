@@ -168,6 +168,29 @@ to be the descriptions or the answer model. Hidden reasoning is not it either
 chain-of-thought extracts nothing more from these descriptions, so every
 number stays at effort=minimal.
 
+## Why the atomic-skill graph loses (24-question rollout dump, 2026-09-04)
+
+`graph_diag_24` (whole catalog, always_commit, gpt-oss-120b for planner and
+skills, every step on the LLM backend): 3/24 correct where direct over the
+same evidence gets ≈10/24. Every rollout runs the same chain
+(parse_question_target → propose_evidence_roles → generate_answer_hypotheses →
+retrieve_evidence_for_hypothesis → score_hypothesis_support ×k →
+compare_hypotheses → verify_claim_support → commit_answer). Where the points go:
+
+- `generate_answer_hypotheses` assigns a prior per option: top prior = gold
+  5/24. It sees the question, not the evidence.
+- `score_hypothesis_support` scores each option **independently** against ~5
+  retrieved observations (single-clip facts, not the narrative); plausible
+  wrong options get "moderate support" (0.6–0.65) and `compare_hypotheses`
+  picks the max: best = gold **3/24**, worse than the prior.
+- `verify_claim_support` fails on 21/24; under always_commit the committed
+  label is then whatever `commit_answer` falls back to (7× "A"), i.e. arbitrary.
+
+So the graph never lets one model read all the evidence and weigh the options
+against each other — which is exactly what direct does. Fix under test: keep
+the skills as an analysis pass, then answer with **whole catalog + skill
+findings** in one call (`hybrid` condition), so the graph can only add.
+
 ## CG catalog repair, targeted
 
 Of the 67 heldout CG videos, 28 have placeholder catalogs and they are spread
