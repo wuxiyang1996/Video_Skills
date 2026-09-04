@@ -28,4 +28,7 @@ args=(
 if [[ "${DATASET_BALANCED_LOSS:-0}" == "1" ]]; then
   args+=(--dataset-balanced-loss)
 fi
+if [[ -n "${SCORE_MODE:-}" ]]; then
+  args+=(--score-mode "${SCORE_MODE}")
+fi
 "${PYTHON}" -m trainer.train_l2_pointwise_opd "${args[@]}"
