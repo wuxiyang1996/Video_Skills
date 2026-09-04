@@ -7,7 +7,7 @@ absent from it and were silently skipped, so a "full benchmark" run measured
 example with no learning.
 """
 
-from scripts.eval.measure_answer_chain import bm25_indices, model_indices, oracle_indices, retrieval_rank_indices
+from scripts.eval.measure_answer_chain import apply_temporal_nms, bm25_indices, model_indices, oracle_indices, retrieval_rank_indices
 
 
 def _example(descs, question):
@@ -44,3 +44,14 @@ def test_oracle_source_picks_candidates_overlapping_gold_spans() -> None:
     ex = _example(["a", "b", "c", "d"], "q")          # clips at [0,4),[4,8),[8,12),[12,16)
     sup = {"segment_spans": [{"start_s": 9.0, "end_s": 11.0}]}
     assert oracle_indices(ex, sup, 4) == [2]
+
+
+def test_temporal_nms_over_a_ranking_skips_overlapping_picks() -> None:
+    ex = _example(["a", "b", "c", "d"], "q")   # clips [0,4),[4,8),[8,12),[12,16): touching, not overlapping
+    ex["metadata"]["clip_schemas"][1]["time_span"] = {"start_s": 2.0, "end_s": 6.0}   # make clip 1 overlap clip 0
+    assert apply_temporal_nms(ex, [0, 1, 2, 3], 3) == [0, 2, 3]
+
+
+def test_bm25_returns_the_full_ranking_when_asked() -> None:
+    ex = _example(["cigarette", "car", "street"], "cigarette")
+    assert len(bm25_indices(ex, 0)) == 3
