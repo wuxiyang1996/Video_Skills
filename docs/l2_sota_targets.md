@@ -139,6 +139,14 @@ evidence fixed and changes only the pointer: `--indices-from all
 --highlight-from oracle` vs `all` (running). Whole catalog vs BM25 top-4 on
 the full 300: 35.9 vs 35.9, +0.0 [−5.0, +5.4].
 
+**Retrieval as a pointer, not a cut (300 ids):** whole catalog + BM25 top-4
+flagged as `likely_key_clips` scores 39.0 — +3.0 [−2.0, +8.0] over the whole
+catalog and +3.4 [−1.7, +8.4] over BM25 top-4 (IMC +21 is the only per-type
+CI excluding 0). Not significant at n=300; launched on the full 1,837
+(`direct_all_hlbm25_1837`). If it holds, this is the slot where the OPD
+reranker can add value honestly: `--highlight-from report` with the OPD
+ranking, same evidence, only the pointer trained.
+
 Caution on interim readouts: rows land in completion order, and whole-catalog
 prompts finish first on short videos, so the first 104 `all` rows read 41.3%
 before settling to 33.2% on 199 paired ids. No accuracy pattern by catalog size
