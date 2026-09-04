@@ -28,7 +28,10 @@ from pathlib import Path
 from typing import Any
 
 from dataset_clip_wrapper.l2_reasoning_graph.reasoning_planner import build_llm_reasoning_rollout
+from atomic_skills.skill_executor import SkillExecutor
+from atomic_skills.skill_model_client import SkillModelClient
 from dataset_clip_wrapper.perception.openrouter_client import OpenRouterClient
+from trainer.grpo.live_rollout import _grpo_skill_backend_config, _GRPO_LLM_SKILLS
 from trainer.closed_loop_harness import load_frozen_l1_examples
 from trainer.grpo.l2_dataset_rewards import temporal_hit
 from dataset_clip_wrapper.training.lexical_retrieval_baseline import BM25  # noqa: F401  (shared tokeniser deps)
@@ -107,6 +110,53 @@ def direct_answer(
     return {"final_answer": {"label": label}, "failure_reasons": [] if label else ["no_label_parsed"]}
 
 
+def degradation(rollout: dict[str, Any]) -> dict[str, Any]:
+    """Markers for the two silent fallbacks: planner -> deterministic, skill -> rule.
+
+    Both leave ok=True and errors=0.  The planner fallback shows only as
+    llm_plan.fallback_reason; an LLM-executed skill shows only as
+    metadata.answer_step_diagnostics[<step_id>].backend == "llm" (rollout nodes
+    carry no backend field), and a skill that fell back to its rule carries a
+    `*_fallback_to_rule` message there.  A rollout whose planner fell back is not
+    a measurement of the system and is excluded from accuracy.
+    """
+    meta = rollout.get("metadata") or {}
+    llm_plan = meta.get("llm_plan") or {}
+    planner_fell_back = bool(llm_plan.get("fallback_reason") or llm_plan.get("planner_error"))
+    diagnostics = meta.get("answer_step_diagnostics") or {}
+
+    def step_backend(step: dict[str, Any]) -> str | None:
+        if step.get("backend"):
+            return str(step["backend"])
+        for key in ("scored_hypothesis", "best_hypothesis", "verified_claim"):
+            nested = step.get(key)
+            if isinstance(nested, dict) and nested.get("backend"):
+                return str(nested["backend"])
+        return None
+
+    llm_nodes = 0
+    critical_on_llm = 0
+    rule_fallbacks = 0
+    for node in rollout.get("nodes") or []:
+        step = diagnostics.get(str(node.get("step_id") or ""))
+        if not isinstance(step, dict):
+            continue
+        backend = step_backend(step)
+        messages = " ".join(str(m) for m in (step.get("messages") or []))
+        if backend == "llm":
+            llm_nodes += 1
+            if node.get("skill_id") in _GRPO_LLM_SKILLS:
+                critical_on_llm += 1
+        if "fallback_to_rule" in messages:
+            rule_fallbacks += 1
+    return {
+        "planner_fell_back": planner_fell_back,
+        "llm_skill_nodes": llm_nodes,
+        "critical_skills_on_llm": critical_on_llm,
+        "rule_fallbacks": rule_fallbacks,
+    }
+
+
 def score(rollout: dict[str, Any], gold_label: str) -> dict[str, Any]:
     label = (rollout.get("final_answer") or {}).get("label")
     committed = bool(label)
@@ -116,6 +166,7 @@ def score(rollout: dict[str, Any], gold_label: str) -> dict[str, Any]:
         "correct": bool(correct),
         "acceptance_status": rollout.get("acceptance_status"),
         "failure_reasons": list(rollout.get("failure_reasons") or [])[:3],
+        **degradation(rollout),
     }
 
 
@@ -127,6 +178,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=20260904)
     parser.add_argument("--top-k", type=int, default=4)
     parser.add_argument("--planner-model", default="openai/gpt-oss-120b")
+    parser.add_argument("--skill-model", default="qwen/qwen3.5-9b",
+                        help="LLM that executes answer-critical skills; mirrors the GRPO trainer's --skill-model.")
+    parser.add_argument("--skill-timeout-s", type=int, default=90)
+    parser.add_argument("--no-skill-executor", action="store_true",
+                        help="Run skills as rules only (the degraded mode this script used to run in silently).")
     parser.add_argument("--keys-py", type=Path, default=Path("/fs/gamma-projects/vlm-robot/keys.py"))
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--timeout-s", type=int, default=240)
@@ -180,6 +236,22 @@ def main(argv: list[str] | None = None) -> int:
         timeout_s=args.timeout_s,
     )
 
+    # The trainer executes answer-critical skills with a separate LLM; without it
+    # every skill degrades to a lexical rule and the chain scores below chance.
+    executor = None
+    if not args.no_skill_executor:
+        executor = SkillExecutor(
+            llm_client=SkillModelClient(
+                model=args.skill_model,
+                api_key=load_openrouter_api_key(keys_py_path=args.keys_py),
+                max_tokens=768,
+                temperature=0.0,
+                timeout_s=args.skill_timeout_s,
+            ),
+            vlm_client=None,
+            config=_grpo_skill_backend_config(),
+        )
+
     def run(example_id: str, condition: str) -> dict[str, Any] | None:
         example = examples[example_id]
         question = example.get("question") or {}
@@ -200,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 isolated, graph = filter_example_for_retrieval(example, indices)
                 rollout = build_llm_reasoning_rollout(
-                    isolated, graph, client=client, motif_enabled=False,
+                    isolated, graph, client=client, skill_executor=executor, motif_enabled=False,
                     commit_policy={"always_commit_mcq": True} if args.always_commit_mcq else None,
                 )
         except Exception as exc:  # a transport failure is not an abstention
@@ -219,8 +291,12 @@ def main(argv: list[str] | None = None) -> int:
 
     summary: dict[str, Any] = {}
     for condition in args.conditions:
-        subset = [r for r in rows if r.get("condition") == condition and "error" not in r]
+        all_rows = [r for r in rows if r.get("condition") == condition and "error" not in r]
+        degraded = [r for r in all_rows if r.get("planner_fell_back")]
+        subset = [r for r in all_rows if not r.get("planner_fell_back")]
         n = max(1, len(subset))
+        skill_rows = [r for r in subset if condition != "direct"]
+        no_llm_skills = sum(1 for r in skill_rows if r.get("critical_skills_on_llm", 0) == 0)
         committed = sum(bool(r["committed"]) for r in subset)
         correct = sum(bool(r["correct"]) for r in subset)
         reasons: collections.Counter[str] = collections.Counter()
@@ -229,14 +305,25 @@ def main(argv: list[str] | None = None) -> int:
                 reasons.update(str(x)[:60] for x in r["failure_reasons"])
         summary[condition] = {
             "examples": len(subset),
+            "excluded_planner_fallback": len(degraded),
+            "rows_with_no_llm_critical_skill": no_llm_skills,
+            "rows_with_rule_fallbacks": sum(1 for r in skill_rows if r.get("rule_fallbacks", 0) > 0),
             "errors": sum(1 for r in rows if r.get("condition") == condition and "error" in r),
             "completion_rate": 100.0 * committed / n,
             "accuracy_end_to_end": 100.0 * correct / n,
             "accuracy_when_answered": (100.0 * correct / committed) if committed else 0.0,
             "top_abstention_reasons": reasons.most_common(3),
         }
+    invalid = [
+        c for c, v in summary.items()
+        if v["excluded_planner_fallback"] or (c != "direct" and not args.no_skill_executor and v["rows_with_no_llm_critical_skill"] > 0)
+    ]
+    if invalid:
+        print(f"WARNING: degraded execution detected in conditions {invalid}; see excluded_planner_fallback / rows_with_no_llm_critical_skill", flush=True)
     payload = {
-        "schema_version": "video-skills/answer-chain-heldout-v1",
+        "schema_version": "video-skills/answer-chain-heldout-v2",
+        "valid": not invalid,
+        "skill_model": None if args.no_skill_executor else args.skill_model,
         "sample": len(chosen),
         "seed": args.seed,
         "top_k": args.top_k,
