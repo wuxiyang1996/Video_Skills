@@ -25,6 +25,31 @@ _GRPO_LLM_SKILLS = {
 }
 
 
+def probe_skill_model(client: Any) -> str | None:
+    """Return a reason the skill model is unusable, or None if it answers.
+
+    qwen/qwen3.5-9b on OpenRouter now spends its whole completion budget on
+    hidden reasoning and returns empty content; every LLM-backed skill then
+    parse-fails and the executor falls back to its lexical rule with ok=True, so
+    a GRPO run would train for hours on rule-executed skills without any error.
+    One trivial call before training catches that.
+    """
+    try:
+        result = client.reason('Reply with JSON only: {"ok": true}')
+    except Exception as exc:  # noqa: BLE001 -- surfaced as a reason, not raised here
+        return f"skill model call failed: {type(exc).__name__}: {exc}"
+    meta = getattr(client, "last_response_metadata", {}) or {}
+    if meta.get("thinking_exhausted"):
+        return (
+            f"skill model {getattr(client, 'model', '?')} spent its budget on hidden reasoning "
+            f"(reasoning_tokens={meta.get('reasoning_tokens')}, finish_reason={meta.get('finish_reason')}); "
+            "skills would silently fall back to rules"
+        )
+    if not isinstance(result, dict) or result.get("parse_error"):
+        return f"skill model {getattr(client, 'model', '?')} returned unparseable content: {str(result)[:120]}"
+    return None
+
+
 def _grpo_skill_backend_config() -> SkillBackendConfig:
     """RULE for schema/retrieval scaffolding; LLM for answer-critical steps."""
     rule_only = {

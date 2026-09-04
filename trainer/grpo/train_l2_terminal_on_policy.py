@@ -38,7 +38,7 @@ from dataset_clip_wrapper.training.l2_pointwise_reranker_v8 import (
 from dataset_clip_wrapper.training.l2_specialist_sft_adapter import SYSTEM as POINTWISE_SYSTEM
 from dataset_clip_wrapper.training.sft_common import apply_chat_template_no_think, compact_visibility, strip_think_tags
 from trainer.closed_loop_harness import load_frozen_l1_examples
-from trainer.grpo.live_rollout import _grpo_skill_backend_config
+from trainer.grpo.live_rollout import _grpo_skill_backend_config, probe_skill_model
 from trainer.grpo.l2_dataset_rewards import (
     RELATIONSHIP_SUPPORT_VERSION,
     lexical_support,
@@ -1192,6 +1192,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--planner-timeout-s", type=int, default=180)
     parser.add_argument("--skill-timeout-s", type=int, default=90)
     parser.add_argument(
+        "--skip-skill-model-probe",
+        action="store_true",
+        help="Skip the one-call startup check that the skill model returns content.",
+    )
+    parser.add_argument(
         "--executor-cache-dir",
         type=Path,
         help="Shared locked cache making the fixed executor identical for matching actions.",
@@ -1537,6 +1542,14 @@ def main(argv: list[str] | None = None) -> int:
             temperature=0.0,
             timeout_s=int(args.skill_timeout_s),
         )
+        if not args.skip_skill_model_probe:
+            problem = probe_skill_model(skill_client)
+            if problem:
+                raise RuntimeError(
+                    f"refusing to start: {problem}. Pick a working --skill-model "
+                    "(openai/gpt-oss-120b or qwen/qwen3-30b-a3b-instruct-2507 have been verified) "
+                    "or pass --skip-skill-model-probe."
+                )
         executor = SkillExecutor(
             llm_client=skill_client,
             vlm_client=None,
