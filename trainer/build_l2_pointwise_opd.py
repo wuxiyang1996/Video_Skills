@@ -14,8 +14,16 @@ from dataset_clip_wrapper.training.sft_common import read_json, read_jsonl, writ
 
 def build_opd_rows(
     chats: list[dict[str, Any]], report: dict[str, Any], *, negatives_per_source: int = 3,
-    teacher_confidence: float = 0.98,
+    positives_per_source: int = 1, teacher_confidence: float = 0.98,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Distil the student's own ranking mistakes into per-candidate decisions.
+
+    ``positives_per_source`` bounds how many gold candidates each example
+    contributes.  It defaulted to one, which on Video-Holmes discarded roughly 35
+    of the ~36 positives an example already carries; raising it uses supervision
+    that has already been collected rather than requiring new rollouts.  Values
+    <= 0 mean "take every positive".
+    """
     if not 0.5 < teacher_confidence < 1.0:
         raise ValueError("teacher_confidence must be between 0.5 and 1.0")
     by_key = {
@@ -34,16 +42,23 @@ def build_opd_rows(
             continue
         positives = [row for row in ranking if int(row["candidate_index"]) in gold]
         negatives = [row for row in ranking if int(row["candidate_index"]) not in gold][:negatives_per_source]
-        # Lowest-scoring gold is the student's hardest positive; highest-scoring
+        # Lowest-scoring golds are the student's hardest positives; highest-scoring
         # non-golds are its actual on-policy hard negatives.
-        selected = sorted(positives, key=lambda row: float(row["score"]))[:1] + negatives
+        ordered_positives = sorted(positives, key=lambda row: float(row["score"]))
+        if positives_per_source > 0:
+            ordered_positives = ordered_positives[:positives_per_source]
+        selected = ordered_positives + negatives
         for ranked in selected:
             index = int(ranked["candidate_index"])
             chat = by_key.get((example_id, index))
             if chat is None:
                 raise ValueError(f"Missing pointwise chat for {example_id}:{index}")
             relevant = index in gold
-            sample_weight = 0.5 if relevant else 0.5 / max(1, len(negatives))
+            # Keep the positive and negative halves balanced however many of each
+            # this example contributed.
+            sample_weight = (
+                0.5 / max(1, len(ordered_positives)) if relevant else 0.5 / max(1, len(negatives))
+            )
             correct_id = "relevant_true" if relevant else "relevant_false"
             wrong_id = "relevant_false" if relevant else "relevant_true"
             output.append({
@@ -82,6 +97,7 @@ def build_opd_rows(
             (row["teacher"]["action_probs"].get("relevant_false") or 0.0) > 0.5 for row in output
         ),
         "negatives_per_source": negatives_per_source,
+        "positives_per_source": positives_per_source,
         "teacher_confidence": teacher_confidence,
         "excluded_gold_outside_candidate_pool": excluded_gold_outside_candidate_pool,
     }
@@ -95,11 +111,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-jsonl", type=Path, required=True)
     parser.add_argument("--output-report", type=Path, required=True)
     parser.add_argument("--negatives-per-source", type=int, default=3)
+    parser.add_argument(
+        "--positives-per-source",
+        type=int,
+        default=1,
+        help="Golds kept per example, hardest first; <=0 keeps all. Default 1 reproduces earlier builds.",
+    )
     parser.add_argument("--teacher-confidence", type=float, default=0.98)
     args = parser.parse_args(argv)
     rows, summary = build_opd_rows(
         read_jsonl(args.train_jsonl), read_json(args.train_report),
         negatives_per_source=args.negatives_per_source,
+        positives_per_source=args.positives_per_source,
         teacher_confidence=args.teacher_confidence,
     )
     write_jsonl(args.output_jsonl, rows)

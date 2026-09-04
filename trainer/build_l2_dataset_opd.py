@@ -82,9 +82,16 @@ def _opd_row(
     *,
     candidate_index: int,
     score: float,
-    relevant: bool,
+    relevant: bool | None,
     sample_weight: float,
 ) -> dict[str, Any]:
+    """Build one OPD row.
+
+    ``relevant=None`` marks a middle-band candidate: one the teacher scores
+    between its negative and positive thresholds.  Those are the candidates that
+    actually compete for the top-k slots, so rather than forcing them to a side
+    the teacher score is used directly as the relevance probability.
+    """
     example_id = str(example.get("example_id") or "")
     dataset = str(example.get("dataset") or "")
     state = {
@@ -107,11 +114,12 @@ def _opd_row(
             ),
         },
     ]
-    relevant_prob = (
-        max(0.55, min(0.98, 0.50 + 0.48 * score))
-        if relevant
-        else min(0.45, max(0.02, 0.50 * score))
-    )
+    if relevant is None:
+        relevant_prob = max(0.05, min(0.95, float(score)))
+    elif relevant:
+        relevant_prob = max(0.55, min(0.98, 0.50 + 0.48 * score))
+    else:
+        relevant_prob = min(0.45, max(0.02, 0.50 * score))
     return {
         "schema_version": "video-skills/opd-distill-v1",
         "state": {
@@ -157,9 +165,18 @@ def build_dataset_opd_rows(
     *,
     positives_per_example: int = 3,
     negatives_per_example: int = 3,
+    middle_band_per_example: int = 0,
     min_video_holmes_score: float = 0.50,
     max_video_holmes_negative_score: float = 0.05,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Turn frozen L1 examples into pointwise OPD rows.
+
+    ``middle_band_per_example`` emits candidates the thresholds otherwise drop.
+    On Video-Holmes that band holds 72% of all candidates (median 59 per
+    example) against the 3 positives and 3 negatives actually trained on, and it
+    is precisely where the top-k decision is made.  CG-Bench's teacher score is
+    binary, so it has no middle band and this has no effect there.
+    """
     rows: list[dict[str, Any]] = []
     excluded: Counter[str] = Counter()
     source_counts: Counter[str] = Counter()
@@ -195,9 +212,31 @@ def build_dataset_opd_rows(
         if not positives or not negatives:
             excluded[f"{dataset}:missing_class"] += 1
             continue
+        middle: list[tuple[float, int, Any]] = []
+        if middle_band_per_example > 0:
+            negative_indices = {index for _, index, _ in negatives}
+            # Highest-scoring first: those are the candidates contending for the
+            # top-k slots, so they carry the most ranking signal.
+            middle = [
+                row for row in scored
+                if row[1] not in positive_indices
+                and row[1] not in negative_indices
+                and max_negative_score < row[0] < (
+                    1.0 if dataset == "cg_bench" else min_video_holmes_score
+                )
+            ][:middle_band_per_example]
         source_counts[dataset] += 1
-        for relevant, selected in ((True, positives), (False, negatives)):
-            weight = 0.5 / len(selected)
+        groups: list[tuple[bool | None, list[tuple[float, int, Any]]]] = [
+            (True, positives),
+            (False, negatives),
+        ]
+        if middle:
+            groups.append((None, middle))
+        # Each group carries equal total mass so a large middle band cannot swamp
+        # the confidently-labelled ends.
+        group_mass = 1.0 / len(groups)
+        for relevant, selected in groups:
+            weight = group_mass / len(selected)
             for score, index, candidate in selected:
                 rows.append(
                     _opd_row(
@@ -209,7 +248,8 @@ def build_dataset_opd_rows(
                         sample_weight=weight,
                     )
                 )
-                row_counts[f"{dataset}:{'positive' if relevant else 'negative'}"] += 1
+                label = "middle" if relevant is None else ("positive" if relevant else "negative")
+                row_counts[f"{dataset}:{label}"] += 1
     summary = {
         "schema_version": "video-skills/l2-dataset-opd-build-v0.1",
         "source_examples": dict(source_counts),
@@ -218,6 +258,7 @@ def build_dataset_opd_rows(
         "excluded": dict(excluded),
         "positives_per_example": positives_per_example,
         "negatives_per_example": negatives_per_example,
+        "middle_band_per_example": middle_band_per_example,
         "min_video_holmes_score": min_video_holmes_score,
         "max_video_holmes_negative_score": max_video_holmes_negative_score,
         "hidden_supervision_visible_to_policy": False,
@@ -245,6 +286,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--positives-per-example", type=int, default=3)
     parser.add_argument("--negatives-per-example", type=int, default=3)
+    parser.add_argument(
+        "--middle-band-per-example",
+        type=int,
+        default=0,
+        help=(
+            "Candidates to keep from between the negative and positive thresholds, "
+            "highest-scoring first, with the teacher score used directly as the "
+            "relevance probability.  0 reproduces earlier builds."
+        ),
+    )
     parser.add_argument("--min-video-holmes-score", type=float, default=0.50)
     parser.add_argument("--max-video-holmes-negative-score", type=float, default=0.05)
     args = parser.parse_args(argv)
@@ -278,6 +329,7 @@ def main(argv: list[str] | None = None) -> int:
         load_dataset_reward_supervision(args.dataset_root),
         positives_per_example=args.positives_per_example,
         negatives_per_example=args.negatives_per_example,
+        middle_band_per_example=args.middle_band_per_example,
         min_video_holmes_score=args.min_video_holmes_score,
         max_video_holmes_negative_score=args.max_video_holmes_negative_score,
     )
