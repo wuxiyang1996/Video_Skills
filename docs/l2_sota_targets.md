@@ -144,8 +144,11 @@ the full 300: 35.9 vs 35.9, +0.0 [−5.0, +5.4].
 **Retrieval as a pointer, not a cut (300 ids):** whole catalog + BM25 top-4
 flagged as `likely_key_clips` scores 39.0 — +3.0 [−2.0, +8.0] over the whole
 catalog and +3.4 [−1.7, +8.4] over BM25 top-4 (IMC +21 is the only per-type
-CI excluding 0). Not significant at n=300; launched on the full 1,837
-(`direct_all_hlbm25_1837`). The same prompt with the **corrected oracle**
+CI excluding 0). **Full test (1,826 paired): 36.8** (7-type avg 36.6) — +3.4 [+1.2, +5.5]
+over BM25 top-4 and +1.1 [−0.7, +2.9] over the whole catalog. So the pointer
+itself is worth about one point on top of full context; the whole-catalog
+step carries the other two. Current best honest VH number without learning:
+**36.8**. The same prompt with the **corrected oracle**
 (Inference-Shot clips) as the pointer scores 38.3, +2.3 [−2.0, +6.7] over the
 whole catalog — no better than the BM25 pointer. So even a perfect pointer to
 the clue moment is worth ≈2–3 points to this answer model over these
