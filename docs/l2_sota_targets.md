@@ -165,7 +165,11 @@ now separate facts.
 and skill executor, all rows verified LLM-executed, seed 20260904):** completion
 100%, end-to-end accuracy **36.8%**, against published 27.8 (Qwen2.5-VL-7B)
 and 45.0 (Gemini-2.5-Pro). With skills run as lexical rules the same setup
-scored 15.8%. Still missing before this is a claim: the same-model `direct`
+scored 15.8%. Only 3 of the 38 commits went through the flag's unverified path
+(31 `accepted_strong`, 4 `accepted_weak`): with LLM-executed skills the chain
+commits on its own, so the earlier ~60% abstention was mostly an artifact of
+rule-executed skills, and `always_commit_mcq` is a small safety net rather than
+the main lever. Still missing before this is a claim: the same-model `direct`
 control (no skill graph) and the flag-off `model` run, both in flight; and the
 190 unread heldout examples for the final number.
 
