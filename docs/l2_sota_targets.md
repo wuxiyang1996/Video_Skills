@@ -104,21 +104,31 @@ full 1,837-question test, paired by question:
 | evidence given to the answer model | n paired | acc | vs BM25 top-4 |
 |---|---|---|---|
 | BM25 top-4 (system, no learning) | 1,827 | 33.6 | — |
-| **oracle** top-4 (clips overlapping the gold spans; only 10% overlap with BM25 picks) | 1,012 | 29.9 | **−3.6 [−6.7, −0.4]** |
+| ~~"oracle" top-4~~ **RETRACTED** — was the video's first 4 clips (see below) | 1,827 | 30.6 | −3.0 [−5.3, −0.6] (measures "opening vs BM25", not a ceiling) |
 | BM25 top-8 | 418 | 31.8 | −1.2 [−5.0, +2.9] |
 | no clips at all (`--indices-from none`, 300 ids) | 281 so far | 15.3 (54% abstain; ≈chance when it commits) | |
 | whole catalog (`--indices-from all`, 300 ids) | 199 so far | 33.2 | −0.5 (paired on the same 199: BM25 33.7) |
 
-Perfect clip selection does not raise the answer accuracy — it lowers it
-(largest drops on SR −11.6 and TCI −8.5). Oracle clips are not placeholders and
-are as long as BM25 picks (658 vs 692 chars), so this is not a catalog-coverage
-artifact. Reading: the answer model is not extracting the answer from the
-descriptions of the gold moment; BM25's lexical match to the question/options
-is worth more to it than the right moment is. The retrieval controller (SFT →
-OPD → GRPO) therefore cannot carry the system from 33.6 toward Gemini's 45.0 on
-its own — the ceiling is set by the evidence modality (text descriptions from a
-per-video, question-agnostic 9B pass) and the answer model. The `none`/`all`
-controls bracket this; results land in `full_vh_controls/`.
+**Retraction (same day).** The "oracle" used Video-Holmes `segment_spans`,
+which come from the per-video *Segment Description* rows and cover a median
+95% of the video. A median 52 of ~61 clips therefore "overlapped gold", and
+`hits[:4]` returned the video's opening four clips (ending at 9% of the video)
+— identical for every question of a video. The row above measures "video
+opening vs BM25 top-4", not a retrieval ceiling. Fixed in commit after
+888c822: the oracle now uses the per-video *Inference Shots* timestamps
+(`inference_spans`: 1-s clue moments, median 2 clips hit, 12% overlap with
+BM25 top-4; 14% of questions have none and are counted as errors) and ranks
+clips by overlap; CG-Bench uses its per-question `clue_intervals`. The
+corrected oracle runs on the 300 control ids (`direct_oracle_fixed_300`).
+
+**Same caveat applies to the paper's VH "segment recall".** `temporal_retrieval_metrics(selected, segment_spans)`
+scores recall over those 95%-coverage segments, so it mostly measures how
+spread out the top-k picks are, not whether they land on the clue. The
+inference-span recall is the meaningful VH retrieval number, and there the
+heldout order was BM25 10.77 > OPD 7.92 > SFT 5.61. Report inference recall as
+the primary VH retrieval metric.
+
+The `none`/`all` controls remain valid; results land in `full_vh_controls/`.
 
 Caution on interim readouts: rows land in completion order, and whole-catalog
 prompts finish first on short videos, so the first 104 `all` rows read 41.3%
