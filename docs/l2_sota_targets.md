@@ -218,7 +218,9 @@ pointwise build plus a GPU scoring pass. Built: 1,781 of 1,837 questions
 question's full catalog must contain both a positive and a negative candidate
 (43 no-negative, 13 no-positive). OPD-adapter scoring over it is queued on GPU;
 on completion both answer-chain conditions relaunch with those indices. Two
-BM25-indexed runs over all 1,837 are in flight now. 80 of 270
+BM25-indexed runs over all 1,837 are in flight now.
+
+**Full Video-Holmes test, direct prompting, gpt-oss-120b, BM25-retrieved top-4 clips (n=1837 of 1,837, all measured; completion 99.5%): accuracy 33.5%.** By type: MHR 32.2 (n=332), SR 43.8 (n=292), IMC 34.1 (n=276), TCI 27.5 (n=273), CTI 30.0 (n=270), TA 36.0 (n=200), PAR 29.9 (n=194). Published: 27.8 (Qwen2.5-VL-7B), 45.0 (Gemini-2.5-Pro). First number here comparable to the leaderboard; the skill-graph condition and the reranker-retrieved variants are in flight. 80 of 270
 one-question examples are consumed; the full-benchmark run must be the source
 of any final number. Still missing before this is a claim: the same-model `direct`
 control (no skill graph) and the flag-off `model` run, both in flight; and the
