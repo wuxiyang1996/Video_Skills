@@ -76,7 +76,11 @@ def _with_rate_limit_retry(call, *, attempts: int = 4, base_sleep_s: float = 10.
             return call()
         except Exception as exc:  # noqa: BLE001 -- only 429 is retried below
             text = f"{type(exc).__name__}: {exc}"
-            if "429" not in text or attempt == attempts - 1:
+            # Transient transport faults: rate limit, upstream 5xx, or a non-JSON
+            # body (an HTML error page makes requests' .json() raise ValueError,
+            # which escaped as an error row on 10 of 1,837 questions).
+            transient = "429" in text or re.search(r"\b5\d\d\b", text) is not None or isinstance(exc, ValueError)
+            if not transient or attempt == attempts - 1:
                 raise
             sleep(base_sleep_s * (2 ** attempt))
 

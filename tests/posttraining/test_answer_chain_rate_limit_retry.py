@@ -30,9 +30,29 @@ def test_gives_up_after_the_last_attempt() -> None:
     assert call.n == 3
 
 
-def test_non_429_errors_are_not_retried() -> None:
+def test_5xx_is_retried() -> None:
     slept = []
-    call = _Flaky(1, "HTTPError: 500 upstream")
+    call = _Flaky(1, "HTTPError: 502 error from https://openrouter.ai")
+    assert _with_rate_limit_retry(call, sleep=slept.append) == "ok"
+    assert call.n == 2 and slept == [10.0]
+
+
+def test_transport_valueerror_is_retried() -> None:
+    class _Bad:
+        def __init__(self): self.n = 0
+        def __call__(self):
+            self.n += 1
+            if self.n == 1:
+                raise ValueError("Expecting value: line 1 column 1 (char 0)")   # requests .json() on an HTML body
+            return "ok"
+    call = _Bad()
+    assert _with_rate_limit_retry(call, sleep=lambda s: None) == "ok"
+    assert call.n == 2
+
+
+def test_non_transient_errors_are_not_retried() -> None:
+    slept = []
+    call = _Flaky(1, "KeyError: 'choices'")
     with pytest.raises(RuntimeError):
         _with_rate_limit_retry(call, sleep=slept.append)
     assert call.n == 1 and slept == []
