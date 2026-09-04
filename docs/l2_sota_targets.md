@@ -159,7 +159,15 @@ is strictly dominated by committing the best hypothesis, since a guess scores
 `always_commit_mcq` (opt-in, default off so frozen GRPO rewards reproduce) emits
 the candidate at confidence 0.2 and flags it `committed_unverified`; the
 acceptance gate is unchanged, so "has an answer" and "answer is verified" are
-now separate facts. Measurement on reserved heldout examples is in progress.
+now separate facts.
+
+**Measured (2026-09-04, 38 reserved heldout examples, gpt-oss-120b as planner
+and skill executor, all rows verified LLM-executed, seed 20260904):** completion
+100%, end-to-end accuracy **36.8%**, against published 27.8 (Qwen2.5-VL-7B)
+and 45.0 (Gemini-2.5-Pro). With skills run as lexical rules the same setup
+scored 15.8%. Still missing before this is a claim: the same-model `direct`
+control (no skill graph) and the flag-off `model` run, both in flight; and the
+190 unread heldout examples for the final number.
 
 **The skill executor's default model is unusable on OpenRouter.** `qwen/qwen3.5-9b`
 (the trainer's `--skill-model` default) now spends its whole completion budget
