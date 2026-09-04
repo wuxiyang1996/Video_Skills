@@ -175,14 +175,19 @@ the refs the verifier looked at, so unverified commits were reported verified.
 Fixed: `committed_unverified` now forces `commit_ok=False`; the label survives,
 the status is `rejected`. The B-run labels on disk predate the fix.
 
-**Verdict on the skill graph (same 38, one model for planner, skills and the
-direct control):** direct 44.7% / graph flag-off 13.2% / graph + always_commit
-36.8%. Paired bootstrap: graph − direct **−31.6 [−47.4, −15.8]**; always_commit −
-graph +23.7 [+10.5, +36.8]; always_commit − direct −7.9 [−23.7, +7.9], not
-significant. With model, evidence and budget fixed, removing the decomposition
-raises accuracy; the graph's best configuration reaches parity at best.
-MHR/IMC are 1–2 examples each. A second seed is in flight; the 190 unread
-examples must supply any final number. Still missing before this is a claim: the same-model `direct`
+**Verdict on the skill graph (two seeds, n=72 paired, one model for planner,
+skills and the direct control):** direct **45.8%** / graph flag-off 19.4% /
+graph + always_commit 36.8% (n=38). Paired bootstrap: graph − direct
+**−26.4 [−38.9, −13.9]**; always_commit − graph +23.7 [+10.5, +36.8];
+always_commit − direct −7.9 [−23.7, +7.9], not significant. The second seed
+replicates the direction (direct 48.7, graph 30.8). With model, evidence and
+budget fixed, removing the decomposition raises accuracy; the graph's best
+configuration reaches parity at best. One qualification: on the second seed the
+graph is right 75% of the time *when it commits* (vs direct 48.7%), so its
+failure is coverage, not precision — whether that is complementary to direct is
+testable offline. MHR/IMC are 1–2 examples each on test; a multi-hop answer
+needs the train split. 80 of 270 heldout examples are now consumed; the 190
+unread must supply any final number. Still missing before this is a claim: the same-model `direct`
 control (no skill graph) and the flag-off `model` run, both in flight; and the
 190 unread heldout examples for the final number.
 
