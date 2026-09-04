@@ -143,7 +143,11 @@ the full 300: 35.9 vs 35.9, +0.0 [−5.0, +5.4].
 flagged as `likely_key_clips` scores 39.0 — +3.0 [−2.0, +8.0] over the whole
 catalog and +3.4 [−1.7, +8.4] over BM25 top-4 (IMC +21 is the only per-type
 CI excluding 0). Not significant at n=300; launched on the full 1,837
-(`direct_all_hlbm25_1837`). If it holds, this is the slot where the OPD
+(`direct_all_hlbm25_1837`). The same prompt with the **corrected oracle**
+(Inference-Shot clips) as the pointer scores 38.3, +2.3 [−2.0, +6.7] over the
+whole catalog — no better than the BM25 pointer. So even a perfect pointer to
+the clue moment is worth ≈2–3 points to this answer model over these
+descriptions; whatever the reranker learns cannot exceed that on Video-Holmes. If it holds, this is the slot where the OPD
 reranker can add value honestly: `--highlight-from report` with the OPD
 ranking, same evidence, only the pointer trained.
 
