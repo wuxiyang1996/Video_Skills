@@ -175,6 +175,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--l1-glob", required=True)
     parser.add_argument("--eval-report", type=Path, help="ranking source for the 'model' condition")
     parser.add_argument("--sample", type=int, default=40)
+    parser.add_argument("--example-ids", type=Path,
+                        help="Newline-separated example ids to run instead of a seeded sample (for re-running a hung tail).")
     parser.add_argument("--seed", type=int, default=20260904)
     parser.add_argument("--top-k", type=int, default=4)
     parser.add_argument("--planner-model", default="openai/gpt-oss-120b")
@@ -209,9 +211,13 @@ def main(argv: list[str] | None = None) -> int:
         for e in load_frozen_l1_examples(paths)
         if e.get("example_id")
     }
-    chosen = sorted(examples)
-    random.Random(args.seed).shuffle(chosen)
-    chosen = chosen[: max(1, args.sample)]
+    if args.example_ids:
+        wanted = [line.strip() for line in args.example_ids.read_text(encoding="utf-8").splitlines() if line.strip()]
+        chosen = [e for e in wanted if e in examples]
+    else:
+        chosen = sorted(examples)
+        random.Random(args.seed).shuffle(chosen)
+        chosen = chosen[: max(1, args.sample)]
 
     # Hidden supervision is loaded evaluator-side; it never enters a prompt.
     supervision_index = load_dataset_reward_supervision(args.dataset_root)
@@ -281,12 +287,20 @@ def main(argv: list[str] | None = None) -> int:
 
     rows: list[dict[str, Any]] = []
     jobs = [(e, c) for e in chosen for c in args.conditions]
+    # Rows are appended to a sidecar as they finish.  A rollout that hangs on a
+    # slow API call must not forfeit the ones already completed: the final JSON
+    # is only written at the end, and one full run was lost that way.
+    sidecar = args.output.with_suffix(".rows.jsonl")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_text("", encoding="utf-8")
     with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
         futures = {pool.submit(run, e, c): (e, c) for e, c in jobs}
         for done in as_completed(futures):
             row = done.result()
             if row:
                 rows.append(row)
+                with sidecar.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(row) + "\n")
             print(f"[{len(rows)}/{len(jobs)}]", flush=True)
 
     summary: dict[str, Any] = {}
