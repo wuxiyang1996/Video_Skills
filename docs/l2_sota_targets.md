@@ -130,6 +130,15 @@ the primary VH retrieval metric.
 
 The `none`/`all` controls remain valid; results land in `full_vh_controls/`.
 
+**Corrected oracle (300 control ids, 257 with Inference Shots):** the clue
+clips alone (median 2 clips) score 30.2 vs BM25 top-4 35.3 (−5.1 [−10.2, 0.0])
+and vs whole catalog 36.6 (−6.2 [−12.1, −0.4]). Two readings are possible and
+the run cannot separate them: the clue moment's *description* does not carry
+the answer, or two clips are too little context. The clean test keeps the
+evidence fixed and changes only the pointer: `--indices-from all
+--highlight-from oracle` vs `all` (running). Whole catalog vs BM25 top-4 on
+the full 300: 35.9 vs 35.9, +0.0 [−5.0, +5.4].
+
 Caution on interim readouts: rows land in completion order, and whole-catalog
 prompts finish first on short videos, so the first 104 `all` rows read 41.3%
 before settling to 33.2% on 199 paired ids. No accuracy pattern by catalog size
