@@ -162,8 +162,11 @@ before settling to 33.2% on 199 paired ids. No accuracy pattern by catalog size
 (≤40 / 41–60 / 61–80 / >80 clips) separates `all` from BM25 top-4. Everything
 that keeps the same descriptions and the same answer model converges on ≈33%:
 none 15 < oracle 30.6 < BM25 top-4 33.6 ≈ top-8 ≈ whole catalog. The lever has
-to be the descriptions or the answer model. Two runs test the latter cheaply
-(`--reasoning-effort high`, 8k budget, BM25 top-4 and whole catalog, 300 ids).
+to be the descriptions or the answer model. Hidden reasoning is not it either
+(`--reasoning-effort high`, 8k budget, 300 ids, paired): BM25 top-4 −1.7
+[−6.1, +2.4]; whole catalog +1.7 [−3.7, +7.1]. The answer model's own
+chain-of-thought extracts nothing more from these descriptions, so every
+number stays at effort=minimal.
 
 ## CG catalog repair, targeted
 
