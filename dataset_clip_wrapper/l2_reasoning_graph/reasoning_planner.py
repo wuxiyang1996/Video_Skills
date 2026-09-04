@@ -1468,8 +1468,6 @@ def execute_reasoning_plan(
                     support_chain=support_chain,
                     decision_policy=step_policy or None,
                 )
-                if isinstance(result.outputs, dict) and result.outputs.get("committed_unverified"):
-                    setattr(result, "committed_unverified", True)
             else:
                 result = executor(**resolved_args)
         except (TypeError, KeyError, AttributeError, ValueError) as exc:
