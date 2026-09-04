@@ -99,6 +99,21 @@ def oracle_indices(example: dict[str, Any], supervision: dict[str, Any], top_k: 
     return hits[:top_k]
 
 
+def control_indices(example: dict[str, Any], source: str) -> list[int]:
+    """The two retrieval controls: 'none' = no clips at all, 'all' = the whole catalog.
+
+    Together with 'oracle' they bracket what retrieval can contribute: if 'none'
+    is close to the system, the clip descriptions are not carrying the answer; if
+    'all' is well above the system, recall at top-k is the limit.
+    """
+    if source == "none":
+        return []
+    if source == "all":
+        schemas, _ = retrieval_catalog(example)
+        return list(range(len(schemas)))
+    raise ValueError(f"not a control source: {source}")
+
+
 def model_indices(example_id: str, rankings: dict[str, list[int]], top_k: int) -> list[int]:
     return (rankings.get(example_id) or [])[:top_k]
 
@@ -262,10 +277,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--eval-report", type=Path, help="ranking source for the 'model' condition")
     parser.add_argument(
         "--indices-from",
-        choices=("report", "bm25", "retrieval_rank", "oracle"),
+        choices=("report", "bm25", "retrieval_rank", "oracle", "none", "all"),
         default="report",
         help=(
-            "Where the retrieved clip indices come from.  'report' uses the reranker "
+            "Where the retrieved clip indices come from.  'none' passes NO clips (question "
+            "and options only -- the no-evidence control, 'direct' condition only); 'all' "
+            "passes the whole catalog (the no-retrieval control); 'report' uses the reranker "
             "ranking in --eval-report and SKIPS examples it does not cover; 'bm25' ranks "
             "each example's own captions against its question (no learning, covers "
             "every example); 'retrieval_rank' uses the catalog's question-blind order; "
@@ -306,6 +323,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset-root", type=Path, default=Path("/fs/gamma-projects/vlm-robot/datasets"))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
+    if args.indices_from == "none" and any(c != "direct" for c in args.conditions):
+        parser.error("--indices-from none is the no-evidence control; it only makes sense with --conditions direct")
 
     from trainer.grpo.train_l2_terminal_on_policy import load_openrouter_api_key
 
@@ -378,7 +397,9 @@ def main(argv: list[str] | None = None) -> int:
         if not gold_label:
             return None
         supervision = supervision_index.get(supervision_key(example)) or {}
-        if condition == "oracle" or args.indices_from == "oracle":
+        if args.indices_from in ("none", "all"):
+            indices = control_indices(example, args.indices_from)
+        elif condition == "oracle" or args.indices_from == "oracle":
             indices = oracle_indices(example, supervision, args.top_k)
         else:
             slate = 0 if args.temporal_nms else args.top_k   # 0 -> full ranking
@@ -389,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 ranked = model_indices(example_id, rankings, slate) if slate else (rankings.get(example_id) or [])
             indices = apply_temporal_nms(example, ranked, args.top_k) if args.temporal_nms else ranked[: args.top_k]
-        if not indices:
+        if not indices and args.indices_from != "none":
             # Skipping silently hid 1,574 of 1,837 questions once; count it.
             return {"example_id": example_id, "condition": condition, "error": "no_retrieval_indices"}
         try:

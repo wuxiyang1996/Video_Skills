@@ -55,3 +55,18 @@ def test_temporal_nms_over_a_ranking_skips_overlapping_picks() -> None:
 def test_bm25_returns_the_full_ranking_when_asked() -> None:
     ex = _example(["cigarette", "car", "street"], "cigarette")
     assert len(bm25_indices(ex, 0)) == 3
+
+
+def test_none_control_passes_no_clips_and_all_control_passes_the_catalog() -> None:
+    from scripts.eval.measure_answer_chain import control_indices
+    ex = _example(["a", "b", "c"], "q")
+    assert control_indices(ex, "none") == []
+    assert control_indices(ex, "all") == [0, 1, 2]
+
+
+def test_none_control_is_refused_for_graph_conditions(capsys) -> None:
+    import pytest
+    from scripts.eval.measure_answer_chain import main
+    with pytest.raises(SystemExit):
+        main(["--l1-glob", "x", "--output", "o.json", "--indices-from", "none", "--conditions", "direct", "model"])
+    assert "no-evidence control" in capsys.readouterr().err
