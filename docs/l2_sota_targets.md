@@ -65,11 +65,45 @@ Two things bound ranking today:
 2. OPD trains on one positive per example out of ~36 available, with a pointwise
    two-way objective against a top-k ranking metric.
 
+## What the learned reranker has to beat
+
+BM25 between the question and the clip text, with no training at all, reaches
+segment_recall 58.12 and inference_shot_recall 10.77 on the Video-Holmes heldout,
+against SFT 56.01/5.61 and OPD 59.93/7.92. It beats SFT on both and beats OPD on
+inference_shot_recall. On CG-Bench it reaches mIoU 2.97 against the reranker's
+3.64, already close to the 3.58 published for Qwen2-VL-72B. Rank-fusing the two
+gains nothing over the better of them, so the signals are redundant.
+
+This does not retire the learned controller: BM25 is a scoring function, not a
+policy, and the L2 controller has to emit structured tool actions. What it does
+is set the bar. Two methods as different as lexical matching and a trained
+reranker plateauing together, far below an oracle of 99.75/95.57, points at the
+input they share rather than at either model -- the first-pass captions are
+written without the question in context, and gold-overlapping clips share only
+11.1% of the gold wording against 8.9% for the rest.
+
+So the comparison to make is BM25 against OPD **on the improved input**, once
+`--anchor-repass-top-n` re-captions a shortlist with the question in context. A
+learned reranker should separate there, because it can use semantics, negation,
+entity binding and the option text that lexical overlap cannot. If it does not
+separate even then, the contribution is the perception change, not the policy.
+
+**OPD success criterion: beat BM25 by a clear margin on the repassed catalog**,
+not merely beat SFT.
+
 ## Order of work
 
 1. Rebuild the CG L1 catalog (`--retry-failed-clip-schemas`).
-2. OPD: use all available positives; replace the pointwise objective with a
-   listwise one over each example's candidate set.
-3. Scale evaluation to the official mini-set.
-4. Coarse-to-fine retrieval, only if needed after (2).
-5. Video-Holmes answer path.
+2. Re-caption a per-question shortlist with the question in context
+   (`--anchor-repass-top-n`), which is where the shared ceiling sits.
+3. **Retrain OPD on the repassed catalog** and compare it against BM25 on that
+   same input. Changing the catalog without retraining reads new text with a
+   model fitted to the old text and understates the policy.
+4. Scale evaluation to the official mini-set.
+5. Coarse-to-fine retrieval, only if needed after (3).
+6. Video-Holmes answer path.
+
+Measured negatives, kept so they are not re-attempted blind: emitting the
+discarded middle band under the pointwise objective changed nothing
+(-0.16 dev segment_recall) and hurt when combined with decision-logit training
+(-3.33); rank-fusing BM25 with the reranker gains nothing.
