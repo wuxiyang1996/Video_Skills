@@ -121,6 +121,8 @@ BM25 top-4; 14% of questions have none and are counted as errors) and ranks
 clips by overlap; CG-Bench uses its per-question `clue_intervals`. The
 corrected oracle runs on the 300 control ids (`direct_oracle_fixed_300`).
 
+The graph+always_commit run on the same retracted oracle (`full_vh_oracle/graph_commit_oracle_300`, 23.3%) is likewise not a ceiling; the graph-over-whole-catalog run (`full_vh_controls/graph_commit_all_300`) replaces it.
+
 **Same caveat applies to the paper's VH "segment recall".** `temporal_retrieval_metrics(selected, segment_spans)`
 scores recall over those 95%-coverage segments, so it mostly measures how
 spread out the top-k picks are, not whether they land on the clue. The
