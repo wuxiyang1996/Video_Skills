@@ -196,7 +196,15 @@ above is on an SR-dominated subset and **is not comparable to the leaderboard's
 27.8, which averages all seven types**; and because the L1 catalog is built per
 video, the existing 270 catalogs should already cover all 1,837 questions
 without new captioning — a full-benchmark evaluation is a matter of
-re-deriving examples for every question over the cached stages. 80 of 270
+re-deriving examples for every question over the cached stages. Confirmed:
+`extract_clue_memory_graph` takes no question ("question-agnostic layer-1"),
+and in `video_only` mode clip schemas carry no `question_context`; the skew came
+from `--unique-videos` in the L1 worker, which keeps the first question per
+video (SR for 260 of 270). Stage directories are keyed by example_id, so the
+runner cannot reuse a video's cache for a sibling question on its own;
+`scripts/eval/derive_full_question_examples.py` copies each video's frozen L1
+into one example per question with no captioning. The 270 videos carry all
+1,837 test questions. 80 of 270
 one-question examples are consumed; the full-benchmark run must be the source
 of any final number. Still missing before this is a claim: the same-model `direct`
 control (no skill graph) and the flag-off `model` run, both in flight; and the
