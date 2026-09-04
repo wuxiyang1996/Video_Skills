@@ -77,6 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     written = 0
     skipped_no_l1 = 0
     per_video: dict[str, int] = {}
+    index: dict[str, dict[str, str]] = {}
     for item in adapter.iter_items():
         video_id = str(item.video_id)
         frozen = by_video.get(video_id)
@@ -88,6 +89,11 @@ def main(argv: list[str] | None = None) -> int:
         out_dir = args.output_root / args.dataset / args.split / "derived" / "stages" / safe
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "04_l1_example.json").write_text(json.dumps(example, ensure_ascii=False), encoding="utf-8")
+        index[example["example_id"]] = {
+            "path": str(out_dir / "04_l1_example.json"),
+            "question_type": str(example["question"].get("question_type") or "?"),
+            "video_id": video_id,
+        }
         written += 1
         per_video[video_id] = per_video.get(video_id, 0) + 1
     report = {
@@ -98,6 +104,9 @@ def main(argv: list[str] | None = None) -> int:
         "output_root": str(args.output_root),
     }
     (args.output_root / "derive_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    # A small index so readers need not open every derived file (each carries a
+    # multi-thousand-node graph) just to learn an example's type or video.
+    (args.output_root / "example_index.json").write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(report, indent=2))
     return 0
 
