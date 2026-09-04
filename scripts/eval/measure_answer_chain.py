@@ -85,18 +85,48 @@ def _with_rate_limit_retry(call, *, attempts: int = 4, base_sleep_s: float = 10.
             sleep(base_sleep_s * (2 ** attempt))
 
 
+def oracle_gold_spans(supervision: dict[str, Any]) -> list[dict[str, Any]]:
+    """The spans an oracle may use: per-question clue intervals on CG-Bench,
+    per-video Inference-Shot timestamps on Video-Holmes.
+
+    Video-Holmes ``segment_spans`` are the Segment-Description rows and cover
+    ~95% of a video, so 'overlaps a gold span' held for a median 52 of ~61
+    clips and a first-hits cap returned the video's opening four clips for
+    every question.  Those are never an oracle.
+    """
+    supervision = supervision or {}
+    if supervision.get("dataset") == "cg_bench":
+        return list(supervision.get("clue_spans") or [])
+    return list(supervision.get("inference_spans") or [])
+
+
 def oracle_indices(example: dict[str, Any], supervision: dict[str, Any], top_k: int) -> list[int]:
-    """Candidates that actually overlap a gold span, best-effort up to top_k."""
+    """Candidates overlapping the oracle gold spans, most overlap first, up to top_k.
+
+    Returns [] when the example has no usable gold (the caller records it as a
+    missing-index error rather than silently falling back to another source).
+    """
     schemas, _ = retrieval_catalog(example)
-    gold = (supervision or {}).get("segment_spans") or []
-    hits = [
-        index
-        for index, schema in enumerate(schemas)
-        if isinstance(schema, dict)
-        and isinstance(schema.get("time_span"), dict)
-        and any(temporal_hit(schema["time_span"], span) for span in gold)
-    ]
-    return hits[:top_k]
+    gold = oracle_gold_spans(supervision)
+    if not gold:
+        return []
+    scored = []
+    for index, schema in enumerate(schemas):
+        if not (isinstance(schema, dict) and isinstance(schema.get("time_span"), dict)):
+            continue
+        span = schema["time_span"]
+        start, end = float(span.get("start_s") or 0.0), float(span.get("end_s") or 0.0)
+        overlap = sum(
+            max(0.0, min(end, float(g.get("end_s") or 0.0)) - max(start, float(g.get("start_s") or 0.0)))
+            for g in gold
+            if isinstance(g, dict)
+        )
+        hit = any(temporal_hit(span, g) for g in gold if isinstance(g, dict))
+        if hit:
+            # point timestamps have zero overlap seconds; keep the hit, rank by overlap
+            scored.append((-overlap, index))
+    scored.sort()
+    return [index for _, index in scored[:top_k]]
 
 
 def answer_model_budget(effort: str, max_tokens: int | None) -> int:

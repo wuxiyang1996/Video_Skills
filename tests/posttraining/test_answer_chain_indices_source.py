@@ -40,10 +40,23 @@ def test_retrieval_rank_source_follows_the_catalog_order() -> None:
     assert retrieval_rank_indices(_example(["a", "b", "c"], "q"), 2) == [2, 1]
 
 
-def test_oracle_source_picks_candidates_overlapping_gold_spans() -> None:
-    ex = _example(["a", "b", "c", "d"], "q")          # clips at [0,4),[4,8),[8,12),[12,16)
-    sup = {"segment_spans": [{"start_s": 9.0, "end_s": 11.0}]}
-    assert oracle_indices(ex, sup, 4) == [2]
+def test_oracle_source_uses_inference_shots_on_video_holmes_and_ranks_by_overlap() -> None:
+    from scripts.eval.measure_answer_chain import oracle_gold_spans
+    ex = _example(["a", "b", "c", "d", "e"], "q")   # clips at [0,4) [4,8) [8,12) [12,16) [16,20)
+    sup = {
+        "dataset": "video_holmes",
+        "segment_spans": [{"start_s": 0.0, "end_s": 20.0}],           # covers everything: never an oracle
+        "inference_spans": [{"start_s": 13.0, "end_s": 14.0}, {"start_s": 9.0, "end_s": 9.0}],
+    }
+    assert oracle_gold_spans(sup) == sup["inference_spans"]
+    assert oracle_indices(ex, sup, 4) == [3, 2]          # 1s overlap first, then the point hit
+    assert oracle_indices(ex, {"dataset": "video_holmes", "segment_spans": sup["segment_spans"]}, 4) == []
+
+
+def test_oracle_source_uses_clue_intervals_on_cg_bench() -> None:
+    ex = _example(["a", "b", "c"], "q")
+    sup = {"dataset": "cg_bench", "clue_spans": [{"start_s": 5.0, "end_s": 7.0}]}
+    assert oracle_indices(ex, sup, 4) == [1]
 
 
 def test_temporal_nms_over_a_ranking_skips_overlapping_picks() -> None:
