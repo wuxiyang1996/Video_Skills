@@ -106,8 +106,8 @@ full 1,837-question test, paired by question:
 | BM25 top-4 (system, no learning) | 1,827 | 33.6 | — |
 | **oracle** top-4 (clips overlapping the gold spans; only 10% overlap with BM25 picks) | 1,012 | 29.9 | **−3.6 [−6.7, −0.4]** |
 | BM25 top-8 | 418 | 31.8 | −1.2 [−5.0, +2.9] |
-| no clips at all (`--indices-from none`, 300 ids) | running | | |
-| whole catalog (`--indices-from all`, 300 ids) | running | | |
+| no clips at all (`--indices-from none`, 300 ids) | 281 so far | 15.3 (54% abstain; ≈chance when it commits) | |
+| whole catalog (`--indices-from all`, 300 ids) | 199 so far | 33.2 | −0.5 (paired on the same 199: BM25 33.7) |
 
 Perfect clip selection does not raise the answer accuracy — it lowers it
 (largest drops on SR −11.6 and TCI −8.5). Oracle clips are not placeholders and
@@ -119,6 +119,15 @@ OPD → GRPO) therefore cannot carry the system from 33.6 toward Gemini's 45.0 o
 its own — the ceiling is set by the evidence modality (text descriptions from a
 per-video, question-agnostic 9B pass) and the answer model. The `none`/`all`
 controls bracket this; results land in `full_vh_controls/`.
+
+Caution on interim readouts: rows land in completion order, and whole-catalog
+prompts finish first on short videos, so the first 104 `all` rows read 41.3%
+before settling to 33.2% on 199 paired ids. No accuracy pattern by catalog size
+(≤40 / 41–60 / 61–80 / >80 clips) separates `all` from BM25 top-4. Everything
+that keeps the same descriptions and the same answer model converges on ≈33%:
+none 15 < oracle 30.6 < BM25 top-4 33.6 ≈ top-8 ≈ whole catalog. The lever has
+to be the descriptions or the answer model. Two runs test the latter cheaply
+(`--reasoning-effort high`, 8k budget, BM25 top-4 and whole catalog, 300 ids).
 
 ## CG catalog repair, targeted
 
