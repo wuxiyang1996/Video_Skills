@@ -46,3 +46,10 @@ def test_highlight_is_refused_for_graph_conditions(capsys) -> None:
     with pytest.raises(SystemExit):
         main(["--l1-glob", "x", "--output", "o.json", "--indices-from", "all", "--highlight-from", "bm25", "--conditions", "direct", "model"])
     assert "only applies to the direct condition" in capsys.readouterr().err
+
+
+def test_answer_model_budget_grows_with_reasoning_effort() -> None:
+    from scripts.eval.measure_answer_chain import answer_model_budget
+    assert answer_model_budget("minimal", None) == 1800
+    assert answer_model_budget("high", None) == 8000
+    assert answer_model_budget("high", 3000) == 3000

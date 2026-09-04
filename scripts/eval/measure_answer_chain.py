@@ -99,6 +99,14 @@ def oracle_indices(example: dict[str, Any], supervision: dict[str, Any], top_k: 
     return hits[:top_k]
 
 
+def answer_model_budget(effort: str, max_tokens: int | None) -> int:
+    """Completion budget: hidden reasoning is billed against max_tokens, so a
+    larger effort needs headroom or the answer JSON never arrives."""
+    if max_tokens is not None:
+        return max_tokens
+    return 1800 if effort == "minimal" else 8000
+
+
 def control_indices(example: dict[str, Any], source: str) -> list[int]:
     """The two retrieval controls: 'none' = no clips at all, 'all' = the whole catalog.
 
@@ -315,6 +323,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=20260904)
     parser.add_argument("--top-k", type=int, default=4)
     parser.add_argument("--planner-model", default="openai/gpt-oss-120b")
+    parser.add_argument(
+        "--reasoning-effort",
+        choices=("minimal", "low", "medium", "high"),
+        default="minimal",
+        help=(
+            "Hidden-reasoning budget for the planner/direct model on OpenRouter.  The "
+            "default 'minimal' is what every number so far was measured with; Video-Holmes "
+            "is a reasoning benchmark, so this is a lever on the answer model itself."
+        ),
+    )
+    parser.add_argument("--max-tokens", type=int, default=None,
+                        help="Completion budget (reasoning tokens count against it); default 1800 for minimal, 8000 otherwise.")
     parser.add_argument("--skill-model", default="qwen/qwen3.5-9b",
                         help="LLM that executes answer-critical skills; mirrors the GRPO trainer's --skill-model.")
     parser.add_argument("--skill-timeout-s", type=int, default=90)
@@ -389,9 +409,9 @@ def main(argv: list[str] | None = None) -> int:
     client = OpenRouterClient(
         model=args.planner_model,
         api_key=load_openrouter_api_key(keys_py_path=args.keys_py),
-        max_tokens=1800,
+        max_tokens=answer_model_budget(args.reasoning_effort, args.max_tokens),
         temperature=0.0,
-        reasoning={"effort": "minimal", "exclude": True},
+        reasoning={"effort": args.reasoning_effort, "exclude": True},
         timeout_s=args.timeout_s,
     )
 
@@ -511,6 +531,8 @@ def main(argv: list[str] | None = None) -> int:
         "always_commit_mcq": bool(args.always_commit_mcq),
         "indices_from": args.indices_from,
         "highlight_from": args.highlight_from,
+        "reasoning_effort": args.reasoning_effort,
+        "max_tokens": answer_model_budget(args.reasoning_effort, args.max_tokens),
         "temporal_nms": bool(args.temporal_nms),
         "note": "seeded subsample of heldout_test; the rest stays unread",
         "conditions": summary,
