@@ -248,13 +248,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--eval-report", type=Path, help="ranking source for the 'model' condition")
     parser.add_argument(
         "--indices-from",
-        choices=("report", "bm25", "retrieval_rank"),
+        choices=("report", "bm25", "retrieval_rank", "oracle"),
         default="report",
         help=(
             "Where the retrieved clip indices come from.  'report' uses the reranker "
             "ranking in --eval-report and SKIPS examples it does not cover; 'bm25' ranks "
             "each example's own captions against its question (no learning, covers "
-            "every example); 'retrieval_rank' uses the catalog's question-blind order."
+            "every example); 'retrieval_rank' uses the catalog's question-blind order; "
+            "'oracle' uses the candidates overlapping the gold spans -- a retrieval CEILING, "
+            "never a system result."
         ),
     )
     parser.add_argument("--sample", type=int, default=40)
@@ -357,7 +359,7 @@ def main(argv: list[str] | None = None) -> int:
         if not gold_label:
             return None
         supervision = supervision_index.get(supervision_key(example)) or {}
-        if condition == "oracle":
+        if condition == "oracle" or args.indices_from == "oracle":
             indices = oracle_indices(example, supervision, args.top_k)
         elif args.indices_from == "bm25":
             indices = bm25_indices(example, args.top_k)

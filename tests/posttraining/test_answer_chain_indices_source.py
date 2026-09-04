@@ -7,7 +7,7 @@ absent from it and were silently skipped, so a "full benchmark" run measured
 example with no learning.
 """
 
-from scripts.eval.measure_answer_chain import bm25_indices, model_indices, retrieval_rank_indices
+from scripts.eval.measure_answer_chain import bm25_indices, model_indices, oracle_indices, retrieval_rank_indices
 
 
 def _example(descs, question):
@@ -38,3 +38,9 @@ def test_bm25_source_is_empty_only_when_there_is_nothing_to_match() -> None:
 def test_retrieval_rank_source_follows_the_catalog_order() -> None:
     # retrieval_rank is 3,2,1 for clips 0,1,2 -> best rank is clip 2.
     assert retrieval_rank_indices(_example(["a", "b", "c"], "q"), 2) == [2, 1]
+
+
+def test_oracle_source_picks_candidates_overlapping_gold_spans() -> None:
+    ex = _example(["a", "b", "c", "d"], "q")          # clips at [0,4),[4,8),[8,12),[12,16)
+    sup = {"segment_spans": [{"start_s": 9.0, "end_s": 11.0}]}
+    assert oracle_indices(ex, sup, 4) == [2]
