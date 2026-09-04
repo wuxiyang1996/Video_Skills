@@ -134,6 +134,21 @@ the candidate at confidence 0.2 and flags it `committed_unverified`; the
 acceptance gate is unchanged, so "has an answer" and "answer is verified" are
 now separate facts. Measurement on reserved heldout examples is in progress.
 
+**The skill executor's default model is unusable on OpenRouter.** `qwen/qwen3.5-9b`
+(the trainer's `--skill-model` default) now spends its whole completion budget
+on hidden reasoning and returns empty content with `finish_reason: length` on
+every provider tried (SiliconFlow, DeepInfra), and `reasoning.exclude` /
+`chat_template_kwargs.enable_thinking=false` do not stop it. Every LLM-backed
+skill then parse-fails and falls back to its lexical rule with `ok=True`. The
+cached trainer rollouts predate this and show `backend: llm`; any new GRPO run
+with the default would silently train on rule-executed skills. `SkillModelClient`
+now records `reasoning_tokens` and `thinking_exhausted` from the usage counter,
+accepts a `provider` preference, and `openai/gpt-oss-120b` (75 reasoning tokens
+under `effort: minimal`, content returned) or `qwen/qwen3-30b-a3b-instruct-2507`
+(0 reasoning tokens) both work. Answer-chain measurements use gpt-oss-120b for
+both planner and skills so the direct-vs-skill-graph comparison holds the model
+fixed.
+
 Two earlier numbers are retracted: "76.4% when answered" came from 25 examples
 selected for reward variance, and a "13.2% clean heldout" figure was measured on
 the deterministic fallback planner after the `:free` model was withdrawn — the

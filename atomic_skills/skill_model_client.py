@@ -74,6 +74,8 @@ class SkillModelClient:
         temperature: float = 0.0,
         timeout_s: int = 60,
         seed: int | None = None,
+        disable_thinking: bool = True,
+        provider: dict[str, Any] | None = None,
     ):
         self.model = model
         self.api_key = api_key
@@ -82,7 +84,20 @@ class SkillModelClient:
         self.temperature = temperature
         self.timeout_s = timeout_s
         self.seed = seed
+        self.disable_thinking = disable_thinking
+        # OpenRouter routing preferences, e.g. {"order": [...], "allow_fallbacks": False}.
+        # Needed because providers differ on whether they honour thinking-off.
+        self.provider = provider
         self.last_response_metadata: dict[str, Any] = {}
+
+    @staticmethod
+    def _is_qwen_reasoning_model(model: str) -> bool:
+        lower = (model or "").lower()
+        return any(token in lower for token in ("qwen3", "qwen-3", "qwen3.5", "qwq"))
+
+    @property
+    def is_openrouter_endpoint(self) -> bool:
+        return "openrouter.ai" in (self.api_base or "")
 
     def _post(self, messages: list[dict[str, Any]]) -> str:
         headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -97,6 +112,21 @@ class SkillModelClient:
         }
         if self.seed is not None:
             payload["seed"] = int(self.seed)
+        # Qwen3-family endpoints can default to thinking, which spends the whole
+        # completion budget on hidden reasoning and returns empty content with
+        # finish_reason "length".  Every skill then parse-fails and silently
+        # falls back to its rule.  Mirror OpenRouterClient.chat and turn it off.
+        if self.disable_thinking:
+            if self._is_qwen_reasoning_model(self.model):
+                payload["chat_template_kwargs"] = {"enable_thinking": False}
+            if self.is_openrouter_endpoint:
+                # ``exclude`` only hides the reasoning field; ``effort`` is what
+                # limits it, and some providers ignore both.  Verify with
+                # usage.completion_tokens_details.reasoning_tokens, not by absence
+                # of message.reasoning.
+                payload["reasoning"] = {"exclude": True, "effort": "minimal"}
+        if self.provider and self.is_openrouter_endpoint:
+            payload["provider"] = dict(self.provider)
 
         prompt_chars = sum(len(str(message.get("content") or "")) for message in messages)
         self.last_response_metadata = {
@@ -118,15 +148,24 @@ class SkillModelClient:
                 )
                 resp.raise_for_status()
             data = resp.json()
-            content = data["choices"][0]["message"].get("content") or ""
-            content = content.strip()
+            choice = data["choices"][0]
+            message = choice.get("message") or {}
+            content = (message.get("content") or "").strip()
             usage = data.get("usage") or {}
+            finish_reason = choice.get("finish_reason")
+            reasoning_tokens = int(((usage.get("completion_tokens_details") or {}).get("reasoning_tokens")) or 0)
             self.last_response_metadata.update({
                 "output_chars": len(content),
                 "prompt_tokens": usage.get("prompt_tokens"),
                 "completion_tokens": usage.get("completion_tokens"),
                 "total_tokens": usage.get("total_tokens"),
-                "finish_reason": data["choices"][0].get("finish_reason"),
+                "reasoning_tokens": reasoning_tokens,
+                "finish_reason": finish_reason,
+                "provider": data.get("provider"),
+                # Diagnosable rather than silent: the budget went to hidden
+                # reasoning.  Read the usage counter -- ``reasoning.exclude``
+                # strips message.reasoning while the tokens are still spent.
+                "thinking_exhausted": bool(not content and (reasoning_tokens > 0 or finish_reason == "length")),
             })
             return content
         except (TimeoutError, requests.Timeout, requests.ConnectionError, requests.HTTPError) as exc:
