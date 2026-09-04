@@ -103,7 +103,38 @@ not merely beat SFT.
 5. Coarse-to-fine retrieval, only if needed after (3).
 6. Video-Holmes answer path.
 
-Measured negatives, kept so they are not re-attempted blind: emitting the
-discarded middle band under the pointwise objective changed nothing
-(-0.16 dev segment_recall) and hurt when combined with decision-logit training
-(-3.33); rank-fusing BM25 with the reranker gains nothing.
+## What has moved the reranker so far (dev, 21 Video-Holmes examples)
+
+| Variant | seg_recall | infer_shot | vs BM25 on the same input |
+| --- | ---: | ---: | --- |
+| BM25, no learning | 54.60 | 0.00 | — |
+| OPD baseline (408 rows, pointwise) | 59.76 | 3.97 | +5.2 / +4.0 |
+| + middle band (696 rows) | 59.60 | 3.97 | flat |
+| + middle band + decision-logit training | 56.43 | 3.97 | worse |
+| **+ middle band + decision-logit + pairwise margin** | **63.73** | **10.32** | **+9.1 / +10.3** |
+
+The middle band contributes nothing under a pointwise objective — a graded
+target near 0.5 carries almost no gradient in a two-way cross-entropy — and only
+pays off once an ordering loss can use it. Dev only; the heldout run is queued.
+Measured negatives kept so they are not re-attempted blind: middle band alone,
+middle band with decision-logit training, and rank-fusing BM25 with the reranker.
+
+## Where Video-Holmes answers are lost
+
+Both benchmarks score QA accuracy and an abstention counts as wrong. The answer
+chain abstains on the majority of questions, and 95.7% of those abstentions
+already carry an option_label at the commit step: `verify_claim_support` scores
+support by lexical overlap (threshold 0.05), fails `insufficient_evidence`, and
+`commit_answer` refuses on `claim_not_verified`. On multiple choice that policy
+is strictly dominated by committing the best hypothesis, since a guess scores
+~20% and an abstention scores 0.
+
+`always_commit_mcq` (opt-in, default off so frozen GRPO rewards reproduce) emits
+the candidate at confidence 0.2 and flags it `committed_unverified`; the
+acceptance gate is unchanged, so "has an answer" and "answer is verified" are
+now separate facts. Measurement on reserved heldout examples is in progress.
+
+Two earlier numbers are retracted: "76.4% when answered" came from 25 examples
+selected for reward variance, and a "13.2% clean heldout" figure was measured on
+the deterministic fallback planner after the `:free` model was withdrawn — the
+fallback is silent, `errors: 0`, and only `llm_plan.fallback_reason` reveals it.
