@@ -147,7 +147,9 @@ accepts a `provider` preference, and `openai/gpt-oss-120b` (75 reasoning tokens
 under `effort: minimal`, content returned) or `qwen/qwen3-30b-a3b-instruct-2507`
 (0 reasoning tokens) both work. Answer-chain measurements use gpt-oss-120b for
 both planner and skills so the direct-vs-skill-graph comparison holds the model
-fixed.
+fixed. The frozen GRPO executor caches (last writes 2026-09-02 23:22) show every
+answer-critical skill on `backend: llm`, so the paper's GRPO artifacts predate
+the breakage and were trained with LLM-executed skills.
 
 Two earlier numbers are retracted: "76.4% when answered" came from 25 examples
 selected for reward variance, and a "13.2% clean heldout" figure was measured on
