@@ -95,6 +95,18 @@ def _clip_schema_failure_counts(example_stage_dir: Path) -> tuple[int, int]:
     return failed, total
 
 
+def _apply_example_id_allowlist(items: list[Any], allowlist_path: Path | None) -> list[Any]:
+    """Keep only items whose example_id is listed; order is preserved."""
+    if allowlist_path is None:
+        return items
+    wanted = {
+        line.strip()
+        for line in allowlist_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    }
+    return [item for item in items if str(getattr(item, "example_id", "")) in wanted]
+
+
 def _cached_clip_schema_error_count(example_stage_dir: Path) -> int:
     """Count retryable failures or coverage defects in cached clip schemas."""
     issues = sum(
@@ -206,6 +218,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-fill-missing-clip-schemas",
         action="store_true",
         help="When rebuilding from stages, do not call the clip-schema backend for missing clip ids.",
+    )
+    parser.add_argument(
+        "--example-id-allowlist",
+        type=Path,
+        help=(
+            "Newline-separated example ids; only these are processed (after --start-index/--limit "
+            "select the shard).  Lets a repair target the few examples a heldout set needs instead "
+            "of a whole lane."
+        ),
     )
     parser.add_argument(
         "--retry-failed-clip-schemas",
@@ -1258,6 +1279,9 @@ def main(argv: list[str] | None = None) -> int:
 
     written = 0
     failed = 0
+    selected_items = _apply_example_id_allowlist(selected_items, args.example_id_allowlist)
+    if args.example_id_allowlist:
+        print(json.dumps({"event": "example_id_allowlist", "kept": len(selected_items), "path": str(args.example_id_allowlist)}), flush=True)
     clip_schema_failed = 0
     clip_schema_total = 0
     for item in selected_items:
