@@ -138,6 +138,46 @@ def answer_model_budget(effort: str, max_tokens: int | None) -> int:
     return 1800 if effort == "minimal" else 8000
 
 
+def extract_findings(rollout: dict[str, Any], max_chars: int = 6000) -> dict[str, Any]:
+    """Turn a skill-graph rollout into notes a single answer call can read.
+
+    The graph scores each option separately against a few observations and
+    picks the max, which is where it loses to direct answering (3/24 vs ~10/24
+    on the same evidence).  As *notes* next to the whole catalog the same
+    per-option reasoning can only add information; the answer call still
+    weighs the options against each other over all the clips.
+    """
+    notes: list[dict[str, Any]] = []
+    used = 0
+    diagnostics = ((rollout.get("metadata") or {}).get("answer_step_diagnostics") or {})
+    for step, payload in diagnostics.items():
+        if not isinstance(payload, dict):
+            continue
+        for key in ("scored_hypothesis", "best_hypothesis"):
+            item = payload.get(key)
+            if not isinstance(item, dict) or not item.get("llm_reasoning"):
+                continue
+            note = {
+                "step": step,
+                "option_label": item.get("option_label"),
+                "support_score": item.get("support_score"),
+                "contradiction_score": item.get("contradiction_score"),
+                "note": str(item["llm_reasoning"])[:800],
+            }
+            size = len(json.dumps(note, ensure_ascii=False))
+            if used + size > max_chars:
+                break
+            notes.append(note)
+            used += size
+    final = rollout.get("final_answer") or {}
+    vote = {
+        "label": final.get("label") if isinstance(final, dict) else None,
+        "confidence": final.get("confidence") if isinstance(final, dict) else None,
+        "acceptance_status": rollout.get("acceptance_status"),
+    }
+    return {"notes": notes, "vote": vote}
+
+
 def dump_rollout(handle: Any, lock: Any, record: dict[str, Any]) -> None:
     """Append one full rollout as a JSON line; workers share the handle under a lock."""
     line = json.dumps(record, ensure_ascii=False, default=str)
@@ -217,6 +257,7 @@ def direct_answer(
     example: dict[str, Any],
     indices: list[int],
     highlight: list[int] | None = None,
+    findings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ask the same model the same question over the same clips, with no skill graph.
 
@@ -254,6 +295,14 @@ def direct_answer(
         payload["likely_key_clips"] = [position[i] for i in highlight if i in position]
         payload["likely_key_clips_note"] = (
             "ranks of clips a retriever flagged as most likely to matter; it may be wrong"
+        )
+    if findings:
+        payload["skill_findings"] = findings.get("notes") or []
+        payload["graph_vote"] = findings.get("vote")
+        payload["skill_findings_note"] = (
+            "notes from an analysis pass by atomic skills over the same clips, one per "
+            "candidate option, plus that pass's own vote; they may be wrong -- decide "
+            "from the clips"
         )
     text = client.chat([
         {"role": "system", "content": DIRECT_SYSTEM},
@@ -388,7 +437,8 @@ def main(argv: list[str] | None = None) -> int:
         "--conditions",
         nargs="+",
         default=["model", "oracle", "direct"],
-        help="'model'/'oracle' run the skill graph; 'direct' is the no-decomposition control.",
+        help=("'model'/'oracle' run the skill graph; 'direct' is the no-decomposition control; "
+              "'hybrid' runs the graph, then answers once over all the clips plus the graph's notes."),
     )
     parser.add_argument(
         "--always-commit-mcq",
@@ -403,8 +453,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset-root", type=Path, default=Path("/fs/gamma-projects/vlm-robot/datasets"))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
-    if args.highlight_from and any(c != "direct" for c in args.conditions):
-        parser.error("--highlight-from only applies to the direct condition")
+    if args.highlight_from and any(c not in ("direct", "hybrid") for c in args.conditions):
+        parser.error("--highlight-from only applies to the direct and hybrid conditions")
     if args.indices_from == "none" and any(c != "direct" for c in args.conditions):
         parser.error("--indices-from none is the no-evidence control; it only makes sense with --conditions direct")
 
@@ -506,6 +556,7 @@ def main(argv: list[str] | None = None) -> int:
             # Skipping silently hid 1,574 of 1,837 questions once; count it.
             return {"example_id": example_id, "condition": condition, "error": "no_retrieval_indices"}
         try:
+            graph_rollout = None
             if condition == "direct":
                 rollout = _with_rate_limit_retry(lambda: direct_answer(client, example, indices, highlight))
             else:
@@ -514,14 +565,32 @@ def main(argv: list[str] | None = None) -> int:
                     isolated, graph, client=client, skill_executor=executor, motif_enabled=False,
                     commit_policy={"always_commit_mcq": True} if args.always_commit_mcq else None,
                 ))
+                if condition == "hybrid":
+                    # skills as an analysis pass; one answer call over all the evidence
+                    graph_rollout = rollout
+                    findings = extract_findings(graph_rollout)
+                    rollout = _with_rate_limit_retry(
+                        lambda: direct_answer(client, example, indices, highlight, findings)
+                    )
         except Exception as exc:  # a transport failure is not an abstention
             return {"example_id": example_id, "condition": condition, "error": type(exc).__name__}
         if dump_handle is not None:
             dump_rollout(dump_handle, dump_lock, {
                 "example_id": example_id, "condition": condition, "gold_label": gold_label,
-                "indices": indices, "rollout": rollout,
+                "indices": indices, "rollout": graph_rollout if graph_rollout is not None else rollout,
             })
-        return {"example_id": example_id, "condition": condition, **score(rollout, gold_label)}
+        row = {"example_id": example_id, "condition": condition, **score(rollout, gold_label)}
+        if graph_rollout is not None:
+            graph_scored = score(graph_rollout, gold_label)
+            row.update({
+                "graph_committed": graph_scored["committed"],
+                "graph_correct": graph_scored["correct"],
+                "graph_acceptance_status": graph_scored["acceptance_status"],
+                "planner_fell_back": graph_scored["planner_fell_back"],
+                "critical_skills_on_llm": graph_scored["critical_skills_on_llm"],
+                "skill_notes": len(extract_findings(graph_rollout)["notes"]),
+            })
+        return row
 
     rows: list[dict[str, Any]] = []
     jobs = [(e, c) for e in chosen for c in args.conditions]

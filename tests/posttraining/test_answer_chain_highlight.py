@@ -45,7 +45,7 @@ def test_no_highlight_leaves_the_payload_unchanged() -> None:
 def test_highlight_is_refused_for_graph_conditions(capsys) -> None:
     with pytest.raises(SystemExit):
         main(["--l1-glob", "x", "--output", "o.json", "--indices-from", "all", "--highlight-from", "bm25", "--conditions", "direct", "model"])
-    assert "only applies to the direct condition" in capsys.readouterr().err
+    assert "only applies to the direct and hybrid conditions" in capsys.readouterr().err
 
 
 def test_answer_model_budget_grows_with_reasoning_effort() -> None:
@@ -66,3 +66,41 @@ def test_dump_rollout_appends_one_json_line_per_record(tmp_path) -> None:
     lines = [json.loads(l) for l in path.read_text().splitlines()]
     assert [l["example_id"] for l in lines] == ["e1", "e2"]
     assert lines[0]["rollout"] == {"x": 1}
+
+
+def _rollout():
+    return {
+        "final_answer": {"label": "B", "confidence": 0.2},
+        "acceptance_status": "rejected",
+        "metadata": {"answer_step_diagnostics": {
+            "r3": {"hypotheses": [{"option_label": "A"}], "backend": "llm"},
+            "r9": {"scored_hypothesis": {"option_label": "A", "support_score": 0.6, "contradiction_score": 0.0,
+                                         "llm_reasoning": "dim lighting suggests A"}, "backend": "llm"},
+            "r10": {"scored_hypothesis": {"option_label": "B", "support_score": 0.65, "contradiction_score": 0.1,
+                                          "llm_reasoning": "wire suggests B"}, "backend": "llm"},
+            "r14": {"best_hypothesis": {"option_label": "B", "llm_reasoning": "wire suggests B"}, "backend": "llm"},
+        }},
+    }
+
+
+def test_extract_findings_collects_per_option_reasoning_and_the_graph_vote() -> None:
+    from scripts.eval.measure_answer_chain import extract_findings
+    out = extract_findings(_rollout())
+    assert [n["option_label"] for n in out["notes"]] == ["A", "B", "B"]
+    assert out["notes"][0]["note"] == "dim lighting suggests A"
+    assert out["vote"] == {"label": "B", "confidence": 0.2, "acceptance_status": "rejected"}
+
+
+def test_extract_findings_respects_the_character_budget() -> None:
+    from scripts.eval.measure_answer_chain import extract_findings
+    assert len(extract_findings(_rollout(), max_chars=200)["notes"]) < 3
+
+
+def test_direct_answer_with_findings_keeps_all_clips_and_adds_the_notes() -> None:
+    from scripts.eval.measure_answer_chain import extract_findings
+    client = _FakeClient()
+    direct_answer(client, _example(), indices=[0, 1, 2, 3, 4], findings=extract_findings(_rollout()))
+    assert len(client.payload["clips"]) == 5
+    assert len(client.payload["skill_findings"]) == 3
+    assert client.payload["graph_vote"]["label"] == "B"
+    assert "may be wrong" in client.payload["skill_findings_note"]
