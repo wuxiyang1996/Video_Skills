@@ -53,3 +53,16 @@ def test_answer_model_budget_grows_with_reasoning_effort() -> None:
     assert answer_model_budget("minimal", None) == 1800
     assert answer_model_budget("high", None) == 8000
     assert answer_model_budget("high", 3000) == 3000
+
+
+def test_dump_rollout_appends_one_json_line_per_record(tmp_path) -> None:
+    import threading
+    from scripts.eval.measure_answer_chain import dump_rollout
+    path = tmp_path / "r.jsonl"
+    with path.open("w", encoding="utf-8") as handle:
+        lock = threading.Lock()
+        dump_rollout(handle, lock, {"example_id": "e1", "rollout": {"x": 1}})
+        dump_rollout(handle, lock, {"example_id": "e2", "rollout": {"y": object()}})   # non-JSON values are stringified
+    lines = [json.loads(l) for l in path.read_text().splitlines()]
+    assert [l["example_id"] for l in lines] == ["e1", "e2"]
+    assert lines[0]["rollout"] == {"x": 1}

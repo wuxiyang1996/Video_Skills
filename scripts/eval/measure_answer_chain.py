@@ -21,6 +21,7 @@ import argparse
 import collections
 import glob
 import json
+import threading
 import random
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -135,6 +136,14 @@ def answer_model_budget(effort: str, max_tokens: int | None) -> int:
     if max_tokens is not None:
         return max_tokens
     return 1800 if effort == "minimal" else 8000
+
+
+def dump_rollout(handle: Any, lock: Any, record: dict[str, Any]) -> None:
+    """Append one full rollout as a JSON line; workers share the handle under a lock."""
+    line = json.dumps(record, ensure_ascii=False, default=str)
+    with lock:
+        handle.write(line + "\n")
+        handle.flush()
 
 
 def control_indices(example: dict[str, Any], source: str) -> list[int]:
@@ -347,6 +356,8 @@ def main(argv: list[str] | None = None) -> int:
             "retriever steers attention over the whole catalog instead of cutting it."
         ),
     )
+    parser.add_argument("--dump-rollouts", type=Path,
+                        help="Also append every full rollout (plan, skill outputs, commit) to this jsonl for diagnosis.")
     parser.add_argument("--sample", type=int, default=40)
     parser.add_argument("--example-ids", type=Path,
                         help="Newline-separated example ids to run instead of a seeded sample (for re-running a hung tail).")
@@ -461,6 +472,12 @@ def main(argv: list[str] | None = None) -> int:
             config=_grpo_skill_backend_config(),
         )
 
+    dump_lock = threading.Lock()
+    dump_handle = None
+    if args.dump_rollouts:
+        args.dump_rollouts.parent.mkdir(parents=True, exist_ok=True)
+        dump_handle = args.dump_rollouts.open("w", encoding="utf-8")
+
     def run(example_id: str, condition: str) -> dict[str, Any] | None:
         example = examples[example_id]
         question = example.get("question") or {}
@@ -499,6 +516,11 @@ def main(argv: list[str] | None = None) -> int:
                 ))
         except Exception as exc:  # a transport failure is not an abstention
             return {"example_id": example_id, "condition": condition, "error": type(exc).__name__}
+        if dump_handle is not None:
+            dump_rollout(dump_handle, dump_lock, {
+                "example_id": example_id, "condition": condition, "gold_label": gold_label,
+                "indices": indices, "rollout": rollout,
+            })
         return {"example_id": example_id, "condition": condition, **score(rollout, gold_label)}
 
     rows: list[dict[str, Any]] = []
