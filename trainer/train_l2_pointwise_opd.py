@@ -49,6 +49,48 @@ def _sequence_score(causal_lm: Any, hidden: Any, labels: Any, *, chunk_size: int
     return score
 
 
+def pairwise_margin_loss(
+    positive_score: Any, negative_score: Any, *, margin: float
+) -> Any:
+    """Hinge on the score gap between a better and a worse candidate.
+
+    The pointwise KL objective calibrates each candidate independently against
+    the teacher, but the metric is a top-k ranking over an example's candidates,
+    so nothing in that loss compares candidates to one another.  This penalises
+    the pair only while the better candidate fails to lead by ``margin``.
+    """
+    import torch
+
+    return torch.clamp(margin - (positive_score - negative_score), min=0.0)
+
+
+def build_ranking_pairs(
+    encoded: list[dict[str, Any]], *, max_pairs_per_example: int
+) -> list[tuple[int, int]]:
+    """Pair up candidates of the same example that the teacher orders strictly.
+
+    Pairs are formed widest-gap-first so the clearest orderings are kept when the
+    per-example budget binds.
+    """
+    by_example: dict[str, list[int]] = defaultdict(list)
+    for position, row in enumerate(encoded):
+        by_example[str(row["source_example_id"])].append(position)
+    pairs: list[tuple[int, int]] = []
+    for positions in by_example.values():
+        ordered = sorted(positions, key=lambda index: -float(encoded[index]["teacher_score"]))
+        example_pairs = []
+        for i, high in enumerate(ordered):
+            for low in ordered[i + 1 :]:
+                gap = float(encoded[high]["teacher_score"]) - float(encoded[low]["teacher_score"])
+                if gap > 0.0:
+                    example_pairs.append((gap, high, low))
+        example_pairs.sort(key=lambda item: -item[0])
+        if max_pairs_per_example > 0:
+            example_pairs = example_pairs[:max_pairs_per_example]
+        pairs.extend((high, low) for _, high, low in example_pairs)
+    return pairs
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default="Qwen/Qwen3.5-9B")
@@ -70,6 +112,24 @@ def main(argv: list[str] | None = None) -> int:
             "logits off the single divergent token in fp32, matching what the "
             "evaluator scores and removing bf16 cancellation from the gradient."
         ),
+    )
+    parser.add_argument(
+        "--objective",
+        choices=("pointwise_kl", "pairwise_margin"),
+        default="pointwise_kl",
+        help=(
+            "'pointwise_kl' (default) matches each candidate to the teacher "
+            "independently.  'pairwise_margin' ranks candidates against each "
+            "other within an example, which is what the top-k metric measures; "
+            "it requires --score-mode decision_logit."
+        ),
+    )
+    parser.add_argument("--margin", type=float, default=1.0)
+    parser.add_argument(
+        "--max-pairs-per-example",
+        type=int,
+        default=32,
+        help="Cap on ranking pairs per example, widest teacher gap first; <=0 keeps all.",
     )
     parser.add_argument(
         "--dataset-balanced-loss",
@@ -139,13 +199,31 @@ def main(argv: list[str] | None = None) -> int:
         decision = decision_position(variants[0][0], variants[1][0])
         encoded.append({
             "state_id": (row.get("state") or {}).get("state_id"),
+            "source_example_id": (row.get("state") or {}).get("source_example_id"),
+            "teacher_score": float(
+                (row.get("teacher") or {}).get(
+                    "annotation_score",
+                    float(teacher_map.get("relevant_true", 0.0)),
+                )
+            ),
             "variants": variants,
             "decision": decision,
             "teacher": torch.tensor([float(teacher_map.get("relevant_true", 0.0)), float(teacher_map.get("relevant_false", 0.0))], dtype=torch.float32),
             "weight": raw_weight / mean_weight,
         })
 
-    total_steps = max(1, math.ceil(len(encoded) * args.epochs / args.gradient_accumulation_steps))
+    if args.objective == "pairwise_margin" and args.score_mode != "decision_logit":
+        raise ValueError(
+            "--objective pairwise_margin needs --score-mode decision_logit: ranking on a "
+            "bf16-quantised sequence log-likelihood difference would hinge on noise"
+        )
+    pairs: list[tuple[int, int]] = []
+    if args.objective == "pairwise_margin":
+        pairs = build_ranking_pairs(encoded, max_pairs_per_example=args.max_pairs_per_example)
+        if not pairs:
+            raise ValueError("no strictly-ordered candidate pairs found in the distillation file")
+    units = len(pairs) if args.objective == "pairwise_margin" else len(encoded)
+    total_steps = max(1, math.ceil(units * args.epochs / args.gradient_accumulation_steps))
     optimizer = torch.optim.AdamW((parameter for parameter in model.parameters() if parameter.requires_grad), lr=args.learning_rate)
     scheduler = get_linear_schedule_with_warmup(optimizer, int(total_steps * args.warmup_ratio), total_steps)
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -158,7 +236,60 @@ def main(argv: list[str] | None = None) -> int:
     correct = 0
     seen = 0
     started = time.time()
+    def decision_logits(row: dict[str, Any]) -> Any:
+        """Return the [true, false] logits at the single divergent token, fp32."""
+        prefix_length, true_token, false_token = row["decision"]
+        prefix = row["variants"][0][0][:prefix_length]
+        input_ids = torch.tensor([prefix], dtype=torch.long, device="cuda")
+        hidden = causal_lm.model(
+            input_ids=input_ids,
+            attention_mask=torch.ones_like(input_ids),
+            use_cache=False,
+        ).last_hidden_state
+        pair = causal_lm.lm_head.weight[[true_token, false_token]].float()
+        return pair @ hidden[0, -1].float()
+
     for epoch in range(1, args.epochs + 1):
+        if args.objective == "pairwise_margin":
+            order = list(range(len(pairs)))
+            random.Random(args.seed + epoch).shuffle(order)
+            for pair_index in order:
+                high, low = pairs[pair_index]
+                # Relevance log-odds: the margin is taken on the same scalar the
+                # evaluator ranks by.
+                high_logits = decision_logits(encoded[high])
+                low_logits = decision_logits(encoded[low])
+                weight = 0.5 * (float(encoded[high]["weight"]) + float(encoded[low]["weight"]))
+                loss = pairwise_margin_loss(
+                    high_logits[0] - high_logits[1],
+                    low_logits[0] - low_logits[1],
+                    margin=args.margin,
+                ) * weight
+                (loss / args.gradient_accumulation_steps).backward()
+                losses.append(float(loss.detach().cpu()))
+                correct += int(
+                    float((high_logits[0] - high_logits[1]).detach())
+                    > float((low_logits[0] - low_logits[1]).detach())
+                )
+                seen += 1
+                micro_step += 1
+                if micro_step % args.gradient_accumulation_steps and micro_step < units * args.epochs:
+                    continue
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step(); scheduler.step(); optimizer.zero_grad(set_to_none=True)
+                update_step += 1
+                metric = {
+                    "step": update_step, "epoch": epoch,
+                    "loss": sum(losses[-args.gradient_accumulation_steps:]) / min(args.gradient_accumulation_steps, len(losses)),
+                    "pair_ordering_accuracy": correct / seen,
+                    "learning_rate": scheduler.get_last_lr()[0],
+                    "elapsed_s": time.time() - started,
+                    "peak_gpu_memory_gb": torch.cuda.max_memory_allocated() / (1024**3),
+                }
+                with metrics_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(metric) + "\n")
+                print(json.dumps({"event": "opd_step", **metric}), flush=True)
+            continue
         order = list(range(len(encoded)))
         random.Random(args.seed + epoch).shuffle(order)
         for row_index in order:
@@ -253,6 +384,9 @@ def main(argv: list[str] | None = None) -> int:
         "first_loss": losses[0], "last_loss": losses[-1],
         "teacher_argmax_accuracy": correct / seen,
         "score_mode": str(args.score_mode),
+        "objective": str(args.objective),
+        "margin": float(args.margin),
+        "ranking_pairs": len(pairs),
         "dataset_balanced_loss": bool(args.dataset_balanced_loss),
         "dataset_rows": dict(Counter(row_datasets)),
         "dataset_raw_weight": dict(dataset_raw_weight),
