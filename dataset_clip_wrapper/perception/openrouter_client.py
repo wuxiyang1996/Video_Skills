@@ -161,10 +161,14 @@ class OpenRouterClient:
         # Hard-disable Qwen3/3.5 thinking for controller / structured-JSON calls.
         if self._is_qwen_reasoning_model(self.model):
             payload["chat_template_kwargs"] = {"enable_thinking": False}
-            extra_body = payload.setdefault("extra_body", {})
-            if isinstance(extra_body, dict):
-                extra_body["enable_thinking"] = False
-                extra_body.setdefault("chat_template_kwargs", {"enable_thinking": False})
+            # ``extra_body`` is an OpenRouter extension.  Hugging Face's local
+            # ``transformers serve`` endpoint accepts ``chat_template_kwargs``
+            # directly but rejects the nested extension with HTTP 422.
+            if self.is_openrouter_endpoint:
+                extra_body = payload.setdefault("extra_body", {})
+                if isinstance(extra_body, dict):
+                    extra_body["enable_thinking"] = False
+                    extra_body.setdefault("chat_template_kwargs", {"enable_thinking": False})
         self.last_response_metadata = self._base_request_metadata(messages)
         try:
             with _total_timeout(self.timeout_s):

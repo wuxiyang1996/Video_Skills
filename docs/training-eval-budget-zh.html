@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Video Skills 的 SFT、GRPO 与 GPT-5.4 + Gemini 双评审预算说明。">
+  <title>Video Skills · 训练与评测预算</title>
+  <style>
+    :root {
+      --paper: #f4f1e8;
+      --paper-strong: #fffdf7;
+      --ink: #17211d;
+      --muted: #667069;
+      --line: #d8d4c8;
+      --green: #123f31;
+      --green-2: #1c5a46;
+      --mint: #caeadc;
+      --orange: #e56b3f;
+      --yellow: #f0c85a;
+      --shadow: 0 18px 60px rgba(22, 35, 29, .10);
+      --radius: 22px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 10% 0%, rgba(240, 200, 90, .23), transparent 30rem),
+        radial-gradient(circle at 100% 22%, rgba(202, 234, 220, .60), transparent 34rem),
+        var(--paper);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      line-height: 1.6;
+    }
+
+    a { color: inherit; text-underline-offset: 3px; }
+    button, select { font: inherit; }
+
+    .shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 24px 0;
+      gap: 20px;
+    }
+
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 800; letter-spacing: -.02em; }
+    .brand-mark {
+      width: 34px; height: 34px; display: grid; place-items: center;
+      color: white; background: var(--green); border-radius: 10px;
+      box-shadow: 5px 5px 0 var(--yellow);
+    }
+    nav { display: flex; gap: 22px; color: var(--muted); font-size: 14px; font-weight: 650; }
+    nav a { text-decoration: none; }
+    nav a:hover { color: var(--green); }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      min-height: 540px;
+      display: grid;
+      grid-template-columns: 1.2fr .8fr;
+      gap: 52px;
+      align-items: center;
+      padding: 72px;
+      color: white;
+      background: var(--green);
+      border-radius: 34px;
+      box-shadow: var(--shadow);
+    }
+    .hero::before {
+      content: "";
+      position: absolute; width: 440px; height: 440px; right: -170px; top: -180px;
+      border: 70px solid rgba(202, 234, 220, .12); border-radius: 50%;
+    }
+    .hero::after {
+      content: "";
+      position: absolute; width: 210px; height: 210px; left: 46%; bottom: -130px;
+      background: var(--orange); border-radius: 50%; opacity: .9;
+    }
+    .hero-copy, .hero-budget { position: relative; z-index: 1; }
+    .eyebrow {
+      display: inline-flex; align-items: center; gap: 9px;
+      text-transform: uppercase; letter-spacing: .14em; font-size: 12px; font-weight: 800;
+      color: var(--yellow);
+    }
+    .eyebrow::before { content: ""; width: 28px; height: 2px; background: currentColor; }
+    h1 { max-width: 760px; margin: 22px 0; font-size: clamp(46px, 6vw, 82px); line-height: .98; letter-spacing: -.065em; }
+    .hero p { max-width: 650px; margin: 0; color: #cde1d8; font-size: 17px; }
+    .hero-budget {
+      padding: 34px;
+      color: var(--ink);
+      background: var(--paper-strong);
+      border-radius: 26px;
+      transform: rotate(1.5deg);
+      box-shadow: 0 24px 55px rgba(0,0,0,.18);
+    }
+    .hero-budget small { color: var(--muted); font-weight: 750; }
+    .big-number { margin: 5px 0 0; color: var(--green); font-size: clamp(60px, 8vw, 94px); font-weight: 900; line-height: 1; letter-spacing: -.07em; }
+    .cap { display: flex; justify-content: space-between; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); font-weight: 750; }
+    .cap span:last-child { color: var(--orange); }
+
+    section { padding: 88px 0 0; }
+    .section-head { display: flex; justify-content: space-between; align-items: end; gap: 30px; margin-bottom: 30px; }
+    .section-head h2 { margin: 8px 0 0; font-size: clamp(34px, 4vw, 54px); line-height: 1.05; letter-spacing: -.045em; }
+    .section-note { max-width: 520px; color: var(--muted); }
+
+    .controls {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
+      padding: 14px; margin-bottom: 18px; background: rgba(255,255,255,.55);
+      border: 1px solid var(--line); border-radius: 18px;
+    }
+    .control { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 10px; }
+    .control label { color: var(--muted); font-size: 13px; font-weight: 750; }
+    select {
+      min-width: 142px; padding: 9px 34px 9px 12px; color: var(--ink);
+      background: var(--paper-strong); border: 1px solid var(--line); border-radius: 10px;
+    }
+
+    .calculator { display: grid; grid-template-columns: 1.08fr .92fr; gap: 18px; }
+    .cost-panel, .summary-panel, .card {
+      background: rgba(255,253,247,.88); border: 1px solid rgba(216,212,200,.9);
+      border-radius: var(--radius); box-shadow: 0 10px 35px rgba(22,35,29,.055);
+    }
+    .cost-panel { overflow: hidden; }
+    .cost-row {
+      display: grid; grid-template-columns: 1.35fr .8fr .8fr; gap: 12px; align-items: center;
+      padding: 21px 24px; border-bottom: 1px solid var(--line);
+    }
+    .cost-row:last-child { border-bottom: 0; }
+    .cost-row.header { color: var(--muted); background: #ebe8df; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .09em; }
+    .stage { font-weight: 780; }
+    .stage small { display: block; color: var(--muted); font-weight: 520; }
+    .range { font-variant-numeric: tabular-nums; font-weight: 760; }
+
+    .summary-panel { padding: 28px; color: white; background: #1b2d26; border-color: transparent; }
+    .summary-panel h3 { margin: 0; font-size: 18px; }
+    .summary-total { margin: 30px 0 8px; font-size: clamp(52px, 7vw, 80px); line-height: 1; font-weight: 900; letter-spacing: -.065em; }
+    .summary-total span { color: var(--yellow); }
+    .summary-caption { color: #aec6ba; font-size: 14px; }
+    .bar { height: 12px; margin: 28px 0 10px; overflow: hidden; background: rgba(255,255,255,.12); border-radius: 99px; }
+    .bar > span { display: block; width: 72%; height: 100%; background: linear-gradient(90deg, var(--mint), var(--yellow), var(--orange)); border-radius: inherit; transition: width .25s ease; }
+    .bar-labels { display: flex; justify-content: space-between; color: #aec6ba; font-size: 12px; }
+    .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 28px; }
+    .summary-stat { padding: 15px; background: rgba(255,255,255,.08); border-radius: 14px; }
+    .summary-stat small { display: block; color: #aec6ba; }
+    .summary-stat strong { font-size: 20px; }
+
+    .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+    .metric { min-height: 210px; padding: 25px; position: relative; overflow: hidden; }
+    .metric::after { content: attr(data-index); position: absolute; right: 12px; bottom: -24px; color: rgba(18,63,49,.06); font-size: 110px; font-weight: 900; }
+    .metric-label { color: var(--muted); font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+    .metric-value { margin: 14px 0 7px; color: var(--green); font-size: 42px; font-weight: 900; letter-spacing: -.05em; }
+    .metric p { margin: 0; color: var(--muted); font-size: 14px; }
+
+    .api-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .api-card { padding: 30px; }
+    .api-top { display: flex; justify-content: space-between; gap: 20px; align-items: start; }
+    .api-name { margin: 0; font-size: 25px; letter-spacing: -.03em; }
+    .pill { padding: 5px 10px; color: var(--green); background: var(--mint); border-radius: 99px; font-size: 11px; font-weight: 850; }
+    .price-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 30px; }
+    .price-box { padding: 17px; background: #eeece4; border-radius: 14px; }
+    .price-box small { display: block; color: var(--muted); }
+    .price-box strong { font-size: 23px; }
+    .api-card p { margin: 20px 0 0; color: var(--muted); font-size: 14px; }
+
+    .formula {
+      margin-top: 18px; padding: 36px; color: white; background: var(--green-2); border-radius: var(--radius);
+      display: grid; grid-template-columns: .8fr 1.2fr; gap: 32px; align-items: center;
+    }
+    .formula h3 { margin: 0; font-size: 28px; }
+    .formula p { margin: 8px 0 0; color: #cde1d8; }
+    code { display: block; padding: 20px; overflow-x: auto; color: #21352c; background: var(--mint); border-radius: 14px; font-size: 15px; }
+
+    .callout {
+      display: grid; grid-template-columns: 64px 1fr; gap: 22px; align-items: start;
+      padding: 32px; margin-top: 18px; background: #f6dfd4; border: 1px solid #efbca6; border-radius: var(--radius);
+    }
+    .callout-icon { width: 54px; height: 54px; display: grid; place-items: center; color: white; background: var(--orange); border-radius: 16px; font-size: 25px; font-weight: 900; }
+    .callout h3 { margin: 0 0 7px; font-size: 22px; }
+    .callout p { margin: 0; color: #744634; }
+
+    .sources { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .source-list { margin: 0; padding: 25px 25px 25px 45px; }
+    .source-list li { margin: 8px 0; }
+
+    footer { display: flex; justify-content: space-between; gap: 30px; padding: 70px 0 38px; color: var(--muted); font-size: 13px; }
+
+    @media (max-width: 900px) {
+      nav { display: none; }
+      .hero { grid-template-columns: 1fr; padding: 50px 34px; }
+      .hero-budget { max-width: 500px; transform: none; }
+      .calculator, .formula { grid-template-columns: 1fr; }
+      .metric-grid { grid-template-columns: 1fr 1fr; }
+      .controls { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 620px) {
+      .shell { width: min(100% - 24px, 1180px); }
+      .hero { padding: 42px 22px; border-radius: 24px; }
+      .section-head { align-items: start; flex-direction: column; }
+      .cost-row { grid-template-columns: 1.2fr .8fr; }
+      .cost-row > :nth-child(2) { display: none; }
+      .metric-grid, .api-grid, .sources { grid-template-columns: 1fr; }
+      .callout { grid-template-columns: 1fr; }
+      footer { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="brand"><span class="brand-mark">VS</span> Video Skills</div>
+      <nav aria-label="页面导航">
+        <a href="#budget">预算</a>
+        <a href="#evidence">实测依据</a>
+        <a href="#api">双评审</a>
+        <a href="#sources">来源</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="page-title">
+        <div class="hero-copy">
+          <span class="eyebrow">Post-training budget · 2026-08</span>
+          <h1 id="page-title">训练与评测，<br>钱花在哪里？</h1>
+          <p>面向 Qwen3.5-9B 五 LoRA SFT、三轮 GRPO，以及 GPT‑5.4 + Gemini 3.1 Pro 双评审的可执行预算。GPU 全部按 H100 计价。</p>
+        </div>
+        <aside class="hero-budget" aria-label="建议预算">
+          <small>建议审批额度 · USD</small>
+          <div class="big-number">$1,300</div>
+          <div class="cap"><span>预算硬上限</span><span>$1,700</span></div>
+        </aside>
+      </section>
+
+      <section id="budget" aria-labelledby="budget-title">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow" style="color:var(--orange)">01 · Budget model</span>
+            <h2 id="budget-title">预算计算器</h2>
+          </div>
+          <p class="section-note">调整 H100 云厂商、GRPO 轮数和评测计费模式。区间保留吞吐波动、失败重跑及 judge 审计的不确定性。</p>
+        </div>
+
+        <div class="controls" aria-label="预算参数">
+          <div class="control">
+            <label for="provider">H100 单价</label>
+            <select id="provider">
+              <option value="2.99">RunPod SXM · $2.99/h</option>
+              <option value="2.89">RunPod PCIe · $2.89/h</option>
+              <option value="4.09">Lambda SXM · $4.09/h</option>
+            </select>
+          </div>
+          <div class="control">
+            <label for="rounds">GRPO 轮数</label>
+            <select id="rounds">
+              <option value="2">2 轮</option>
+              <option value="3" selected>3 轮</option>
+              <option value="4">4 轮</option>
+              <option value="5">5 轮</option>
+            </select>
+          </div>
+          <div class="control">
+            <label for="billing">Eval API</label>
+            <select id="billing">
+              <option value="batch" selected>Batch / Flex</option>
+              <option value="standard">Standard</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="calculator">
+          <div class="cost-panel" role="table" aria-label="预算分项">
+            <div class="cost-row header" role="row"><span>阶段</span><span>H100-hours</span><span>费用区间</span></div>
+            <div class="cost-row" role="row">
+              <span class="stage">五 LoRA SFT <small>含 baseline 与 gates</small></span>
+              <span class="range">8–12 h</span><span class="range" id="sftCost">—</span>
+            </div>
+            <div class="cost-row" role="row">
+              <span class="stage">GRPO <small id="grpoLabel">3 轮 × 512 rollouts</small></span>
+              <span class="range" id="grpoHours">50–70 h</span><span class="range" id="grpoCost">—</span>
+            </div>
+            <div class="cost-row" role="row">
+              <span class="stage">dev_tune Eval <small>1,313 questions</small></span>
+              <span class="range">41–50 h</span><span class="range" id="devCost">—</span>
+            </div>
+            <div class="cost-row" role="row">
+              <span class="stage">heldout Eval <small>3,995 questions</small></span>
+              <span class="range">125–145 h</span><span class="range" id="testCost">—</span>
+            </div>
+            <div class="cost-row" role="row">
+              <span class="stage">重跑与审计 <small>GPU + API 风险缓冲</small></span>
+              <span class="range">20–35 h</span><span class="range" id="bufferCost">—</span>
+            </div>
+          </div>
+
+          <aside class="summary-panel" aria-live="polite">
+            <h3>当前配置总预算</h3>
+            <div class="summary-total"><span id="totalLow">$—</span>–<span id="totalHigh">$—</span></div>
+            <div class="summary-caption">GPU 租赁 + GRPO API + GPT‑5.4/Gemini 双评审</div>
+            <div class="bar" aria-hidden="true"><span id="budgetBar"></span></div>
+            <div class="bar-labels"><span>$0</span><span>建议 $1,300</span><span>硬上限 $1,700</span></div>
+            <div class="summary-grid">
+              <div class="summary-stat"><small>H100 总量</small><strong id="totalHours">—</strong></div>
+              <div class="summary-stat"><small>GPU 费用</small><strong id="gpuTotal">—</strong></div>
+              <div class="summary-stat"><small>API 费用</small><strong id="apiTotal">—</strong></div>
+              <div class="summary-stat"><small>完整问题数</small><strong>5,308</strong></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="evidence" aria-labelledby="evidence-title">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow" style="color:var(--orange)">02 · Measured evidence</span>
+            <h2 id="evidence-title">从实测推预算</h2>
+          </div>
+          <p class="section-note">预算不是从 walltime 上限反推，而是以仓库已有的 Slurm 记录和训练报告为基线。</p>
+        </div>
+        <div class="metric-grid">
+          <article class="card metric" data-index="1"><span class="metric-label">SFT 成功作业</span><div class="metric-value">8.5 h</div><p>五个 LoRA、baseline、capped pilot 与完整 L1 的累计成功 GPU 时间。</p></article>
+          <article class="card metric" data-index="2"><span class="metric-label">GRPO 小样本</span><div class="metric-value">2.38 h</div><p>20 groups、74 条有效 rollout；含四个 collect shard 与一次训练。</p></article>
+          <article class="card metric" data-index="3"><span class="metric-label">正式单轮</span><div class="metric-value">≈16.5 h</div><p>按 64 groups × K=8，即 512 rollouts，从小样本线性外推。</p></article>
+          <article class="card metric" data-index="4"><span class="metric-label">Eval 总规模</span><div class="metric-value">5,308</div><p>dev_tune 1,313 + heldout_test 3,995 questions。</p></article>
+        </div>
+        <div class="formula">
+          <div><h3>GRPO 单轮换算</h3><p>API 延迟主导，因此换成 H100 并不会按算力比例缩短等待时间。</p></div>
+          <code>512 ÷ 74 × 2.38 GPU-h ≈ 16.5 H100-h / round</code>
+        </div>
+      </section>
+
+      <section id="api" aria-labelledby="api-title">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow" style="color:var(--orange)">03 · Dual evaluation</span>
+            <h2 id="api-title">GPT‑5.4 × Gemini</h2>
+          </div>
+          <p class="section-note">每道题由两个独立 evaluator 各评一次，以结构化短输出完成正确性、证据充分性与引用一致性判断。</p>
+        </div>
+        <div class="api-grid">
+          <article class="card api-card">
+            <div class="api-top"><div><span class="metric-label">Evaluator A</span><h3 class="api-name">GPT‑5.4</h3></div><span class="pill">OpenAI</span></div>
+            <div class="price-pair"><div class="price-box"><small>输入 / 1M tokens</small><strong>$2.50</strong></div><div class="price-box"><small>输出 / 1M tokens</small><strong>$15.00</strong></div></div>
+            <p>Batch/Flex 约为标准价格的一半。建议使用低 reasoning effort、JSON Schema 与严格输出上限。</p>
+          </article>
+          <article class="card api-card">
+            <div class="api-top"><div><span class="metric-label">Evaluator B</span><h3 class="api-name">Gemini 3.1 Pro</h3></div><span class="pill">Google</span></div>
+            <div class="price-pair"><div class="price-box"><small>输入 / 1M tokens</small><strong>$2.00</strong></div><div class="price-box"><small>输出 / 1M tokens</small><strong>$12.00</strong></div></div>
+            <p>按 ≤200K context 的标准价估算；Flex/Batch 约为 $1/$6。高于 200K 时需使用长上下文价格。</p>
+          </article>
+        </div>
+        <div class="callout">
+          <div class="callout-icon">!</div>
+          <div><h3>最大可优化项不是模型，而是 GPU 等待</h3><p>当前 API rollout 作业申请 GPU，但大部分时间在等待远端响应。完整 Eval 因而约占 167 H100-hours。若把 API orchestration 移到 CPU，GPU 仅负责本地 policy/reference 推理，整体预算可从约 $1,300 降至约 $500–800。</p></div>
+        </div>
+      </section>
+
+      <section id="sources" aria-labelledby="sources-title">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow" style="color:var(--orange)">04 · Assumptions & sources</span>
+            <h2 id="sources-title">口径与来源</h2>
+          </div>
+        </div>
+        <div class="sources">
+          <article class="card"><ul class="source-list">
+            <li>每道题每个 evaluator 输入 4k–8k tokens。</li>
+            <li>输出与 reasoning 合计 300–800 tokens。</li>
+            <li>评审输入为文本化 question、answer、evidence、timestamps 与 rollout trace。</li>
+            <li>不重复向 evaluator 发送完整原始视频。</li>
+          </ul></article>
+          <article class="card"><ul class="source-list">
+            <li><a href="https://www.runpod.io/pricing">RunPod H100 定价</a></li>
+            <li><a href="https://lambda.ai/instances">Lambda H100 定价</a></li>
+            <li><a href="https://developers.openai.com/api/docs/pricing">OpenAI GPT‑5.4 定价</a></li>
+            <li><a href="https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing">Google Gemini 定价</a></li>
+            <li><a href="../dataset_clip_wrapper/output/sft_cold_start/split_manifest_v1_summary.json">本地 split manifest 摘要</a></li>
+            <li><a href="../dataset_clip_wrapper/output/sft_training/five_lora_pipeline_20260725/">本地 SFT 实测报告</a></li>
+          </ul></article>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Video Skills · SFT + GRPO + Dual Eval</span>
+      <span>预算单位：USD · 页面更新：2026-08-01</span>
+    </footer>
+  </div>
+
+  <script>
+    (() => {
+      const provider = document.querySelector('#provider');
+      const rounds = document.querySelector('#rounds');
+      const billing = document.querySelector('#billing');
+      const money = value => '$' + Math.round(value).toLocaleString('en-US');
+      const range = (low, high) => `${money(low)}–${money(high)}`;
+
+      function update() {
+        const hourly = Number(provider.value);
+        const nRounds = Number(rounds.value);
+        const grpoLowH = 50 / 3 * nRounds;
+        const grpoHighH = 70 / 3 * nRounds;
+        const hoursLow = 8 + grpoLowH + 41 + 125 + 20;
+        const hoursHigh = 12 + grpoHighH + 50 + 145 + 35;
+
+        const gpuLow = hoursLow * hourly;
+        const gpuHigh = hoursHigh * hourly;
+        const grpoApiLow = 10 / 3 * nRounds;
+        const grpoApiHigh = 25 / 3 * nRounds;
+        const evalApi = billing.value === 'batch' ? [69, 153] : [138, 306];
+        const apiLow = grpoApiLow + evalApi[0] + 20;
+        const apiHigh = grpoApiHigh + evalApi[1] + 50;
+        const totalLow = gpuLow + apiLow;
+        const totalHigh = gpuHigh + apiHigh;
+
+        document.querySelector('#grpoLabel').textContent = `${nRounds} 轮 × 512 rollouts`;
+        document.querySelector('#grpoHours').textContent = `${Math.round(grpoLowH)}–${Math.round(grpoHighH)} h`;
+        document.querySelector('#sftCost').textContent = range(8 * hourly, 12 * hourly);
+        document.querySelector('#grpoCost').textContent = range(grpoLowH * hourly, grpoHighH * hourly);
+        document.querySelector('#devCost').textContent = range(41 * hourly, 50 * hourly);
+        document.querySelector('#testCost').textContent = range(125 * hourly, 145 * hourly);
+        document.querySelector('#bufferCost').textContent = range(20 * hourly, 35 * hourly);
+        document.querySelector('#totalLow').textContent = money(totalLow);
+        document.querySelector('#totalHigh').textContent = money(totalHigh);
+        document.querySelector('#totalHours').textContent = `${Math.round(hoursLow)}–${Math.round(hoursHigh)} h`;
+        document.querySelector('#gpuTotal').textContent = range(gpuLow, gpuHigh);
+        document.querySelector('#apiTotal').textContent = range(apiLow, apiHigh);
+        document.querySelector('#budgetBar').style.width = `${Math.min(100, totalHigh / 1700 * 100)}%`;
+      }
+
+      [provider, rounds, billing].forEach(el => el.addEventListener('change', update));
+      update();
+    })();
+  </script>
+</body>
+</html>

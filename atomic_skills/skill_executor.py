@@ -126,6 +126,31 @@ class SkillExecutor:
         evidence_text = self._gather_evidence_text(args, graph)
         prompt_kwargs = self._build_prompt_kwargs(skill_id, args, evidence_text)
         prompt = format_skill_prompt(skill_id, **prompt_kwargs)
+        support_policy = args.get("support_policy") if isinstance(args.get("support_policy"), dict) else {}
+        if skill_id == "verify_claim_support" and support_policy.get("allow_llm_claim_support_override"):
+            claim = args.get("claim", "")
+            claim_text = (
+                claim
+                if isinstance(claim, str)
+                else claim.get("claim_text") or claim.get("text") or str(claim)
+            )
+            question = args.get("question_text") or (
+                claim.get("question_text") if isinstance(claim, dict) else ""
+            )
+            options = args.get("options") or []
+            option_text = json.dumps(options, ensure_ascii=False) if options else "[]"
+            prompt = (
+                "This is a multiple-choice video social/causal inference task. Judge whether the "
+                "claim is the best-supported abductive interpretation of the visible evidence among "
+                "the provided answer choices, even when the relationship or cause is not literally "
+                "stated. Score relative multiple-choice support, not definitive real-world proof. "
+                "A score of 0.8 or higher is appropriate when concrete scene cues make this claim the "
+                "most natural listed choice; reject it when another listed choice fits better or the "
+                "evidence does not address the question target.\n"
+                f"Question: {question}\nOptions: {option_text}\nClaim: {claim_text}\nEvidence: {evidence_text}\n"
+                'Return JSON: {"supported":true/false,"score":0.0-1.0,'
+                '"target_aligned":true/false,"reasoning":"..."}'
+            )
 
         if not prompt:
             return self._execute_rule(skill_id, args=args, graph=graph)
@@ -438,6 +463,11 @@ class SkillExecutor:
     def _gather_evidence_text(self, args: dict[str, Any], graph: dict[str, Any] | None) -> str:
         """Collect evidence text from refs in args or graph."""
         refs = args.get("evidence_refs") or args.get("supporting_evidence") or args.get("context_evidence") or []
+        support = args.get("support_evidence")
+        if not refs and isinstance(support, dict):
+            refs = support.get("support_refs") or support.get("evidence_refs") or []
+        elif not refs and isinstance(support, list):
+            refs = support
         if isinstance(refs, str):
             refs = [refs]
         chain = args.get("evidence_chain")
@@ -484,7 +514,9 @@ class SkillExecutor:
         elif skill_id == "score_hypothesis_support":
             h = args.get("hypothesis", "")
             kwargs["hypothesis"] = h if isinstance(h, str) else ((h or {}).get("claim_text") if isinstance(h, dict) else str(h or ""))
-            kwargs["support"] = args.get("support_evidence", [])
+            # Pass grounded evidence text to the semantic scorer.  Reference IDs
+            # alone make implicit Video-Holmes relations indistinguishable.
+            kwargs["support"] = evidence_text or args.get("support_evidence", [])
             kwargs["counter"] = args.get("counterevidence", [])
         elif skill_id == "compare_hypotheses":
             kwargs["hypotheses"] = args.get("scored_hypotheses", [])
@@ -580,6 +612,7 @@ class SkillExecutor:
                 rule_target_score = float(rule_result.outputs.get("target_alignment_score", 0.0))
                 support_policy = args.get("support_policy") if isinstance(args.get("support_policy"), dict) else {}
                 allow_llm_alignment_override = bool(support_policy.get("allow_llm_target_alignment_override"))
+                allow_llm_claim_override = bool(support_policy.get("allow_llm_claim_support_override"))
                 llm_target_aligned = bool(response.get("target_aligned", ok))
                 override_min_score = float(support_policy.get("llm_alignment_override_min_score") or 0.75)
                 can_override_alignment = (
@@ -589,12 +622,19 @@ class SkillExecutor:
                     and score >= override_min_score
                     and refs
                 )
-                if not rule_result.ok and not can_override_alignment:
+                can_override_claim = (
+                    allow_llm_claim_override
+                    and ok
+                    and llm_target_aligned
+                    and score >= override_min_score
+                    and refs
+                )
+                if not rule_result.ok and not (can_override_alignment and can_override_claim):
                     ok = False
                     score = min(score, rule_score)
                 elif ok:
                     score = max(score, rule_score)
-                if rule_claim_score < 0.05:
+                if rule_claim_score < 0.05 and not can_override_claim:
                     ok = False
                 if rule_target_score < 0.05 and not can_override_alignment:
                     ok = False
@@ -642,7 +682,12 @@ class SkillExecutor:
             if rule_result is not None:
                 rule_scored = rule_result.outputs.get("scored_hypothesis") or {}
                 rule_support = float(rule_scored.get("support_score", 0.0))
-                if rule_support < 0.05:
+                evidence_text = self._gather_evidence_text(args, graph)
+                # A low lexical overlap is expected for implicit relationships
+                # (e.g. woman + child in a bedroom -> mother/daughter).  Only
+                # suppress the semantic score when the refs cannot be resolved
+                # to visible evidence at all.
+                if rule_support < 0.05 and not evidence_text:
                     support_score = min(support_score, 0.05)
                 else:
                     support_score = max(support_score, rule_support)
@@ -657,14 +702,32 @@ class SkillExecutor:
                     "support_refs": support_refs,
                     "counterevidence_refs": counter_refs,
                     "backend": "llm",
+                    "llm_reasoning": response.get("reasoning", ""),
                 },
                 "backend": "llm",
-            }, support_refs + counter_refs, confidence=support_score, ok=support_score > 0)
+            }, support_refs + counter_refs, confidence=support_score, ok=support_score > 0,
+                failure_code=None if support_score > 0 else "no_hypothesis_support")
 
         elif skill_id == "compare_hypotheses":
             best_label = str(response.get("best_label") or "").strip()
             margin = float(response.get("margin", 0.0))
             scored = list(args.get("scored_hypotheses") or [])
+            known_labels = {
+                str(item.get("option_label") or (item.get("hypothesis") or {}).get("option_label") or "").strip()
+                for item in scored
+                if isinstance(item, dict)
+            }
+            if best_label not in known_labels:
+                folded = best_label.casefold()
+                for label in sorted(known_labels, key=len, reverse=True):
+                    if label and (
+                        folded == label.casefold()
+                        or folded.startswith(label.casefold() + " ")
+                        or folded.startswith(label.casefold() + ":")
+                        or folded.startswith(label.casefold() + "-")
+                    ):
+                        best_label = label
+                        break
             policy = args.get("decision_policy") if isinstance(args.get("decision_policy"), dict) else {}
             # If scored options are near-tied, rotate with explore_seed instead of
             # letting a single LLM label collapse all K samples.
@@ -760,6 +823,19 @@ class SkillExecutor:
             }
             ordered: list[dict[str, Any]] = []
             for label in ranked:
+                if label not in by_label:
+                    folded = label.casefold()
+                    label = next(
+                        (
+                            known
+                            for known in by_label
+                            if folded == known.casefold()
+                            or folded.startswith(known.casefold() + " ")
+                            or folded.startswith(known.casefold() + ":")
+                            or folded.startswith(known.casefold() + "-")
+                        ),
+                        label,
+                    )
                 if label in by_label:
                     hyp = dict(by_label.pop(label))
                     if label in priors:

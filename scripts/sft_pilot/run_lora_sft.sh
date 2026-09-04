@@ -47,6 +47,10 @@ common=(
   --seed 42
 )
 
+if [[ -n "${INIT_ADAPTER:-}" ]]; then
+  common+=(--init-adapter "${INIT_ADAPTER}")
+fi
+
 cd "${REPO_ROOT}"
 # L1/L2 tool JSON can exceed 384 tokens; keep headroom for complete objects.
 GEN_MAX_NEW_TOKENS="${GEN_MAX_NEW_TOKENS:-2048}"
@@ -85,7 +89,8 @@ elif [[ "${STAGE}" == "pilot" ]]; then
     MAX_EVAL_SAMPLES="${MAX_EVAL_SAMPLES:-0}"
   fi
   GRAD_ACCUM="${GRAD_ACCUM:-4}"
-  echo "PILOT_CFG specialist=${SPECIALIST:-joint} epochs=${EPOCHS} max_train_samples=${MAX_TRAIN_SAMPLES} max_eval_samples=${MAX_EVAL_SAMPLES} grad_accum=${GRAD_ACCUM} gen_examples=${GEN_EXAMPLES} l1_full=${L1_FULL:-0}"
+  LEARNING_RATE="${LEARNING_RATE:-1e-4}"
+  echo "PILOT_CFG specialist=${SPECIALIST:-joint} epochs=${EPOCHS} max_train_samples=${MAX_TRAIN_SAMPLES} max_eval_samples=${MAX_EVAL_SAMPLES} grad_accum=${GRAD_ACCUM} learning_rate=${LEARNING_RATE} gen_examples=${GEN_EXAMPLES} l1_full=${L1_FULL:-0}"
   # Frequent checkpoints help scavenger A100/H100 requeue.
   exec "${VENV_ROOT}/bin/python" -m dataset_clip_wrapper.training.train_lora_sft \
     "${common[@]}" \
@@ -94,7 +99,7 @@ elif [[ "${STAGE}" == "pilot" ]]; then
     --max-train-samples "${MAX_TRAIN_SAMPLES}" \
     --max-eval-samples "${MAX_EVAL_SAMPLES}" \
     --gradient-accumulation-steps "${GRAD_ACCUM}" \
-    --learning-rate 1e-4 \
+    --learning-rate "${LEARNING_RATE}" \
     --save-steps 10 \
     --generation-examples "${GEN_EXAMPLES}" \
     --generation-max-new-tokens "${GEN_MAX_NEW_TOKENS}" \

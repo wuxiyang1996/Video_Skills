@@ -112,3 +112,20 @@ def compact_visibility(payload: Any) -> Any:
     if isinstance(payload, list):
         return [compact_visibility(value) for value in payload]
     return payload
+
+
+def decision_position(true_ids: list[int], false_ids: list[int]) -> tuple[int, int, int]:
+    """Return (prefix_length, true_token, false_token) for the single decision token.
+
+    The ``true``/``false`` relevance completions share a prefix and then diverge
+    at the boolean literal.  Scoring there, rather than differencing two whole
+    sequence log-likelihoods, avoids catastrophic cancellation between two large
+    nearly-equal sums whose per-token logits are bf16-quantised.
+    """
+    limit = min(len(true_ids), len(false_ids))
+    prefix = 0
+    while prefix < limit and true_ids[prefix] == false_ids[prefix]:
+        prefix += 1
+    if prefix == 0 or prefix >= limit:
+        raise ValueError("true/false completions do not diverge at a single interior token")
+    return prefix, true_ids[prefix], false_ids[prefix]

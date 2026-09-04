@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Video Skills · 训练进度简报</title>
+  <style>
+    :root {
+      --ink: #17201d;
+      --muted: #66716c;
+      --paper: #f4f1e8;
+      --card: rgba(255,255,255,.72);
+      --line: rgba(23,32,29,.13);
+      --green: #1e6b50;
+      --lime: #b9d875;
+      --orange: #e2703a;
+      --yellow: #edc95c;
+      --blue: #426f9e;
+      --shadow: 0 18px 60px rgba(36, 45, 39, .09);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 92% 3%, rgba(185,216,117,.32), transparent 26rem),
+        radial-gradient(circle at 4% 32%, rgba(226,112,58,.13), transparent 24rem),
+        var(--paper);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+    body::before {
+      content: "";
+      position: fixed; inset: 0; pointer-events: none; opacity: .24;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.12'/%3E%3C/svg%3E");
+    }
+    a { color: inherit; }
+    .wrap { width: min(1180px, calc(100% - 36px)); margin: auto; position: relative; }
+    nav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 22px 0; border-bottom: 1px solid var(--line); font-size: 13px;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: .02em; }
+    .brand i { width: 11px; height: 11px; background: var(--orange); border-radius: 50%; box-shadow: 17px 0 var(--green); }
+    .navlinks { display: flex; gap: 24px; color: var(--muted); }
+    .navlinks a { text-decoration: none; }
+    header { padding: 72px 0 46px; display: grid; grid-template-columns: 1.25fr .75fr; gap: 52px; align-items: end; }
+    .eyebrow { color: var(--green); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .16em; }
+    h1 { font-family: Georgia, "Noto Serif SC", serif; font-size: clamp(48px, 8vw, 88px); line-height: .94; letter-spacing: -.055em; margin: 14px 0 25px; font-weight: 500; }
+    .lede { font-size: 18px; color: #46514c; max-width: 760px; }
+    .asof { border-left: 1px solid var(--line); padding-left: 30px; color: var(--muted); font-size: 13px; }
+    .asof strong { display: block; color: var(--ink); font: 400 34px/1.1 Georgia, serif; margin: 8px 0 12px; }
+    .status-line { display: flex; gap: 8px; align-items: center; color: var(--green); font-weight: 700; }
+    .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 5px rgba(30,107,80,.12); }
+    .hero-grid { display: grid; grid-template-columns: 1.2fr repeat(3, 1fr); gap: 14px; margin-bottom: 72px; }
+    .metric { background: var(--card); border: 1px solid rgba(255,255,255,.85); border-radius: 18px; padding: 24px; box-shadow: var(--shadow); min-height: 170px; backdrop-filter: blur(8px); }
+    .metric.primary { background: var(--green); color: white; }
+    .metric .label { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .1em; opacity: .68; }
+    .metric .num { display: block; font: 500 48px/1 Georgia, serif; margin: 20px 0 10px; letter-spacing: -.04em; }
+    .metric .note { font-size: 13px; opacity: .75; }
+    section { padding: 68px 0; border-top: 1px solid var(--line); }
+    .section-head { display: grid; grid-template-columns: 1fr 1.5fr; gap: 40px; margin-bottom: 36px; }
+    h2 { font: 500 clamp(34px, 5vw, 54px)/1 Georgia, "Noto Serif SC", serif; letter-spacing: -.035em; margin: 0; }
+    .section-head p { margin: 4px 0 0; color: var(--muted); max-width: 660px; }
+    .callout { background: #fff8e5; border: 1px solid rgba(226,112,58,.22); border-left: 5px solid var(--orange); padding: 20px 22px; border-radius: 12px; margin: 22px 0; }
+    .callout strong { color: #a14723; }
+    .progress-row { display: grid; grid-template-columns: 150px 1fr 100px; gap: 18px; align-items: center; margin: 18px 0; }
+    .progress-row .name { font-weight: 750; }
+    .track { height: 11px; border-radius: 20px; background: rgba(23,32,29,.08); overflow: hidden; }
+    .fill { height: 100%; border-radius: inherit; background: var(--green); }
+    .fill.warn { background: var(--orange); }
+    .progress-row small { color: var(--muted); text-align: right; }
+    .phase-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; }
+    .phase { padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.4); position: relative; }
+    .phase::before { content: ""; display: block; width: 28px; height: 5px; border-radius: 8px; background: var(--green); margin-bottom: 18px; }
+    .phase.active::before { background: var(--orange); }
+    .phase.future::before { background: #aab1ad; }
+    .phase b { display: block; margin-bottom: 7px; }
+    .phase p { margin: 0; color: var(--muted); font-size: 13px; }
+    .table-wrap { overflow-x: auto; border-radius: 17px; box-shadow: var(--shadow); }
+    table { width: 100%; border-collapse: collapse; background: rgba(255,255,255,.72); min-width: 760px; }
+    th, td { padding: 16px 18px; text-align: left; border-bottom: 1px solid var(--line); font-size: 14px; }
+    th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .09em; background: rgba(23,32,29,.035); }
+    tbody tr:last-child td { border-bottom: 0; }
+    td:first-child { font-weight: 750; }
+    .pill { display: inline-flex; align-items: center; padding: 4px 9px; border-radius: 30px; font-size: 11px; font-weight: 800; background: rgba(30,107,80,.1); color: var(--green); }
+    .pill.warn { background: rgba(226,112,58,.11); color: #aa4c24; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .panel { padding: 27px; border: 1px solid var(--line); border-radius: 18px; background: rgba(255,255,255,.48); }
+    .panel h3 { margin: 0 0 16px; font-size: 17px; }
+    .panel p { color: var(--muted); font-size: 14px; }
+    .big-inline { font: 500 38px Georgia, serif; color: var(--green); }
+    .risk-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .risk { border-top: 4px solid var(--orange); padding: 20px 2px; }
+    .risk:nth-child(2) { border-color: var(--yellow); }
+    .risk:nth-child(3) { border-color: var(--blue); }
+    .risk b { display: block; margin-bottom: 8px; }
+    .risk p { margin: 0; color: var(--muted); font-size: 13px; }
+    .evidence { margin-top: 26px; font-size: 12px; color: var(--muted); }
+    .evidence details { border-bottom: 1px solid var(--line); padding: 12px 0; }
+    .evidence summary { cursor: pointer; color: var(--ink); font-weight: 700; }
+    .evidence code { font-size: 11px; overflow-wrap: anywhere; }
+    footer { padding: 34px 0 52px; display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
+    @media (max-width: 900px) {
+      header, .section-head { grid-template-columns: 1fr; }
+      .asof { border-left: 0; border-top: 1px solid var(--line); padding: 20px 0 0; }
+      .hero-grid { grid-template-columns: 1fr 1fr; }
+      .phase-grid { grid-template-columns: 1fr 1fr; }
+      .risk-list { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 620px) {
+      .navlinks { display: none; }
+      header { padding-top: 48px; }
+      .hero-grid, .two-col, .phase-grid { grid-template-columns: 1fr; }
+      .progress-row { grid-template-columns: 100px 1fr; }
+      .progress-row small { grid-column: 2; text-align: left; margin-top: -12px; }
+      footer { flex-direction: column; gap: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav>
+      <div class="brand"><i></i> VIDEO SKILLS / STATUS</div>
+      <div class="navlinks"><a href="#progress">进度</a><a href="#data">数据</a><a href="#sft">SFT</a><a href="#next">判断</a></div>
+    </nav>
+
+    <header>
+      <div>
+        <div class="eyebrow">Research & engineering brief · 中文版</div>
+        <h1>视频技能<br>训练进度</h1>
+        <div class="lede">L1 证据图、L2 推理与修复、Verifier、Motif 已形成可训练的五专家系统。SFT 冷启动闭环已经跑通；后训练完成小规模可行性验证，但距离可信的端到端收益结论仍有一段路。</div>
+      </div>
+      <div class="asof">
+        最新可核验产物
+        <strong>2026.07.26</strong>
+        <div class="status-line"><span class="pulse"></span>SFT 完成 · Post-training 验证中</div>
+        <div style="margin-top:12px">报告生成：2026.08.09<br>依据仓库本地日志与 JSON 产物</div>
+      </div>
+    </header>
+
+    <div class="hero-grid">
+      <div class="metric primary"><div class="label">核心结论</div><span class="num">5 / 5</span><div class="note">五个专家 LoRA pilot 均通过 SFT 结构与动作门禁</div></div>
+      <div class="metric"><div class="label">训练样本</div><span class="num">8,223</span><div class="note">最终 five-LoRA 包；另有 940 条 dev</div></div>
+      <div class="metric"><div class="label">数据底座</div><span class="num">1,722</span><div class="note">视频，覆盖 15,517 个问题</div></div>
+      <div class="metric"><div class="label">完整 L1 SFT</div><span class="num">7,648</span><div class="note">1 epoch / 1,912 steps / 已产出 adapter</div></div>
+    </div>
+
+    <section id="progress">
+      <div class="section-head"><h2>现在走到哪了</h2><p>工程主链路已跨过“能否训练”的门槛，进入“训练是否真正改善任务表现”的验证阶段。代码与产物最新活动停在 7 月 26 日：SFT 冻结底座可用，GRPO 与 OPD 都已有小规模跑通记录。</p></div>
+      <div class="phase-grid">
+        <div class="phase"><b>01 · 数据与图协议</b><p>完成 L1/L2 图、修复协议、split manifest 和多类 SFT exporter。</p></div>
+        <div class="phase"><b>02 · 五专家 SFT</b><p>Qwen3.5-9B + LoRA rank 16；五个 specialist pilot 门禁全部通过。</p></div>
+        <div class="phase active"><b>03 · OPD / GRPO</b><p>GRPO 20 组可训练；OPD 排序教师 62 条校准通过，仍属小样本。</p></div>
+        <div class="phase future"><b>04 · 端到端定论</b><p>尚缺 held-out 大样本、SFT 前后任务指标，以及 post-training 增益对照。</p></div>
+      </div>
+      <div class="callout"><strong>正确解读：</strong> “SFT gates passed”证明 adapter 接线、JSON 协议和动作学习在小样本生成检查中成立；它不等同于视频问答 benchmark 已获得显著提升。</div>
+    </section>
+
+    <section id="data">
+      <div class="section-head"><h2>数据数量</h2><p>最终训练包按视频级 manifest 划分，避免同一视频跨角色泄漏。训练数据高度集中在 L1，这是证据图节点/边构造天然产生大量 stepwise action 的结果。</p></div>
+      <div class="progress-row"><div class="name">L1 builder</div><div class="track"><div class="fill" style="width:100%"></div></div><small>7,648 train</small></div>
+      <div class="progress-row"><div class="name">L2 retrieval</div><div class="track"><div class="fill" style="width:3.79%;min-width:10px"></div></div><small>290 train</small></div>
+      <div class="progress-row"><div class="name">Motif</div><div class="track"><div class="fill" style="width:2.63%;min-width:10px"></div></div><small>201 train</small></div>
+      <div class="progress-row"><div class="name">Repair</div><div class="track"><div class="fill warn" style="width:.75%;min-width:8px"></div></div><small>57 train</small></div>
+      <div class="progress-row"><div class="name">Verifier</div><div class="track"><div class="fill warn" style="width:.36%;min-width:8px"></div></div><small>27 train</small></div>
+      <div class="table-wrap" style="margin-top:36px">
+        <table>
+          <thead><tr><th>专家</th><th>Train</th><th>Dev</th><th>总计</th><th>动作族</th><th>Train 主要来源</th><th>最大类别占比</th></tr></thead>
+          <tbody>
+            <tr><td>L1</td><td>7,648</td><td>776</td><td>8,424</td><td>6</td><td>CG 2,500 / VH 5,148</td><td>49.8%</td></tr>
+            <tr><td>L2</td><td>290</td><td>110</td><td>400</td><td>7</td><td>CG 226 / VH 64</td><td>31.7%</td></tr>
+            <tr><td>Repair</td><td>57</td><td>12</td><td>69</td><td>2</td><td>CG 33 / VH 24</td><td><span class="pill warn">98.2%</span></td></tr>
+            <tr><td>Verifier</td><td>27</td><td>26</td><td>53</td><td>2</td><td>CG 27</td><td><span class="pill warn">88.9%</span></td></tr>
+            <tr><td>Motif</td><td>201</td><td>16</td><td>217</td><td>5</td><td>CG 63 / VH 58 / unknown 80</td><td>44.3%</td></tr>
+            <tr><td>合计</td><td>8,223</td><td>940</td><td>9,163</td><td>—</td><td>CG-Bench + Video-Holmes</td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="two-col" style="margin-top:18px">
+        <div class="panel"><h3>视频级角色划分</h3><p><span class="big-inline">1,722</span> 个视频：SFT seed 609、OPD 243、GRPO 247、dev 138、held-out 485。总问题数 15,517。</p></div>
+        <div class="panel"><h3>早期快照 → 最终专家包</h3><p>7 月 13 日快照曾导出 7,874 条 chat；最终 v4 five-LoRA 包重新按 manifest、专家职责和质量门禁组织为 9,163 条 train+dev，不应把两者相加。</p></div>
+      </div>
+    </section>
+
+    <section id="sft">
+      <div class="section-head"><h2>SFT 结果</h2><p>主结果来自 2026-07-25 五专家 pipeline；模型为 Qwen/Qwen3.5-9B，LoRA rank 16，assistant-only loss。L1 完整训练产物在自动提交后独立完成。</p></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>专家</th><th>训练行 / epoch</th><th>Steps</th><th>末步 loss</th><th>JSON valid</th><th>Action match</th><th>生成检查 n</th><th>判断</th></tr></thead>
+          <tbody>
+            <tr><td>L1（完整）</td><td>7,648 / 1</td><td>1,912</td><td>0.0527</td><td>100%</td><td>100%</td><td>6</td><td><span class="pill">完成</span></td></tr>
+            <tr><td>L2</td><td>290 / 4</td><td>219</td><td>0.000043</td><td>100%</td><td>83.3%</td><td>6</td><td><span class="pill">通过</span></td></tr>
+            <tr><td>Repair</td><td>57 / 4</td><td>45</td><td>0.000603</td><td>100%</td><td>100%</td><td>1</td><td><span class="pill">通过*</span></td></tr>
+            <tr><td>Verifier</td><td>27 / 4</td><td>21</td><td>0.1721</td><td>100%</td><td>100%</td><td>1</td><td><span class="pill">通过*</span></td></tr>
+            <tr><td>Motif</td><td>201 / 4</td><td>153</td><td>0.000021</td><td>100%</td><td>100%</td><td>1</td><td><span class="pill">通过*</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout"><strong>* 极薄评估：</strong> Repair / Verifier / Motif 各只做了 1 个生成样本，L1 / L2 各 6 个。100% 只能视为 smoke/warm-up 通过，不能给出统计置信度。完整 L1 的 dev loss 为 0.0972，耗时约 5.62 小时，峰值显存 21.2 GB。</div>
+      <div class="two-col">
+        <div class="panel"><h3>相对 baseline</h3><p>L1 与 L2 pilot 的 action match 均为 83.3%，高于 dev 多数类基线 33.9% / 32.7%。Base model 对应 action match 为 0% / 14.3%。方向正确，但生成样本只有 6 条。</p></div>
+        <div class="panel"><h3>早期统一 LoRA 对照</h3><p>7 月 21 日统一控制器 pilot（173 train / 27 dev）JSON valid 只有 75%，eval loss 0.324。之后拆成五专家 LoRA，协议生成率在门禁样本上升到 100%，说明职责拆分至少改善了格式与动作可学性。</p></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head"><h2>数据质量</h2><p>格式与隔离质量较强，语义覆盖和类别平衡仍是主要短板。下面把“已经被自动门禁验证的”与“仍需实验回答的”明确分开。</p></div>
+      <div class="two-col">
+        <div class="panel"><h3>已通过的硬质量项</h3><p>全部 five-LoRA train/dev 行：assistant JSON parse 100%、chat role 合法 100%、prompt forbidden key 命中 0、eval-only 混入 train 为 0。最终包 gate 整体 passed。</p></div>
+        <div class="panel"><h3>数据隔离</h3><p>manifest 以视频为单位分配角色；held-out 有 485 个视频。Video-Holmes test 全部保留为 held-out，训练侧只使用其 train 视频。当前报告未发现 unknown video（Motif 的 80 行为来源标签 unknown，需继续治理）。</p></div>
+      </div>
+      <div class="risk-list" style="margin-top:34px">
+        <div class="risk"><b>长尾专家样本过少</b><p>Repair 57、Verifier 27 条 train，远低于 L1；容易记忆模板，无法覆盖真实失败分布。</p></div>
+        <div class="risk"><b>类别失衡明显</b><p>Repair 主类占 98.2%，Verifier 主类占 88.9%；package gate 已要求训练时 family-weighted sampling。</p></div>
+        <div class="risk"><b>质量指标偏结构化</b><p>现有 gate 重 JSON、动作名、泄漏与格式；缺少大规模语义正确率、最终答案正确率与跨数据集泛化。</p></div>
+      </div>
+    </section>
+
+    <section id="next">
+      <div class="section-head"><h2>后训练与下一步</h2><p>后训练链路已经能跑，但目前规模只足以证明机制可用。最重要的下一步不是继续看 train loss，而是在冻结的 held-out 视频上建立 SFT → OPD/GRPO 的增量收益曲线。</p></div>
+      <div class="two-col">
+        <div class="panel"><h3>GRPO 小规模验证</h3><p><span class="big-inline">20</span> groups / 74 samples；label-diverse 85%，空答案 0，全部 20 组具有非平凡 advantage，mean terminal success 16.2%，采集质量门禁全过，已产出 L2+Repair adapter。</p></div>
+        <div class="panel"><h3>OPD 教师校准</h3><p><span class="big-inline">62</span> 条 ranking-Borda distill rows；顺序打乱后 top-1 一致率 100%，mean L1 0.077，校准门禁通过。此前 16 条 soft teacher 版本 top-1 仅 12.5%，已被排序/Borda 方案替代。</p></div>
+      </div>
+      <div class="callout"><strong>Motif 现状：</strong> 20 对 on/off QA 中，正确率均为 30%，delta correct = 0；开启 Motif 后 accepted-strong 从 55% 到 60%，但没有转化成答案正确率提升。这是“调用链可用、效用尚未证明”的明确信号。</div>
+      <div class="risk-list">
+        <div class="risk"><b>P0 · 建立可信评测</b><p>在 held-out 485 视频上报告正确率、accepted-strong、abstain、repair conversion，并给置信区间。</p></div>
+        <div class="risk"><b>P1 · 扩充弱专家数据</b><p>重点增加 Repair / Verifier 的困难负例与少数动作族；治理 Motif 80 条 unknown 来源。</p></div>
+        <div class="risk"><b>P2 · 校验训练数值</b><p>GRPO 报告中的 mean KL 为负值（-0.223），与标准 KL 非负性质冲突；在扩大训练前应核对日志定义/实现。</p></div>
+      </div>
+
+      <div class="evidence">
+        <details open><summary>本页核心证据文件</summary>
+          <p><code>output/sft_training/five_lora_pipeline_20260725/package_gates_report.json</code><br>
+          <code>output/sft_training/five_lora_pipeline_20260725/gates/lora_sft_gates_report.json</code><br>
+          <code>output/sft_training/five_lora_pipeline_20260725/verify/sft_pilot_verify_report.json</code><br>
+          <code>output/sft_training/five_lora_pipeline_20260725/pilot_l1_full/l1/pilot/training_report.json</code></p>
+        </details>
+        <details><summary>数据与后训练证据</summary>
+          <p><code>output/sft_cold_start/split_manifest_v1_summary.json</code><br>
+          <code>output/grpo_a6000_shard_20260726_040030/collect/collect_summary.json</code><br>
+          <code>output/grpo_a6000_shard_20260726_040030/train_l2_repair/grpo_train_gpu.json</code><br>
+          <code>output/opd_ranking_calib_20260726_051547/collect_summary.json</code><br>
+          <code>output/motif_paired_qa_p0_20260725/paired_qa_report.json</code></p>
+        </details>
+      </div>
+    </section>
+
+    <footer><span>Video Skills · Internal Research Brief</span><span>数据截至本地最新产物 2026-07-26</span></footer>
+  </div>
+</body>
+</html>

@@ -113,6 +113,25 @@ Use one entity row per visible instance. State and event indices refer to the
 zero-based entity_mentions array.
 """
 
+MINIMAL_CLIP_SCHEMA_PROMPT = """Return one valid JSON object under 700 tokens.
+Use only visible or supplied subtitle evidence. Never add explanation outside JSON.
+Use exactly these keys and at most two short items in each list:
+{
+  "scene_description": "one grounded sentence",
+  "observable_facts": [{"text": "short fact", "modality": "visual"}],
+  "dialogue_spans": [],
+  "entity_mentions": [{"surface_form": "person or object", "entity_type": "person|object|place|other", "attributes": {}}],
+  "state_assertions": [],
+  "salient_objects": [],
+  "place": {"description": "short setting", "searchable_phrases": []},
+  "events": [],
+  "visual_social_cues": [],
+  "cross_clip_cues": [],
+  "searchable_phrases": ["short phrase"],
+  "uncertainty": "short note"
+}
+"""
+
 
 def _clip_schema_response_schema() -> dict[str, Any]:
     """OpenRouter response schema for clip perception records."""
@@ -398,10 +417,36 @@ class QwenClipSchemaProducer:
         else:
             step = max(clip.end_s - clip.start_s, 0.1) / max(count - 1, 1)
             sample_times = [clip.start_s + i * step for i in range(count)]
+        try:
+            fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        except (AttributeError, TypeError, ValueError):
+            fps = 0.0
+            frame_count = 0
+        frame_period_s = 1.0 / fps if fps > 0.0 else 1.0 / 30.0
+        last_frame_s = (frame_count - 1) / fps if fps > 0.0 and frame_count > 0 else None
         for t in sample_times:
-            cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000.0)
-            ok, frame = cap.read()
-            if not ok:
+            # OpenCV commonly fails when a span endpoint is exactly the video
+            # duration.  Preserve the requested sampling grid when it works,
+            # but retry the nearest preceding decodable frame so an anchor
+            # repass requesting six frames does not silently return five.
+            safe_end_s = max(clip.start_s, clip.end_s - frame_period_s)
+            if last_frame_s is not None:
+                safe_end_s = min(safe_end_s, last_frame_s)
+            candidates = [t, min(t, safe_end_s), max(clip.start_s, t - frame_period_s)]
+            frame = None
+            tried: set[int] = set()
+            for candidate_s in candidates:
+                key = round(candidate_s * 1_000_000)
+                if key in tried:
+                    continue
+                tried.add(key)
+                cap.set(cv2.CAP_PROP_POS_MSEC, max(candidate_s, 0.0) * 1000.0)
+                ok, candidate_frame = cap.read()
+                if ok:
+                    frame = candidate_frame
+                    break
+            if frame is None:
                 continue
             ok, buf = cv2.imencode(".jpg", frame)
             if not ok:
@@ -446,11 +491,13 @@ class QwenClipSchemaProducer:
 
         user_content = _content(CLIP_SCHEMA_PROMPT)
         compact_content = _content(COMPACT_CLIP_SCHEMA_PROMPT)
+        minimal_content = _content(MINIMAL_CLIP_SCHEMA_PROMPT)
         last_error: Exception | None = None
         attempts = (
             ("full", user_content, _clip_schema_response_schema()),
             ("compact_retry", compact_content, _clip_schema_response_schema()),
             ("compact_json_object_retry", compact_content, None),
+            ("minimal_json_object_retry", minimal_content, None),
         )
         for attempt_index, (attempt, content, response_format) in enumerate(attempts):
             try:
@@ -497,7 +544,7 @@ class QwenClipSchemaProducer:
                 "llm_usage": {
                     **(self.client.last_response_metadata or {}),
                     "attempt": "failed",
-                    "compact_retry_count": 2,
+                    "compact_retry_count": len(attempts) - 1,
                     "sampled_frame_count": len(sampled_frames),
                 },
             }

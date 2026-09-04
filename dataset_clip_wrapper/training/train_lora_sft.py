@@ -231,11 +231,66 @@ def _action_signature(payload: dict[str, Any] | None) -> tuple[str, str]:
     return str(payload.get("tool_name") or nested.get("action_type") or ""), str(payload.get("round_type") or "")
 
 
+def _retrieval_argument_match(payload: dict[str, Any] | None, gold: dict[str, Any] | None) -> bool | None:
+    """Return index-set correctness for retrieval actions, not just tool-name correctness."""
+    if not payload or not gold:
+        return False
+    tool_name = str(gold.get("tool_name") or "")
+    argument_key = {
+        "select_coarse_clips": "selected_coarse_indices",
+        "choose_better_coarse_candidate": "coarse_index",
+        "choose_best_coarse_candidate": "coarse_index",
+        "select_next_coarse_clip": "coarse_index",
+    }.get(tool_name)
+    if argument_key is None:
+        return None
+    predicted_arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
+    gold_arguments = gold.get("arguments") if isinstance(gold.get("arguments"), dict) else {}
+    predicted, expected = predicted_arguments.get(argument_key), gold_arguments.get(argument_key)
+    if argument_key == "selected_coarse_indices":
+        try:
+            return {int(value) for value in predicted or []} == {int(value) for value in expected or []}
+        except (TypeError, ValueError):
+            return False
+    try:
+        return int(predicted) == int(expected)
+    except (TypeError, ValueError):
+        return False
+
+
 def _assistant_text(row: dict[str, Any]) -> str:
     for message in row.get("messages") or []:
         if isinstance(message, dict) and message.get("role") == "assistant":
             return str(message.get("content") or "")
     return ""
+
+
+def _select_generation_rows(rows: list[dict[str, Any]], max_examples: int) -> list[dict[str, Any]]:
+    """Deterministically round-robin task families instead of testing one easy row."""
+    by_controller: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        by_controller[_row_task(row)].append(row)
+    for controller_rows in by_controller.values():
+        controller_rows.sort(key=lambda row: (
+            not bool((row.get("metadata") or {}).get("is_core")),
+            hashlib.sha256(str(row.get("transition_id") or row.get("demo_id") or "").encode()).hexdigest(),
+        ))
+    selected: list[dict[str, Any]] = []
+    controllers = sorted(by_controller)
+    depth = 0
+    while len(selected) < max_examples:
+        added = False
+        for controller in controllers:
+            candidates = by_controller[controller]
+            if depth < len(candidates):
+                selected.append(candidates[depth])
+                added = True
+                if len(selected) >= max_examples:
+                    break
+        if not added:
+            break
+        depth += 1
+    return selected
 
 
 def _json_complete_stopping_criteria(tokenizer: Any, prompt_len: int):
@@ -264,15 +319,7 @@ def _generation_check(
 ) -> dict[str, Any]:
     import torch
 
-    # Prefer shortest *assistant* gold JSON per controller (not shortest prompt).
-    shortest_by_controller: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        controller = _row_task(row)
-        asst_len = len(_assistant_text(row))
-        prev = shortest_by_controller.get(controller)
-        if prev is None or asst_len < len(_assistant_text(prev)):
-            shortest_by_controller[controller] = row
-    selected = sorted(shortest_by_controller.values(), key=lambda row: len(_assistant_text(row)))[:max_examples]
+    selected = _select_generation_rows(rows, max_examples)
     results = []
     model.eval()
     model.config.use_cache = True
@@ -310,23 +357,29 @@ def _generation_check(
             payload = _extract_json_object(completion)
             gold = _extract_json_object(gold_text)
             action_match = bool(payload is not None and _action_signature(payload) == _action_signature(gold))
+            retrieval_argument_match = _retrieval_argument_match(payload, gold)
             results.append({
                 "record_id": row.get("transition_id") or row.get("demo_id"),
                 "controller": _row_task(row),
                 "json_valid": payload is not None,
                 "action_match": action_match,
+                "retrieval_argument_match": retrieval_argument_match,
                 "exact_match": payload == gold,
                 "max_new_tokens": example_max_new,
                 "completion": completion,
             })
     valid = sum(result["json_valid"] for result in results)
     action_valid = sum(result["action_match"] for result in results)
+    retrieval_results = [result for result in results if result["retrieval_argument_match"] is not None]
+    retrieval_valid = sum(bool(result["retrieval_argument_match"]) for result in retrieval_results)
     return {
         "examples": len(results),
         "json_valid": valid,
         "json_valid_rate": valid / max(1, len(results)),
         "action_match": action_valid,
         "action_match_rate": action_valid / max(1, len(results)),
+        "retrieval_argument_examples": len(retrieval_results),
+        "retrieval_argument_match_rate": retrieval_valid / max(1, len(retrieval_results)),
         "results": results,
     }
 
@@ -337,6 +390,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--train-jsonl", type=Path, required=True)
     parser.add_argument("--dev-jsonl", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--init-adapter",
+        type=Path,
+        default=None,
+        help="Continue training an existing LoRA adapter instead of creating a fresh one.",
+    )
     parser.add_argument("--stage", choices=["smoke", "pilot", "base_baseline"], required=True)
     parser.add_argument("--max-length", type=int, default=16384)
     parser.add_argument("--max-train-samples", type=int, default=0)
@@ -376,7 +435,7 @@ def main(argv: list[str] | None = None) -> int:
     import torch
     import peft.import_utils as peft_import_utils
     import peft.tuners.lora.torchao as peft_torchao
-    from peft import LoraConfig, TaskType, get_peft_model
+    from peft import LoraConfig, PeftModel, TaskType, get_peft_model
     from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss
     from torch.utils.data import DataLoader
     from transformers import AutoModelForCausalLM, AutoTokenizer, get_linear_schedule_with_warmup
@@ -487,15 +546,20 @@ def main(argv: list[str] | None = None) -> int:
     model.config.use_cache = False
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model.enable_input_require_grads()
-    lora = LoraConfig(
-        task_type=TaskType.CAUSAL_LM,
-        r=args.lora_rank,
-        lora_alpha=args.lora_alpha,
-        lora_dropout=args.lora_dropout,
-        target_modules="all-linear",
-        bias="none",
-    )
-    model = get_peft_model(model, lora).to(device)
+    if args.init_adapter is not None:
+        if not args.init_adapter.is_dir():
+            raise ValueError(f"Initial adapter directory does not exist: {args.init_adapter}")
+        model = PeftModel.from_pretrained(model, args.init_adapter, is_trainable=True).to(device)
+    else:
+        lora = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            r=args.lora_rank,
+            lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout,
+            target_modules="all-linear",
+            bias="none",
+        )
+        model = get_peft_model(model, lora).to(device)
     causal_lm = model.get_base_model()
     if hasattr(causal_lm.lm_head, "lora_A"):
         raise RuntimeError("lm_head unexpectedly received LoRA; fused loss requires the frozen output projection")
@@ -575,6 +639,7 @@ def main(argv: list[str] | None = None) -> int:
     report = {
         **data_report,
         "model": args.model,
+        "init_adapter": str(args.init_adapter) if args.init_adapter is not None else None,
         "lora_rank": args.lora_rank,
         "total_steps": total_steps,
         "epochs_completed": epoch,

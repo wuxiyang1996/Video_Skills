@@ -47,6 +47,8 @@ from ..schemas import (
 )
 from ..perception.video_tool_backend import VideoToolConfig, VideoToolPerceptionBackend
 
+L1_PERCEPTION_PROTOCOL = "no-redundant-covered-tail-v1"
+
 
 def _safe_name(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", text)[:180]
@@ -71,6 +73,79 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
         if line.strip():
             rows.append(json.loads(line))
     return rows
+
+
+def _clip_schema_failure_counts(example_stage_dir: Path) -> tuple[int, int]:
+    """Return (placeholder_rows, total_rows) across an example's cached clip schemas.
+
+    ``build_clip_schema`` degrades to a schema-shaped placeholder carrying
+    ``model_error`` when every retry fails.  That keeps one bad clip from killing
+    a whole catalog, but it is indistinguishable from success to every structural
+    check downstream, so the rate has to be accounted for explicitly.
+    """
+    failed = 0
+    total = 0
+    for path in example_stage_dir.glob("*clip_schemas.jsonl"):
+        for row in _read_jsonl(path):
+            if not isinstance(row, dict):
+                continue
+            total += 1
+            if row.get("model_error"):
+                failed += 1
+    return failed, total
+
+
+def _cached_clip_schema_error_count(example_stage_dir: Path) -> int:
+    """Count retryable failures or coverage defects in cached clip schemas."""
+    issues = sum(
+        1
+        for path in example_stage_dir.glob("*clip_schemas.jsonl")
+        for row in _read_jsonl(path)
+        if (
+            not isinstance(row, dict)
+            or row.get("model_error")
+            or (
+                row.get("producer") == "qwen_clip_schema"
+                and (
+                    int((row.get("llm_usage") or {}).get("sampled_frame_count") or 0) <= 0
+                    or (
+                        row.get("schema_attempt_context") == "query_time_anchor_repass"
+                        and int((row.get("llm_usage") or {}).get("sampled_frame_count") or 0)
+                        != int(row.get("request_frames") or 0)
+                    )
+                )
+            )
+        )
+    )
+    spans_path = example_stage_dir / "01_perception_spans.json"
+    primary_path = example_stage_dir / "02_clip_schemas.jsonl"
+    if not spans_path.exists():
+        return issues
+    spans = _read_json(spans_path)
+    expected_ids = [
+        str(row.get("clip_id") or "")
+        for row in (spans.get("derived_clips") or [])
+        if isinstance(row, dict)
+    ]
+    cached = _read_jsonl(primary_path)
+    cached_ids = [
+        str(row.get("clip_id") or "")
+        for row in cached
+        if isinstance(row, dict)
+    ]
+    expected_set = set(expected_ids)
+    cached_set = set(cached_ids)
+    issues += sum(not clip_id for clip_id in expected_ids)
+    issues += sum(not clip_id for clip_id in cached_ids)
+    issues += len(expected_set - cached_set)
+    issues += len(cached_set - expected_set)
+    issues += len(cached_ids) - len(cached_set)
+    frozen_l1_path = example_stage_dir / "04_l1_example.json"
+    if frozen_l1_path.exists():
+        frozen_l1 = _read_json(frozen_l1_path)
+        if (frozen_l1.get("metadata") or {}).get("l1_perception_protocol") != L1_PERCEPTION_PROTOCOL:
+            issues += 1
+    return issues
 
 
 def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
@@ -136,6 +211,33 @@ def _build_parser() -> argparse.ArgumentParser:
         "--retry-failed-clip-schemas",
         action="store_true",
         help="Reuse good cached clip schemas but discard cached model_error rows and retry those clips.",
+    )
+    parser.add_argument(
+        "--max-clip-schema-failure-rate",
+        type=float,
+        default=0.01,
+        help=(
+            "Fail the run when the FINAL share of placeholder clip schemas exceeds "
+            "this rate (default 0.01).  Checked at the end because failures are not "
+            "uniform: a healthy lane measured 0.9%% final but 5.6%% early, while a "
+            "degraded one measured 0.3%% early and 22.7%% final.  Set to 1.0 to disable."
+        ),
+    )
+    parser.add_argument(
+        "--abort-clip-schema-failure-rate",
+        type=float,
+        default=0.50,
+        help=(
+            "Abort mid-run once the cumulative placeholder rate exceeds this (default 0.50). "
+            "Separates a dead backend from a merely degraded one: measured lanes ran 100%% "
+            "(deterministic fault) versus at most ~6%% cumulative while healthy."
+        ),
+    )
+    parser.add_argument(
+        "--clip-schema-failure-min-sample",
+        type=int,
+        default=200,
+        help="Only enforce --abort-clip-schema-failure-rate once this many clips have been attempted.",
     )
     parser.add_argument(
         "--retry-non-backbone-clip-schemas",
@@ -329,16 +431,30 @@ def _produce_or_resume_clip_schemas(
     if force and stage_path.exists():
         stage_path.unlink()
 
+    budget = config.clip_schema.max_clips
     cached = _read_jsonl(stage_path)
     if retry_failed and cached:
-        cached = [row for row in cached if not row.get("model_error")]
+        expected_clip_ids = {
+            derived["clip_id"]
+            for index, derived in enumerate(derived_clips)
+            if budget is None or index < budget
+        }
+        cached = [
+            row
+            for row in cached
+            if not row.get("model_error")
+            and row.get("clip_id") in expected_clip_ids
+            and not (
+                row.get("producer") == "qwen_clip_schema"
+                and int((row.get("llm_usage") or {}).get("sampled_frame_count") or 0) <= 0
+            )
+        ]
         _write_jsonl(stage_path, cached)
     if retry_non_backbone and cached:
         expected_producer = "qwen_clip_schema" if config.clip_schema.backend == "qwen" else "video_tool_perception_backend"
         cached = [row for row in cached if row.get("producer") == expected_producer]
         _write_jsonl(stage_path, cached)
     by_clip_id = {row.get("clip_id"): row for row in cached if row.get("clip_id")}
-    budget = config.clip_schema.max_clips
     targets: list[tuple[Any, dict[str, Any]]] = []
 
     for index, (span, derived) in enumerate(zip(spans, derived_clips)):
@@ -603,7 +719,13 @@ def _produce_or_resume_anchor_repass(
 
     cached = _read_jsonl(stage_path)
     if retry_failed and cached:
-        cached = [row for row in cached if not row.get("model_error")]
+        cached = [
+            row
+            for row in cached
+            if not row.get("model_error")
+            and int((row.get("llm_usage") or {}).get("sampled_frame_count") or 0)
+            == int(row.get("request_frames") or request_frames)
+        ]
         _write_jsonl(stage_path, cached)
     by_clip_id = {row.get("clip_id"): row for row in cached if row.get("clip_id")}
 
@@ -793,11 +915,19 @@ def _run_item(
 
     final_path = example_stage_dir / "final_example.json"
     frozen_l1_path = example_stage_dir / "04_l1_example.json"
+    # ``--retry-failed-clip-schemas`` is lane-wide, but only examples with a
+    # cached failed schema should bypass their valid final cache.  This keeps a
+    # resumable repair attempt proportional to the failures instead of
+    # recomposing every completed video in the lane.
+    retry_failed_for_item = bool(
+        retry_failed_clip_schemas and _cached_clip_schema_error_count(example_stage_dir)
+    )
     if (
         config.reuse_frozen_l1_example
         and frozen_l1_path.exists()
         and config.run_l2_llm_planner
         and not force
+        and not retry_failed_for_item
     ):
         example = _read_json(frozen_l1_path)
         clue_graph = (example.get("metadata") or {}).get("clue_memory_graph") or {}
@@ -838,10 +968,11 @@ def _run_item(
             _write_json(final_path, example)
             return example
 
-    if final_path.exists() and not force and not rebuild_from_stages and not retry_failed_clip_schemas:
+    if final_path.exists() and not force and not rebuild_from_stages and not retry_failed_for_item:
         return _read_json(final_path)
 
     example = build_canonical_example(item, config=config, backbone=None)
+    example.setdefault("metadata", {})["l1_perception_protocol"] = L1_PERCEPTION_PROTOCOL
     duration_s = float(example["video"].get("duration_s") or 0.0)
     clip_policy = config.resolved_clip_policy(duration_s)
     visible_segments = example["video"]["segments"]
@@ -858,7 +989,7 @@ def _run_item(
             primary_path=primary_path,
             stage_path=example_stage_dir / "00b_coarse_clip_schemas.jsonl",
             force=force,
-            retry_failed=retry_failed_clip_schemas,
+            retry_failed=retry_failed_for_item,
             retry_non_backbone=retry_non_backbone_clip_schemas,
             fill_missing=fill_missing_clip_schemas,
             workers=clip_schema_workers,
@@ -922,7 +1053,7 @@ def _run_item(
         visible_segments=visible_segments,
         stage_path=example_stage_dir / "02_clip_schemas.jsonl",
         force=force,
-        retry_failed=retry_failed_clip_schemas,
+        retry_failed=retry_failed_for_item,
         retry_non_backbone=retry_non_backbone_clip_schemas,
         fill_missing=fill_missing_clip_schemas,
         workers=clip_schema_workers,
@@ -943,7 +1074,7 @@ def _run_item(
             visible_segments=visible_segments,
             stage_path=example_stage_dir / "02b_anchor_clip_schemas.jsonl",
             force=force,
-            retry_failed=retry_failed_clip_schemas,
+            retry_failed=retry_failed_for_item,
             fill_missing=fill_missing_clip_schemas,
             request_frames=anchor_repass_frames,
         )
@@ -1037,6 +1168,8 @@ def main(argv: list[str] | None = None) -> int:
 
     written = 0
     failed = 0
+    clip_schema_failed = 0
+    clip_schema_total = 0
     for item in selected_items:
         try:
             example = _run_item(
@@ -1078,20 +1211,63 @@ def main(argv: list[str] | None = None) -> int:
             existing_output_ids.add(example_id)
             rows_by_example_id[example_id] = example
             written += 1
+        staged_dir = example["metadata"]["llm_pipeline"]["staged_dir"]
+        example_failed, example_total = _clip_schema_failure_counts(Path(staged_dir))
+        clip_schema_failed += example_failed
+        clip_schema_total += example_total
+        failure_rate = clip_schema_failed / clip_schema_total if clip_schema_total else 0.0
         print(
             json.dumps(
                 {
                     "example_id": example["example_id"],
                     "dataset": example["dataset"],
-                    "stage_dir": example["metadata"]["llm_pipeline"]["staged_dir"],
+                    "stage_dir": staged_dir,
                     "clip_schema_count": len(example["metadata"].get("clip_schemas") or []),
+                    "clip_schema_failed": example_failed,
+                    "clip_schema_total": example_total,
+                    "cumulative_clip_schema_failure_rate": round(failure_rate, 6),
                     "output": str(output_path),
                 },
                 ensure_ascii=False,
             ),
             flush=True,
         )
-    print(json.dumps({"written": written, "failed": failed, "output": str(output_path)}, indent=2))
+        # Run-level integrity, not a per-item error: a backend that rejects every
+        # request still returns well-formed placeholders, so this is the only
+        # signal that separates a degraded lane from a dead one.
+        if (
+            clip_schema_total >= max(1, int(args.clip_schema_failure_min_sample))
+            and failure_rate > float(args.abort_clip_schema_failure_rate)
+        ):
+            raise RuntimeError(
+                "clip-schema failure rate "
+                f"{failure_rate:.1%} ({clip_schema_failed}/{clip_schema_total}) exceeds "
+                f"--abort-clip-schema-failure-rate {float(args.abort_clip_schema_failure_rate):.1%}; "
+                "the clip-schema backend is rejecting effectively every request. "
+                "Fix the backend, then resume with --retry-failed-clip-schemas."
+            )
+    final_rate = clip_schema_failed / clip_schema_total if clip_schema_total else 0.0
+    print(json.dumps({
+        "written": written,
+        "failed": failed,
+        "clip_schema_failed": clip_schema_failed,
+        "clip_schema_total": clip_schema_total,
+        "clip_schema_failure_rate": round(final_rate, 6),
+        "max_clip_schema_failure_rate": float(args.max_clip_schema_failure_rate),
+        "output": str(output_path),
+    }, indent=2))
+    if clip_schema_total and final_rate > float(args.max_clip_schema_failure_rate):
+        print(
+            json.dumps({
+                "event": "clip_schema_failure_gate",
+                "status": "fail",
+                "failure_rate": round(final_rate, 6),
+                "threshold": float(args.max_clip_schema_failure_rate),
+                "hint": "resume with --retry-failed-clip-schemas once the backend is fixed",
+            }),
+            flush=True,
+        )
+        return 1
     return 0
 
 

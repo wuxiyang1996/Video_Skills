@@ -80,6 +80,35 @@ REASONING_SKILL_EXECUTORS = {
 REASONING_SKILL_IDS = sorted(REASONING_SKILL_EXECUTORS.keys())
 
 
+def _is_video_holmes_graph(graph: dict[str, Any]) -> bool:
+    """Identify Video-Holmes even after graph serialization drops ``dataset``.
+
+    Terminal graphs historically retained the canonical dataset only in the
+    example id.  Policy selection must therefore not depend on the optional
+    top-level ``dataset`` field alone.
+    """
+    dataset = str(graph.get("dataset") or "").strip().lower()
+    if dataset == "video_holmes":
+        return True
+    metadata = graph.get("metadata") if isinstance(graph.get("metadata"), dict) else {}
+    metadata_dataset = str(metadata.get("dataset") or "").strip().lower()
+    if metadata_dataset == "video_holmes":
+        return True
+    example_id = str(graph.get("example_id") or "").strip().lower()
+    return example_id.startswith("video_holmes:")
+
+
+def _semantic_rescore_indices(
+    rule_rows: list[dict[str, Any]], graph: dict[str, Any]
+) -> set[int]:
+    """Select options for semantic scoring without pruning VH by lexical score."""
+    ranked = sorted(rule_rows, key=lambda row: row["score"], reverse=True)
+    # CG-Bench retains the latency-bounded top-2 path. Video-Holmes relationship
+    # and causal questions often have 5–6 lexically indistinguishable options.
+    limit = len(ranked) if _is_video_holmes_graph(graph) else min(2, len(ranked))
+    return {int(row["index"]) for row in ranked[:limit]}
+
+
 def _refs_from_value(value: Any) -> list[str]:
     if value is None:
         return []
@@ -686,6 +715,12 @@ def execute_reasoning_plan(
         "schema_version": clue_memory_graph.get("schema_version"),
         "nodes": deepcopy(clue_memory_graph.get("nodes") or []),
         "edges": deepcopy(clue_memory_graph.get("edges") or []),
+        # These fields select dataset-specific verification semantics.  Keep
+        # them in the execution graph; dropping them silently changed
+        # Video-Holmes abductive verification back to strict entailment.
+        "dataset": clue_memory_graph.get("dataset"),
+        "example_id": clue_memory_graph.get("example_id"),
+        "metadata": deepcopy(clue_memory_graph.get("metadata") or {}),
     }
     question_text = question.get("question_text") or ""
     options = question.get("options") or []
@@ -755,6 +790,40 @@ def execute_reasoning_plan(
             if "multi_hop_chain" in value:
                 return _chain(value["multi_hop_chain"])
         return {"evidence_refs": _refs(value), "items": []}
+
+    def _role_name(value: Any, *, default: str = "supporting_evidence") -> str:
+        """Normalize planner-emitted role objects/lists to the skill's string contract."""
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, dict):
+            role = value.get("role") or value.get("name")
+            return str(role).strip() if role else default
+        if isinstance(value, list):
+            for item in value:
+                role = _role_name(item, default="")
+                if role:
+                    return role
+        return default
+
+    def _candidate_nodes(value: Any) -> list[dict[str, Any]]:
+        """Resolve evidence-ref outputs back to graph nodes for localize_clue."""
+        node_map = {
+            str(node.get("node_id")): node
+            for node in graph.get("nodes", [])
+            if isinstance(node, dict) and node.get("node_id")
+        }
+        values = value if isinstance(value, list) else [value]
+        nodes: list[dict[str, Any]] = []
+        for item in values:
+            if isinstance(item, dict) and item.get("node_id"):
+                nodes.append(node_map.get(str(item["node_id"]), item))
+            elif isinstance(item, str) and item in node_map:
+                nodes.append(node_map[item])
+            else:
+                for ref in _refs(item):
+                    if ref in node_map:
+                        nodes.append(node_map[ref])
+        return list({str(node.get("node_id")): node for node in nodes}.values())
 
     def _claim(value: Any, *, fallback: str | None = None) -> dict[str, Any]:
         if isinstance(value, dict):
@@ -867,12 +936,19 @@ def execute_reasoning_plan(
             support_policy = resolved_args.get("support_policy") or {"min_evidence_refs": 1}
             if isinstance(support_policy, str):
                 support_policy = {"min_evidence_refs": 1}
+            else:
+                support_policy = dict(support_policy)
+            if _is_video_holmes_graph(graph):
+                support_policy.setdefault("allow_llm_target_alignment_override", True)
+                support_policy.setdefault("allow_llm_claim_support_override", True)
+                support_policy.setdefault("llm_alignment_override_min_score", 0.80)
             resolved_args["support_policy"] = support_policy
             evidence_chain = _chain(resolved_args.get("evidence_chain"))
             if not evidence_chain.get("evidence_refs"):
                 evidence_chain = _chain(resolved_args["claim"])
             resolved_args["evidence_chain"] = evidence_chain
             resolved_args.setdefault("question_text", resolved_args["claim"].get("question_text") or question_text)
+            resolved_args.setdefault("options", options)
         elif skill_id == "score_hypothesis_support":
             if resolved_args.get("hypothesis") in (None, [], {}):
                 resolved_args["hypothesis"] = _lookup_recent_hypotheses()
@@ -880,11 +956,35 @@ def execute_reasoning_plan(
             if counter is None:
                 resolved_args["counterevidence"] = []
         elif skill_id == "compose_evidence_chain":
-            if not resolved_args.get("dependency_template"):
-                resolved_args["dependency_template"] = "support_chain"
-            labeled = resolved_args.get("role_labeled_evidence")
+            labeled = (
+                resolved_args.get("role_labeled_evidence")
+                or resolved_args.get("evidence_refs")
+                or []
+            )
             if isinstance(labeled, dict):
-                resolved_args["role_labeled_evidence"] = [labeled]
+                labeled = [labeled]
+            if isinstance(labeled, list):
+                labeled = [item for item in labeled if isinstance(item, dict)]
+            else:
+                labeled = []
+            resolved_args["role_labeled_evidence"] = labeled
+            if not resolved_args.get("dependency_template"):
+                actual_roles = [
+                    str(item.get("role")) for item in labeled if item.get("role")
+                ]
+                resolved_args["dependency_template"] = (
+                    " -> ".join(dict.fromkeys(actual_roles)) if actual_roles else "support_chain"
+                )
+        elif skill_id == "localize_clue":
+            if "candidate_evidence" in resolved_args:
+                resolved_args["candidate_evidence"] = _candidate_nodes(
+                    resolved_args.get("candidate_evidence")
+                )
+            resolved_args["role_constraint"] = _role_name(
+                resolved_args.get("role_constraint")
+            )
+        elif skill_id == "assign_evidence_role":
+            resolved_args["role_schema"] = _role_name(resolved_args.get("role_schema"))
         elif skill_id == "retrieve_by_time":
             anchor = resolved_args.get("anchor_event_or_time")
             if isinstance(anchor, (int, float)):
@@ -1138,8 +1238,7 @@ def execute_reasoning_plan(
                         )
                     top_llm = set()
                     if llm_score_each and rule_rows:
-                        ranked = sorted(rule_rows, key=lambda row: row["score"], reverse=True)
-                        top_llm = {row["index"] for row in ranked[: min(2, len(ranked))]}
+                        top_llm = _semantic_rescore_indices(rule_rows, graph)
                     scored = []
                     refs: list[str] = []
                     for row in rule_rows:
@@ -1321,6 +1420,16 @@ def execute_reasoning_plan(
                 support_policy = resolved_args.get("support_policy") or {"min_evidence_refs": 1}
                 if isinstance(support_policy, str):
                     support_policy = {"min_evidence_refs": 1}
+                else:
+                    support_policy = dict(support_policy)
+                if _is_video_holmes_graph(graph):
+                    # Video-Holmes explicitly evaluates implicit relationship and
+                    # causal support.  Permit a high-confidence semantic verifier
+                    # to bridge lexical mismatch, while still requiring grounded
+                    # refs and target alignment in SkillExecutor.
+                    support_policy.setdefault("allow_llm_target_alignment_override", True)
+                    support_policy.setdefault("allow_llm_claim_support_override", True)
+                    support_policy.setdefault("llm_alignment_override_min_score", 0.80)
                 evidence_chain = _chain(resolved_args.get("evidence_chain"))
                 if not evidence_chain.get("evidence_refs"):
                     evidence_chain = _chain(claim_arg)
@@ -1395,8 +1504,20 @@ def execute_reasoning_plan(
                         args={
                             "claim": claim_arg,
                             "evidence_chain": evidence_chain,
-                            "support_policy": {"min_evidence_refs": 1},
+                            "support_policy": {
+                                "min_evidence_refs": 1,
+                                **(
+                                    {
+                                        "allow_llm_target_alignment_override": True,
+                                        "allow_llm_claim_support_override": True,
+                                        "llm_alignment_override_min_score": 0.80,
+                                    }
+                                    if _is_video_holmes_graph(graph)
+                                    else {}
+                                ),
+                            },
                             "question_text": question_text,
+                            "options": options,
                         },
                         graph=graph,
                     )
@@ -1592,6 +1713,12 @@ def build_llm_reasoning_rollout(
         motif_candidate_sink_path: Optional JSONL sink for dual-loop CANDIDATE mine
             after repair→verified success (never auto-promotes).
     """
+    # Selected-window closure graphs may contain only nodes/edges.  Reattach
+    # non-secret routing identity from the public example before execution.
+    # This is not supervision: neither answer labels nor gold spans are copied.
+    clue_memory_graph = dict(clue_memory_graph)
+    clue_memory_graph.setdefault("dataset", example.get("dataset"))
+    clue_memory_graph.setdefault("example_id", example.get("example_id"))
     question = example.get("question") or {}
     input_mode = ((example.get("available_inputs") or {}).get("mode") or "").strip()
     planner_example = example
@@ -1786,7 +1913,18 @@ def build_llm_reasoning_rollout(
             motif_meta["repair_retrieval_attempted"] = True
             motif_meta["repair_fallback_reason"] = f"repair_motif_error:{exc}"
 
-    if not has_successful_commit and (crash_steps or (not ok_steps and len(failed_steps) > 3)):
+    answerability_diagnostic = (planner_example.get("metadata") or {}).get("answerability_diagnostic") or {}
+    l2_route = answerability_diagnostic.get("l2_route")
+    query_memory_commit_allowed = l2_route not in {"repair_only", "abstain_only"}
+
+    # A malformed planner program must not suppress the independently verified
+    # query-memory finalizer on ordinary answerable routes. The finalizer only
+    # sees the selected-window graph and still has to pass claim verification.
+    if (
+        not has_successful_commit
+        and (crash_steps or (not ok_steps and len(failed_steps) > 3))
+        and not query_memory_commit_allowed
+    ):
         rollout = make_reasoning_rollout_shell(planner_example, clue_memory_graph, rollout_source="gpt_oss_execution_failed")
         rollout.setdefault("metadata", {})
         rollout["metadata"]["llm_plan"] = plan_response
@@ -1813,10 +1951,6 @@ def build_llm_reasoning_rollout(
         attach_initial_l2_trajectory(rollout, clue_memory_graph)
         return rollout
 
-    answerability_diagnostic = (planner_example.get("metadata") or {}).get("answerability_diagnostic") or {}
-    l2_route = answerability_diagnostic.get("l2_route")
-    query_memory_commit_allowed = l2_route not in {"repair_only", "abstain_only"}
-
     if query_memory_commit_allowed and not any(item.get("skill_id") == "commit_answer" and item.get("ok") for item in trace):
         try:
             from ..verification.evaluate_l1_query_memory import evaluate_example
@@ -1831,6 +1965,16 @@ def build_llm_reasoning_rollout(
             l1_report = evaluate_example(diagnostic_example, topk=8)
             qa_answerability = l1_report.get("qa_answerability") or {}
             option_scores = l1_report.get("option_scores") or []
+            # Record negative finalizer decisions as well as successful ones.
+            # Without this, an evidence-insufficient decision is indistinguishable
+            # from a finalizer path that was never executed.
+            plan_response["query_memory_finalizer"] = {
+                "attempted": True,
+                "qa_answerability": qa_answerability,
+                "selected_option": None,
+                "verified": False,
+                "committed": False,
+            }
             if qa_answerability.get("grade") == "answerable" and option_scores:
                 best_option = option_scores[0]
                 support_refs = best_option.get("top_refs") or []
@@ -1911,6 +2055,11 @@ def build_llm_reasoning_rollout(
                         "top_refs": support_refs,
                     },
                     "verified": bool(verify_result.ok),
+                    "committed": bool(
+                        verify_result.ok
+                        and isinstance(verified_claim, dict)
+                        and commit_result.ok
+                    ),
                 }
         except Exception as exc:
             plan_response["query_memory_finalizer"] = {"attempted": True, "error": str(exc)}
@@ -2153,15 +2302,59 @@ def build_llm_reasoning_rollout(
         acceptance_failures or ["no_supported_final_answer" if final_answer else "no_final_answer"]
     )
     rollout["verified_evidence_pack"] = verified_evidence_pack
+    answer_step_diagnostics: dict[str, Any] = {}
+    for diagnostic_step_id, outputs in step_outputs.items():
+        if not isinstance(outputs, dict):
+            continue
+        compact: dict[str, Any] = {}
+        if isinstance(outputs.get("hypotheses"), list):
+            compact["hypotheses"] = [
+                {
+                    "option_label": item.get("option_label"),
+                    "claim_text": item.get("claim_text"),
+                    "prior_score": item.get("prior_score"),
+                }
+                for item in outputs["hypotheses"]
+                if isinstance(item, dict)
+            ]
+        for key in ("scored_hypothesis", "best_hypothesis", "verified_claim"):
+            item = outputs.get(key)
+            if isinstance(item, dict):
+                compact[key] = {
+                    name: item.get(name)
+                    for name in (
+                        "option_label", "claim_text", "support_score", "contradiction_score",
+                        "overall_score", "support_refs", "backend", "llm_reasoning", "claim_status",
+                    )
+                    if item.get(name) is not None
+                }
+        for key in ("backend", "decision_reason", "score_margin", "verification_score", "passed"):
+            if outputs.get(key) is not None:
+                compact[key] = outputs.get(key)
+        if compact:
+            answer_step_diagnostics[str(diagnostic_step_id)] = compact
     rollout["metadata"] = {
         "executed_skill_ids": list(dict.fromkeys(executed_skills)),
         "executed_skill_count": len(set(executed_skills)),
+        "failed_skill_ids": list(dict.fromkeys(
+            str(item.get("skill_id"))
+            for item in failed_steps
+            if item.get("skill_id")
+        )),
+        "failed_skill_codes": [
+            {
+                "skill_id": str(item.get("skill_id") or ""),
+                "failure_code": str(item.get("failure_code") or "unknown"),
+            }
+            for item in failed_steps
+        ],
         "expected_reasoning_skill_count": len(REASONING_SKILL_IDS),
         "llm_plan": plan_response,
         "llm_trace_ok": len(ok_steps),
         "llm_trace_fail": len(failed_steps),
         "compare_hypotheses_ran": "compare_hypotheses" in executed_skills,
         "grpo_answer_path": answer_path_meta if "answer_path_meta" in locals() else {},
+        "answer_step_diagnostics": answer_step_diagnostics,
         "acceptance_status_detail": {
             "status": acceptance_status,
             "reason": verifier_reason,

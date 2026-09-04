@@ -39,6 +39,12 @@ def _sliding_windows(
                 )
             )
             index += 1
+        # The preceding overlapping window already reaches the video end.
+        # Without this stop, a non-integral duration can create a redundant
+        # millisecond tail (for example 150.000--150.016s) from which no frame
+        # can be decoded.
+        if end >= limit - 1e-6:
+            break
         cursor += window_s - overlap_s
     return spans
 

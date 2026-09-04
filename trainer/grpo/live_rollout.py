@@ -21,6 +21,7 @@ _GRPO_LLM_SKILLS = {
     "generate_answer_hypotheses",
     "score_hypothesis_support",
     "compare_hypotheses",
+    "verify_claim_support",
 }
 
 
@@ -39,7 +40,6 @@ def _grpo_skill_backend_config() -> SkillBackendConfig:
         "retrieve_by_relation",
         "retrieve_evidence_for_hypothesis",
         "search_counterevidence",
-        "verify_claim_support",
         "commit_answer",
     }
     return SkillBackendConfig(

@@ -7,6 +7,7 @@ HF_HOME="${HF_HOME:-/fs/gamma-projects/vlm-robot/Multi-hop-Reasoning-VLM-Agent/.
 MODEL="${MODEL:-Qwen/Qwen3.5-9B}"
 GRAPH_MODEL="${GRAPH_MODEL:-openai/gpt-oss-120b:free}"
 DATASET="${DATASET:?set DATASET to cg_bench or video_holmes}"
+SPLIT="${SPLIT:-train}"
 START_INDEX="${START_INDEX:-0}"
 LIMIT="${LIMIT:-1}"
 PILOT_TAG="${PILOT_TAG:-pilot_20260710}"
@@ -17,10 +18,19 @@ SMOKE="${SMOKE:-0}"
 QUERY_TIME_RETRIEVAL="${QUERY_TIME_RETRIEVAL:-1}"
 CLIP_FRAMES="${CLIP_FRAMES:-4}"
 CLIP_MAX_TOKENS="${CLIP_MAX_TOKENS:-1600}"
+CLIP_TIMEOUT_S="${CLIP_TIMEOUT_S:-120}"
 LLM_COARSE_SELECTOR="${LLM_COARSE_SELECTOR:-1}"
 CONTINUE_ON_ITEM_ERROR="${CONTINUE_ON_ITEM_ERROR:-1}"
+RETRY_FAILED_CLIP_SCHEMAS="${RETRY_FAILED_CLIP_SCHEMAS:-1}"
+MAX_INLINE_REPAIR_PASSES="${MAX_INLINE_REPAIR_PASSES:-2}"
+
+[[ "${SPLIT}" == "train" || "${SPLIT}" == "test" ]] || {
+  echo "SPLIT must be train or test: ${SPLIT}" >&2
+  exit 2
+}
 
 export HF_HOME
+export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 export TRANSFORMERS_CACHE="${HF_HOME}/hub"
 export VLLM_USE_DEEP_GEMM=0
 export TOKENIZERS_PARALLELISM=false
@@ -29,23 +39,45 @@ export TOKENIZERS_PARALLELISM=false
 # environments expose different distutils implementations.
 export SETUPTOOLS_USE_DISTUTILS=stdlib
 
-RUN_ROOT="${REPO_ROOT}/dataset_clip_wrapper/output/${PILOT_TAG}/${DATASET}/start_${START_INDEX}_limit_${LIMIT}"
+if [[ "${SPLIT}" == "train" ]]; then
+  RUN_ROOT="${REPO_ROOT}/dataset_clip_wrapper/output/${PILOT_TAG}/${DATASET}/start_${START_INDEX}_limit_${LIMIT}"
+else
+  RUN_ROOT="${REPO_ROOT}/dataset_clip_wrapper/output/${PILOT_TAG}/${DATASET}/${SPLIT}/start_${START_INDEX}_limit_${LIMIT}"
+fi
 mkdir -p "${RUN_ROOT}"
 SERVER_LOG="${RUN_ROOT}/transformers_server.log"
 RUN_LOG="${RUN_ROOT}/pipeline.log"
 
-completed_examples=0
-if [[ -f "${RUN_ROOT}/examples.jsonl" ]]; then
-  completed_examples="$(wc -l < "${RUN_ROOT}/examples.jsonl")"
-fi
-if [[ "${SMOKE}" != "1" && "${completed_examples}" -ge "${LIMIT}" ]]; then
+count_completed_examples() {
+  if [[ -f "${RUN_ROOT}/examples.jsonl" ]]; then
+    wc -l < "${RUN_ROOT}/examples.jsonl"
+  else
+    printf '0\n'
+  fi
+}
+
+count_cached_schema_issues() {
+  "${VENV_ROOT}/bin/python" - "${RUN_ROOT}/stages" <<'PY'
+import sys
+from pathlib import Path
+from dataset_clip_wrapper.runners.run_staged_llm_pipeline import _cached_clip_schema_error_count
+
+root = Path(sys.argv[1])
+print(sum(_cached_clip_schema_error_count(path) for path in root.glob("*")))
+PY
+}
+
+completed_examples="$(count_completed_examples)"
+cached_schema_issues="$(count_cached_schema_issues)"
+
+if [[ "${SMOKE}" != "1" && "${completed_examples}" -ge "${LIMIT}" && "${cached_schema_issues}" -eq 0 ]]; then
   printf '{"status":"already_complete","dataset":"%s","start_index":%s,"limit":%s,"examples":%s,"run_root":"%s"}\n' \
     "${DATASET}" "${START_INDEX}" "${LIMIT}" "${completed_examples}" "${RUN_ROOT}" | tee -a "${RUN_LOG}"
   exit 0
 fi
 
-printf '{"status":"starting","dataset":"%s","start_index":%s,"limit":%s,"examples":%s,"pilot_tag":"%s","clip_model":"%s","graph_model":"%s"}\n' \
-  "${DATASET}" "${START_INDEX}" "${LIMIT}" "${completed_examples}" "${PILOT_TAG}" "${MODEL}" "${GRAPH_MODEL}" | tee -a "${RUN_LOG}"
+printf '{"status":"starting","dataset":"%s","split":"%s","start_index":%s,"limit":%s,"examples":%s,"cached_schema_issues":%s,"retry_failed_clip_schemas":%s,"pilot_tag":"%s","clip_model":"%s","graph_model":"%s"}\n' \
+  "${DATASET}" "${SPLIT}" "${START_INDEX}" "${LIMIT}" "${completed_examples}" "${cached_schema_issues}" "${RETRY_FAILED_CLIP_SCHEMAS}" "${PILOT_TAG}" "${MODEL}" "${GRAPH_MODEL}" | tee -a "${RUN_LOG}"
 
 cleanup() {
   trap - EXIT INT TERM
@@ -86,7 +118,7 @@ LOCAL_ENDPOINT="http://127.0.0.1:${PORT}/v1/chat/completions"
 if [[ "${SMOKE}" == "1" ]]; then
   /fs/gamma-projects/vlm-robot/conda/bin/python -m dataset_clip_wrapper.run_llm_pipeline \
     --dataset "${DATASET}" \
-    --split train \
+    --split "${SPLIT}" \
     --mode video_only \
     --limit 1 \
     --clip-schema-model "${MODEL}" \
@@ -107,23 +139,50 @@ else
   if [[ "${CONTINUE_ON_ITEM_ERROR}" == "1" ]]; then
     RETRIEVAL_ARGS+=(--continue-on-item-error)
   fi
-  /fs/gamma-projects/vlm-robot/conda/bin/python -m dataset_clip_wrapper.run_staged_llm_pipeline \
-    --dataset "${DATASET}" \
-    --split train \
-    --mode video_only \
-    --unique-videos \
-    --start-index "${START_INDEX}" \
-    --limit "${LIMIT}" \
-    --clip-schema-model "${MODEL}" \
-    --clip-schema-api-base "${LOCAL_ENDPOINT}" \
-    --clip-schema-frames "${CLIP_FRAMES}" \
-    --clip-schema-max-tokens "${CLIP_MAX_TOKENS}" \
-    --clip-schema-workers "${CLIP_WORKERS}" \
-    --graph-model "${GRAPH_MODEL}" \
-    --graph-neighbor-workers "${GRAPH_WORKERS}" \
-    --skill-model "${MODEL}" \
-    --skill-api-base "${LOCAL_ENDPOINT}" \
-    "${RETRIEVAL_ARGS[@]}" \
-    --output "${RUN_ROOT}/examples.jsonl" \
-    --stage-dir "${RUN_ROOT}/stages" 2>&1 | tee "${RUN_LOG}"
+  if [[ "${RETRY_FAILED_CLIP_SCHEMAS}" == "1" ]]; then
+    RETRIEVAL_ARGS+=(--retry-failed-clip-schemas)
+  fi
+  run_staged_pipeline() {
+    /fs/gamma-projects/vlm-robot/conda/bin/python -m dataset_clip_wrapper.run_staged_llm_pipeline \
+      --dataset "${DATASET}" \
+      --split "${SPLIT}" \
+      --mode video_only \
+      --unique-videos \
+      --start-index "${START_INDEX}" \
+      --limit "${LIMIT}" \
+      --clip-schema-model "${MODEL}" \
+      --clip-schema-api-base "${LOCAL_ENDPOINT}" \
+      --clip-schema-frames "${CLIP_FRAMES}" \
+      --clip-schema-max-tokens "${CLIP_MAX_TOKENS}" \
+      --clip-schema-timeout-s "${CLIP_TIMEOUT_S}" \
+      --clip-schema-workers "${CLIP_WORKERS}" \
+      --graph-model "${GRAPH_MODEL}" \
+      --graph-neighbor-workers "${GRAPH_WORKERS}" \
+      --skill-model "${MODEL}" \
+      --skill-api-base "${LOCAL_ENDPOINT}" \
+      "${RETRIEVAL_ARGS[@]}" \
+      --output "${RUN_ROOT}/examples.jsonl" \
+      --stage-dir "${RUN_ROOT}/stages" 2>&1 | tee -a "${RUN_LOG}"
+  }
+
+  run_staged_pipeline
+  if [[ "${RETRY_FAILED_CLIP_SCHEMAS}" == "1" ]]; then
+    for repair_pass in $(seq 1 "${MAX_INLINE_REPAIR_PASSES}"); do
+      completed_examples="$(count_completed_examples)"
+      cached_schema_issues="$(count_cached_schema_issues)"
+      if [[ "${completed_examples}" -ge "${LIMIT}" && "${cached_schema_issues}" -eq 0 ]]; then
+        break
+      fi
+      printf '{"status":"inline_repair","pass":%s,"examples":%s,"limit":%s,"cached_schema_issues":%s}\n' \
+        "${repair_pass}" "${completed_examples}" "${LIMIT}" "${cached_schema_issues}" | tee -a "${RUN_LOG}"
+      run_staged_pipeline
+    done
+  fi
+  completed_examples="$(count_completed_examples)"
+  cached_schema_issues="$(count_cached_schema_issues)"
+  if [[ "${completed_examples}" -lt "${LIMIT}" || "${cached_schema_issues}" -ne 0 ]]; then
+    printf '{"status":"incomplete","examples":%s,"limit":%s,"cached_schema_issues":%s}\n' \
+      "${completed_examples}" "${LIMIT}" "${cached_schema_issues}" | tee -a "${RUN_LOG}" >&2
+    exit 3
+  fi
 fi

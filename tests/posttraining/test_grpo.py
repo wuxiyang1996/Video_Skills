@@ -254,8 +254,241 @@ def test_grpo_live_skill_backend_is_llm_for_answer_critical_skills() -> None:
     assert "compare_hypotheses" in _GRPO_LLM_SKILLS
     assert "generate_answer_hypotheses" in _GRPO_LLM_SKILLS
     assert "score_hypothesis_support" in _GRPO_LLM_SKILLS
+    assert "verify_claim_support" in _GRPO_LLM_SKILLS
     assert cfg.mode_for("retrieve_by_event") == SkillBackendMode.RULE
     assert cfg.mode_for("commit_answer") == SkillBackendMode.RULE
+
+
+def test_semantic_skill_receives_resolved_support_evidence_text() -> None:
+    from atomic_skills.skill_executor import SkillExecutor
+
+    executor = SkillExecutor()
+    graph = {"nodes": [{"node_id": "e1", "text": "A woman stands beside a young girl in a child's bedroom."}]}
+    args = {
+        "hypothesis": {"claim_text": "mother and daughter", "option_label": "C"},
+        "support_evidence": {"support_refs": ["e1"]},
+    }
+    evidence = executor._gather_evidence_text(args, graph)
+    assert "woman stands beside a young girl" in evidence
+    assert executor._build_prompt_kwargs("score_hypothesis_support", args, evidence)["support"] == evidence
+
+
+def test_video_holmes_semantic_verifier_override_still_requires_explicit_policy() -> None:
+    from atomic_skills.skill_executor import SkillExecutor
+
+    executor = SkillExecutor()
+    graph = {"nodes": [{"node_id": "e1", "text": "A woman stands beside a young girl in a child's bedroom."}]}
+    base_args = {
+        "claim": {"claim_text": "mother and daughter", "option_label": "C"},
+        "question_text": "What is their relationship?",
+        "evidence_chain": {"evidence_refs": ["e1"]},
+    }
+    response = {"supported": True, "target_aligned": True, "score": 0.9, "reasoning": "adult-child family context"}
+    rejected = executor._llm_response_to_result(
+        "verify_claim_support", response, {**base_args, "support_policy": {}}, graph
+    )
+    accepted = executor._llm_response_to_result(
+        "verify_claim_support",
+        response,
+        {
+            **base_args,
+            "support_policy": {
+                "allow_llm_target_alignment_override": True,
+                "allow_llm_claim_support_override": True,
+                "llm_alignment_override_min_score": 0.8,
+            },
+        },
+        graph,
+    )
+    assert rejected.ok is False
+    assert accepted.ok is True
+    assert accepted.outputs["verified_claim"]["option_label"] == "C"
+
+
+def test_semantic_verifier_policy_uses_abductive_grounded_prompt() -> None:
+    from atomic_skills.skill_backends import SkillBackendConfig, SkillBackendMode
+    from atomic_skills.skill_executor import SkillExecutor
+
+    class Client:
+        last_response_metadata = {}
+
+        def __init__(self) -> None:
+            self.prompt = ""
+
+        def reason(self, prompt: str) -> dict:
+            self.prompt = prompt
+            return {"supported": False, "target_aligned": True, "score": 0.3}
+
+    client = Client()
+    executor = SkillExecutor(
+        llm_client=client,
+        config=SkillBackendConfig(default_mode=SkillBackendMode.LLM),
+    )
+    executor.execute(
+        "verify_claim_support",
+        args={
+            "claim": {"claim_text": "mother and daughter", "option_label": "C"},
+            "question_text": "What is their relationship?",
+            "options": [
+                {"label": "A", "text": "sister"},
+                {"label": "C", "text": "mother and daughter"},
+            ],
+            "evidence_chain": {"evidence_refs": ["e1"]},
+            "support_policy": {"allow_llm_claim_support_override": True},
+        },
+        graph={"nodes": [{"node_id": "e1", "text": "A woman stands with a young girl."}]},
+    )
+    assert "best-supported abductive interpretation" in client.prompt
+    assert "A woman stands with a young girl" in client.prompt
+    assert '"label": "C"' in client.prompt
+    assert "relative multiple-choice support" in client.prompt
+
+
+def test_video_holmes_policy_survives_missing_top_level_dataset() -> None:
+    from dataset_clip_wrapper.l2_reasoning_graph.reasoning_planner import (
+        _is_video_holmes_graph,
+        _semantic_rescore_indices,
+    )
+
+    assert _is_video_holmes_graph({"example_id": "video_holmes:train:vid:q1"})
+    assert _is_video_holmes_graph({"metadata": {"dataset": "video_holmes"}})
+    assert not _is_video_holmes_graph({"example_id": "cg_bench:train:vid:q1"})
+    rows = [{"index": index, "score": float(6 - index)} for index in range(6)]
+    assert _semantic_rescore_indices(rows, {"dataset": "video_holmes"}) == set(range(6))
+    assert _semantic_rescore_indices(rows, {"dataset": "cg_bench"}) == {0, 1}
+
+
+def test_llm_zero_hypothesis_support_has_typed_failure_code() -> None:
+    from atomic_skills.skill_backends import SkillBackendConfig, SkillBackendMode
+    from atomic_skills.skill_executor import SkillExecutor
+
+    executor = SkillExecutor(
+        llm_client=None,
+        config=SkillBackendConfig(default_mode=SkillBackendMode.RULE),
+    )
+    result = executor._llm_response_to_result(
+        "score_hypothesis_support",
+        {"support_score": 0.0, "contradiction_score": 0.0},
+        {
+            "hypothesis": {"claim_text": "unsupported", "option_label": "A"},
+            "support_evidence": ["e1"],
+        },
+        {"nodes": [{"node_id": "e1", "text": "unrelated evidence"}]},
+    )
+    assert result.ok is False
+    assert result.failure_code == "no_hypothesis_support"
+
+
+def test_reasoning_executor_preserves_dataset_routing_context() -> None:
+    from atomic_skills.common import make_result
+    from dataset_clip_wrapper.l2_reasoning_graph.reasoning_planner import (
+        execute_reasoning_plan,
+    )
+
+    class CapturingExecutor:
+        def __init__(self) -> None:
+            self.graph = None
+            self.llm_client = object()
+            self.vlm_client = None
+            self.config = type(
+                "Config",
+                (),
+                {"mode_for": lambda _self, _skill_id: __import__(
+                    "atomic_skills.skill_backends", fromlist=["SkillBackendMode"]
+                ).SkillBackendMode.LLM},
+            )()
+
+        def execute(self, skill_id, *, args, graph):
+            self.graph = graph
+            return make_result(
+                skill_id,
+                {
+                    "verified_claim": {
+                        "claim_text": "mother and daughter",
+                        "option_label": "C",
+                        "claim_status": "supported",
+                    },
+                    "verification_score": 0.9,
+                    "passed": True,
+                },
+                evidence_refs=["e1"],
+                confidence=0.9,
+            )
+
+    executor = CapturingExecutor()
+    execute_reasoning_plan(
+        reasoning_plan=[{
+            "step_id": "v1",
+            "skill_id": "verify_claim_support",
+            "args": {
+                "claim": {"claim_text": "mother and daughter", "option_label": "C"},
+                "evidence_chain": {"evidence_refs": ["e1"]},
+                "support_policy": "strict",
+            },
+        }],
+        clue_memory_graph={
+            "dataset": "video_holmes",
+            "example_id": "video_holmes:train:vid:q1",
+            "nodes": [{"node_id": "e1", "text": "A woman and girl stand together."}],
+            "edges": [],
+        },
+        question={"question_text": "What is their relationship?"},
+        skill_executor=executor,
+    )
+    assert executor.graph["dataset"] == "video_holmes"
+    assert executor.graph["example_id"].startswith("video_holmes:")
+
+
+def test_reasoning_executor_normalizes_ref_nodes_and_role_chain_aliases() -> None:
+    from dataset_clip_wrapper.l2_reasoning_graph.reasoning_planner import (
+        execute_reasoning_plan,
+    )
+
+    trace, outputs = execute_reasoning_plan(
+        reasoning_plan=[
+            {
+                "step_id": "r1", "skill_id": "retrieve_by_event",
+                "args": {"event_description": "soldiers outside"}, "depends_on": [],
+            },
+            {
+                "step_id": "r2", "skill_id": "localize_clue",
+                "args": {
+                    "candidate_evidence": "$step.r1.evidence_refs",
+                    "role_constraint": [{"role": "question_anchor", "must_cite_evidence": True}],
+                    "question_context": "Where are the soldiers?",
+                },
+                "depends_on": ["r1"],
+            },
+            {
+                "step_id": "r3", "skill_id": "assign_evidence_role",
+                "args": {
+                    "evidence_ref": "$step.r2.clue_refs",
+                    "role_schema": [{"role": "question_anchor", "must_cite_evidence": True}],
+                    "question_context": "Where are the soldiers?",
+                },
+                "depends_on": ["r2"],
+            },
+            {
+                "step_id": "r4", "skill_id": "compose_evidence_chain",
+                "args": {"evidence_refs": ["$step.r3.role_labeled_evidence"]},
+                "depends_on": ["r3"],
+            },
+        ],
+        clue_memory_graph={
+            "dataset": "cg_bench",
+            "nodes": [{
+                "node_id": "event:1", "node_type": "event",
+                "text": "Soldiers stand outside beside a stone wall.",
+            }],
+            "edges": [],
+        },
+        question={"question_text": "Where are the soldiers?", "options": []},
+    )
+
+    assert all(step["ok"] for step in trace), trace
+    assert outputs["r2"]["clue_refs"] == ["event:1"]
+    assert outputs["r3"]["role_labeled_evidence"]["role"] == "question_anchor"
+    assert outputs["r4"]["evidence_chain"]["evidence_refs"] == ["event:1"]
 
 
 def test_generate_answer_hypotheses_llm_applies_rank_and_priors() -> None:
@@ -287,6 +520,23 @@ def test_generate_answer_hypotheses_llm_applies_rank_and_priors() -> None:
     hyps = result.outputs["hypotheses"]
     assert [h["option_label"] for h in hyps] == ["C", "A", "B"]
     assert hyps[0]["prior_score"] == pytest.approx(0.9)
+
+
+def test_compare_hypotheses_normalizes_label_with_answer_text_suffix() -> None:
+    from atomic_skills.skill_executor import SkillExecutor
+
+    scored = [
+        {"option_label": "A", "claim_text": "stranger", "overall_score": 0.2, "support_refs": ["e1"]},
+        {"option_label": "C", "claim_text": "mother and daughter", "overall_score": 0.8, "support_refs": ["e1"]},
+    ]
+    result = SkillExecutor()._llm_response_to_result(
+        "compare_hypotheses",
+        {"best_label": "C mother and daughter", "margin": 0.6, "reasoning": "family context"},
+        {"scored_hypotheses": scored},
+        graph=None,
+    )
+    assert result.ok
+    assert result.outputs["best_hypothesis"]["option_label"] == "C"
 
 
 def test_compare_hypotheses_near_tie_explore_seed_rotates() -> None:
