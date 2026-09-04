@@ -110,8 +110,7 @@ if [[ "${SERVE_BACKEND}" == "vllm" ]]; then
     --dtype bfloat16 \
     --max-model-len "${VLLM_MAX_MODEL_LEN}" \
     --gpu-memory-utilization "${VLLM_GPU_MEMORY_UTILIZATION}" \
-    --limit-mm-per-prompt "{\"image\": ${VLLM_LIMIT_MM_PER_PROMPT}}" \
-    --disable-log-requests >"${SERVER_LOG}" 2>&1 &
+    --limit-mm-per-prompt "{\"image\": ${VLLM_LIMIT_MM_PER_PROMPT}}" >"${SERVER_LOG}" 2>&1 &
 else
   "${VENV_ROOT}/bin/transformers" serve "${MODEL}" \
     --host 127.0.0.1 \
