@@ -17,6 +17,15 @@ GRAPH_WORKERS="${GRAPH_WORKERS:-2}"
 SMOKE="${SMOKE:-0}"
 QUERY_TIME_RETRIEVAL="${QUERY_TIME_RETRIEVAL:-1}"
 CLIP_FRAMES="${CLIP_FRAMES:-4}"
+# ``transformers serve`` runs without continuous batching, so concurrent clip
+# workers queue behind one another and blow the per-request timeout: a pilot
+# completed 7 of 98 clips in three hours, the rest timing out.  vLLM batches, and
+# each clip is a ~4.5k-token prompt with a ~1k-token structured-JSON completion.
+SERVE_BACKEND="${SERVE_BACKEND:-transformers}"
+VLLM_VENV_ROOT="${VLLM_VENV_ROOT:-${REPO_ROOT}/.venv-qwen35-vllm}"
+VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-16384}"
+VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.90}"
+VLLM_LIMIT_MM_PER_PROMPT="${VLLM_LIMIT_MM_PER_PROMPT:-16}"
 CLIP_MAX_TOKENS="${CLIP_MAX_TOKENS:-1600}"
 CLIP_TIMEOUT_S="${CLIP_TIMEOUT_S:-120}"
 LLM_COARSE_SELECTOR="${LLM_COARSE_SELECTOR:-1}"
@@ -93,16 +102,29 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 cd "${REPO_ROOT}"
-"${VENV_ROOT}/bin/transformers" serve "${MODEL}" \
-  --host 127.0.0.1 \
-  --port "${PORT}" \
-  --device cuda:0 \
-  --dtype bfloat16 \
-  --reasoning off \
-  --attn-implementation sdpa >"${SERVER_LOG}" 2>&1 &
+if [[ "${SERVE_BACKEND}" == "vllm" ]]; then
+  "${VLLM_VENV_ROOT}/bin/vllm" serve "${MODEL}" \
+    --host 127.0.0.1 \
+    --port "${PORT}" \
+    --served-model-name "${MODEL}" \
+    --dtype bfloat16 \
+    --max-model-len "${VLLM_MAX_MODEL_LEN}" \
+    --gpu-memory-utilization "${VLLM_GPU_MEMORY_UTILIZATION}" \
+    --limit-mm-per-prompt "{\"image\": ${VLLM_LIMIT_MM_PER_PROMPT}}" \
+    --disable-log-requests >"${SERVER_LOG}" 2>&1 &
+else
+  "${VENV_ROOT}/bin/transformers" serve "${MODEL}" \
+    --host 127.0.0.1 \
+    --port "${PORT}" \
+    --device cuda:0 \
+    --dtype bfloat16 \
+    --reasoning off \
+    --attn-implementation sdpa >"${SERVER_LOG}" 2>&1 &
+fi
 SERVER_PID=$!
 
-for _ in $(seq 1 180); do
+SERVER_WAIT_TICKS="${SERVER_WAIT_TICKS:-$([[ "${SERVE_BACKEND}" == "vllm" ]] && echo 600 || echo 180)}"
+for _ in $(seq 1 "${SERVER_WAIT_TICKS}"); do
   if curl -sf "http://127.0.0.1:${PORT}/v1/models" >/dev/null; then
     break
   fi
