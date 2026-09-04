@@ -945,7 +945,15 @@ def commit_answer(
     decision_policy: dict[str, Any] | None = None,
 ) -> Any:
     claim_text = verified_claim.get("text") or verified_claim.get("claim_text") or ""
-    if verified_claim.get("claim_status") not in {None, "verified"}:
+    policy = decision_policy or {}
+    # On a multiple-choice benchmark an abstention scores as wrong, so it is
+    # strictly dominated by committing the best hypothesis: verification should
+    # set the confidence of an answer, not decide whether one exists.  On the
+    # cached rollouts 95.7% of abstentions already carried an option_label at this
+    # exact step and were thrown away here.  Opt-in; default keeps the gate.
+    always_commit = bool(policy.get("always_commit_mcq")) and answer_format == "multiple_choice" and bool(options)
+    unverified = verified_claim.get("claim_status") not in {None, "verified"}
+    if unverified and not always_commit:
         return make_result("commit_answer", ok=False, failure_code="claim_not_verified")
     final_answer = claim_text
     commit_explore_used = False
@@ -957,7 +965,6 @@ def commit_answer(
             if isinstance(opt, dict)
         }
         best = by_label.get(label) if label else None
-        policy = decision_policy or {}
         # Backup explore when compare was skipped / singleton: rotate MCQ labels by seed.
         if (
             policy.get("force_explore")
@@ -978,15 +985,20 @@ def commit_answer(
             )
         final_answer = best.get("label") or best.get("text") or claim_text
     refs = support_chain.get("evidence_refs", [])
+    committed_unverified = bool(unverified and always_commit)
     return make_result(
         "commit_answer",
         {
             "final_answer": final_answer,
             "answer_support_chain": support_chain,
-            "confidence": verified_claim.get("confidence", 0.8),
+            # An unverified commit is a guess with a preference, not a claim.
+            "confidence": 0.2 if committed_unverified else verified_claim.get("confidence", 0.8),
             "commit_explore_used": commit_explore_used,
+            "committed_unverified": committed_unverified,
         },
         refs,
-        ok=bool(final_answer and refs),
+        # A label with no refs is still an answer under always_commit; the
+        # acceptance gate downstream keeps it marked unsupported.
+        ok=bool(final_answer and (refs or committed_unverified)),
         failure_code=None if final_answer and refs else "invalid_answer_commit",
     )

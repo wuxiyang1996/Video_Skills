@@ -22,6 +22,7 @@ import collections
 import glob
 import json
 import random
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -30,7 +31,9 @@ from dataset_clip_wrapper.l2_reasoning_graph.reasoning_planner import build_llm_
 from dataset_clip_wrapper.perception.openrouter_client import OpenRouterClient
 from trainer.closed_loop_harness import load_frozen_l1_examples
 from trainer.grpo.l2_dataset_rewards import temporal_hit
+from dataset_clip_wrapper.training.lexical_retrieval_baseline import BM25  # noqa: F401  (shared tokeniser deps)
 from trainer.build_l2_dataset_opd import load_dataset_reward_supervision, supervision_key
+from trainer.grpo.l2_dataset_rewards import _text as clip_schema_text
 from trainer.grpo.train_l2_terminal_on_policy import filter_example_for_retrieval, retrieval_catalog
 
 
@@ -52,6 +55,58 @@ def model_indices(example_id: str, rankings: dict[str, list[int]], top_k: int) -
     return (rankings.get(example_id) or [])[:top_k]
 
 
+DIRECT_SYSTEM = (
+    "You answer multiple-choice questions about a video using only the clip "
+    "descriptions provided. Reply with JSON only."
+)
+
+
+def direct_answer(
+    client: OpenRouterClient,
+    example: dict[str, Any],
+    indices: list[int],
+) -> dict[str, Any]:
+    """Ask the same model the same question over the same clips, with no skill graph.
+
+    This is the control for the atomic-skill decomposition: it holds the model,
+    the evidence and the budget fixed and removes only the plan-and-execute
+    structure, so any difference is attributable to the decomposition itself.
+    """
+    schemas, _ = retrieval_catalog(example)
+    question = example.get("question") or {}
+    clips = []
+    for rank, index in enumerate(indices, start=1):
+        if not (0 <= index < len(schemas)):
+            continue
+        schema = schemas[index] if isinstance(schemas[index], dict) else {}
+        span = schema.get("time_span") or {}
+        clips.append({
+            "rank": rank,
+            "time_span": span,
+            "description": clip_schema_text(schema)[:1200],
+        })
+    payload = {
+        "question": question.get("question_text") or "",
+        "options": [
+            {"label": o.get("label"), "text": o.get("text")}
+            for o in question.get("options") or []
+        ],
+        "clips": clips,
+        "answer_format": 'reply exactly {"label": "<option letter>"}',
+    }
+    text = client.chat([
+        {"role": "system", "content": DIRECT_SYSTEM},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ])
+    label = None
+    try:
+        label = (json.loads(re.search(r"\{.*\}", text, re.S).group(0)) or {}).get("label")
+    except Exception:
+        match = re.search(r"\b([A-H])\b", text or "")
+        label = match.group(1) if match else None
+    return {"final_answer": {"label": label}, "failure_reasons": [] if label else ["no_label_parsed"]}
+
+
 def score(rollout: dict[str, Any], gold_label: str) -> dict[str, Any]:
     label = (rollout.get("final_answer") or {}).get("label")
     committed = bool(label)
@@ -71,10 +126,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sample", type=int, default=40)
     parser.add_argument("--seed", type=int, default=20260904)
     parser.add_argument("--top-k", type=int, default=4)
-    parser.add_argument("--planner-model", default="openai/gpt-oss-120b:free")
+    parser.add_argument("--planner-model", default="openai/gpt-oss-120b")
     parser.add_argument("--keys-py", type=Path, default=Path("/fs/gamma-projects/vlm-robot/keys.py"))
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--timeout-s", type=int, default=240)
+    parser.add_argument(
+        "--conditions",
+        nargs="+",
+        default=["model", "oracle", "direct"],
+        help="'model'/'oracle' run the skill graph; 'direct' is the no-decomposition control.",
+    )
+    parser.add_argument(
+        "--always-commit-mcq",
+        action="store_true",
+        help="Commit the best hypothesis even when verification fails (abstention scores as wrong on MCQ).",
+    )
     parser.add_argument("--dataset-root", type=Path, default=Path("/fs/gamma-projects/vlm-robot/datasets"))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -128,15 +194,21 @@ def main(argv: list[str] | None = None) -> int:
         )
         if not indices:
             return None
-        isolated, graph = filter_example_for_retrieval(example, indices)
         try:
-            rollout = build_llm_reasoning_rollout(isolated, graph, client=client, motif_enabled=False)
+            if condition == "direct":
+                rollout = direct_answer(client, example, indices)
+            else:
+                isolated, graph = filter_example_for_retrieval(example, indices)
+                rollout = build_llm_reasoning_rollout(
+                    isolated, graph, client=client, motif_enabled=False,
+                    commit_policy={"always_commit_mcq": True} if args.always_commit_mcq else None,
+                )
         except Exception as exc:  # a transport failure is not an abstention
             return {"example_id": example_id, "condition": condition, "error": type(exc).__name__}
         return {"example_id": example_id, "condition": condition, **score(rollout, gold_label)}
 
     rows: list[dict[str, Any]] = []
-    jobs = [(e, c) for e in chosen for c in ("model", "oracle")]
+    jobs = [(e, c) for e in chosen for c in args.conditions]
     with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
         futures = {pool.submit(run, e, c): (e, c) for e, c in jobs}
         for done in as_completed(futures):
@@ -146,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[{len(rows)}/{len(jobs)}]", flush=True)
 
     summary: dict[str, Any] = {}
-    for condition in ("model", "oracle"):
+    for condition in args.conditions:
         subset = [r for r in rows if r.get("condition") == condition and "error" not in r]
         n = max(1, len(subset))
         committed = sum(bool(r["committed"]) for r in subset)
@@ -169,6 +241,7 @@ def main(argv: list[str] | None = None) -> int:
         "seed": args.seed,
         "top_k": args.top_k,
         "planner_model": args.planner_model,
+        "always_commit_mcq": bool(args.always_commit_mcq),
         "note": "seeded subsample of heldout_test; the rest stays unread",
         "conditions": summary,
         "rows": rows,

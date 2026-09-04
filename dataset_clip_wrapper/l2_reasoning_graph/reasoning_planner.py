@@ -6,7 +6,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -703,6 +703,7 @@ def execute_reasoning_plan(
     clue_memory_graph: dict[str, Any],
     question: dict[str, Any],
     skill_executor: Any | None = None,
+    commit_policy: Mapping[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Execute a reasoning skill plan over the clue graph, returning trace + step_outputs.
 
@@ -1449,21 +1450,23 @@ def execute_reasoning_plan(
                     support_chain = _chain(verified_claim.get("supported_by_refs") or verified_claim.get("evidence_refs"))
                 if not support_chain.get("evidence_refs"):
                     support_chain = _chain(_lookup_recent_evidence_refs())
-                commit_policy: dict[str, Any] = {}
+                # Start from the run-level policy so always_commit_mcq reaches a
+                # planned commit step as well as the auto-finalize path.
+                step_policy: dict[str, Any] = dict(commit_policy or {})
                 if skill_executor is not None and getattr(skill_executor.llm_client, "seed", None) is not None:
                     ran_compare = any(item.get("skill_id") == "compare_hypotheses" for item in trace)
-                    commit_policy = {
+                    step_policy.update({
                         "explore_seed": int(skill_executor.llm_client.seed),
                         "force_explore": bool(getattr(skill_executor, "grpo_force_explore", True)),
                         # Only rotate at commit when compare never ran (path hole).
                         "commit_explore": not ran_compare,
-                    }
+                    })
                 result = executor(
                     verified_claim,
                     options=resolved_args.get("options") or options or None,
                     answer_format=resolved_args.get("answer_format") or ("multiple_choice" if options else "free_text"),
                     support_chain=support_chain,
-                    decision_policy=commit_policy or None,
+                    decision_policy=step_policy or None,
                 )
             else:
                 result = executor(**resolved_args)
@@ -1544,12 +1547,21 @@ def execute_reasoning_plan(
                     verify_result.evidence_refs,
                 )
                 verified_claim = verify_result.outputs.get("verified_claim") if isinstance(verify_result.outputs, dict) else None
-                if verify_result.ok and isinstance(verified_claim, dict):
+                always_commit = bool((commit_policy or {}).get("always_commit_mcq")) and bool(options)
+                if isinstance(verified_claim, dict) and (verify_result.ok or always_commit):
+                    if not verify_result.ok:
+                        # Verification failed; keep the candidate the chain already
+                        # produced so the benchmark scores an answer, not an absence.
+                        verified_claim = {
+                            **verified_claim,
+                            "option_label": verified_claim.get("option_label") or best_hypothesis.get("option_label"),
+                        }
                     commit_result = commit_answer(
                         verified_claim,
                         options=options or None,
                         answer_format=question.get("answer_format") or ("multiple_choice" if options else "free_text"),
                         support_chain=_chain(verify_result.evidence_refs),
+                        decision_policy=dict(commit_policy or {}),
                     )
                     trace.append({
                         "step_id": "auto_commit_final",
@@ -1559,6 +1571,7 @@ def execute_reasoning_plan(
                         "evidence_refs": commit_result.evidence_refs,
                         "confidence": commit_result.confidence,
                         "auto_finalized": True,
+                        "committed_unverified": bool((commit_result.outputs or {}).get("committed_unverified")),
                     })
                     step_outputs["auto_commit_final"] = _augment_step_outputs(
                         "commit_answer",
@@ -1702,6 +1715,7 @@ def build_llm_reasoning_rollout(
     motif_top_k: int = 3,
     include_shadow_motifs: bool = False,
     motif_candidate_sink_path: str | Path | None = None,
+    commit_policy: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Full L2: plan with gpt-oss then execute reasoning skills. Falls back to deterministic.
 
@@ -1737,6 +1751,8 @@ def build_llm_reasoning_rollout(
         forced_motif_id = example_meta.get("forced_motif_id")
     if example_meta.get("motif_candidate_sink_path") and motif_candidate_sink_path is None:
         motif_candidate_sink_path = example_meta.get("motif_candidate_sink_path")
+    if isinstance(example_meta.get("commit_policy"), dict) and commit_policy is None:
+        commit_policy = example_meta.get("commit_policy")
 
     motif_resolution = _resolve_motif_online_plan(
         example,
@@ -1819,6 +1835,7 @@ def build_llm_reasoning_rollout(
         clue_memory_graph=clue_memory_graph,
         question=question,
         skill_executor=skill_executor,
+        commit_policy=commit_policy,
     )
 
     failed_steps = [t for t in trace if t.get("ok") is False]
