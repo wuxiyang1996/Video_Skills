@@ -96,6 +96,30 @@ separate even then, the contribution is the perception change, not the policy.
 **OPD success criterion: beat BM25 by a clear margin on the repassed catalog**,
 not merely beat SFT.
 
+## Video-Holmes: is retrieval the lever? (interim, 2026-09-04)
+
+Direct answering (gpt-oss-120b over clip descriptions, no skill graph) on the
+full 1,837-question test, paired by question:
+
+| evidence given to the answer model | n paired | acc | vs BM25 top-4 |
+|---|---|---|---|
+| BM25 top-4 (system, no learning) | 1,827 | 33.6 | — |
+| **oracle** top-4 (clips overlapping the gold spans; only 10% overlap with BM25 picks) | 1,012 | 29.9 | **−3.6 [−6.7, −0.4]** |
+| BM25 top-8 | 418 | 31.8 | −1.2 [−5.0, +2.9] |
+| no clips at all (`--indices-from none`, 300 ids) | running | | |
+| whole catalog (`--indices-from all`, 300 ids) | running | | |
+
+Perfect clip selection does not raise the answer accuracy — it lowers it
+(largest drops on SR −11.6 and TCI −8.5). Oracle clips are not placeholders and
+are as long as BM25 picks (658 vs 692 chars), so this is not a catalog-coverage
+artifact. Reading: the answer model is not extracting the answer from the
+descriptions of the gold moment; BM25's lexical match to the question/options
+is worth more to it than the right moment is. The retrieval controller (SFT →
+OPD → GRPO) therefore cannot carry the system from 33.6 toward Gemini's 45.0 on
+its own — the ceiling is set by the evidence modality (text descriptions from a
+per-video, question-agnostic 9B pass) and the answer model. The `none`/`all`
+controls bracket this; results land in `full_vh_controls/`.
+
 ## CG catalog repair, targeted
 
 Of the 67 heldout CG videos, 28 have placeholder catalogs and they are spread
