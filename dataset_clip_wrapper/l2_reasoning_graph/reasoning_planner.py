@@ -1468,6 +1468,8 @@ def execute_reasoning_plan(
                     support_chain=support_chain,
                     decision_policy=step_policy or None,
                 )
+                if isinstance(result.outputs, dict) and result.outputs.get("committed_unverified"):
+                    setattr(result, "committed_unverified", True)
             else:
                 result = executor(**resolved_args)
         except (TypeError, KeyError, AttributeError, ValueError) as exc:
@@ -2127,7 +2129,13 @@ def build_llm_reasoning_rollout(
     if not support_chain:
         support_chain = {"evidence_refs": last_output.get("evidence_refs") or [], "items": []}
     support_refs = support_chain.get("evidence_refs") or last_output.get("evidence_refs") or []
-    commit_ok = bool(last_trace.get("ok") and final_answer and support_refs)
+    # An always_commit_mcq commit carries whatever refs the verifier looked at,
+    # so it would otherwise pass this gate and be reported accepted_strong.  Keep
+    # the label (that is the point of the policy) but never call it verified.
+    committed_unverified = bool(last_trace.get("committed_unverified")) or bool(
+        last_output.get("committed_unverified")
+    )
+    commit_ok = bool(last_trace.get("ok") and final_answer and support_refs and not committed_unverified)
     options = question.get("options") or []
     final_label = final_answer
     final_text = str(final_answer) if final_answer is not None else ""

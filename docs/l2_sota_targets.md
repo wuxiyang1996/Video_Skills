@@ -165,11 +165,24 @@ now separate facts.
 and skill executor, all rows verified LLM-executed, seed 20260904):** completion
 100%, end-to-end accuracy **36.8%**, against published 27.8 (Qwen2.5-VL-7B)
 and 45.0 (Gemini-2.5-Pro). With skills run as lexical rules the same setup
-scored 15.8%. Only 3 of the 38 commits went through the flag's unverified path
-(31 `accepted_strong`, 4 `accepted_weak`): with LLM-executed skills the chain
-commits on its own, so the earlier ~60% abstention was mostly an artifact of
-rule-executed skills, and `always_commit_mcq` is a small safety net rather than
-the main lever. Still missing before this is a claim: the same-model `direct`
+scored 15.8%. **Retracted:** an earlier note here said only 3 of 38 commits used the flag.
+The flag-off run on the same 38 examples commits 34.2%, and 22 examples that
+abstained there are `accepted_strong` with the flag on, with identical
+correctness on every example both runs committed — so the flag, not the chain,
+produced most commits. The `accepted_strong` label was a bug: the acceptance
+gate checked only that refs were present, and an always_commit commit carries
+the refs the verifier looked at, so unverified commits were reported verified.
+Fixed: `committed_unverified` now forces `commit_ok=False`; the label survives,
+the status is `rejected`. The B-run labels on disk predate the fix.
+
+**Verdict on the skill graph (same 38, one model for planner, skills and the
+direct control):** direct 44.7% / graph flag-off 13.2% / graph + always_commit
+36.8%. Paired bootstrap: graph − direct **−31.6 [−47.4, −15.8]**; always_commit −
+graph +23.7 [+10.5, +36.8]; always_commit − direct −7.9 [−23.7, +7.9], not
+significant. With model, evidence and budget fixed, removing the decomposition
+raises accuracy; the graph's best configuration reaches parity at best.
+MHR/IMC are 1–2 examples each. A second seed is in flight; the 190 unread
+examples must supply any final number. Still missing before this is a claim: the same-model `direct`
 control (no skill graph) and the flag-off `model` run, both in flight; and the
 190 unread heldout examples for the final number.
 
