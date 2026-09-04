@@ -40,6 +40,28 @@ from trainer.grpo.l2_dataset_rewards import _text as clip_schema_text
 from trainer.grpo.train_l2_terminal_on_policy import filter_example_for_retrieval, retrieval_catalog
 
 
+class _LazyExamples:
+    """Mapping from example_id to a freshly loaded frozen L1 example."""
+
+    def __init__(self, path_by_id: dict[str, Path]) -> None:
+        self._paths = path_by_id
+
+    def __contains__(self, example_id: object) -> bool:
+        return example_id in self._paths
+
+    def __iter__(self):
+        return iter(self._paths)
+
+    def __len__(self) -> int:
+        return len(self._paths)
+
+    def __getitem__(self, example_id: str) -> dict[str, Any]:
+        loaded = load_frozen_l1_examples([self._paths[example_id]])
+        if not loaded:
+            raise KeyError(example_id)
+        return loaded[0]
+
+
 def oracle_indices(example: dict[str, Any], supervision: dict[str, Any], top_k: int) -> list[int]:
     """Candidates that actually overlap a gold span, best-effort up to top_k."""
     schemas, _ = retrieval_catalog(example)
@@ -243,17 +265,26 @@ def main(argv: list[str] | None = None) -> int:
 
     from trainer.grpo.train_l2_terminal_on_policy import load_openrouter_api_key
 
+    # Index example ids to paths without holding every example resident: each
+    # frozen L1 carries a ~2,600-node clue graph, and loading all 1,837 kept
+    # ~25 GB per process on a shared login node.  Examples are re-read per job.
     paths = [Path(p) for p in sorted(glob.glob(args.l1_glob, recursive=True))]
-    examples = {
-        str(e.get("example_id") or ""): e
-        for e in load_frozen_l1_examples(paths)
-        if e.get("example_id")
-    }
+    path_by_id: dict[str, Path] = {}
+    for path in paths:
+        try:
+            head = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        example_id = str(head.get("example_id") or "")
+        if example_id and example_id not in path_by_id:
+            path_by_id[example_id] = path
+        del head
+    examples = _LazyExamples(path_by_id)
     if args.example_ids:
         wanted = [line.strip() for line in args.example_ids.read_text(encoding="utf-8").splitlines() if line.strip()]
         chosen = [e for e in wanted if e in examples]
     else:
-        chosen = sorted(examples)
+        chosen = sorted(path_by_id)
         random.Random(args.seed).shuffle(chosen)
         chosen = chosen[: max(1, args.sample)]
 
