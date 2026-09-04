@@ -213,7 +213,12 @@ silently skipped, so the run reproduced the SR-subset number (direct 43.0%,
 253/5/5 SR/IMC/MHR). Skipped examples are now counted as errors, and
 `--indices-from bm25` ranks each example's own captions against its question so
 every question is covered; the reranker's own ranking over all 1,837 requires a
-pointwise build plus a GPU scoring pass, which is queued. 80 of 270
+pointwise build plus a GPU scoring pass. Built: 1,781 of 1,837 questions
+(109,978 candidate rows); 56 excluded by the pre-registered rule that a
+question's full catalog must contain both a positive and a negative candidate
+(43 no-negative, 13 no-positive). OPD-adapter scoring over it is queued on GPU;
+on completion both answer-chain conditions relaunch with those indices. Two
+BM25-indexed runs over all 1,837 are in flight now. 80 of 270
 one-question examples are consumed; the full-benchmark run must be the source
 of any final number. Still missing before this is a claim: the same-model `direct`
 control (no skill graph) and the flag-off `model` run, both in flight; and the
