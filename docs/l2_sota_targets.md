@@ -45,7 +45,12 @@ official metrics at a budget of at most five intervals:
 
 **Video-Holmes**, on all 1,837 questions:
 
-- `accuracy > 27.8` — beat the best open ~7B model.
+- **Stated target (2026-09-04): atomic skills + OPD above Gemini-2.5-Pro, i.e.
+  `accuracy > 45.0`**, seven-type average. Direct prompting with BM25 retrieval
+  measures 33.5; the skill graph is currently below direct on the SR subset. A
+  retrieval-ceiling run (direct with gold-span clips) is in flight to decide
+  whether retrieval or the answer model is the binding lever.
+- `accuracy > 27.8` — beat the best open ~7B model (already exceeded by direct).
 - Requires an end-to-end answer path that does not exist yet; this is the
   highest-risk target.
 
