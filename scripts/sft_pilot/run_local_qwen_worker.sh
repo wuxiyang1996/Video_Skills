@@ -112,6 +112,8 @@ if [[ "${SERVE_BACKEND}" == "vllm" ]]; then
     export CUDA_PATH="${VLLM_CUDA_HOME}"
     export PATH="${VLLM_CUDA_HOME}/bin:${PATH}"
   fi
+  # flashinfer shells out to ninja, which ships in the venv rather than on PATH.
+  export PATH="${VLLM_VENV_ROOT}/bin:${PATH}"
   "${VLLM_VENV_ROOT}/bin/vllm" serve "${MODEL}" \
     --host 127.0.0.1 \
     --port "${PORT}" \

@@ -31,4 +31,13 @@ fi
 if [[ -n "${SCORE_MODE:-}" ]]; then
   args+=(--score-mode "${SCORE_MODE}")
 fi
+if [[ -n "${OBJECTIVE:-}" ]]; then
+  args+=(--objective "${OBJECTIVE}")
+fi
+if [[ -n "${MARGIN:-}" ]]; then
+  args+=(--margin "${MARGIN}")
+fi
+if [[ -n "${MAX_PAIRS_PER_EXAMPLE:-}" ]]; then
+  args+=(--max-pairs-per-example "${MAX_PAIRS_PER_EXAMPLE}")
+fi
 "${PYTHON}" -m trainer.train_l2_pointwise_opd "${args[@]}"
