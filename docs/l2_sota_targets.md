@@ -185,7 +185,23 @@ Five 300-id pilots in `full_vh_mm/`, all over whole catalog + BM25 pointer:
 | `gptoss_votes5_300` | gpt-oss-120b, 5 samples at T=0.7 | no | self-consistency |
 
 Reference on the same 300 ids: gpt-oss-120b text, whole catalog + BM25 pointer
-= 39.0. If frames help, retrieval matters again (the pointer decides what is
+= 39.0.
+
+**Result (300 ids, paired).** The answer model is the lever, not the modality:
+
+| answer model | frames | acc | vs gpt-oss-120b |
+|---|---|---|---|
+| gpt-oss-120b | no | 39.0 | — |
+| **qwen/qwen3-vl-235b-a22b-instruct** | no | **45.0** | **+6.0 [−0.7, +12.7]** (CTI +25.7 sig, TCI +11.7) |
+| qwen/qwen3-vl-235b-a22b-instruct | 16 | 43.6 | +0.0 vs its own text run (236 paired) |
+
+Frames of the pointed clips add nothing over the L1 descriptions, so the clip
+schemas already carry what the answer needs; the 120b reader was the
+bottleneck. 45.0 on this subset equals the published Gemini-2.5-Pro number;
+the full 1,837 run (`vl235b_text_1837`) decides whether it holds. qwen3.5-9b
+as answer model is unusable on OpenRouter (hidden-reasoning exhaustion,
+ValueError on every call); qwen3-vl-8b-instruct is the size-matched
+substitute (`vl8b_*`). If frames help, retrieval matters again (the pointer decides what is
 watched) and the atomic skills get a real job: perception skills that turn
 frames into verifiable facts, feeding the `hybrid` answer call.
 
