@@ -421,6 +421,40 @@ contribution measured elsewhere (OPD > BM25 on inference-shot recall); the
 inference loss is what keeps accuracy at parity. That is the paper's honest
 one-line summary of atomic skills on Video-Holmes.
 
+**Why the inference goes wrong — three mechanisms from the rollouts (fresh 300).**
+
+1. *Timeline questions: the ranker ignores the timestamps of its own
+   citations.* TA is the **only** type where graph2 is significantly below
+   direct (19.4 vs 35.5, −16.1 [−29.0, −3.2]); every other type is within ±3
+   (n.s.). In 9 of 23 wrong TA answers the chosen option's cited clips are not
+   in time order, while the gold option's are (e.g. q1194: chosen B cites clips
+   25, 39, **63, 60**, 79 and narrates "burns the paper, then the candle is
+   blown out"; gold F cites 25, 39, 60, 63, 79). Where exactly one option's
+   citations are time-ordered, that option is gold 4/7 times. The graph holds
+   the information that fixes its worst error and does not use it — a
+   deterministic "order events by cited clip time" skill would.
+2. *Implication questions (MHR, "what does the shot at 3:09 imply"): the gold
+   is film grammar, not content.* Gold explanations cite mirror-image
+   reversal, subjective POV, foreshadowing; the descriptions encode none of
+   it, and citation pressure pushes the ranker to over-interpret citable
+   content (a note → "looped reality"; blur → "memory fragmentation"). MHR
+   has the most RE cases (39/61) and the most near-misses (gold at rank 2 with
+   p-gap ≤0.2: 15).
+3. *Motive questions (IMC): directly-supported generic options beat
+   explanatory specific ones.* q104: "visible distress → sudden discomfort"
+   (chosen, p=0.35) over "fear of the women in yellow" (gold, rank 2, p=0.25)
+   although the chain cites the yellow-dress association. Across all RE
+   cases gold sits at rank 2 in 55/167 with mean gap 0.17 — the comparative
+   step prefers the option most *directly* supported by visible cues over the
+   one that *explains* them.
+
+Judge-reason themes among graph2's RE (multi-label, n=167): causal/temporal
+30, missing link 21, literal/surface 15, symbolic over-reading 9.
+Mechanism 1 is fixable inside the decomposition (a rule skill over its own
+citations) and is being tested on all 200 TA questions; 2 and 3 are
+properties of the evidence and of comparative scoring under citation
+pressure.
+
 **Summary of every form the decomposition was tested in (Video-Holmes):**
 
 | condition | evidence | acc | vs direct on the same clips |
