@@ -402,6 +402,16 @@ Every form loses, including the two where the graph cannot remove evidence.
 Report this as a negative result and place the decomposition's contribution in
 verifiable evidence chains, not accuracy.
 
+## Disk (2026-09-04)
+
+`/gamma/projects` has a 2 TB quota and was 100% full (2.6 GB free). With the
+user's go-ahead, nine stale `sft_training/` directories (~140 GB; none
+referenced by the paper's eval reports) were **moved** to
+`/fs/nexus-scratch/wuxiyang/moved_from_sft_training/` (not backed up) — see
+`sft_training/MOVED_TO_SCRATCH.txt` for the list and the scripts whose default
+paths pointed there. The VRBench pilot writes to scratch through the
+`output/vrbench_pilot_v1` symlink.
+
 ## CG catalog repair, targeted
 
 Of the 67 heldout CG videos, 28 have placeholder catalogs and they are spread
