@@ -276,7 +276,22 @@ pointer. The skills' observations are themselves interpretive claims drawn
 from the ~12 clips (of ~61) their per-hypothesis retrieval reached, and adding
 them to a capable reader hurts regardless of whether verdicts come attached.
 The decomposition has no accuracy contribution to make on Video-Holmes in any
-form tested.
+form that *re-reads the L1 text*.
+
+**Why that does not contradict the benchmark.** Video-Holmes is built to test
+seeing a subtle visual clue and chaining it. Our skills operate on clip
+descriptions written at L1 *without the question in view*, so a clue the
+describer did not think to mention is already unreachable; re-arranging that
+text cannot recover it, and the graph works from a strict subset (~12 of ~61
+clips) of what the reader already has. Three measurements agree: the corrected
+oracle (clue clips only) scores *below* BM25 top-4, passively attached frames
+add nothing, and the reader is the only lever that moved.
+
+The one decomposition that can add information is therefore to go back to the
+pixels **with the question**: `--conditions probe` asks a question-conditioned
+visual probe of each pointed clip (4 frames, qwen3-vl-235b) and answers over
+the whole catalog plus those observations. Running on the 300 control ids
+against the same reader's 45.0.
 
 **Summary of every form the decomposition was tested in (Video-Holmes):**
 
