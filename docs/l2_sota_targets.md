@@ -508,9 +508,16 @@ recall, citation precision, mean best IoU (IoU is structurally small for 30-s
 clips vs multi-minute steps; recall/precision are the meaningful pair).
 Smoke: step recall 37.1, citation precision 22.4 over 7 timed questions.
 
-Planned comparison on the 480: direct (accuracy only) vs graph2 (accuracy +
-process) vs graph2+look; the 300-id contamination lesson applies — no
-selection on the pilot ids before a held-out confirmation.
+Pilot L1 finished for 57/60 videos with **0 placeholder clips of 3,375**
+(the last shard was preempted at 7/10 and resumes); 459 questions derived
+(8.1 per video; Event Attribution 95, Counting 88, Hypothetical 78, Event
+Prediction 69, Summarization 58, Implicit Inference 49, Logical Linkage 22).
+direct and graph2 (235B, whole catalog + BM25 pointer) are running on all 459.
+Interim (completion-order-biased, do not quote): direct 70.7% (140 rows, 11
+unparsed labels), graph2 63.2% (38 rows); graph2 process score on 30 timed
+questions: step recall 64.4, citation precision 63.1, mean best IoU 18.5 —
+far above the smoke video's 37/22. No selection on the pilot ids before a
+held-out confirmation.
 
 ## Disk (2026-09-04)
 
