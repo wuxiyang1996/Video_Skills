@@ -91,3 +91,29 @@ def test_direct_answer_omits_the_graph_vote_when_it_was_stripped() -> None:
     payload = json.loads(client.messages[1]["content"])
     assert payload["skill_findings"] == [{"observation": "a man leaves"}]
     assert "graph_vote" not in payload
+
+
+def test_visual_probe_asks_one_clip_with_the_question_and_returns_the_observation() -> None:
+    from scripts.eval.measure_answer_chain import visual_probe
+    client = _FakeClient()
+    client.chat = lambda messages: (setattr(client, "messages", messages), "a woman looks terrified")[1]
+    out = visual_probe(client, _example(), index=2, frames=["AAAA", "BBBB"])
+    assert out == {"time_span": {"start_s": 2.0, "end_s": 3.0}, "observation": "a woman looks terrified"}
+    payload = json.loads(client.messages[1]["content"][0]["text"])
+    assert payload["question"] == "q" and payload["time_span"] == {"start_s": 2.0, "end_s": 3.0}
+    assert [p["type"] for p in client.messages[1]["content"][1:]] == ["image_url", "image_url"]
+
+
+def test_visual_probe_returns_nothing_without_frames_or_reply() -> None:
+    from scripts.eval.measure_answer_chain import visual_probe
+    client = _FakeClient()
+    assert visual_probe(client, _example(), index=0, frames=[]) is None
+    client.chat = lambda messages: "   "
+    assert visual_probe(client, _example(), index=0, frames=["AAAA"]) is None
+
+
+def test_probe_condition_requires_frames() -> None:
+    import pytest
+    from scripts.eval.measure_answer_chain import main
+    with pytest.raises(SystemExit):
+        main(["--l1-glob", "x", "--output", "o.json", "--indices-from", "all", "--conditions", "probe"])

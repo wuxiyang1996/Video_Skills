@@ -221,6 +221,50 @@ def majority_label(labels: list[str | None]) -> str | None:
     return None
 
 
+PROBE_SYSTEM = (
+    "You look at frames from one clip of a video and answer one question about what is "
+    "visible. State only what you can see. If the frames do not show it, say so. Two sentences."
+)
+
+
+def visual_probe(
+    client: OpenRouterClient,
+    example: dict[str, Any],
+    index: int,
+    frames: list[str],
+) -> dict[str, Any] | None:
+    """Ask the answer question of ONE clip's frames and keep the visual reply.
+
+    This is the only form of decomposition that can add information the reader
+    does not already have: the L1 descriptions were written without the
+    question in view, so a clue the describer did not think to mention is
+    unreachable from text.  Re-reading those descriptions (the skill graph)
+    cannot recover it; going back to the pixels with the question can.
+    """
+    if not frames:
+        return None
+    schemas, _ = retrieval_catalog(example)
+    schema = schemas[index] if 0 <= index < len(schemas) and isinstance(schemas[index], dict) else {}
+    span = schema.get("time_span") or {}
+    question = (example.get("question") or {}).get("question_text") or ""
+    payload = {
+        "time_span": span,
+        "question": question,
+        "instruction": "what do these frames show that bears on the question?",
+    }
+    parts: list[dict[str, Any]] = [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]
+    for jpeg in frames:
+        parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{jpeg}"}})
+    text = client.chat([
+        {"role": "system", "content": PROBE_SYSTEM},
+        {"role": "user", "content": parts},
+    ])
+    observation = (text or "").strip()
+    if not observation:
+        return None
+    return {"time_span": span, "observation": observation[:600]}
+
+
 def strip_verdicts(findings: dict[str, Any]) -> dict[str, Any]:
     """Drop the graph's per-option scores and its vote, keep the observations.
 
@@ -521,6 +565,9 @@ def main(argv: list[str] | None = None) -> int:
             "retriever steers attention over the whole catalog instead of cutting it."
         ),
     )
+    parser.add_argument("--probe-model", default=None,
+                        help="VLM that answers one question-conditioned visual probe per watched clip "
+                             "(condition 'probe').  Needs --frames-per-clip.")
     parser.add_argument("--findings-mode", choices=("full", "observations_only"), default="full",
                         help="hybrid: 'full' passes the skills' per-option scores and vote; "
                              "'observations_only' passes just their observations.")
@@ -567,7 +614,9 @@ def main(argv: list[str] | None = None) -> int:
         nargs="+",
         default=["model", "oracle", "direct"],
         help=("'model'/'oracle' run the skill graph; 'direct' is the no-decomposition control; "
-              "'hybrid' runs the graph, then answers once over all the clips plus the graph's notes."),
+              "'hybrid' runs the graph, then answers once over all the clips plus the graph's notes; "
+              "'probe' asks a question-conditioned visual probe of each pointed clip, then answers "
+              "over all the clips plus those visual observations."),
     )
     parser.add_argument(
         "--always-commit-mcq",
@@ -662,8 +711,12 @@ def main(argv: list[str] | None = None) -> int:
             timeout_s=args.timeout_s,
         )
 
-    def answer(example: dict[str, Any], indices: list[int], highlight: list[int] | None, findings: dict[str, Any] | None = None) -> dict[str, Any]:
-        frames = clip_frames_for_answer(example, indices, highlight, args.frames_per_clip, args.frame_max_clips, args.frame_width)
+    def answer(example: dict[str, Any], indices: list[int], highlight: list[int] | None,
+               findings: dict[str, Any] | None = None, attach_frames: bool = True) -> dict[str, Any]:
+        frames = (
+            clip_frames_for_answer(example, indices, highlight, args.frames_per_clip, args.frame_max_clips, args.frame_width)
+            if attach_frames else {}
+        )
         if args.votes <= 1:
             return direct_answer(answer_client, example, indices, highlight, findings, frames)
         samples = [direct_answer(answer_client, example, indices, highlight, findings, frames) for _ in range(args.votes)]
@@ -674,6 +727,19 @@ def main(argv: list[str] | None = None) -> int:
             "frames_attached": samples[0].get("frames_attached", 0),
             "votes": [(s.get("final_answer") or {}).get("label") for s in samples],
         }
+
+    probe_client = None
+    if "probe" in args.conditions:
+        if args.frames_per_clip <= 0:
+            parser.error("--conditions probe needs --frames-per-clip > 0")
+        probe_client = OpenRouterClient(
+            model=args.probe_model or args.answer_model or args.planner_model,
+            api_key=load_openrouter_api_key(keys_py_path=args.keys_py),
+            max_tokens=400,
+            temperature=0.0,
+            reasoning={"effort": "minimal", "exclude": True},
+            timeout_s=args.timeout_s,
+        )
 
     dump_lock = threading.Lock()
     dump_handle = None
@@ -710,7 +776,20 @@ def main(argv: list[str] | None = None) -> int:
             return {"example_id": example_id, "condition": condition, "error": "no_retrieval_indices"}
         try:
             graph_rollout = None
-            if condition == "direct":
+            if condition == "probe":
+                frames = clip_frames_for_answer(
+                    example, indices, highlight, args.frames_per_clip, args.frame_max_clips, args.frame_width
+                )
+                probes = []
+                for probe_index, jpegs in frames.items():
+                    seen = _with_rate_limit_retry(lambda: visual_probe(probe_client, example, probe_index, jpegs))
+                    if seen:
+                        probes.append(seen)
+                rollout = _with_rate_limit_retry(
+                    lambda: answer(example, indices, highlight, {"notes": probes, "vote": None}, attach_frames=False)
+                )
+                rollout["visual_probes"] = len(probes)
+            elif condition == "direct":
                 rollout = _with_rate_limit_retry(lambda: answer(example, indices, highlight))
             else:
                 isolated, graph = filter_example_for_retrieval(example, indices)
@@ -733,6 +812,8 @@ def main(argv: list[str] | None = None) -> int:
                 "indices": indices, "rollout": graph_rollout if graph_rollout is not None else rollout,
             })
         row = {"example_id": example_id, "condition": condition, **score(rollout, gold_label)}
+        if "visual_probes" in rollout:
+            row["visual_probes"] = rollout["visual_probes"]
         if "frames_attached" in rollout:
             row["frames_attached"] = rollout["frames_attached"]
         if "votes" in rollout:
@@ -815,6 +896,7 @@ def main(argv: list[str] | None = None) -> int:
         "frame_max_clips": args.frame_max_clips,
         "votes": args.votes,
         "findings_mode": args.findings_mode,
+        "probe_model": args.probe_model,
         "max_tokens": answer_model_budget(args.reasoning_effort, args.max_tokens),
         "temporal_nms": bool(args.temporal_nms),
         "note": "seeded subsample of heldout_test; the rest stays unread",
