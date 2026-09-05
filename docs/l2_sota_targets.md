@@ -197,8 +197,15 @@ Reference on the same 300 ids: gpt-oss-120b text, whole catalog + BM25 pointer
 
 Frames of the pointed clips add nothing over the L1 descriptions, so the clip
 schemas already carry what the answer needs; the 120b reader was the
-bottleneck. 45.0 on this subset equals the published Gemini-2.5-Pro number;
-the full 1,837 run (`vl235b_text_1837`) decides whether it holds. qwen3.5-9b
+bottleneck. **Full test (1,836 of 1,837, completion 100%): 42.5** (7-type avg 42.1;
+SR 53.8, IMC 49.1, PAR 40.2, TCI 39.9, MHR 39.8, CTI 37.8, TA 34.0), +5.8
+[+3.4, +8.2] over gpt-oss-120b through the identical pipeline. Against the
+published numbers: 27.8 (Qwen2.5-VL-7B) — beaten by 14.7; 45.0
+(Gemini-2.5-Pro) — 2.5 short. The 300-id subset read 45.0, so the subset was
+optimistic. A size-matched reader (`qwen/qwen3-vl-8b-instruct`, 300 ids)
+scores **39.0**, identical to gpt-oss-120b (+0.0 [−6.7, +6.7]) and 11.2 above
+the 7-8B baseline — the pipeline, not the reader size, carries most of it.
+Frames still add nothing (8B: 36.3 with frames vs 39.0 without). qwen3.5-9b
 as answer model is unusable on OpenRouter (hidden-reasoning exhaustion,
 ValueError on every call); qwen3-vl-8b-instruct is the size-matched
 substitute (`vl8b_*`). If frames help, retrieval matters again (the pointer decides what is
