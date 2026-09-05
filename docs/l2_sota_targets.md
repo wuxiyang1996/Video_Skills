@@ -619,8 +619,10 @@ Final sets (2026-09-05): the two July-lane examples were repaired in place
 per-question derivation writes *copies* of the per-video L1, so the 237-set
 had to be re-derived (`cg_heldout_questions_v2`) before its rebuild
 (`heldout_pointwise_cg_questions237_v4`) picked up the repaired schemas —
-a rebuild from the stale copies (v3) stayed at 1.09%. Scoring for both final
-sets is queued; the 1.2%/1.09% numbers above are expected to move by noise
+a rebuild from the stale copies (v3) stayed at 1.09%. The re-derived 237-set v4 is at
+**0.33% placeholder rows** (51 of 15,655) and the 67-set v3 at 0.2% — under the
+1% gate everywhere. Scoring for both final sets is queued (7457404–7457412,
+7457424–7457432); the 1.2%/1.09% numbers above are expected to move by noise
 only. The controller's CI-clean win remains Video-Holmes clue recall
 (+3.57).
 
