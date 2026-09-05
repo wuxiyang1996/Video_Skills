@@ -395,6 +395,19 @@ on Video-Holmes (every CI includes 0, point estimates 1–2 below) and produces
 citations, a probability over options, and — when unsure — targeted visual
 observations, none of which the benchmark scores. No further variants.
 
+**In the benchmark's own error taxonomy** (`evaluate_reasoning.py` prompts,
+judge `deepseek/deepseek-chat` as the official script uses; the chain's
+per-option reasons serve as the "thinking"): graph2's wrong answers are **RE
+91%** (reasoning error), VOE 3%, VPE 2%, unclassifiable 4% (n=184); its right
+answers are TRAR 91% / TWAR 9%. With the sub-question look: RE 85%, VOE 7%,
+VPE 2% (n=181). Paired transitions (300): RE→RIGHT 17, RIGHT→RE 13, RE→VOE 6
+— looking fixes and breaks in nearly equal measure. So, as the benchmark sees
+it, the decomposition does not fail by *missing* clues (VOE/VPE ≤ 9%); it
+fails by drawing the wrong inference from the same descriptions the direct
+reader has — exactly the case where re-arranging evidence cannot help. The
+same analysis for direct (official <think>-style protocol, reasoning as a JSON
+field) is running for the side-by-side.
+
 **Summary of every form the decomposition was tested in (Video-Holmes):**
 
 | condition | evidence | acc | vs direct on the same clips |
