@@ -523,7 +523,15 @@ direct finished on all 459: 30 replies had no parseable label (the 1800-token
 plain budget truncates long counting rationales); re-asking those with the
 3000-token `--rationale` variant recovered 29. **direct (235B, whole catalog
 + BM25 pointer) on the 459-question pilot: 72.3%** (`direct.merged.rows.jsonl`).
-graph2 is at 243/459.
+graph2 is at 243/459. Interim paired on 246 (completion-order biased):
+direct 72.0 vs graph2 67.1, −4.9 [−8.9, −0.8], driven by Hypothetical
+Reasoning (84.4 → 66.7, −17.8 [−28.9, −6.7]) and Logical Linkage (80 → 60,
+n=10); Event Attribution, Counting, Summarization and Implicit Inference are
+tied. graph2 process score on 201 timed questions: step recall 54.4, citation
+precision 60.0, mean best IoU 15.5. Process baselines that need no model are
+computed alongside (BM25 pointer clips, first clips, all clips as
+"citations"), and a single-call direct with a cited rationale is running as
+the fair citation-bearing baseline.
 
 ## Disk (2026-09-04)
 
