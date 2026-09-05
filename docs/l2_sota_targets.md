@@ -494,7 +494,22 @@ by top-k = 9.05/14.29 (k=1), 4.76/5.71 (2), 3.22/1.43 (3), 2.65/1.43 (4),
 2.12/1.43 (5); BM25 4.52/5.71 at k=1 and worse beyond. So the reported
 system prediction is the **top-1 interval** (the official protocol allows up
 to five; more intervals only dilute set-IoU here). Bootstrap CIs on the 67
-heldout questions are recorded below; n=67 is small and the CIs are wide.
+heldout questions (10k paired draws), top-1:
+
+| model | mIoU [95% CI] | rec.@IoU [95% CI] | vs BM25 (paired) |
+|---|---|---|---|
+| BM25 | 4.43 [1.49, 8.20] | 6.57 [2.09, 12.24] | — |
+| SFT | 5.27 [2.34, 8.85] | 7.46 [2.99, 12.84] | +0.84 [−1.71, +3.21] / +0.90 [−3.28, +4.78] |
+| **OPD** | **6.13 [3.11, 9.82]** | **8.96 [4.18, 14.33]** | +1.69 [−0.60, +3.90] / +2.39 [−1.19, +5.97] |
+| GRPO s42 | 6.13 [3.01, 9.93] | 8.96 [4.48, 14.63] | +1.69 [−0.63, +3.89] / +2.39 [−1.49, +5.97] |
+
+At top-2 the learned models lose their edge (OPD − BM25: +0.33 / −0.60). So:
+the point estimates order BM25 < SFT < OPD ≈ GRPO and OPD's mIoU is 1.7× the
+published 72B figure, but with 67 questions **no pairwise difference is
+CI-clean** and the comparison to published numbers is on a different question
+set. The cheap fix is more heldout *questions* on the same cataloged videos
+(CG-Bench has several questions per video with their own clue intervals; no
+GPU needed) — see below.
 
 ## Order of work
 
