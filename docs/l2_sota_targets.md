@@ -294,8 +294,25 @@ add nothing, and the reader is the only lever that moved.
 The one decomposition that can add information is therefore to go back to the
 pixels **with the question**: `--conditions probe` asks a question-conditioned
 visual probe of each pointed clip (4 frames, qwen3-vl-235b) and answers over
-the whole catalog plus those observations. Running on the 300 control ids
-against the same reader's 45.0.
+the whole catalog plus those observations. **Unconditional looking is not the answer either (300 ids, paired).** Probing
+every pointed clip scores 43.3 against direct's 45.0 (−1.7 [−5.3, +2.0]).
+It does beat the text-only skill notes by a wide margin (37.3 vs 28.0 on the
+150 hybrid ids, +9.3 [0.0, +18.7]), so visual observations are far better
+skill output than re-read text — but spending four visual calls on every
+question buys nothing on average, because most questions are already decided
+by the descriptions and many Video-Holmes questions are interpretive ("what is
+the deep implication of..."), which a single clip's frames cannot answer.
+
+**Which is what makes the repaired graph the real test.** `--conditions graph2`
+(commit c6f9e7b) ranks every option against the same whole-catalog evidence in
+one call and cites the deciding clips, then looks at the frames of the clips
+the top two disagree over *only when its own top-two margin is small*. Two
+variants run on the 300 control ids: `--rank-margin 0` (repair only, no
+looking) isolates the structural fix, `--rank-margin 0.15` adds the selective
+look. Early margins are informative (accuracy 75% in the 0.20-0.35 bucket
+against 43% below 0.10), and the gain concentrates where the look fired — the
+decomposition's contribution would then be *deciding where to spend*, which
+the monolithic reader cannot do.
 
 **Summary of every form the decomposition was tested in (Video-Holmes):**
 
