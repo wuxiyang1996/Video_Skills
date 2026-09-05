@@ -309,11 +309,13 @@ one call and cites the deciding clips, then looks at the frames of the clips
 the top two disagree over *only when its own top-two margin is small*. Two
 variants run on the 300 control ids: `--rank-margin 0` (repair only, no
 looking) isolates the structural fix, `--rank-margin 0.15` adds the selective
-look. **Log inspection at 93 paired ids (2026-09-04, corrects an earlier unpaired
-reading of "−7"):** the repaired graph is at **parity** with direct — 38.7 vs
-40.9, −2.2 [−7.5, +3.2]; direct-right/graph-wrong 4, graph-right/direct-wrong
-2, both wrong 55. The structural repair therefore removed the old 9–13 point
-loss. It does not exceed direct because:
+look. **graph2 v1 on the full control 300 (2026-09-04):** 39.7 vs direct 45.0,
+**−5.3 [−9.0, −2.0]**; with the verbatim-question look-again 38.7 (−6.3
+[−10.3, −2.3]; looking itself −1.0 [−4.0, +2.0]). At 93 paired ids this had
+read as parity (−2.2 [−7.5, +3.2]) — the CI was simply too wide; the
+structural repair cut the old 9–13 point loss roughly in half, not to zero.
+Log inspection of those 93 (direct-right/graph-wrong 4, graph-right/direct-wrong
+2, both wrong 55) shows why it still trails:
 
 - 59% of questions fail under both. In those the gold option sits at rank 2
   (20) or 3 (16) of the graph's chain: seen, not decided. They concentrate in
