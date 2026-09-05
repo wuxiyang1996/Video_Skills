@@ -621,9 +621,21 @@ had to be re-derived (`cg_heldout_questions_v2`) before its rebuild
 (`heldout_pointwise_cg_questions237_v4`) picked up the repaired schemas —
 a rebuild from the stale copies (v3) stayed at 1.09%. The re-derived 237-set v4 is at
 **0.33% placeholder rows** (51 of 15,655) and the 67-set v3 at 0.2% — under the
-1% gate everywhere. Scoring for both final sets is queued (7457404–7457412,
-7457424–7457432); the 1.2%/1.09% numbers above are expected to move by noise
-only. The controller's CI-clean win remains Video-Holmes clue recall
+1% gate everywhere. **FINAL CG-Bench table (237-question set v4, 0.33% placeholder rows, top-1
+chosen on dev, 10k paired bootstrap draws):**
+
+| model | mIoU [95% CI] | rec.@IoU [95% CI] | vs BM25 (paired) |
+|---|---|---|---|
+| published Qwen2-VL-72B | 3.58 | 5.32 | |
+| published best 7–8B | 1.63 | 2.89 | |
+| BM25 (no learning) | 4.99 [3.49, 6.66] | 7.43 [5.06, 10.13] | — |
+| SFT v11 | 3.36 [2.12, 4.75] | 4.89 [3.04, 6.92] | −1.64 [−3.41, +0.07] / −2.53 [−5.32, +0.17] |
+| OPD α=0.75 | 5.22 [3.74, 6.83] | 7.68 [5.32, 10.21] | +0.22 [−1.68, +2.08] / +0.25 [−2.78, +3.21] |
+| GRPO 42 / 43 / 44 | 5.18 / 5.18 / 5.12 | 7.68 / 7.68 / 7.59 | ≈ OPD |
+
+The fully repaired 67-question set (v3, 0.2%) reproduces the earlier
+reading exactly (OPD 6.13/8.96, BM25 4.43/6.57, +1.69 [−0.60, +3.90]). The
+repairs moved nothing beyond noise; the table above is the paper's CG result. The controller's CI-clean win remains Video-Holmes clue recall
 (+3.57).
 
 Diagnostics on the 237: OPD and BM25 choose the same top-1 clip on only
