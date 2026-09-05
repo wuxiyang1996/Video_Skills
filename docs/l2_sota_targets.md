@@ -385,7 +385,15 @@ agree on the label only 12/17 times, so the two-stage rank→look→re-rank
 pipeline also compounds sampling noise that a single answer call does not.
 The remaining gap is therefore not a prompt defect: the
 decomposition does not add accuracy on Video-Holmes even in its best-behaved
-form. Final numbers when the 300 complete; no further variants.
+form. **Final (fresh 300, paired vs plain direct 235B, 2026-09-05):** probability
+ranking without looking 38.7 vs 41.0, −2.3 [−6.7, +2.0]; with factual
+sub-question probes 39.7, −1.3 [−5.3, +2.7]; looking vs not +1.0 [−3.0,
++5.0]; on the 250 questions where it looked, +0.8 [−3.2, +4.8] vs direct.
+Direct under the official <think> protocol: 41.5 vs 41.1, +0.3 [−3.3, +4.0].
+Verdict: the repaired decomposition is at **parity** with a single answer call
+on Video-Holmes (every CI includes 0, point estimates 1–2 below) and produces
+citations, a probability over options, and — when unsure — targeted visual
+observations, none of which the benchmark scores. No further variants.
 
 **Summary of every form the decomposition was tested in (Video-Holmes):**
 
