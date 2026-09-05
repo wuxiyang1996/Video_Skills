@@ -346,7 +346,7 @@ too many times to validate anything).
 | direct | whole catalog | 36.0 (300) | — |
 | graph + always_commit | whole catalog | 23.3 (300) | **−12.7 [−19.0, −6.3]** |
 | hybrid (graph notes + vote, one answer call) | whole catalog | 28.0 (150) | **−8.7 [−16.0, −1.3]** |
-| graph + always_commit | BM25 top-4 | 23.6 (127) | −7.9 [−18.1, +3.2] |
+| graph + always_commit, **full test** | BM25 top-4 | 24.2 (1,823) | **−9.4 [−11.9, −6.9]** (2 rows with no LLM skill, 4 excluded) |
 | hybrid, observations only (no scores, no vote) | whole catalog | 26.7 (150) | **−13.3 [−20.7, −6.0]** vs direct+pointer |
 | graph (SR subset, earlier) | reranker top-4 | 19.4 (72) | −26.4 [−38.9, −13.9] |
 
