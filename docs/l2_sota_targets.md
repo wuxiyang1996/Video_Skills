@@ -140,6 +140,14 @@ segment recall (which is near-vacuous) and *lowers* inference recall, so it is
 not part of the reported system. This is the honest retrieval claim for
 Video-Holmes.
 
+Better grounding does **not** move the answer, though: with the whole catalog
+in context and the 235B reader, the OPD pointer scores 44.0 against the BM25
+pointer's 45.0 (300 ids, −1.0 [−4.7, +2.7]), and using the reranker to *cut*
+to top-4 scores 33.6 against 35.3 for whole catalog + BM25 pointer (1,186
+paired, −1.8 [−4.4, +0.8]). So on Video-Holmes retrieval is a grounding
+contribution, not an accuracy one — say that plainly rather than implying the
+controller drives the QA number.
+
 **Same caveat applies to the paper's VH "segment recall".** `temporal_retrieval_metrics(selected, segment_spans)`
 scores recall over those 95%-coverage segments, so it mostly measures how
 spread out the top-k picks are, not whether they land on the clue. The
