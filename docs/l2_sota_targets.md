@@ -268,9 +268,15 @@ notes scores 28.0, against 36.7 for plain direct answering over the same clips
 (−8.7 [−16.0, −1.3]) and 40.0 for direct with the BM25 pointer (−12.0
 [−19.3, −4.7]). The graph's own answer inside those runs was 22.0. So the
 notes are not neutral filler: they drag a capable reader toward the graph's
-wrong pick. `--findings-mode observations_only` (drop the per-option scores and
-the vote, keep the observations) is running to tell a bad scoring step apart
-from a worthless analysis.
+wrong pick. **It is not the scoring step.** `--findings-mode observations_only` — drop the
+per-option scores and the vote, keep only the skills' observations — scores
+26.7 on the same 150 ids: no better than the full notes (28.0, −1.3 [−8.0,
++5.3]) and still −13.3 [−20.7, −6.0] against direct answering with the
+pointer. The skills' observations are themselves interpretive claims drawn
+from the ~12 clips (of ~61) their per-hypothesis retrieval reached, and adding
+them to a capable reader hurts regardless of whether verdicts come attached.
+The decomposition has no accuracy contribution to make on Video-Holmes in any
+form tested.
 
 **Summary of every form the decomposition was tested in (Video-Holmes):**
 
@@ -280,6 +286,7 @@ from a worthless analysis.
 | graph + always_commit | whole catalog | 23.3 (300) | **−12.7 [−19.0, −6.3]** |
 | hybrid (graph notes + vote, one answer call) | whole catalog | 28.0 (150) | **−8.7 [−16.0, −1.3]** |
 | graph + always_commit | BM25 top-4 | 23.6 (127) | −7.9 [−18.1, +3.2] |
+| hybrid, observations only (no scores, no vote) | whole catalog | 26.7 (150) | **−13.3 [−20.7, −6.0]** vs direct+pointer |
 | graph (SR subset, earlier) | reranker top-4 | 19.4 (72) | −26.4 [−38.9, −13.9] |
 
 Every form loses, including the two where the graph cannot remove evidence.
