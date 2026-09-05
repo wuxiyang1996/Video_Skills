@@ -140,9 +140,10 @@ segment recall (which is near-vacuous) and *lowers* inference recall, so it is
 not part of the reported system. This is the honest retrieval claim for
 Video-Holmes.
 
-Better grounding does **not** move the answer, though: with the whole catalog
-in context and the 235B reader, the OPD pointer scores 44.0 against the BM25
-pointer's 45.0 (300 ids, −1.0 [−4.7, +2.7]), and using the reranker to *cut*
+Better grounding does **not** move the answer, though. On the **full test**
+with gpt-oss-120b the OPD pointer scores 36.5 against the BM25 pointer's 36.8
+(1,835 paired, −0.33 [−2.23, +1.58]; no per-type CI excludes 0); with the
+235B reader on 300 ids it is 44.0 against 45.0 (−1.0 [−4.7, +2.7]), and using the reranker to *cut*
 to top-4 scores 33.6 against 35.3 for whole catalog + BM25 pointer (1,186
 paired, −1.8 [−4.4, +0.8]). So on Video-Holmes retrieval is a grounding
 contribution, not an accuracy one — say that plainly rather than implying the
