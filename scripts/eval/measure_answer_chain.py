@@ -631,8 +631,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset-root", type=Path, default=Path("/fs/gamma-projects/vlm-robot/datasets"))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
-    if args.highlight_from and any(c not in ("direct", "hybrid") for c in args.conditions):
-        parser.error("--highlight-from only applies to the direct and hybrid conditions")
+    if args.highlight_from and any(c not in ("direct", "hybrid", "probe") for c in args.conditions):
+        parser.error("--highlight-from only applies to the direct, hybrid and probe conditions")
     if args.indices_from == "none" and any(c != "direct" for c in args.conditions):
         parser.error("--indices-from none is the no-evidence control; it only makes sense with --conditions direct")
 

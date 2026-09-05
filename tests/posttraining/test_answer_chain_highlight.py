@@ -45,7 +45,7 @@ def test_no_highlight_leaves_the_payload_unchanged() -> None:
 def test_highlight_is_refused_for_graph_conditions(capsys) -> None:
     with pytest.raises(SystemExit):
         main(["--l1-glob", "x", "--output", "o.json", "--indices-from", "all", "--highlight-from", "bm25", "--conditions", "direct", "model"])
-    assert "only applies to the direct and hybrid conditions" in capsys.readouterr().err
+    assert "only applies to the direct, hybrid and probe conditions" in capsys.readouterr().err
 
 
 def test_answer_model_budget_grows_with_reasoning_effort() -> None:
