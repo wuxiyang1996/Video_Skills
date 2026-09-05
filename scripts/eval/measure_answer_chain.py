@@ -221,6 +221,90 @@ def majority_label(labels: list[str | None]) -> str | None:
     return None
 
 
+RANK_SYSTEM = (
+    "You are the comparative-scoring skill of a reasoning graph. Given every clip "
+    "description of a video and every answer option, rank the options against the SAME "
+    "evidence and cite the clip ranks that decide it. Reply with JSON only: "
+    '{"ranking": [{"label": "<option>", "score": <0-1>, "clip_ranks": [<int>...], '
+    '"reason": "<one sentence>"}...]} , best first.'
+)
+
+
+def rank_hypotheses(
+    client: OpenRouterClient,
+    example: dict[str, Any],
+    indices: list[int],
+    observations: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """One comparative call over shared evidence, replacing N independent scorings.
+
+    The graph lost because it scored each option in its own call against its own
+    ~5 retrieved observations (evidence overlap between options: Jaccard 0.21;
+    best-minus-median support gap: 0.18), then took the argmax.  Ranking every
+    option against the same clips restores the discriminative signal and still
+    emits the per-option evidence chain the decomposition exists to produce.
+    """
+    schemas, _ = retrieval_catalog(example)
+    question = example.get("question") or {}
+    clips = []
+    for rank, index in enumerate(indices, start=1):
+        if not (0 <= index < len(schemas)):
+            continue
+        schema = schemas[index] if isinstance(schemas[index], dict) else {}
+        clips.append({
+            "rank": rank,
+            "time_span": schema.get("time_span") or {},
+            "description": clip_schema_text(schema)[:1200],
+        })
+    payload = {
+        "question": question.get("question_text") or "",
+        "options": [{"label": o.get("label"), "text": o.get("text")} for o in question.get("options") or []],
+        "clips": clips,
+    }
+    if observations:
+        payload["visual_observations"] = observations
+        payload["visual_observations_note"] = "answers a vision model gave when shown those clips' frames"
+    text = client.chat([
+        {"role": "system", "content": RANK_SYSTEM},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ])
+    ranking: list[dict[str, Any]] = []
+    try:
+        parsed = json.loads(re.search(r"\{.*\}", text, re.S).group(0)) or {}
+        for item in parsed.get("ranking") or []:
+            if isinstance(item, dict) and item.get("label"):
+                ranking.append({
+                    "label": str(item["label"]).strip(),
+                    "score": float(item.get("score") or 0.0),
+                    "clip_ranks": [int(r) for r in (item.get("clip_ranks") or []) if str(r).isdigit()][:6],
+                    "reason": str(item.get("reason") or "")[:300],
+                })
+    except Exception:
+        ranking = []
+    return {"ranking": ranking}
+
+
+def ranking_margin(ranking: list[dict[str, Any]]) -> float:
+    """Confidence of the comparative step: top score minus runner-up."""
+    scores = sorted((item.get("score") or 0.0 for item in ranking), reverse=True)
+    if len(scores) < 2:
+        return 1.0 if scores else 0.0
+    return float(scores[0] - scores[1])
+
+
+def disputed_clip_indices(ranking: list[dict[str, Any]], indices: list[int], limit: int) -> list[int]:
+    """Catalog indices the top two options disagree over -- where looking pays."""
+    if not ranking:
+        return []
+    wanted: list[int] = []
+    for item in ranking[:2]:
+        for rank in item.get("clip_ranks") or []:
+            position = rank - 1
+            if 0 <= position < len(indices) and indices[position] not in wanted:
+                wanted.append(indices[position])
+    return wanted[:limit]
+
+
 PROBE_SYSTEM = (
     "You look at frames from one clip of a video and answer one question about what is "
     "visible. State only what you can see. If the frames do not show it, say so. Two sentences."
@@ -565,6 +649,9 @@ def main(argv: list[str] | None = None) -> int:
             "retriever steers attention over the whole catalog instead of cutting it."
         ),
     )
+    parser.add_argument("--rank-margin", type=float, default=0.15,
+                        help="graph2: when the comparative step's top-two margin is below this, look at "
+                             "the clips the two disagree over before re-ranking. 0 disables looking.")
     parser.add_argument("--probe-model", default=None,
                         help="VLM that answers one question-conditioned visual probe per watched clip "
                              "(condition 'probe').  Needs --frames-per-clip.")
@@ -616,7 +703,10 @@ def main(argv: list[str] | None = None) -> int:
         help=("'model'/'oracle' run the skill graph; 'direct' is the no-decomposition control; "
               "'hybrid' runs the graph, then answers once over all the clips plus the graph's notes; "
               "'probe' asks a question-conditioned visual probe of each pointed clip, then answers "
-              "over all the clips plus those visual observations."),
+              "over all the clips plus those visual observations; "
+              "'graph2' is the repaired decomposition: one comparative ranking of all options over "
+              "shared evidence with citations, and when its top-two margin is small it looks at the "
+              "disputed clips' frames and re-ranks."),
     )
     parser.add_argument(
         "--always-commit-mcq",
@@ -631,8 +721,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset-root", type=Path, default=Path("/fs/gamma-projects/vlm-robot/datasets"))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
-    if args.highlight_from and any(c not in ("direct", "hybrid", "probe") for c in args.conditions):
-        parser.error("--highlight-from only applies to the direct, hybrid and probe conditions")
+    if args.highlight_from and any(c not in ("direct", "hybrid", "probe", "graph2") for c in args.conditions):
+        parser.error("--highlight-from only applies to the direct, hybrid, probe and graph2 conditions")
     if args.indices_from == "none" and any(c != "direct" for c in args.conditions):
         parser.error("--indices-from none is the no-evidence control; it only makes sense with --conditions direct")
 
@@ -729,8 +819,8 @@ def main(argv: list[str] | None = None) -> int:
         }
 
     probe_client = None
-    if "probe" in args.conditions:
-        if args.frames_per_clip <= 0:
+    if "probe" in args.conditions or "graph2" in args.conditions:
+        if args.frames_per_clip <= 0 and "probe" in args.conditions:
             parser.error("--conditions probe needs --frames-per-clip > 0")
         probe_client = OpenRouterClient(
             model=args.probe_model or args.answer_model or args.planner_model,
@@ -776,7 +866,41 @@ def main(argv: list[str] | None = None) -> int:
             return {"example_id": example_id, "condition": condition, "error": "no_retrieval_indices"}
         try:
             graph_rollout = None
-            if condition == "probe":
+            if condition == "graph2":
+                # decompose: rank every option against the SAME evidence, with citations
+                ranked = _with_rate_limit_retry(lambda: rank_hypotheses(answer_client, example, indices))
+                ranking = ranked.get("ranking") or []
+                margin = ranking_margin(ranking)
+                probes: list[dict[str, Any]] = []
+                if ranking and margin < args.rank_margin and args.frames_per_clip > 0:
+                    # the graph is unsure: go and look at the clips the top two disagree over
+                    schemas_now, _ = retrieval_catalog(example)
+                    video_path = ((example.get("video") or {}).get("primary_path")) or ""
+                    for probe_index in disputed_clip_indices(ranking, indices, args.frame_max_clips):
+                        schema_now = schemas_now[probe_index] if 0 <= probe_index < len(schemas_now) else {}
+                        jpegs = sample_clip_frames(
+                            video_path, (schema_now or {}).get("time_span") or {},
+                            args.frames_per_clip, args.frame_width,
+                        )
+                        seen = _with_rate_limit_retry(lambda: visual_probe(probe_client, example, probe_index, jpegs))
+                        if seen:
+                            probes.append(seen)
+                    if probes:
+                        ranked = _with_rate_limit_retry(
+                            lambda: rank_hypotheses(answer_client, example, indices, probes)
+                        )
+                        ranking = ranked.get("ranking") or ranking
+                # assemble: commit the top of the ranking with its evidence chain
+                label = ranking[0]["label"] if ranking else None
+                rollout = {
+                    "final_answer": {"label": label},
+                    "failure_reasons": [] if label else ["no_ranking"],
+                    "evidence_chain": ranking[:3],
+                    "rank_margin": margin,
+                    "visual_probes": len(probes),
+                    "probe_observations": probes,
+                }
+            elif condition == "probe":
                 frames = clip_frames_for_answer(
                     example, indices, highlight, args.frames_per_clip, args.frame_max_clips, args.frame_width
                 )
@@ -815,6 +939,9 @@ def main(argv: list[str] | None = None) -> int:
         row = {"example_id": example_id, "condition": condition, **score(rollout, gold_label)}
         if "visual_probes" in rollout:
             row["visual_probes"] = rollout["visual_probes"]
+        if "rank_margin" in rollout:
+            row["rank_margin"] = rollout["rank_margin"]
+            row["evidence_chain_len"] = len(rollout.get("evidence_chain") or [])
         if "frames_attached" in rollout:
             row["frames_attached"] = rollout["frames_attached"]
         if "votes" in rollout:
@@ -898,6 +1025,7 @@ def main(argv: list[str] | None = None) -> int:
         "votes": args.votes,
         "findings_mode": args.findings_mode,
         "probe_model": args.probe_model,
+        "rank_margin": args.rank_margin,
         "max_tokens": answer_model_budget(args.reasoning_effort, args.max_tokens),
         "temporal_nms": bool(args.temporal_nms),
         "note": "seeded subsample of heldout_test; the rest stays unread",
