@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import collections
 import glob
+import base64
 import json
 import threading
 import random
@@ -138,6 +139,88 @@ def answer_model_budget(effort: str, max_tokens: int | None) -> int:
     return 1800 if effort == "minimal" else 8000
 
 
+def sample_clip_frames(video_path: str | Path, span: dict[str, Any], count: int, width: int = 448) -> list[str]:
+    """Evenly spaced JPEG frames (base64) from one clip span, downscaled to `width`."""
+    if count <= 0 or not video_path:
+        return []
+    try:
+        import cv2  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError("frame sampling needs opencv-python") from exc
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return []
+    start = float(span.get("start_s") or 0.0)
+    end = float(span.get("end_s") or start)
+    if count == 1:
+        times = [(start + end) / 2.0]
+    else:
+        step = max(end - start, 0.1) / (count - 1)
+        times = [start + i * step for i in range(count)]
+    frames: list[str] = []
+    for t in times:
+        cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000.0)
+        ok, frame = cap.read()
+        if not ok:
+            continue
+        h, w = frame.shape[:2]
+        if width and w > width:
+            frame = cv2.resize(frame, (width, max(1, int(h * width / w))))
+        ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        if ok:
+            frames.append(base64.b64encode(buf.tobytes()).decode("ascii"))
+    cap.release()
+    return frames
+
+
+def clip_frames_for_answer(
+    example: dict[str, Any], indices: list[int], focus: list[int] | None, per_clip: int, max_clips: int, width: int = 448
+) -> dict[int, list[str]]:
+    """Frames for the clips the answer model should *watch*: the highlighted
+    (pointer) clips when there are any, else the first `max_clips` retrieved."""
+    if per_clip <= 0:
+        return {}
+    schemas, _ = retrieval_catalog(example)
+    video_path = ((example.get("video") or {}).get("primary_path")) or ""
+    chosen = [i for i in (focus or indices) if 0 <= i < len(schemas)][:max_clips]
+    out: dict[int, list[str]] = {}
+    for index in chosen:
+        schema = schemas[index] if isinstance(schemas[index], dict) else {}
+        span = schema.get("time_span") or {}
+        frames = sample_clip_frames(video_path, span, per_clip, width)
+        if frames:
+            out[index] = frames
+    return out
+
+
+def multimodal_user_content(payload: dict[str, Any], indices: list[int], frames: dict[int, list[str]]) -> Any:
+    """OpenAI-style content parts: the JSON payload, then each watched clip's frames."""
+    if not frames:
+        return json.dumps(payload, ensure_ascii=False)
+    position = {index: rank for rank, index in enumerate(indices, start=1)}
+    parts: list[dict[str, Any]] = [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]
+    for index, jpegs in frames.items():
+        parts.append({"type": "text", "text": f"frames of clip rank {position.get(index, '?')}, in time order:"})
+        for jpeg in jpegs:
+            parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{jpeg}"}})
+    return parts
+
+
+def majority_label(labels: list[str | None]) -> str | None:
+    """Most frequent non-empty label; ties go to the earliest sample."""
+    counts: dict[str, int] = {}
+    for label in labels:
+        if label:
+            counts[label] = counts.get(label, 0) + 1
+    if not counts:
+        return None
+    best = max(counts.values())
+    for label in labels:
+        if label and counts[label] == best:
+            return label
+    return None
+
+
 def extract_findings(rollout: dict[str, Any], max_chars: int = 6000) -> dict[str, Any]:
     """Turn a skill-graph rollout into notes a single answer call can read.
 
@@ -246,6 +329,10 @@ def retrieval_rank_indices(example: dict[str, Any], top_k: int) -> list[int]:
     return ranked[:top_k]
 
 
+DIRECT_SYSTEM_MULTIMODAL = (
+    "You answer multiple-choice questions about a video using the clip descriptions "
+    "provided and the attached frames of the clips most likely to matter. Reply with JSON only."
+)
 DIRECT_SYSTEM = (
     "You answer multiple-choice questions about a video using only the clip "
     "descriptions provided. Reply with JSON only."
@@ -258,6 +345,7 @@ def direct_answer(
     indices: list[int],
     highlight: list[int] | None = None,
     findings: dict[str, Any] | None = None,
+    frames: dict[int, list[str]] | None = None,
 ) -> dict[str, Any]:
     """Ask the same model the same question over the same clips, with no skill graph.
 
@@ -304,9 +392,16 @@ def direct_answer(
             "candidate option, plus that pass's own vote; they may be wrong -- decide "
             "from the clips"
         )
+    system = DIRECT_SYSTEM
+    if frames:
+        payload["watched_clips_note"] = (
+            "frames of the clips listed after this JSON are attached; use them together "
+            "with the descriptions"
+        )
+        system = DIRECT_SYSTEM_MULTIMODAL
     text = client.chat([
-        {"role": "system", "content": DIRECT_SYSTEM},
-        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        {"role": "system", "content": system},
+        {"role": "user", "content": multimodal_user_content(payload, indices, frames or {})},
     ])
     label = None
     try:
@@ -314,7 +409,11 @@ def direct_answer(
     except Exception:
         match = re.search(r"\b([A-H])\b", text or "")
         label = match.group(1) if match else None
-    return {"final_answer": {"label": label}, "failure_reasons": [] if label else ["no_label_parsed"]}
+    return {
+        "final_answer": {"label": label},
+        "failure_reasons": [] if label else ["no_label_parsed"],
+        "frames_attached": sum(len(v) for v in (frames or {}).values()),
+    }
 
 
 def degradation(rollout: dict[str, Any]) -> dict[str, Any]:
@@ -405,6 +504,16 @@ def main(argv: list[str] | None = None) -> int:
             "retriever steers attention over the whole catalog instead of cutting it."
         ),
     )
+    parser.add_argument("--answer-model", default=None,
+                        help="Model for the direct/hybrid answer call when different from --planner-model (e.g. a VLM).")
+    parser.add_argument("--frames-per-clip", type=int, default=0,
+                        help="Attach this many frames per watched clip to the answer call (0 = text only).")
+    parser.add_argument("--frame-max-clips", type=int, default=4,
+                        help="Watch at most this many clips: the --highlight-from picks, else the first retrieved.")
+    parser.add_argument("--frame-width", type=int, default=448)
+    parser.add_argument("--votes", type=int, default=1,
+                        help="Self-consistency: sample the answer call this many times at --vote-temperature and take the majority.")
+    parser.add_argument("--vote-temperature", type=float, default=0.7)
     parser.add_argument("--dump-rollouts", type=Path,
                         help="Also append every full rollout (plan, skill outputs, commit) to this jsonl for diagnosis.")
     parser.add_argument("--sample", type=int, default=40)
@@ -522,6 +631,30 @@ def main(argv: list[str] | None = None) -> int:
             config=_grpo_skill_backend_config(),
         )
 
+    answer_client = client
+    if args.answer_model or args.votes > 1:
+        answer_client = OpenRouterClient(
+            model=args.answer_model or args.planner_model,
+            api_key=load_openrouter_api_key(keys_py_path=args.keys_py),
+            max_tokens=answer_model_budget(args.reasoning_effort, args.max_tokens),
+            temperature=args.vote_temperature if args.votes > 1 else 0.0,
+            reasoning={"effort": args.reasoning_effort, "exclude": True},
+            timeout_s=args.timeout_s,
+        )
+
+    def answer(example: dict[str, Any], indices: list[int], highlight: list[int] | None, findings: dict[str, Any] | None = None) -> dict[str, Any]:
+        frames = clip_frames_for_answer(example, indices, highlight, args.frames_per_clip, args.frame_max_clips, args.frame_width)
+        if args.votes <= 1:
+            return direct_answer(answer_client, example, indices, highlight, findings, frames)
+        samples = [direct_answer(answer_client, example, indices, highlight, findings, frames) for _ in range(args.votes)]
+        label = majority_label([(s.get("final_answer") or {}).get("label") for s in samples])
+        return {
+            "final_answer": {"label": label},
+            "failure_reasons": [] if label else ["no_label_parsed"],
+            "frames_attached": samples[0].get("frames_attached", 0),
+            "votes": [(s.get("final_answer") or {}).get("label") for s in samples],
+        }
+
     dump_lock = threading.Lock()
     dump_handle = None
     if args.dump_rollouts:
@@ -558,7 +691,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             graph_rollout = None
             if condition == "direct":
-                rollout = _with_rate_limit_retry(lambda: direct_answer(client, example, indices, highlight))
+                rollout = _with_rate_limit_retry(lambda: answer(example, indices, highlight))
             else:
                 isolated, graph = filter_example_for_retrieval(example, indices)
                 rollout = _with_rate_limit_retry(lambda: build_llm_reasoning_rollout(
@@ -569,9 +702,7 @@ def main(argv: list[str] | None = None) -> int:
                     # skills as an analysis pass; one answer call over all the evidence
                     graph_rollout = rollout
                     findings = extract_findings(graph_rollout)
-                    rollout = _with_rate_limit_retry(
-                        lambda: direct_answer(client, example, indices, highlight, findings)
-                    )
+                    rollout = _with_rate_limit_retry(lambda: answer(example, indices, highlight, findings))
         except Exception as exc:  # a transport failure is not an abstention
             return {"example_id": example_id, "condition": condition, "error": type(exc).__name__}
         if dump_handle is not None:
@@ -580,6 +711,10 @@ def main(argv: list[str] | None = None) -> int:
                 "indices": indices, "rollout": graph_rollout if graph_rollout is not None else rollout,
             })
         row = {"example_id": example_id, "condition": condition, **score(rollout, gold_label)}
+        if "frames_attached" in rollout:
+            row["frames_attached"] = rollout["frames_attached"]
+        if "votes" in rollout:
+            row["votes"] = rollout["votes"]
         if graph_rollout is not None:
             graph_scored = score(graph_rollout, gold_label)
             row.update({
@@ -653,6 +788,10 @@ def main(argv: list[str] | None = None) -> int:
         "indices_from": args.indices_from,
         "highlight_from": args.highlight_from,
         "reasoning_effort": args.reasoning_effort,
+        "answer_model": args.answer_model or args.planner_model,
+        "frames_per_clip": args.frames_per_clip,
+        "frame_max_clips": args.frame_max_clips,
+        "votes": args.votes,
         "max_tokens": answer_model_budget(args.reasoning_effort, args.max_tokens),
         "temporal_nms": bool(args.temporal_nms),
         "note": "seeded subsample of heldout_test; the rest stays unread",
