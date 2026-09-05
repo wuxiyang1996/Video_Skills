@@ -344,7 +344,15 @@ the 235B direct run): probability ranking without looking −2.1 [−7.2, +3.4]
 (237); with factual sub-question probes −4.9 [−10.7, +0.8] (122), the look
 firing on 86% of questions and costing −4.8 on the questions where it fired.
 The scores are no longer saturated (top mean 0.36) and the sub-questions are
-genuinely factual, so the remaining gap is not a prompt defect: the
+genuinely factual — only 34% of probe answers are of the "not visible" kind
+against 91% in v1 — yet the probes still flip answers the wrong way (on 106
+fired questions: 3 wrong→right, 7 right→wrong, 11 wrong→wrong). The
+probability margin tracks difficulty for both systems, not the graph's own
+reliability (margin <0.10: graph 33.5 vs direct 37.1 on the same 167 ids;
+0.10–0.25: 58.3 vs 58.3). Two independent ranking calls on the same question
+agree on the label only 12/17 times, so the two-stage rank→look→re-rank
+pipeline also compounds sampling noise that a single answer call does not.
+The remaining gap is therefore not a prompt defect: the
 decomposition does not add accuracy on Video-Holmes even in its best-behaved
 form. Final numbers when the 300 complete; no further variants.
 
