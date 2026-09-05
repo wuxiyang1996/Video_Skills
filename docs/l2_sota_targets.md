@@ -404,9 +404,22 @@ VPE 2% (n=181). Paired transitions (300): RE→RIGHT 17, RIGHT→RE 13, RE→VOE
 — looking fixes and breaks in nearly equal measure. So, as the benchmark sees
 it, the decomposition does not fail by *missing* clues (VOE/VPE ≤ 9%); it
 fails by drawing the wrong inference from the same descriptions the direct
-reader has — exactly the case where re-arranging evidence cannot help. The
-same analysis for direct (official <think>-style protocol, reasoning as a JSON
-field) is running for the side-by-side.
+reader has — exactly the case where re-arranging evidence cannot help. **Side-by-side with direct** (same 300, direct's reasoning elicited as a
+JSON field after the 235B reader ignored <think> tags 299/299 times):
+
+| | wrong answers: RE / VOE / VPE | right: TRAR / TWAR |
+|---|---|---|
+| direct (n wrong 179) | **80% / 17% / 3%** | 84% / 16% |
+| graph2 (n wrong 184) | **91% / 3% / 2%** | 91% / 9% |
+
+Paired transitions direct→graph2: RIGHT→RE 30 vs RE→RIGHT 21; **VOE→RE 20 vs
+VOE→RIGHT 7**. Read in the benchmark's terms: the decomposition *finds* the
+clues (omission errors fall from 17% to 3%, and its right answers are more
+often reasoned right, TRAR 91% vs 84%) and then *infers worse over them*
+(reasoning errors rise to 91%). The clue-finding gain is exactly the grounding
+contribution measured elsewhere (OPD > BM25 on inference-shot recall); the
+inference loss is what keeps accuracy at parity. That is the paper's honest
+one-line summary of atomic skills on Video-Holmes.
 
 **Summary of every form the decomposition was tested in (Video-Holmes):**
 
