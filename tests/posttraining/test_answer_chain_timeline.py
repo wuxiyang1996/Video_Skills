@@ -45,3 +45,22 @@ def test_order_by_time_falls_back_when_an_event_is_unlocated_or_nothing_matches(
     assert order_by_time({"①": 1, "②": None, "③": 3}, indices, ex, options) is None
     assert order_by_time({"①": 1, "②": 3, "③": 2}, indices, ex, options) is None   # ①③② is not an option
     assert order_by_time({"①": 99, "②": 1, "③": 2}, indices, ex, options) is None  # rank out of range
+
+
+def test_concordance_commits_the_uniquely_best_option_and_tolerates_one_unlocated_event() -> None:
+    from scripts.eval.measure_answer_chain import order_by_concordance
+    ex = {
+        "question": {"question_text": "order:\n① a ② b ③ c ④ d",
+                     "options": [{"label": "A", "text": "①②③④"}, {"label": "B", "text": "②①③④"}, {"label": "C", "text": "④③②①"}]},
+        "metadata": {"clip_schemas": [
+            {"clip_id": f"c{i}", "scene_description": "s", "time_span": {"start_s": i * 10.0, "end_s": i * 10.0 + 10.0}} for i in range(6)
+        ]},
+    }
+    indices = [0, 1, 2, 3, 4, 5]
+    options = {"A": "①②③④", "B": "②①③④", "C": "④③②①"}
+    # ② at 10s, ① at 20s, ③ at 40s; ④ unlocated -> B orders all three located pairs correctly, A gets 2/3, C 0/3
+    assert order_by_concordance({"①": 3, "②": 2, "③": 5, "④": None}, indices, ex, options) == "B"
+    # too few located events -> None
+    assert order_by_concordance({"①": 3, "②": 2, "③": None, "④": None}, indices, ex, options) is None
+    # a tie between two options -> None
+    assert order_by_concordance({"①": 3, "②": 3, "③": 5, "④": 6}, indices, ex, {"A": "①②③④", "B": "②①③④"}) is None

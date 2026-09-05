@@ -469,6 +469,48 @@ def order_by_time(
     return None
 
 
+def order_by_concordance(
+    located: dict[str, int | None], indices: list[int], example: dict[str, Any], options: dict[str, str],
+    min_located: int = 3,
+) -> str | None:
+    """Soft assembly: score each permutation option by how many located,
+    distinct-time event pairs it orders the same way as the clip start times.
+
+    The strict version fired on 35/151 timeline questions: 73 had an unlocated
+    event and 43 had an order that matched no option (a localisation off by one
+    clip).  Pairwise concordance tolerates both; it commits only when one
+    option is uniquely best and disagrees with the located order on at most one
+    pair, else returns None for the ranking fallback.
+    """
+    schemas, _ = retrieval_catalog(example)
+    starts: dict[str, float] = {}
+    for event, rank in (located or {}).items():
+        if rank is None:
+            continue
+        pos = int(rank) - 1
+        if 0 <= pos < len(indices) and 0 <= indices[pos] < len(schemas):
+            span = (schemas[indices[pos]] or {}).get("time_span") or {}
+            starts[event] = float(span.get("start_s") or 0.0)
+    if len(starts) < min_located:
+        return None
+    pairs = [(a, b) for i, a in enumerate(starts) for b in list(starts)[i + 1:] if starts[a] != starts[b]]
+    if not pairs:
+        return None
+    scores: dict[str, int] = {}
+    for label, perm in options.items():
+        position = {ch: i for i, ch in enumerate(perm)}
+        if not all(a in position and b in position for a, b in pairs):
+            continue
+        scores[label] = sum(1 for a, b in pairs if (position[a] < position[b]) == (starts[a] < starts[b]))
+    if not scores:
+        return None
+    top = max(scores.values())
+    winners = [label for label, score in scores.items() if score == top]
+    if len(winners) != 1 or top < max(2, len(pairs) - 1):
+        return None
+    return winners[0]
+
+
 PROBE_SYSTEM = (
     "You look at frames from one clip of a video and answer one question about what is "
     "visible. State only what you can see. If the frames do not show it, say so. Two sentences."
@@ -848,6 +890,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="graph2: on timeline questions (options are permutations of numbered events) locate "
                              "each event's clip with one call and assemble the order deterministically from clip "
                              "start times; falls back to the ranking when an event is unlocated or no option matches.")
+    parser.add_argument("--timeline-soft", action="store_true",
+                        help="graph2 timeline skill: when no option matches the strict order, commit the uniquely "
+                             "most concordant option over located event pairs (else fall back to the ranking).")
     parser.add_argument("--rank-probabilities", action="store_true",
                         help="graph2: score options as a probability distribution (margin becomes a confidence).")
     parser.add_argument("--probe-subquestions", action="store_true",
@@ -1077,7 +1122,11 @@ def main(argv: list[str] | None = None) -> int:
                     if events and perm_options:
                         located = _with_rate_limit_retry(lambda: localize_events(answer_client, example, indices, events))
                         chosen = order_by_time(located, indices, example, perm_options)
-                        timeline = {"events": located, "label": chosen}
+                        mode = "strict" if chosen else None
+                        if chosen is None and args.timeline_soft:
+                            chosen = order_by_concordance(located, indices, example, perm_options)
+                            mode = "soft" if chosen else None
+                        timeline = {"events": located, "label": chosen, "mode": mode}
                 # decompose: rank every option against the SAME evidence, with citations
                 ranked = _with_rate_limit_retry(
                     lambda: rank_hypotheses(answer_client, example, indices, probabilities=args.rank_probabilities)
@@ -1266,6 +1315,7 @@ def main(argv: list[str] | None = None) -> int:
         "rank_margin": args.rank_margin,
         "rank_probabilities": args.rank_probabilities,
         "timeline_skill": args.timeline_skill,
+        "timeline_soft": args.timeline_soft,
         "rationale": args.rationale,
         "probe_subquestions": args.probe_subquestions,
         "max_tokens": answer_model_budget(args.reasoning_effort, args.max_tokens),
