@@ -489,9 +489,12 @@ questions, decision_logit scoring, ≤5-interval protocol):**
 Every learned model and even BM25 clear the published 72B number at top-1;
 OPD at top-1 is 1.7× the 72B mIoU. The GRPO adapters have distinct weights
 but change OPD's top-1 pick on only 1–3 of 67 questions, so GRPO ≈ OPD on
-CG grounding. Bootstrap CIs and the a-priori choice of k (on the cg14 dev
-split, not on heldout) are recorded below when computed; n=67 is small and
-the CIs will be wide.
+CG grounding. **k chosen on the cg14 dev split, not on heldout:** OPD dev mIoU / rec.@IoU
+by top-k = 9.05/14.29 (k=1), 4.76/5.71 (2), 3.22/1.43 (3), 2.65/1.43 (4),
+2.12/1.43 (5); BM25 4.52/5.71 at k=1 and worse beyond. So the reported
+system prediction is the **top-1 interval** (the official protocol allows up
+to five; more intervals only dilute set-IoU here). Bootstrap CIs on the 67
+heldout questions are recorded below; n=67 is small and the CIs are wide.
 
 ## Order of work
 
