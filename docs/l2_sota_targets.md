@@ -519,6 +519,12 @@ questions: step recall 64.4, citation precision 63.1, mean best IoU 18.5 —
 far above the smoke video's 37/22. No selection on the pilot ids before a
 held-out confirmation.
 
+direct finished on all 459: 30 replies had no parseable label (the 1800-token
+plain budget truncates long counting rationales); re-asking those with the
+3000-token `--rationale` variant recovered 29. **direct (235B, whole catalog
++ BM25 pointer) on the 459-question pilot: 72.3%** (`direct.merged.rows.jsonl`).
+graph2 is at 243/459.
+
 ## Disk (2026-09-04)
 
 `/gamma/projects` has a 2 TB quota and was 100% full (2.6 GB free). With the
