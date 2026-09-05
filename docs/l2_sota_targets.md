@@ -309,10 +309,35 @@ one call and cites the deciding clips, then looks at the frames of the clips
 the top two disagree over *only when its own top-two margin is small*. Two
 variants run on the 300 control ids: `--rank-margin 0` (repair only, no
 looking) isolates the structural fix, `--rank-margin 0.15` adds the selective
-look. Early margins are informative (accuracy 75% in the 0.20-0.35 bucket
-against 43% below 0.10), and the gain concentrates where the look fired — the
-decomposition's contribution would then be *deciding where to spend*, which
-the monolithic reader cannot do.
+look. **Log inspection at 93 paired ids (2026-09-04, corrects an earlier unpaired
+reading of "−7"):** the repaired graph is at **parity** with direct — 38.7 vs
+40.9, −2.2 [−7.5, +3.2]; direct-right/graph-wrong 4, graph-right/direct-wrong
+2, both wrong 55. The structural repair therefore removed the old 9–13 point
+loss. It does not exceed direct because:
+
+- 59% of questions fail under both. In those the gold option sits at rank 2
+  (20) or 3 (16) of the graph's chain: seen, not decided. They concentrate in
+  TCI (15/25) and TA (8/11) — causal chains and event order, which
+  question-blind clip descriptions do not record. No re-arrangement of the same
+  evidence fixes that.
+- The scores are saturated: top ≥0.9 on 92/95 (mean 0.93), runner-up mean
+  0.75. The margin is a constant, not a confidence; its apparent
+  informativeness tracked question difficulty (direct's accuracy in the same
+  buckets was identical), so it cannot decide where to look.
+- The look-again probes were handed the abstract question verbatim and 91%
+  (107/118) came back "not visible / no evidence"; they changed 7/30 answers,
+  1 wrong→right and 4 right→wrong. "Nothing visible" statements push the
+  ranker off correct inferential options.
+- The 4 losses share one cause: "cite the deciding clips" biases the ranking
+  toward literally citable options over inferential ones (e.g. "the
+  yellow-clothed woman's physical attack" over "asthma attack cannot be
+  treated"). The 2 wins are behaviour-visible IMC/CTI questions.
+
+Two log-justified changes remain untested: probe with *factual sub-questions*
+derived from the top-two dispute instead of the abstract question, and score
+as a probability distribution over options so the margin means something.
+They run on a **fresh** 300 ids (the control 300 have been used for selection
+too many times to validate anything).
 
 **Summary of every form the decomposition was tested in (Video-Holmes):**
 
