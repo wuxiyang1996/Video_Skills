@@ -339,7 +339,14 @@ Two log-justified changes remain untested: probe with *factual sub-questions*
 derived from the top-two dispute instead of the abstract question, and score
 as a probability distribution over options so the margin means something.
 They run on a **fresh** 300 ids (the control 300 have been used for selection
-too many times to validate anything).
+too many times to validate anything). Interim (v2, fresh ids, paired against
+the 235B direct run): probability ranking without looking −2.1 [−7.2, +3.4]
+(237); with factual sub-question probes −4.9 [−10.7, +0.8] (122), the look
+firing on 86% of questions and costing −4.8 on the questions where it fired.
+The scores are no longer saturated (top mean 0.36) and the sub-questions are
+genuinely factual, so the remaining gap is not a prompt defect: the
+decomposition does not add accuracy on Video-Holmes even in its best-behaved
+form. Final numbers when the 300 complete; no further variants.
 
 **Summary of every form the decomposition was tested in (Video-Holmes):**
 
