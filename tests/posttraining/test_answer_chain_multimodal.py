@@ -117,3 +117,21 @@ def test_probe_condition_requires_frames() -> None:
     from scripts.eval.measure_answer_chain import main
     with pytest.raises(SystemExit):
         main(["--l1-glob", "x", "--output", "o.json", "--indices-from", "all", "--conditions", "probe"])
+
+
+def test_rationale_mode_keeps_the_think_block_and_parses_the_label_after_it() -> None:
+    class _C:
+        def chat(self, messages):
+            self.system = messages[0]["content"]
+            return '<think>clip 3 shows the knife, so B is wrong; A fits.</think>\n{"label": "A"}'
+    from scripts.eval.measure_answer_chain import DIRECT_SYSTEM_RATIONALE
+    client = _C()
+    out = direct_answer(client, _example(), indices=[0, 1], rationale=True)
+    assert client.system == DIRECT_SYSTEM_RATIONALE
+    assert out["final_answer"]["label"] == "A"
+    assert out["thinking"] == "clip 3 shows the knife, so B is wrong; A fits."
+
+
+def test_plain_mode_has_no_thinking_field() -> None:
+    out = direct_answer(_FakeClient(), _example(), indices=[0, 1])
+    assert "thinking" not in out

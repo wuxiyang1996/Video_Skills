@@ -574,6 +574,12 @@ DIRECT_SYSTEM_MULTIMODAL = (
     "You answer multiple-choice questions about a video using the clip descriptions "
     "provided and the attached frames of the clips most likely to matter. Reply with JSON only."
 )
+DIRECT_SYSTEM_RATIONALE = (
+    "You answer multiple-choice questions about a video using only the clip descriptions "
+    "provided. First reason step by step between <think> and </think> tags, actively "
+    "locating and connecting the relevant clues across clips; then reply with JSON only: "
+    '{"label": "<option letter>"}.'
+)
 DIRECT_SYSTEM = (
     "You answer multiple-choice questions about a video using only the clip "
     "descriptions provided. Reply with JSON only."
@@ -587,6 +593,7 @@ def direct_answer(
     highlight: list[int] | None = None,
     findings: dict[str, Any] | None = None,
     frames: dict[int, list[str]] | None = None,
+    rationale: bool = False,
 ) -> dict[str, Any]:
     """Ask the same model the same question over the same clips, with no skill graph.
 
@@ -634,7 +641,7 @@ def direct_answer(
             "candidate option, plus that pass's own vote; they may be wrong -- decide "
             "from the clips"
         )
-    system = DIRECT_SYSTEM
+    system = DIRECT_SYSTEM_RATIONALE if rationale else DIRECT_SYSTEM
     if frames:
         payload["watched_clips_note"] = (
             "frames of the clips listed after this JSON are attached; use them together "
@@ -646,16 +653,26 @@ def direct_answer(
         {"role": "user", "content": multimodal_user_content(payload, indices, frames or {})},
     ])
     label = None
+    thinking = ""
+    if rationale:
+        found = re.findall(r"<think>\s*(.*?)\s*</think>", text or "", re.S)
+        thinking = found[-1].strip() if found else ""
+        tail = (text or "").split("</think>")[-1] if found else (text or "")
+    else:
+        tail = text or ""
     try:
-        label = (json.loads(re.search(r"\{.*\}", text, re.S).group(0)) or {}).get("label")
+        label = (json.loads(re.search(r"\{.*\}", tail, re.S).group(0)) or {}).get("label")
     except Exception:
-        match = re.search(r"\b([A-H])\b", text or "")
+        match = re.search(r"\b([A-H])\b", tail)
         label = match.group(1) if match else None
-    return {
+    out = {
         "final_answer": {"label": label},
         "failure_reasons": [] if label else ["no_label_parsed"],
         "frames_attached": sum(len(v) for v in (frames or {}).values()),
     }
+    if rationale:
+        out["thinking"] = thinking[:4000]
+    return out
 
 
 def degradation(rollout: dict[str, Any]) -> dict[str, Any]:
@@ -746,6 +763,9 @@ def main(argv: list[str] | None = None) -> int:
             "retriever steers attention over the whole catalog instead of cutting it."
         ),
     )
+    parser.add_argument("--rationale", action="store_true",
+                        help="direct: ask for a <think>...</think> reasoning process before the label, as the "
+                             "official Video-Holmes protocol does, and keep it in the rollout dump.")
     parser.add_argument("--rank-probabilities", action="store_true",
                         help="graph2: score options as a probability distribution (margin becomes a confidence).")
     parser.add_argument("--probe-subquestions", action="store_true",
@@ -897,7 +917,7 @@ def main(argv: list[str] | None = None) -> int:
         answer_client = OpenRouterClient(
             model=args.answer_model or args.planner_model,
             api_key=load_openrouter_api_key(keys_py_path=args.keys_py),
-            max_tokens=answer_model_budget(args.reasoning_effort, args.max_tokens),
+            max_tokens=max(answer_model_budget(args.reasoning_effort, args.max_tokens), 3000 if args.rationale else 0),
             temperature=args.vote_temperature if args.votes > 1 else 0.0,
             reasoning={"effort": args.reasoning_effort, "exclude": True},
             timeout_s=args.timeout_s,
@@ -910,7 +930,7 @@ def main(argv: list[str] | None = None) -> int:
             if attach_frames else {}
         )
         if args.votes <= 1:
-            return direct_answer(answer_client, example, indices, highlight, findings, frames)
+            return direct_answer(answer_client, example, indices, highlight, findings, frames, rationale=args.rationale)
         samples = [direct_answer(answer_client, example, indices, highlight, findings, frames) for _ in range(args.votes)]
         label = majority_label([(s.get("final_answer") or {}).get("label") for s in samples])
         return {
@@ -1150,6 +1170,7 @@ def main(argv: list[str] | None = None) -> int:
         "probe_model": args.probe_model,
         "rank_margin": args.rank_margin,
         "rank_probabilities": args.rank_probabilities,
+        "rationale": args.rationale,
         "probe_subquestions": args.probe_subquestions,
         "max_tokens": answer_model_budget(args.reasoning_effort, args.max_tokens),
         "temporal_nms": bool(args.temporal_nms),
