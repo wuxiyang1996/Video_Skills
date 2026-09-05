@@ -268,6 +268,20 @@ wrong pick. `--findings-mode observations_only` (drop the per-option scores and
 the vote, keep the observations) is running to tell a bad scoring step apart
 from a worthless analysis.
 
+**Summary of every form the decomposition was tested in (Video-Holmes):**
+
+| condition | evidence | acc | vs direct on the same clips |
+|---|---|---|---|
+| direct | whole catalog | 36.0 (300) | — |
+| graph + always_commit | whole catalog | 23.3 (300) | **−12.7 [−19.0, −6.3]** |
+| hybrid (graph notes + vote, one answer call) | whole catalog | 28.0 (150) | **−8.7 [−16.0, −1.3]** |
+| graph + always_commit | BM25 top-4 | 23.6 (127) | −7.9 [−18.1, +3.2] |
+| graph (SR subset, earlier) | reranker top-4 | 19.4 (72) | −26.4 [−38.9, −13.9] |
+
+Every form loses, including the two where the graph cannot remove evidence.
+Report this as a negative result and place the decomposition's contribution in
+verifiable evidence chains, not accuracy.
+
 ## CG catalog repair, targeted
 
 Of the 67 heldout CG videos, 28 have placeholder catalogs and they are spread
