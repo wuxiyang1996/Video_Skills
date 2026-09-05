@@ -528,10 +528,14 @@ direct 72.0 vs graph2 67.1, −4.9 [−8.9, −0.8], driven by Hypothetical
 Reasoning (84.4 → 66.7, −17.8 [−28.9, −6.7]) and Logical Linkage (80 → 60,
 n=10); Event Attribution, Counting, Summarization and Implicit Inference are
 tied. graph2 process score on 201 timed questions: step recall 54.4, citation
-precision 60.0, mean best IoU 15.5. Process baselines that need no model are
-computed alongside (BM25 pointer clips, first clips, all clips as
-"citations"), and a single-call direct with a cited rationale is running as
-the fair citation-bearing baseline.
+precision 60.0, mean best IoU 15.5. Process baselines that need no model, on the 382 timed pilot questions
+(what counts as a "citation" → step recall / citation precision): BM25
+pointer top-4 **43.3 / 39.4**; BM25 top-2 29.3 / 39.9; first four clips
+22.5 / 33.7; all clips 100 / 31.4. graph2's cited clips (interim, 201 timed)
+score **54.4 / 60.0** — above the retrieval pointer on both axes, i.e. the
+comparative step's citations land on the annotated reasoning steps more often
+and more precisely than the retriever that fed it. A single-call direct with
+a cited rationale is running as the fair citation-bearing baseline.
 
 ## Disk (2026-09-04)
 
