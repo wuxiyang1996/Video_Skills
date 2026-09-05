@@ -579,6 +579,27 @@ default `use_mini=True`) produced all 237 with the full coarse+fine catalog
 placeholder rows. Five scoring jobs submitted (7456731–7456739); BM25 scored.
 This 3.5× larger set is what the paper's CG table should use.
 
+**Result on the 237-question set (top-1, k chosen on dev; 10k paired
+bootstrap draws):**
+
+| model | mIoU [95% CI] | rec.@IoU [95% CI] | vs BM25 (paired) |
+|---|---|---|---|
+| published Qwen2-VL-72B | 3.58 | 5.32 | |
+| BM25 (no learning) | 5.05 [3.54, 6.71] | 7.51 [5.15, 10.21] | — |
+| SFT v11 | 3.36 [2.12, 4.75] | 4.89 [3.04, 6.92] | −1.70 [−3.47, +0.01] / −2.62 [−5.40, +0.08] |
+| OPD α=0.75 | 5.22 [3.74, 6.83] | 7.68 [5.32, 10.21] | **+0.17 [−1.72, +2.04] / +0.17 [−2.87, +3.12]** |
+| GRPO 42/43/44 | 5.18 / 5.18 / 5.12 | 7.68 / 7.68 / 7.59 | ≈ OPD |
+
+The 67-question edge (OPD − BM25 +1.69) **did not survive** the larger set:
+on 237 questions OPD ≈ BM25 (+0.17, CI centred on 0), SFT is *below* BM25
+(significantly so at top-2), and GRPO ≈ OPD. What does hold: every retriever
+over the 30-s clip catalog — BM25 included — is above the published 72B
+figures on this heldout slice (different question set; indicative only).
+Honest CG claim: **the catalog pipeline clears the published grounding
+numbers; the learned controller does not beat lexical retrieval on CG-Bench
+grounding.** The controller's CI-clean win remains Video-Holmes clue recall
+(+3.57).
+
 ## Order of work
 
 1. Rebuild the CG L1 catalog (`--retry-failed-clip-schemas`).
