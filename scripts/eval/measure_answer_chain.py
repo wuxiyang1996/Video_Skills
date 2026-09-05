@@ -400,6 +400,75 @@ def disputed_clip_indices(ranking: list[dict[str, Any]], indices: list[int], lim
     return wanted[:limit]
 
 
+_CIRCLED = "①②③④⑤⑥⑦⑧⑨"
+LOCALIZE_SYSTEM = (
+    "You are the event-localization skill of a reasoning graph. For each numbered event, "
+    "give the rank of the clip (from the list) where it happens, or null if no clip shows "
+    'it. Reply with JSON only: {"events": {"①": <clip rank or null>, ...}}.'
+)
+
+
+def timeline_events(question: dict[str, Any]) -> tuple[list[tuple[str, str]], dict[str, str]]:
+    """Events ①… in a timeline question and the permutation options, or empty."""
+    text = question.get("question_text") or ""
+    options = {str(o.get("label")): str(o.get("text") or "").strip() for o in question.get("options") or []}
+    if not options or not all(re.fullmatch(rf"[{_CIRCLED}]{{3,9}}", v) for v in options.values()):
+        return [], {}
+    events = [(m.group(1), m.group(2).strip()) for m in re.finditer(rf"([{_CIRCLED}])\s*([^{_CIRCLED}\n]+)", text)]
+    return events, options
+
+
+def localize_events(
+    client: OpenRouterClient, example: dict[str, Any], indices: list[int], events: list[tuple[str, str]]
+) -> dict[str, int | None]:
+    """One call: which clip shows each event.  The graph already finds clues
+    well (omission errors 3%); what it did not do is *use* their timestamps."""
+    schemas, _ = retrieval_catalog(example)
+    clips = []
+    for rank, index in enumerate(indices, start=1):
+        if 0 <= index < len(schemas):
+            schema = schemas[index] if isinstance(schemas[index], dict) else {}
+            clips.append({"rank": rank, "time_span": schema.get("time_span") or {},
+                          "description": clip_schema_text(schema)[:900]})
+    payload = {"events": [{"id": k, "text": v} for k, v in events], "clips": clips}
+    text = client.chat([
+        {"role": "system", "content": LOCALIZE_SYSTEM},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ])
+    out: dict[str, int | None] = {k: None for k, _ in events}
+    try:
+        parsed = json.loads(re.search(r"\{.*\}", text, re.S).group(0)) or {}
+        for k, v in (parsed.get("events") or {}).items():
+            if k in out and v is not None and str(v).strip().lstrip("-").isdigit():
+                out[k] = int(v)
+    except Exception:
+        pass
+    return out
+
+
+def order_by_time(
+    located: dict[str, int | None], indices: list[int], example: dict[str, Any], options: dict[str, str]
+) -> str | None:
+    """Deterministic assembly: sort events by the start time of their located
+    clip and return the option whose permutation matches; None if any event is
+    unlocated or no option matches."""
+    if not located or any(v is None for v in located.values()):
+        return None
+    schemas, _ = retrieval_catalog(example)
+    starts: dict[str, float] = {}
+    for event, rank in located.items():
+        pos = int(rank) - 1
+        if not (0 <= pos < len(indices)) or not (0 <= indices[pos] < len(schemas)):
+            return None
+        span = (schemas[indices[pos]] or {}).get("time_span") or {}
+        starts[event] = float(span.get("start_s") or 0.0)
+    order = "".join(sorted(starts, key=lambda e: (starts[e], e)))
+    for label, perm in options.items():
+        if perm == order:
+            return label
+    return None
+
+
 PROBE_SYSTEM = (
     "You look at frames from one clip of a video and answer one question about what is "
     "visible. State only what you can see. If the frames do not show it, say so. Two sentences."
@@ -775,6 +844,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rationale", action="store_true",
                         help="direct: ask for a <think>...</think> reasoning process before the label, as the "
                              "official Video-Holmes protocol does, and keep it in the rollout dump.")
+    parser.add_argument("--timeline-skill", action="store_true",
+                        help="graph2: on timeline questions (options are permutations of numbered events) locate "
+                             "each event's clip with one call and assemble the order deterministically from clip "
+                             "start times; falls back to the ranking when an event is unlocated or no option matches.")
     parser.add_argument("--rank-probabilities", action="store_true",
                         help="graph2: score options as a probability distribution (margin becomes a confidence).")
     parser.add_argument("--probe-subquestions", action="store_true",
@@ -998,6 +1071,13 @@ def main(argv: list[str] | None = None) -> int:
         try:
             graph_rollout = None
             if condition == "graph2":
+                timeline: dict[str, Any] = {}
+                if args.timeline_skill:
+                    events, perm_options = timeline_events(example.get("question") or {})
+                    if events and perm_options:
+                        located = _with_rate_limit_retry(lambda: localize_events(answer_client, example, indices, events))
+                        chosen = order_by_time(located, indices, example, perm_options)
+                        timeline = {"events": located, "label": chosen}
                 # decompose: rank every option against the SAME evidence, with citations
                 ranked = _with_rate_limit_retry(
                     lambda: rank_hypotheses(answer_client, example, indices, probabilities=args.rank_probabilities)
@@ -1041,10 +1121,14 @@ def main(argv: list[str] | None = None) -> int:
                                                     probabilities=args.rank_probabilities)
                         )
                         ranking = ranked.get("ranking") or ranking
-                # assemble: commit the top of the ranking with its evidence chain
+                # assemble: commit the top of the ranking with its evidence chain --
+                # unless the timeline skill produced a fully located, matching order
                 label = ranking[0]["label"] if ranking else None
+                if timeline.get("label"):
+                    label = timeline["label"]
                 rollout = {
                     "final_answer": {"label": label},
+                    "timeline": timeline,
                     "failure_reasons": [] if label else ["no_ranking"],
                     "evidence_chain": ranking[:3],
                     "rank_margin": margin,
@@ -1091,6 +1175,8 @@ def main(argv: list[str] | None = None) -> int:
         row = {"example_id": example_id, "condition": condition, **score(rollout, gold_label)}
         if "visual_probes" in rollout:
             row["visual_probes"] = rollout["visual_probes"]
+        if rollout.get("timeline"):
+            row["timeline_used"] = bool(rollout["timeline"].get("label"))
         if "rank_margin" in rollout:
             row["rank_margin"] = rollout["rank_margin"]
             row["evidence_chain_len"] = len(rollout.get("evidence_chain") or [])
@@ -1179,6 +1265,7 @@ def main(argv: list[str] | None = None) -> int:
         "probe_model": args.probe_model,
         "rank_margin": args.rank_margin,
         "rank_probabilities": args.rank_probabilities,
+        "timeline_skill": args.timeline_skill,
         "rationale": args.rationale,
         "probe_subquestions": args.probe_subquestions,
         "max_tokens": answer_model_budget(args.reasoning_effort, args.max_tokens),
