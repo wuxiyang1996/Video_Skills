@@ -230,7 +230,11 @@ published numbers: 27.8 (Qwen2.5-VL-7B) — beaten by 14.7; 45.0
 optimistic. A size-matched reader (`qwen/qwen3-vl-8b-instruct`, 300 ids)
 scores **39.0**, identical to gpt-oss-120b (+0.0 [−6.7, +6.7]) and 11.2 above
 the 7-8B baseline — the pipeline, not the reader size, carries most of it.
-Frames still add nothing (8B: 36.3 with frames vs 39.0 without). qwen3.5-9b
+Frames still add nothing: 235B 44.7 with frames vs 45.0 without (300 paired,
+−0.3 [−4.3, +3.7]); 8B 36.3 vs 39.0. Self-consistency does not help either —
+gpt-oss-120b with 5 samples at T=0.7 and a majority vote scores 38.0 against
+39.0 for the single greedy call (295 paired, −1.0 [−5.4, +3.7]). The reader is
+the only lever that moved. qwen3.5-9b
 as answer model is unusable on OpenRouter (hidden-reasoning exhaustion,
 ValueError on every call); qwen3-vl-8b-instruct is the size-matched
 substitute (`vl8b_*`). If frames help, retrieval matters again (the pointer decides what is
