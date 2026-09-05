@@ -450,10 +450,24 @@ one-line summary of atomic skills on Video-Holmes.
 
 Judge-reason themes among graph2's RE (multi-label, n=167): causal/temporal
 30, missing link 21, literal/surface 15, symbolic over-reading 9.
-Mechanism 1 is fixable inside the decomposition (a rule skill over its own
-citations) and is being tested on all 200 TA questions; 2 and 3 are
-properties of the evidence and of comparative scoring under citation
-pressure.
+Mechanism 1 was tested on all 200 TA questions (`--timeline-skill`, commit
+7fa2d51; soft assembly commit after). One localisation call per question,
+then the order is assembled from clip start times:
+
+| on the 200 TA questions | acc | vs direct 235B (34.0 / 31.8 on the paired ids) |
+|---|---|---|
+| graph2 base | 25.5 | −8.5 [−14.5, −2.5] |
+| + strict timeline (fires 35/151 permutation questions) | 27.0 | −7.0 [−14.5, +0.5]; on fired: base 37.1 → 42.9, direct 40.0 |
+| + soft concordance assembly (fires 57/151, offline re-assembly of the same localisations) | 27.2 | −4.6 [−13.9, +4.6]; vs base +4.0 [−3.3, +11.3]; on fired: 35.1 vs base 26.3 vs direct 36.8 |
+
+Why it fires so rarely: of 151 permutation questions, 73 had at least one
+event the localiser could not place and 43 produced an order no option
+contains (a localisation off by one clip); 49 TA questions are not
+permutations at all. So the deterministic assembly removes the ranker's
+self-inconsistency and recovers about half of the TA gap, and the limiter
+moves to **localisation quality** — the same description ceiling as
+everywhere else. It brings the graph to parity with direct on the questions
+it decides, not above it.
 
 **Summary of every form the decomposition was tested in (Video-Holmes):**
 
