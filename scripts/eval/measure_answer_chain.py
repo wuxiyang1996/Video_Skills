@@ -221,6 +221,22 @@ def majority_label(labels: list[str | None]) -> str | None:
     return None
 
 
+def strip_verdicts(findings: dict[str, Any]) -> dict[str, Any]:
+    """Drop the graph's per-option scores and its vote, keep the observations.
+
+    With scores and a vote attached, the notes drag the answer toward the
+    graph's own (mostly wrong) pick: hybrid scored -8.7 [-16.0, -1.3] against
+    plain direct answering over the same clips.  This variant tests whether the
+    per-option *verdicts* are the poison or the analysis itself is worthless.
+    """
+    notes = []
+    for note in findings.get("notes") or []:
+        text = str(note.get("note") or "").strip()
+        if text:
+            notes.append({"observation": text})
+    return {"notes": notes, "vote": None}
+
+
 def extract_findings(rollout: dict[str, Any], max_chars: int = 6000) -> dict[str, Any]:
     """Turn a skill-graph rollout into notes a single answer call can read.
 
@@ -386,7 +402,8 @@ def direct_answer(
         )
     if findings:
         payload["skill_findings"] = findings.get("notes") or []
-        payload["graph_vote"] = findings.get("vote")
+        if findings.get("vote"):
+            payload["graph_vote"] = findings["vote"]
         payload["skill_findings_note"] = (
             "notes from an analysis pass by atomic skills over the same clips, one per "
             "candidate option, plus that pass's own vote; they may be wrong -- decide "
@@ -504,6 +521,9 @@ def main(argv: list[str] | None = None) -> int:
             "retriever steers attention over the whole catalog instead of cutting it."
         ),
     )
+    parser.add_argument("--findings-mode", choices=("full", "observations_only"), default="full",
+                        help="hybrid: 'full' passes the skills' per-option scores and vote; "
+                             "'observations_only' passes just their observations.")
     parser.add_argument("--answer-model", default=None,
                         help="Model for the direct/hybrid answer call when different from --planner-model (e.g. a VLM).")
     parser.add_argument("--frames-per-clip", type=int, default=0,
@@ -702,6 +722,8 @@ def main(argv: list[str] | None = None) -> int:
                     # skills as an analysis pass; one answer call over all the evidence
                     graph_rollout = rollout
                     findings = extract_findings(graph_rollout)
+                    if args.findings_mode == "observations_only":
+                        findings = strip_verdicts(findings)
                     rollout = _with_rate_limit_retry(lambda: answer(example, indices, highlight, findings))
         except Exception as exc:  # a transport failure is not an abstention
             return {"example_id": example_id, "condition": condition, "error": type(exc).__name__}
@@ -792,6 +814,7 @@ def main(argv: list[str] | None = None) -> int:
         "frames_per_clip": args.frames_per_clip,
         "frame_max_clips": args.frame_max_clips,
         "votes": args.votes,
+        "findings_mode": args.findings_mode,
         "max_tokens": answer_model_budget(args.reasoning_effort, args.max_tokens),
         "temporal_nms": bool(args.temporal_nms),
         "note": "seeded subsample of heldout_test; the rest stays unread",

@@ -72,3 +72,22 @@ def test_sample_clip_frames_reads_a_real_video(tmp_path) -> None:
     assert len(frames) == 3 and all(isinstance(f, str) and len(f) > 100 for f in frames)
     watched = clip_frames_for_answer(_example(str(path)), [0, 1, 2, 3], [2, 9], per_clip=2, max_clips=4)
     assert list(watched) == [2] and len(watched[2]) == 2
+
+
+def test_strip_verdicts_keeps_observations_and_drops_scores_and_vote() -> None:
+    from scripts.eval.measure_answer_chain import strip_verdicts
+    findings = {"notes": [{"option_label": "A", "support_score": 0.6, "note": "dim lighting"},
+                          {"option_label": "B", "support_score": 0.9, "note": ""}],
+                "vote": {"label": "B"}}
+    out = strip_verdicts(findings)
+    assert out == {"notes": [{"observation": "dim lighting"}], "vote": None}
+
+
+def test_direct_answer_omits_the_graph_vote_when_it_was_stripped() -> None:
+    from scripts.eval.measure_answer_chain import strip_verdicts
+    client = _FakeClient()
+    direct_answer(client, _example(), indices=[0, 1],
+                  findings=strip_verdicts({"notes": [{"note": "a man leaves"}], "vote": {"label": "B"}}))
+    payload = json.loads(client.messages[1]["content"])
+    assert payload["skill_findings"] == [{"observation": "a man leaves"}]
+    assert "graph_vote" not in payload
