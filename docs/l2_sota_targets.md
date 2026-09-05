@@ -474,6 +474,25 @@ also queued were cancelled. A follow-up repair of cg_bench:6 and :129 would
 bring the set under 1% everywhere; the first official numbers come from this
 1.2% set and are labelled as such.
 
+**First trustworthy official CG-Bench numbers (repaired v1 set, 67 heldout
+questions, decision_logit scoring, ≤5-interval protocol):**
+
+| model | top-1 mIoU / rec.@IoU | top-2 mIoU / rec.@IoU |
+|---|---|---|
+| published best (Qwen2-VL-72B) | 3.58 / 5.32 | |
+| published best 7–8B | 1.63 / 2.89 | |
+| BM25 (no learning) | 4.44 / 6.57 | 4.87 / 7.46 |
+| SFT (v11) | 5.27 / 7.46 | 4.27 / 5.67 |
+| **OPD α=0.75** | **6.13 / 8.96** | 5.19 / 6.87 |
+| GRPO seeds 42/43/44 | 6.13 / 8.96 (top-1 identical to OPD on 64–66/67) | 5.19 / 5.19 / 5.07 |
+
+Every learned model and even BM25 clear the published 72B number at top-1;
+OPD at top-1 is 1.7× the 72B mIoU. The GRPO adapters have distinct weights
+but change OPD's top-1 pick on only 1–3 of 67 questions, so GRPO ≈ OPD on
+CG grounding. Bootstrap CIs and the a-priori choice of k (on the cg14 dev
+split, not on heldout) are recorded below when computed; n=67 is small and
+the CIs will be wide.
+
 ## Order of work
 
 1. Rebuild the CG L1 catalog (`--retry-failed-clip-schemas`).
