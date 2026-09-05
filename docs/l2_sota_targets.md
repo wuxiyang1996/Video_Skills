@@ -228,9 +228,12 @@ SR 53.8, IMC 49.1, PAR 40.2, TCI 39.9, MHR 39.8, CTI 37.8, TA 34.0), +5.8
 [+3.4, +8.2] over gpt-oss-120b through the identical pipeline. Against the
 published numbers: 27.8 (Qwen2.5-VL-7B) — beaten by 14.7; 45.0
 (Gemini-2.5-Pro) — 2.5 short. The 300-id subset read 45.0, so the subset was
-optimistic. A size-matched reader (`qwen/qwen3-vl-8b-instruct`, 300 ids)
-scores **39.0**, identical to gpt-oss-120b (+0.0 [−6.7, +6.7]) and 11.2 above
-the 7-8B baseline — the pipeline, not the reader size, carries most of it.
+optimistic. A size-matched reader (`qwen/qwen3-vl-8b-instruct`) scores **39.1 on the full
+test** (SR 51.7, IMC 43.5, CTI 39.3, MHR 36.7, PAR 36.1, TA 34.0, TCI 29.7):
++2.3 [−0.3, +4.9] over gpt-oss-120b, −3.5 [−5.8, −1.3] under the 235B, and
+**+11.3 over the 27.8 published for Qwen2.5-VL-7B**. So an 8B-class system
+built on this pipeline beats the size-matched baseline by eleven points, and
+the pipeline rather than the reader's size carries most of the gain.
 Frames still add nothing: 235B 44.7 with frames vs 45.0 without (300 paired,
 −0.3 [−4.3, +3.7]); 8B 36.3 vs 39.0. Self-consistency does not help either —
 gpt-oss-120b with 5 samples at T=0.7 and a majority vote scores 38.0 against
