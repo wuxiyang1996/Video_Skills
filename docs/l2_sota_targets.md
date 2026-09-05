@@ -168,6 +168,27 @@ to be the descriptions or the answer model. Hidden reasoning is not it either
 chain-of-thought extracts nothing more from these descriptions, so every
 number stays at effort=minimal.
 
+## Video-Holmes: opening the evidence ceiling (pilots launched 2026-09-04)
+
+Every text-side lever converges at 33–37, so the next step changes the
+evidence modality: the answer call now gets **frames of the pointed clips**
+(`--frames-per-clip 4 --frame-max-clips 4`, 448 px) next to the whole
+catalog, and the answer model can differ from the planner (`--answer-model`).
+Five 300-id pilots in `full_vh_mm/`, all over whole catalog + BM25 pointer:
+
+| run | answer model | frames | separates |
+|---|---|---|---|
+| `vl9b_text_300` | qwen/qwen3.5-9b (the L1 describer) | no | small VLM as reader vs gpt-oss-120b |
+| `vl9b_frames_300` | qwen/qwen3.5-9b | 16 | seeing the pointed clips, same small model |
+| `vl235b_text_300` | qwen/qwen3-vl-235b-a22b-instruct | no | bigger model, text only |
+| `vl235b_frames_300` | qwen/qwen3-vl-235b-a22b-instruct | 16 | bigger model + frames |
+| `gptoss_votes5_300` | gpt-oss-120b, 5 samples at T=0.7 | no | self-consistency |
+
+Reference on the same 300 ids: gpt-oss-120b text, whole catalog + BM25 pointer
+= 39.0. If frames help, retrieval matters again (the pointer decides what is
+watched) and the atomic skills get a real job: perception skills that turn
+frames into verifiable facts, feeding the `hybrid` answer call.
+
 ## Why the atomic-skill graph loses (24-question rollout dump, 2026-09-04)
 
 `graph_diag_24` (whole catalog, always_commit, gpt-oss-120b for planner and
