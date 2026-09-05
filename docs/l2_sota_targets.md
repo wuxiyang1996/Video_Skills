@@ -611,7 +611,17 @@ over the 30-s clip catalog — BM25 included — is above the published 72B
 figures on this heldout slice (different question set; indicative only).
 Honest CG claim: **the catalog pipeline clears the published grounding
 numbers; the learned controller does not beat lexical retrieval on CG-Bench
-grounding.** The controller's CI-clean win remains Video-Holmes clue recall
+grounding.**
+
+Final sets (2026-09-05): the two July-lane examples were repaired in place
+(cg_bench:6 → 0/97, :129 → 0/107). The 67-question set rebuilt as
+`heldout_pointwise_cg_repaired_v3` is at 0.2% placeholder rows. The
+per-question derivation writes *copies* of the per-video L1, so the 237-set
+had to be re-derived (`cg_heldout_questions_v2`) before its rebuild
+(`heldout_pointwise_cg_questions237_v4`) picked up the repaired schemas —
+a rebuild from the stale copies (v3) stayed at 1.09%. Scoring for both final
+sets is queued; the 1.2%/1.09% numbers above are expected to move by noise
+only. The controller's CI-clean win remains Video-Holmes clue recall
 (+3.57).
 
 Diagnostics on the 237: OPD and BM25 choose the same top-1 clip on only
