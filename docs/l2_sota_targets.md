@@ -453,6 +453,19 @@ lane examples (training pool, not on the critical path) can be repaired later.
 Do not run `resubmit_preempted_repair.sh` while `cg-held-*` jobs are active.
 Targets: `l2_expansion_20260831/heldout_repair_targets.json`.
 
+**Outcome (2026-09-05).** All 28 targeted examples repaired: 1 placeholder clip
+left of 2,144 (a JSON-truncated coarse clip in cg_bench:841 that fails
+deterministically on retry). The heldout CG pointwise was rebuilt into
+`heldout_pointwise_cg_repaired_v1/cg_bench/pointwise.jsonl`: 67 examples,
+4,449 rows, **52 placeholder rows (1.2%)** against 43.1% in the frozen set.
+The residual is not in the repaired lane: 51 rows sit in 7 examples from the
+July lanes (cg_bench:6 26/87, cg_bench:129 15/97, five others ≤3 rows). Five
+scoring jobs (SFT, OPD α=0.75, GRPO seeds 42–44; decision_logit) were
+submitted on the rebuilt set; the spurious Video-Holmes jobs the submit script
+also queued were cancelled. A follow-up repair of cg_bench:6 and :129 would
+bring the set under 1% everywhere; the first official numbers come from this
+1.2% set and are labelled as such.
+
 ## Order of work
 
 1. Rebuild the CG L1 catalog (`--retry-failed-clip-schemas`).
