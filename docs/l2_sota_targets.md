@@ -509,7 +509,15 @@ published 72B figure, but with 67 questions **no pairwise difference is
 CI-clean** and the comparison to published numbers is on a different question
 set. The cheap fix is more heldout *questions* on the same cataloged videos
 (CG-Bench has several questions per video with their own clue intervals; no
-GPU needed) — see below.
+GPU needed). Done: the 67 heldout videos carry 718 questions in the full
+`cgbench.json` and **237 in `cgbench_mini.json`** (the 3,000-question config
+the leaderboard evaluations use); the per-question derivation
+(`scripts/eval/derive_full_question_examples.py --dataset cg_bench`, adapter
+default `use_mini=True`) produced all 237 with the full coarse+fine catalog
+(≈87 clips) and clue spans on every row. New set
+`heldout_pointwise_cg_questions237_v1`: 237 questions, 15,655 rows, 1.09%
+placeholder rows. Five scoring jobs submitted (7456731–7456739); BM25 scored.
+This 3.5× larger set is what the paper's CG table should use.
 
 ## Order of work
 
