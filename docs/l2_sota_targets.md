@@ -402,6 +402,34 @@ Every form loses, including the two where the graph cannot remove evidence.
 Report this as a negative result and place the decomposition's contribution in
 verifiable evidence chains, not accuracy.
 
+## VRBench pilot (started 2026-09-04)
+
+Why: VRBench (960 long narrative videos, median 85 min; 8,243 questions; every
+question annotated with 2–4 reasoning steps, 18,970 of 25,106 steps with a
+time span; seven reasoning types) scores the *reasoning process* as well as
+the MCQ letter. A chain that cites clips can therefore earn credit a single
+answer call cannot — the accuracy-independent win the decomposition never had
+on Video-Holmes. Adapter (`vrbench`) and runner support already existed; the
+per-question derivation and the answer chain work unchanged.
+
+Pilot: the 60 shortest readable videos (20–25 min, 1,372 min total, 480
+questions; two videos are unreadable and excluded), six scavenger shards, all
+outputs on nexus-scratch through the `output/vrbench_pilot_v1` symlink. Smoke
+on one 20-min video: L1 in 9 min (44 coarse 30-s clips + 10 fine, 0
+placeholders; note the coarse selector puts all 10 fine clips inside one
+~1-min window), 8 derived questions, direct 6/8 and graph2 5/8 (n=8, not a
+result).
+
+Process scorer (`scripts/eval/vrbench_process_score.py`): cited clip spans of
+the top option (+ probed spans) against the annotated timed steps — step
+recall, citation precision, mean best IoU (IoU is structurally small for 30-s
+clips vs multi-minute steps; recall/precision are the meaningful pair).
+Smoke: step recall 37.1, citation precision 22.4 over 7 timed questions.
+
+Planned comparison on the 480: direct (accuracy only) vs graph2 (accuracy +
+process) vs graph2+look; the 300-id contamination lesson applies — no
+selection on the pilot ids before a held-out confirmation.
+
 ## Disk (2026-09-04)
 
 `/gamma/projects` has a 2 TB quota and was 100% full (2.6 GB free). With the
