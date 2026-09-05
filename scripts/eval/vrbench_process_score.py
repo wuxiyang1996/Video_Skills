@@ -24,6 +24,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from scripts.eval.measure_answer_chain import retrieval_catalog
+
 _TS = re.compile(r"(\d{1,2}:\d{2}(?::\d{2})?)\s*(?:->|-|~)\s*(\d{1,2}:\d{2}(?::\d{2})?)")
 _T1 = re.compile(r"(\d{1,2}:\d{2}(?::\d{2})?)")
 
@@ -110,8 +112,11 @@ def main(argv: list[str] | None = None) -> int:
         if eid not in gold or eid not in index:
             continue
         example = json.load(open(index[eid]["path"]))
-        schemas = (example.get("metadata") or {}).get("clip_schemas") or []
-        spans = [s.get("time_span") or {} for s in schemas]
+        # the same catalog accessor the answer chain ranks over (coarse+fine as
+        # the pipeline exposes them); metadata.clip_schemas alone is only the
+        # fine subset and mis-maps the cited ranks
+        schemas, _ = retrieval_catalog(example)
+        spans = [(s.get("time_span") or {}) if isinstance(s, dict) else {} for s in schemas]
         spans = [{"start_s": float(t.get("start_s") or 0), "end_s": float(t.get("end_s") or 0)} for t in spans]
         steps = step_spans(gold[eid].get("reasoning_process"))
         cited = cited_spans(rec["rollout"], rec.get("indices") or [], spans, args.top_options)
