@@ -353,7 +353,30 @@ def rank_hypotheses(
                 })
     except Exception:
         ranking = []
-    return {"ranking": ranking}
+    return {"ranking": normalize_ranking(ranking, probabilities)}
+
+
+def normalize_ranking(ranking: list[dict[str, Any]], probabilities: bool) -> list[dict[str, Any]]:
+    """Make the committed option the argmax and the scores comparable.
+
+    One reply scored an option 20.0 (a percentage) while keeping its own order,
+    so the margin read 19.65 and the committed label was not the best-scored.
+    Percentages are folded to fractions; in probability mode the scores are
+    renormalised to sum to 1; the list is sorted best first.
+    """
+    if not ranking:
+        return ranking
+    scores = [max(0.0, float(item.get("score") or 0.0)) for item in ranking]
+    if max(scores) > 1.0:
+        scores = [x / 100.0 for x in scores]
+    if probabilities and sum(scores) > 0:
+        total = sum(scores)
+        scores = [x / total for x in scores]
+    out = []
+    for item, score in zip(ranking, scores):
+        out.append({**item, "score": round(min(1.0, score), 4)})
+    out.sort(key=lambda item: item["score"], reverse=True)
+    return out
 
 
 def ranking_margin(ranking: list[dict[str, Any]]) -> float:
@@ -951,6 +974,11 @@ def main(argv: list[str] | None = None) -> int:
                     lambda: rank_hypotheses(answer_client, example, indices, probabilities=args.rank_probabilities)
                 )
                 ranking = ranked.get("ranking") or []
+                if not ranking:   # a parse failure is not an abstention: ask once more
+                    ranked = _with_rate_limit_retry(
+                        lambda: rank_hypotheses(answer_client, example, indices, probabilities=args.rank_probabilities)
+                    )
+                    ranking = ranked.get("ranking") or []
                 margin = ranking_margin(ranking)
                 probes: list[dict[str, Any]] = []
                 subquestions: list[dict[str, Any]] = []

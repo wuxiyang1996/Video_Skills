@@ -100,3 +100,14 @@ def test_probability_mode_switches_the_ranking_prompt() -> None:
     out = rank_hypotheses(client, _example(), indices=[0, 1], probabilities=True)
     assert client.system == RANK_SYSTEM_PROB and "sum to 1" in client.system
     assert abs(ranking_margin(out["ranking"]) - 0.2) < 1e-9
+
+
+def test_normalize_ranking_folds_percentages_sorts_and_renormalises() -> None:
+    from scripts.eval.measure_answer_chain import normalize_ranking
+    raw = [{"label": "F", "score": 0.35}, {"label": "E", "score": 20.0}, {"label": "D", "score": 0.15}]
+    out = normalize_ranking(raw, probabilities=False)
+    assert [o["label"] for o in out] == ["E", "F", "D"]           # argmax first
+    assert out[0]["score"] == 0.2                                   # 20 -> 0.20
+    prob = normalize_ranking([{"label": "A", "score": 0.6}, {"label": "B", "score": 0.6}], probabilities=True)
+    assert [o["score"] for o in prob] == [0.5, 0.5]
+    assert normalize_ranking([], probabilities=True) == []
