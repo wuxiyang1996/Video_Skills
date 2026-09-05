@@ -600,6 +600,19 @@ numbers; the learned controller does not beat lexical retrieval on CG-Bench
 grounding.** The controller's CI-clean win remains Video-Holmes clue recall
 (+3.57).
 
+Diagnostics on the 237: OPD and BM25 choose the same top-1 clip on only
+20/237 questions yet score alike; the oracle single-clip ceiling is **mIoU
+28.94 / rec.@IoU 46.08** (every question has an overlapping clip), so the
+headroom is 5× and neither retriever exploits it. Clue recall of an
+overlapping clip within top-k: BM25 22.8 / 35.0 / 55.3 / 66.2 (k=1/2/5/10),
+OPD 23.2 / 31.6 / 52.7 / 65.8 (R@5 −2.5 [−10.6, +5.9]), SFT 15.6 / 25.7 /
+43.5 / 63.3 — so on CG the controller did not learn to rank clue clips higher
+at any depth. The cg14 dev split (14 questions) and the 67-question set both
+flattered OPD; only the 237 set is large enough to see this. Reciprocal-rank
+fusion of OPD and BM25 reads 6.00 / 8.78 on the 237 — but the dev split did
+**not** prefer it (7.62 vs OPD 9.05), so it cannot be reported as the system;
+noted as an observation only.
+
 ## Order of work
 
 1. Rebuild the CG L1 catalog (`--retry-failed-clip-schemas`).
