@@ -105,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     index = json.load(args.l1_index.open())
 
     totals: dict[str, float] = {"step_recall": 0.0, "citation_precision": 0.0, "mean_best_iou": 0.0}
-    n = 0; n_cited = 0; correct = 0
+    n = 0; n_cited = 0; correct = 0; n_timed = 0
     for line in args.rollouts.open(encoding="utf-8"):
         rec = json.loads(line)
         eid = rec["example_id"]
@@ -123,12 +123,15 @@ def main(argv: list[str] | None = None) -> int:
         sc = score_question(steps, cited)
         n += 1; n_cited += bool(cited)
         correct += str((rec["rollout"].get("final_answer") or {}).get("label")) == str(gold[eid].get("answer"))
-        for k in totals:
-            totals[k] += sc[k]
+        if steps:   # process metrics are averaged over questions that have timed steps
+            n_timed += 1
+            for k in totals:
+                totals[k] += sc[k]
     if not n:
         print("no scorable questions"); return 1
     print(json.dumps({"questions": n, "with_citations": n_cited, "accuracy": round(100 * correct / n, 2),
-                      **{k: round(100 * v / n, 2) for k, v in totals.items()}}, indent=2))
+                      "questions_with_timed_steps": n_timed,
+                      **{k: round(100 * v / max(n_timed, 1), 2) for k, v in totals.items()}}, indent=2))
     return 0
 
 
