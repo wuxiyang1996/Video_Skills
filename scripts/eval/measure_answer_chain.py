@@ -789,6 +789,7 @@ def main(argv: list[str] | None = None) -> int:
                     lambda: answer(example, indices, highlight, {"notes": probes, "vote": None}, attach_frames=False)
                 )
                 rollout["visual_probes"] = len(probes)
+                rollout["probe_observations"] = probes
             elif condition == "direct":
                 rollout = _with_rate_limit_retry(lambda: answer(example, indices, highlight))
             else:
