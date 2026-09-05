@@ -228,6 +228,77 @@ RANK_SYSTEM = (
     '{"ranking": [{"label": "<option>", "score": <0-1>, "clip_ranks": [<int>...], '
     '"reason": "<one sentence>"}...]} , best first.'
 )
+RANK_SYSTEM_PROB = (
+    "You are the comparative-scoring skill of a reasoning graph. Given every clip "
+    "description of a video and every answer option, rank ALL the options against the SAME "
+    "evidence. Options that need inference from the whole story are as valid as options with "
+    "a literally visible cue; cite the clip ranks that bear on each. The scores are your "
+    "probabilities that each option is the intended answer and MUST sum to 1 across all "
+    "options. Reply with JSON only: "
+    '{"ranking": [{"label": "<option>", "score": <probability>, "clip_ranks": [<int>...], '
+    '"reason": "<one sentence>"}...]} , best first.'
+)
+SUBQ_SYSTEM = (
+    "You are the question-decomposition skill of a reasoning graph. The comparative step "
+    "could not separate two answer options. Write 2 to 4 short, FACTUAL questions about what "
+    "is visible in the cited clips whose answers would decide between the two options -- "
+    "things a person could check by looking at frames (objects, actions, expressions, text "
+    "on screen, who is present). Never ask about meaning, intent, or implication. Reply with "
+    'JSON only: {"subquestions": [{"clip_rank": <int>, "question": "<text>"}...]}.'
+)
+
+
+def decompose_dispute(
+    client: OpenRouterClient,
+    example: dict[str, Any],
+    indices: list[int],
+    ranking: list[dict[str, Any]],
+    max_subquestions: int = 4,
+) -> list[dict[str, Any]]:
+    """Turn the top-two dispute into factual, checkable sub-questions per clip.
+
+    Handing the abstract question ("what is the deep implication of...") to a
+    clip's frames returned "not visible" 91% of the time and flipped 4 answers
+    wrong for 1 right.  A sub-question ("is she holding an inhaler?") is the
+    kind of thing four frames can answer, and is the decomposition this
+    benchmark rewards.
+    """
+    if len(ranking) < 2:
+        return []
+    schemas, _ = retrieval_catalog(example)
+    question = example.get("question") or {}
+    by_label = {str(o.get("label")): o.get("text") for o in question.get("options") or []}
+    cited: list[int] = []
+    for item in ranking[:2]:
+        for rank in item.get("clip_ranks") or []:
+            if rank not in cited:
+                cited.append(rank)
+    clips = []
+    for rank in cited[:8]:
+        position = rank - 1
+        if 0 <= position < len(indices) and 0 <= indices[position] < len(schemas):
+            schema = schemas[indices[position]] if isinstance(schemas[indices[position]], dict) else {}
+            clips.append({"rank": rank, "time_span": schema.get("time_span") or {},
+                          "description": clip_schema_text(schema)[:600]})
+    payload = {
+        "question": question.get("question_text") or "",
+        "option_1": {"label": ranking[0]["label"], "text": by_label.get(ranking[0]["label"]), "reason": ranking[0].get("reason")},
+        "option_2": {"label": ranking[1]["label"], "text": by_label.get(ranking[1]["label"]), "reason": ranking[1].get("reason")},
+        "cited_clips": clips,
+    }
+    text = client.chat([
+        {"role": "system", "content": SUBQ_SYSTEM},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ])
+    out: list[dict[str, Any]] = []
+    try:
+        parsed = json.loads(re.search(r"\{.*\}", text, re.S).group(0)) or {}
+        for item in parsed.get("subquestions") or []:
+            if isinstance(item, dict) and item.get("question") and str(item.get("clip_rank", "")).isdigit():
+                out.append({"clip_rank": int(item["clip_rank"]), "question": str(item["question"])[:200]})
+    except Exception:
+        return []
+    return out[:max_subquestions]
 
 
 def rank_hypotheses(
@@ -235,6 +306,7 @@ def rank_hypotheses(
     example: dict[str, Any],
     indices: list[int],
     observations: list[dict[str, Any]] | None = None,
+    probabilities: bool = False,
 ) -> dict[str, Any]:
     """One comparative call over shared evidence, replacing N independent scorings.
 
@@ -265,7 +337,7 @@ def rank_hypotheses(
         payload["visual_observations"] = observations
         payload["visual_observations_note"] = "answers a vision model gave when shown those clips' frames"
     text = client.chat([
-        {"role": "system", "content": RANK_SYSTEM},
+        {"role": "system", "content": RANK_SYSTEM_PROB if probabilities else RANK_SYSTEM},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
     ])
     ranking: list[dict[str, Any]] = []
@@ -316,6 +388,7 @@ def visual_probe(
     example: dict[str, Any],
     index: int,
     frames: list[str],
+    probe_question: str | None = None,
 ) -> dict[str, Any] | None:
     """Ask the answer question of ONE clip's frames and keep the visual reply.
 
@@ -330,11 +403,12 @@ def visual_probe(
     schemas, _ = retrieval_catalog(example)
     schema = schemas[index] if 0 <= index < len(schemas) and isinstance(schemas[index], dict) else {}
     span = schema.get("time_span") or {}
-    question = (example.get("question") or {}).get("question_text") or ""
+    question = probe_question or (example.get("question") or {}).get("question_text") or ""
     payload = {
         "time_span": span,
         "question": question,
-        "instruction": "what do these frames show that bears on the question?",
+        "instruction": "answer from what is visible in these frames" if probe_question
+        else "what do these frames show that bears on the question?",
     }
     parts: list[dict[str, Any]] = [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]
     for jpeg in frames:
@@ -346,7 +420,7 @@ def visual_probe(
     observation = (text or "").strip()
     if not observation:
         return None
-    return {"time_span": span, "observation": observation[:600]}
+    return {"time_span": span, "question": probe_question, "observation": observation[:600]}
 
 
 def strip_verdicts(findings: dict[str, Any]) -> dict[str, Any]:
@@ -649,6 +723,11 @@ def main(argv: list[str] | None = None) -> int:
             "retriever steers attention over the whole catalog instead of cutting it."
         ),
     )
+    parser.add_argument("--rank-probabilities", action="store_true",
+                        help="graph2: score options as a probability distribution (margin becomes a confidence).")
+    parser.add_argument("--probe-subquestions", action="store_true",
+                        help="graph2: probe with factual sub-questions derived from the top-two dispute "
+                             "instead of handing the abstract question to the frames.")
     parser.add_argument("--rank-margin", type=float, default=0.15,
                         help="graph2: when the comparative step's top-two margin is below this, look at "
                              "the clips the two disagree over before re-ranking. 0 disables looking.")
@@ -868,26 +947,41 @@ def main(argv: list[str] | None = None) -> int:
             graph_rollout = None
             if condition == "graph2":
                 # decompose: rank every option against the SAME evidence, with citations
-                ranked = _with_rate_limit_retry(lambda: rank_hypotheses(answer_client, example, indices))
+                ranked = _with_rate_limit_retry(
+                    lambda: rank_hypotheses(answer_client, example, indices, probabilities=args.rank_probabilities)
+                )
                 ranking = ranked.get("ranking") or []
                 margin = ranking_margin(ranking)
                 probes: list[dict[str, Any]] = []
+                subquestions: list[dict[str, Any]] = []
                 if ranking and margin < args.rank_margin and args.frames_per_clip > 0:
                     # the graph is unsure: go and look at the clips the top two disagree over
                     schemas_now, _ = retrieval_catalog(example)
                     video_path = ((example.get("video") or {}).get("primary_path")) or ""
-                    for probe_index in disputed_clip_indices(ranking, indices, args.frame_max_clips):
+                    if args.probe_subquestions:
+                        subquestions = _with_rate_limit_retry(
+                            lambda: decompose_dispute(answer_client, example, indices, ranking)
+                        )
+                        targets = [(sq["clip_rank"] - 1, sq["question"]) for sq in subquestions
+                                   if 0 <= sq["clip_rank"] - 1 < len(indices)]
+                        targets = [(indices[pos], q) for pos, q in targets][: args.frame_max_clips]
+                    else:
+                        targets = [(i, None) for i in disputed_clip_indices(ranking, indices, args.frame_max_clips)]
+                    for probe_index, probe_q in targets:
                         schema_now = schemas_now[probe_index] if 0 <= probe_index < len(schemas_now) else {}
                         jpegs = sample_clip_frames(
                             video_path, (schema_now or {}).get("time_span") or {},
                             args.frames_per_clip, args.frame_width,
                         )
-                        seen = _with_rate_limit_retry(lambda: visual_probe(probe_client, example, probe_index, jpegs))
+                        seen = _with_rate_limit_retry(
+                            lambda: visual_probe(probe_client, example, probe_index, jpegs, probe_q)
+                        )
                         if seen:
                             probes.append(seen)
                     if probes:
                         ranked = _with_rate_limit_retry(
-                            lambda: rank_hypotheses(answer_client, example, indices, probes)
+                            lambda: rank_hypotheses(answer_client, example, indices, probes,
+                                                    probabilities=args.rank_probabilities)
                         )
                         ranking = ranked.get("ranking") or ranking
                 # assemble: commit the top of the ranking with its evidence chain
@@ -899,6 +993,7 @@ def main(argv: list[str] | None = None) -> int:
                     "rank_margin": margin,
                     "visual_probes": len(probes),
                     "probe_observations": probes,
+                    "subquestions": subquestions,
                 }
             elif condition == "probe":
                 frames = clip_frames_for_answer(
@@ -1026,6 +1121,8 @@ def main(argv: list[str] | None = None) -> int:
         "findings_mode": args.findings_mode,
         "probe_model": args.probe_model,
         "rank_margin": args.rank_margin,
+        "rank_probabilities": args.rank_probabilities,
+        "probe_subquestions": args.probe_subquestions,
         "max_tokens": answer_model_budget(args.reasoning_effort, args.max_tokens),
         "temporal_nms": bool(args.temporal_nms),
         "note": "seeded subsample of heldout_test; the rest stays unread",

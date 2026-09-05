@@ -59,3 +59,44 @@ def test_visual_observations_ride_along_on_the_second_ranking() -> None:
     client = _FakeClient('{"ranking": [{"label": "A", "score": 0.9, "clip_ranks": [1], "reason": "he trembles"}]}')
     rank_hypotheses(client, _example(), indices=[0, 1], observations=[{"observation": "he trembles"}])
     assert client.payload["visual_observations"] == [{"observation": "he trembles"}]
+
+
+def test_decompose_dispute_yields_factual_subquestions_on_the_cited_clips() -> None:
+    from scripts.eval.measure_answer_chain import decompose_dispute
+    client = _FakeClient('{"subquestions": [{"clip_rank": 2, "question": "is she holding an inhaler?"}, '
+                         '{"clip_rank": "x", "question": "bad"}, {"clip_rank": 4, "question": "does he shout?"}]}')
+    ranking = [{"label": "B", "clip_ranks": [2, 4], "reason": "he shouts"}, {"label": "A", "clip_ranks": [1], "reason": "fear"}]
+    out = decompose_dispute(client, _example(), indices=[0, 1, 2, 3, 4, 5], ranking=ranking)
+    assert out == [{"clip_rank": 2, "question": "is she holding an inhaler?"}, {"clip_rank": 4, "question": "does he shout?"}]
+    assert client.payload["option_1"]["label"] == "B" and client.payload["option_2"]["text"] == "fear"
+    assert [c["rank"] for c in client.payload["cited_clips"]] == [2, 4, 1]
+
+
+def test_decompose_dispute_needs_two_options_and_survives_bad_json() -> None:
+    from scripts.eval.measure_answer_chain import decompose_dispute
+    assert decompose_dispute(_FakeClient("{}"), _example(), [0, 1], [{"label": "A"}]) == []
+    assert decompose_dispute(_FakeClient("nope"), _example(), [0, 1], [{"label": "A", "clip_ranks": [1]}, {"label": "B"}]) == []
+
+
+def test_visual_probe_uses_the_subquestion_when_given() -> None:
+    from scripts.eval.measure_answer_chain import visual_probe
+
+    class _C:
+        def chat(self, messages):
+            self.payload = json.loads(messages[-1]["content"][0]["text"]); return "yes, an inhaler"
+    client = _C()
+    out = visual_probe(client, _example(), index=1, frames=["AAAA"], probe_question="is she holding an inhaler?")
+    assert client.payload["question"] == "is she holding an inhaler?"
+    assert out["question"] == "is she holding an inhaler?" and out["observation"] == "yes, an inhaler"
+
+
+def test_probability_mode_switches_the_ranking_prompt() -> None:
+    from scripts.eval.measure_answer_chain import RANK_SYSTEM_PROB
+
+    class _C:
+        def chat(self, messages):
+            self.system = messages[0]["content"]; return '{"ranking": [{"label": "A", "score": 0.6}, {"label": "B", "score": 0.4}]}'
+    client = _C()
+    out = rank_hypotheses(client, _example(), indices=[0, 1], probabilities=True)
+    assert client.system == RANK_SYSTEM_PROB and "sum to 1" in client.system
+    assert abs(ranking_margin(out["ranking"]) - 0.2) < 1e-9

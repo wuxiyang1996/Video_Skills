@@ -98,7 +98,7 @@ def test_visual_probe_asks_one_clip_with_the_question_and_returns_the_observatio
     client = _FakeClient()
     client.chat = lambda messages: (setattr(client, "messages", messages), "a woman looks terrified")[1]
     out = visual_probe(client, _example(), index=2, frames=["AAAA", "BBBB"])
-    assert out == {"time_span": {"start_s": 2.0, "end_s": 3.0}, "observation": "a woman looks terrified"}
+    assert out == {"time_span": {"start_s": 2.0, "end_s": 3.0}, "question": None, "observation": "a woman looks terrified"}
     payload = json.loads(client.messages[1]["content"][0]["text"])
     assert payload["question"] == "q" and payload["time_span"] == {"start_s": 2.0, "end_s": 3.0}
     assert [p["type"] for p in client.messages[1]["content"][1:]] == ["image_url", "image_url"]
