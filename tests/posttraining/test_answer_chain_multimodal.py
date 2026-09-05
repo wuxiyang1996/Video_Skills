@@ -130,6 +130,23 @@ def test_rationale_mode_keeps_the_think_block_and_parses_the_label_after_it() ->
     assert client.system == DIRECT_SYSTEM_RATIONALE
     assert out["final_answer"]["label"] == "A"
     assert out["thinking"] == "clip 3 shows the knife, so B is wrong; A fits."
+    assert out["raw_text"].startswith("<think>")
+
+
+def test_rationale_mode_reads_the_json_reasoning_field_when_there_are_no_tags() -> None:
+    class _C:
+        def chat(self, messages):
+            return '{"reasoning": "clip 2 shows her inhaler; E fits", "label": "E"}'
+    out = direct_answer(_C(), _example(), indices=[0, 1], rationale=True)
+    assert out["final_answer"]["label"] == "E" and out["thinking"] == "clip 2 shows her inhaler; E fits"
+
+
+def test_rationale_mode_falls_back_to_prose_before_the_json() -> None:
+    class _C:
+        def chat(self, messages):
+            return 'She holds an inhaler in clip 2, so E.\n{"label": "E"}'
+    out = direct_answer(_C(), _example(), indices=[0, 1], rationale=True)
+    assert out["thinking"] == "She holds an inhaler in clip 2, so E."
 
 
 def test_plain_mode_has_no_thinking_field() -> None:

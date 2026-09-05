@@ -576,9 +576,9 @@ DIRECT_SYSTEM_MULTIMODAL = (
 )
 DIRECT_SYSTEM_RATIONALE = (
     "You answer multiple-choice questions about a video using only the clip descriptions "
-    "provided. First reason step by step between <think> and </think> tags, actively "
-    "locating and connecting the relevant clues across clips; then reply with JSON only: "
-    '{"label": "<option letter>"}.'
+    "provided. Reason step by step first, actively locating and connecting the relevant "
+    "clues across clips, then decide. Reply with JSON only: "
+    '{"reasoning": "<your step-by-step reasoning, citing clip ranks>", "label": "<option letter>"}.'
 )
 DIRECT_SYSTEM = (
     "You answer multiple-choice questions about a video using only the clip "
@@ -654,6 +654,7 @@ def direct_answer(
     ])
     label = None
     thinking = ""
+    parsed: dict[str, Any] = {}
     if rationale:
         found = re.findall(r"<think>\s*(.*?)\s*</think>", text or "", re.S)
         thinking = found[-1].strip() if found else ""
@@ -661,10 +662,17 @@ def direct_answer(
     else:
         tail = text or ""
     try:
-        label = (json.loads(re.search(r"\{.*\}", tail, re.S).group(0)) or {}).get("label")
+        parsed = json.loads(re.search(r"\{.*\}", tail, re.S).group(0)) or {}
+        label = parsed.get("label")
     except Exception:
         match = re.search(r"\b([A-H])\b", tail)
         label = match.group(1) if match else None
+    if rationale and not thinking:
+        # JSON "reasoning" field, else whatever prose preceded the JSON
+        thinking = str(parsed.get("reasoning") or "").strip()
+        if not thinking:
+            head = (text or "").split("{", 1)[0].strip()
+            thinking = head
     out = {
         "final_answer": {"label": label},
         "failure_reasons": [] if label else ["no_label_parsed"],
@@ -672,6 +680,7 @@ def direct_answer(
     }
     if rationale:
         out["thinking"] = thinking[:4000]
+        out["raw_text"] = (text or "")[:6000]
     return out
 
 
