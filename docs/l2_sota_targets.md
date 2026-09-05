@@ -123,6 +123,23 @@ corrected oracle runs on the 300 control ids (`direct_oracle_fixed_300`).
 
 The graph+always_commit run on the same retracted oracle (`full_vh_oracle/graph_commit_oracle_300`, 23.3%) is likewise not a ceiling; the graph-over-whole-catalog run (`full_vh_controls/graph_commit_all_300`) replaces it.
 
+**The trained controller does beat the no-learning baseline on the meaningful
+metric.** OPD reranker vs BM25 on the same 1,561 full-test questions that have
+Inference Shots, top-4:
+
+| model | segment recall | segment precision | **inference-shot recall** |
+|---|---|---|---|
+| BM25 (no learning) | 60.49 | 88.02 | 11.00 |
+| **OPD reranker** | 58.68 | 90.05 | **14.57** |
+| BM25 + temporal NMS | 67.36 | 88.32 | 10.93 |
+| OPD + temporal NMS | 58.07 | 89.94 | 12.19 |
+
+OPD − BM25 inference-shot recall = **+3.57 [+1.85, +5.34]**; OPD finds a clue
+clip BM25 misses on 242 questions, the reverse on 163. Temporal NMS raises
+segment recall (which is near-vacuous) and *lowers* inference recall, so it is
+not part of the reported system. This is the honest retrieval claim for
+Video-Holmes.
+
 **Same caveat applies to the paper's VH "segment recall".** `temporal_retrieval_metrics(selected, segment_spans)`
 scores recall over those 95%-coverage segments, so it mostly measures how
 spread out the top-k picks are, not whether they land on the clue. The
