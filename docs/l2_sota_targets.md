@@ -224,9 +224,17 @@ compare_hypotheses → verify_claim_support → commit_answer). Where the points
   label is then whatever `commit_answer` falls back to (7× "A"), i.e. arbitrary.
 
 So the graph never lets one model read all the evidence and weigh the options
-against each other — which is exactly what direct does. Fix under test: keep
-the skills as an analysis pass, then answer with **whole catalog + skill
-findings** in one call (`hybrid` condition), so the graph can only add.
+against each other — which is exactly what direct does.
+
+**The `hybrid` fix does not rescue it (150 ids, paired).** Keeping the skills
+as an analysis pass and answering once over the whole catalog *plus* their
+notes scores 28.0, against 36.7 for plain direct answering over the same clips
+(−8.7 [−16.0, −1.3]) and 40.0 for direct with the BM25 pointer (−12.0
+[−19.3, −4.7]). The graph's own answer inside those runs was 22.0. So the
+notes are not neutral filler: they drag a capable reader toward the graph's
+wrong pick. `--findings-mode observations_only` (drop the per-option scores and
+the vote, keep the observations) is running to tell a bad scoring step apart
+from a worthless analysis.
 
 ## CG catalog repair, targeted
 
