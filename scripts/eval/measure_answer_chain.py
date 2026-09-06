@@ -45,9 +45,10 @@ from trainer.grpo.train_l2_terminal_on_policy import filter_example_for_retrieva
 class _LazyExamples:
     """Mapping from example_id to a freshly loaded frozen L1 example."""
 
-    def __init__(self, path_by_id: dict[str, Path], catalog_order: str = "given") -> None:
+    def __init__(self, path_by_id: dict[str, Path], catalog_order: str = "given", shuffle_options_seed: int | None = None) -> None:
         self._paths = path_by_id
         self._catalog_order = catalog_order
+        self._shuffle_options_seed = shuffle_options_seed
 
     def __contains__(self, example_id: object) -> bool:
         return example_id in self._paths
@@ -65,7 +66,40 @@ class _LazyExamples:
         example = loaded[0]
         if self._catalog_order == "time":
             order_catalog_by_time(example)
+        if self._shuffle_options_seed is not None:
+            shuffle_options(example, self._shuffle_options_seed)
         return example
+
+
+def shuffle_options(example: dict[str, Any], seed: int) -> list[str]:
+    """Deterministically permute the option texts (per example and seed), relabelling A.. in order.
+
+    The gold label follows its text.  `question.option_perm[k]` records which ORIGINAL label now
+    sits at position k, so a dumped rollout can be replayed onto the same permuted example.
+    Used to generate training data in several option orders so a reader cannot learn a letter prior.
+    """
+    question = example.get("question") or {}
+    options = list(question.get("options") or [])
+    if len(options) < 2:
+        return []
+    rng = random.Random(f"{seed}:{example.get('example_id')}")
+    order = list(range(len(options)))
+    rng.shuffle(order)
+    labels = [str(o.get("label")) for o in options]
+    gold = str((question.get("answer") or {}).get("label") or "")
+    new_options = []
+    perm = []
+    new_gold = None
+    for k, src in enumerate(order):
+        new_options.append({**options[src], "label": labels[k]})
+        perm.append(labels[src])
+        if labels[src] == gold:
+            new_gold = labels[k]
+    question["options"] = new_options
+    if new_gold is not None:
+        question["answer"] = {**(question.get("answer") or {}), "label": new_gold}
+    question["option_perm"] = perm
+    return perm
 
 
 def order_catalog_by_time(example: dict[str, Any]) -> None:
@@ -1033,6 +1067,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dump-rollouts", type=Path,
                         help="Also append every full rollout (plan, skill outputs, commit) to this jsonl for diagnosis.")
     parser.add_argument("--sample", type=int, default=40)
+    parser.add_argument("--shuffle-options", type=int, default=None,
+                        help="Seed: permute each question's options deterministically (gold follows its text); the permutation is recorded in dumped rollouts.")
     parser.add_argument("--catalog-order", choices=["given", "time"], default="given",
                         help="'time' interleaves catalog rows by start time (narrative/dialogue rows among the clips they cover).")
     parser.add_argument("--example-ids", type=Path,
@@ -1106,7 +1142,7 @@ def main(argv: list[str] | None = None) -> int:
         if example_id and example_id not in path_by_id:
             path_by_id[example_id] = path
         del head
-    examples = _LazyExamples(path_by_id, catalog_order=args.catalog_order)
+    examples = _LazyExamples(path_by_id, catalog_order=args.catalog_order, shuffle_options_seed=args.shuffle_options)
     if args.example_ids:
         wanted = [line.strip() for line in args.example_ids.read_text(encoding="utf-8").splitlines() if line.strip()]
         chosen = [e for e in wanted if e in examples]
@@ -1365,6 +1401,7 @@ def main(argv: list[str] | None = None) -> int:
         if dump_handle is not None:
             dump_rollout(dump_handle, dump_lock, {
                 "example_id": example_id, "condition": condition, "gold_label": gold_label,
+                "option_perm": (question.get("option_perm") or None),
                 "indices": indices, "rollout": graph_rollout if graph_rollout is not None else rollout,
             })
         row = {"example_id": example_id, "condition": condition, **score(rollout, gold_label)}
