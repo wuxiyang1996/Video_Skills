@@ -1001,6 +1001,20 @@ arm on grounded accuracy (this is the atomic-skills claim); transfer on
 VRBench held-out. Budget: 3 weeks; if Stage 2 does not beat Stage 1 on the
 fresh 300 within that, report Stage 1 and stop.
 
+Implementation (2026-09-06): `trainer/reader/` — `prompting.py` (exact
+evaluation prompt via `direct_messages`, JSON target), `rewards.py`
+(correct + citation precision on annotated spans, paid only when correct;
+time-order check), `build_sft_data.py` (teacher rationales kept only when
+verifiably right), `sft_lora.py` (LoRA, completion-only loss, FA2),
+`rft_iterate.py` (sample K from the current policy served by vLLM, keep the
+best verified completion per question → next SFT round). Stage 2 runs as
+this verifiable-reward iteration first; GRPO proper is swapped in if TRL
+can be installed alongside the local FA2 environment without breaking it.
+Train L1 for the 233 train videos runs on the gamma partition (32 GB / 4
+CPU QoS); the base reader's own baseline (Qwen3.5-9B via vLLM, fresh 300,
+direct and cited) is queued so the trained model is compared with itself.
+
+
 ## Feasibility probe: are reasoning failures reusable sub-trajectories? (2026-09-06)
 
 `scripts/eval/mine_failure_subtrajectories.py` fits every direct-reader
