@@ -677,6 +677,22 @@ describer (long window, many frames, human-annotator prompt) — the
 experiment that sits between "narrative from our text" (−2.3) and "human
 narrative" (+12.3).
 
+**Audio was never used (found 2026-09-06).** Video-Holmes ships no subtitle
+files, the adapter passes `subtitle_paths=[]`, and every clip in the catalog
+has `dialogue_spans: []`. The human rows quote what people say ("the young
+woman said it was about to start"). `scripts/eval/transcribe_videos.py`
+caches whisper-1 segments per video (PyAV audio extraction, region-pinned
+OpenAI host); on the fresh 191 videos whisper also emits sound-effect
+captions ("**footsteps**", "**creepy music intensifies**"), which one PAR
+question literally asks about. `narr_px` = `build_narrative_catalog.py
+--frames-per-window 16 --window-s 30 --asr-dir … --no-clip-text`: the 235B
+*looks* at 16 frames per 30-s window, reads the dialogue in it, sees the
+previous paragraph and the cast, and writes one human-annotator-style
+paragraph (smoke output quotes dialogue, names "Sonya" from the audio, and
+carries her across windows). Two catalogs on the fresh 300: narrative rows
+only, and narrative rows + our clips (time grid for TA).
+
+
 
 
 
