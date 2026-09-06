@@ -718,6 +718,20 @@ the narrative adds SR/TCI/CTI. So roughly half of the gain is a modality
 the pipeline had simply never ingested, and half is describing 30-s
 stretches as a story rather than 4-s clips as facts.
 
+**Full Video-Holmes test with the narr_px_plus catalog (2026-09-06; 1,837
+questions, 270 videos, BM25 pointer, 235B reader — identical flags to the
+42.5 run): 47.4, paired +4.8 [+2.9, +6.6] over 42.6.** Above Gemini-2.5-Pro's
+published 45.0 and every open model on the leaderboard. By type: MHR +4.8*,
+SR +5.5*, IMC +5.4*, TCI +7.3*, CTI +6.7*, PAR +6.2 (CI touches 0), **TA
+−4.5 [−9.5, +0.5]** — timeline questions are the one type the narrative rows
+hurt (30-s paragraphs blur event order; the clips' 4-s grid was what TA
+lived on). The configuration was fixed on the fresh 300 before this run; TA
+is reported as is. What the number is: open components only (Qwen3.5-9B clip
+describer, whisper-1, Qwen3-VL-235B as window describer and text reader),
+no question-conditioned perception, no learned retrieval, no decomposition.
+Pipeline cost per video ≈ 6 windows × 16 frames + ASR, a few cents.
+
+
 
 
 
