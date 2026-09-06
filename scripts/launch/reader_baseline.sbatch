@@ -4,7 +4,9 @@
 #SBATCH --output=/fs/nexus-scratch/wuxiyang/reader_train/slurm_logs/base-%j.out --error=/fs/nexus-scratch/wuxiyang/reader_train/slurm_logs/base-%j.err
 # Baseline for the trainable reader: Qwen3.5-9B (text prompt) served by vLLM, answering the fresh 300 over the narr_px_plus catalog, direct and direct+rationale.
 set -uo pipefail; cd /fs/gamma-projects/vlm-robot/Video_Skills
-export HF_HOME=/fs/gamma-projects/vlm-robot/Multi-hop-Reasoning-VLM-Agent/.hf_cache; export PATH=$PWD/.venv-qwen35-vllm/bin:$PATH
+export HF_HOME=/fs/gamma-projects/vlm-robot/Multi-hop-Reasoning-VLM-Agent/.hf_cache; export TRANSFORMERS_CACHE=$HF_HOME/hub
+export CUDA_HOME=/opt/common/cuda/cuda-13.0.2; export CUDA_PATH=$CUDA_HOME; export PATH=$CUDA_HOME/bin:$PWD/.venv-qwen35-vllm/bin:$PATH
+export VLLM_USE_DEEP_GEMM=0 TOKENIZERS_PARALLELISM=false SETUPTOOLS_USE_DISTUTILS=stdlib PYTHONPATH=$PWD
 PORT=$((19000 + SLURM_JOB_ID % 1000)); MODEL=Qwen/Qwen3.5-9B
 .venv-qwen35-vllm/bin/vllm serve $MODEL --host 127.0.0.1 --port $PORT --served-model-name $MODEL --dtype bfloat16 --max-model-len 32768 --gpu-memory-utilization 0.90 > /fs/nexus-scratch/wuxiyang/reader_train/slurm_logs/vllm-$SLURM_JOB_ID.log 2>&1 &
 for i in $(seq 1 600); do curl -sf http://127.0.0.1:$PORT/v1/models >/dev/null && break; sleep 2; done; curl -sf http://127.0.0.1:$PORT/v1/models >/dev/null || { echo "vllm did not start"; exit 1; }
