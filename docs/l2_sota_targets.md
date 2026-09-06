@@ -850,6 +850,36 @@ the primary CI excludes 0 in the positive direction. Chain:
 
 
 
+## Feasibility probe: are reasoning failures reusable sub-trajectories? (2026-09-06)
+
+`scripts/eval/mine_failure_subtrajectories.py` fits every direct-reader
+failure (gold explanation / inference shots / VRBench reasoning_process +
+the reader's wrong rationale) to the fixed skill ontology with a failure code
+and a per-step "what would executing this need" label. Three failure sets:
+VH fresh 300 on the narr_px_plus catalog (163 wrong), VH fresh 300 on the old
+catalog (178), VRBench pilot 480 (157).
+
+**Exact sub-trajectories do not recur.** 134 distinct programs among 163 VH
+failures, top-5 cover 22 (13%); VRBench 134/157, top-5 cover 16. As
+"reusable programs" the hypothesis fails.
+
+**Failure modes do recur, and split three ways:**
+
+| failure code (VH new / VH old / VRBench) | share | what fixes it |
+|---|---|---|
+| clue in the text but mis-weighted (official judge: RE 87/98) | **60% / 60% / 59%** | nothing tool-shaped: the fact is read and the inference is wrong (graph2 has the gold option at rank 2 in 25/98). This is a *reader training* target, i.e. the RLVR framing, not a skill-library target |
+| deterministic structure the model gets wrong: temporal order (VH TA 15/15 of that type) / counting (VRBench 28, and "Counting Problems" is 94/480 questions at **32%** direct accuracy vs 71–93% on every other type) | 10% VH / 18% VRBench | a deterministic skill — the one pattern that has worked (timeline skill) |
+| clue not in the text / dialogue needed | 10–14% / 2% | perception at the window+audio level (narr_px, window grounder) |
+| film grammar / symbolism | 5–8% | out of reach |
+
+Verdict: the sub-trajectory-bank idea is not feasible as stated (no recurring
+programs), and the GPU spend on train-split L1 for mining is not justified.
+What is feasible and concrete: (1) VRBench counting — one deterministic
+`count_events` skill on a fifth of the benchmark sitting at 32%; (2) temporal
+ordering (done, half the TA gap); (3) the window grounder for the
+perception tail. The 60% majority is where "atomic skills as an RLVR variant
+that regularises reasoning" would have to act, and only training can test it.
+
 ## CG-Bench QA accuracy (first measurement, 2026-09-05)
 
 Only grounding had ever been measured on CG. Direct answering over the whole
