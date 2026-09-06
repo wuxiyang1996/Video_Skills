@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from dataset_clip_wrapper.perception.openrouter_client import OpenRouterClient, load_openrouter_api_key
-from scripts.eval.measure_answer_chain import clip_schema_text, retrieval_catalog
+from scripts.eval.measure_answer_chain import clip_schema_text, retrieval_catalog, sample_clip_frames
 
 NARRATE_SYSTEM = (
     "You turn a sequence of short, independently written clip descriptions from one stretch "
@@ -34,6 +34,26 @@ NARRATE_SYSTEM = (
     "events the clips do not support. Reply with JSON only: "
     '{"narrative": "<paragraph>", "cast": ["<stable descriptor>", ...]}.'
 )
+
+
+ANNOTATE_SYSTEM = (
+    "You are annotating one stretch of a short film for a detective-style question set. You are given "
+    "evenly spaced frames from that stretch in time order, the dialogue heard in it (if any), the "
+    "previous stretch's annotation and the running cast. Write ONE paragraph, the way a careful human "
+    "annotator would, of what happens: who is present (stable descriptors reused from the cast, e.g. "
+    "'the man with the backpack'), what each person does and says, how they react, what changes, and "
+    "what the sequence shows or implies about intentions, relationships and cause-and-effect when the "
+    "frames and dialogue make it clear. Quote or paraphrase dialogue in English. Describe events, not "
+    "camera work. Do not invent what is not shown or heard. Reply with JSON only: "
+    '{"narrative": "<paragraph>", "cast": ["<stable descriptor>", ...]}.'
+)
+
+
+def asr_in_span(segments: list[dict[str, Any]], span: dict[str, Any], pad_s: float = 1.0) -> list[dict[str, Any]]:
+    """Transcript segments overlapping the window (padded), as {start_s, end_s, text}."""
+    lo, hi = float(span.get("start_s") or 0.0) - pad_s, float(span.get("end_s") or 0.0) + pad_s
+    return [{"start_s": g.get("start_s"), "end_s": g.get("end_s"), "text": g.get("text")}
+            for g in segments or [] if float(g.get("end_s") or 0.0) > lo and float(g.get("start_s") or 0.0) < hi]
 
 
 def window_clips(schemas: list[dict[str, Any]], target_s: float = 45.0, min_windows: int = 3) -> list[list[int]]:
@@ -54,11 +74,18 @@ def window_clips(schemas: list[dict[str, Any]], target_s: float = 45.0, min_wind
 
 
 def narrate_video(client: Any, schemas: list[dict[str, Any]], windows: list[list[int]],
-                  per_clip_chars: int = 900) -> list[dict[str, Any]]:
-    """Sequential synthesis: each window sees the previous narrative and the running cast."""
+                  per_clip_chars: int = 900, *, video_path: str | None = None, frames_per_window: int = 0,
+                  asr_segments: list[dict[str, Any]] | None = None, use_clip_text: bool = True,
+                  frame_width: int = 448) -> list[dict[str, Any]]:
+    """Sequential synthesis: each window sees the previous narrative and the running cast.
+
+    With `frames_per_window` > 0 the model also *looks* at evenly spaced frames of the window
+    (and reads the ASR segments in it), which turns the text re-organiser into a describer.
+    """
     rows: list[dict[str, Any]] = []
     previous = ""
     cast: list[str] = []
+    looking = frames_per_window > 0 and bool(video_path)
     for k, window in enumerate(windows, start=1):
         clips = []
         for i in window:
@@ -66,11 +93,22 @@ def narrate_video(client: Any, schemas: list[dict[str, Any]], windows: list[list
             clips.append({"time_span": s.get("time_span") or {}, "description": clip_schema_text(s)[:per_clip_chars]})
         span = {"start_s": float(schemas[window[0]]["time_span"].get("start_s") or 0.0),
                 "end_s": float(schemas[window[-1]]["time_span"].get("end_s") or 0.0)}
-        payload = {"window": k, "of": len(windows), "time_span": span, "previous_narrative": previous[:1500],
-                   "cast_so_far": cast[:20], "clips": clips}
+        payload: dict[str, Any] = {"window": k, "of": len(windows), "time_span": span,
+                                   "previous_narrative": previous[:1500], "cast_so_far": cast[:20]}
+        if use_clip_text:
+            payload["clips"] = clips
+        if asr_segments is not None:
+            payload["dialogue"] = asr_in_span(asr_segments, span)
+        frames = sample_clip_frames(video_path, span, frames_per_window, width=frame_width) if looking else []
+        if frames:
+            content: Any = [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]
+            for jpeg in frames:
+                content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{jpeg}"}})
+        else:
+            content = json.dumps(payload, ensure_ascii=False)
         text = client.chat([
-            {"role": "system", "content": NARRATE_SYSTEM},
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            {"role": "system", "content": ANNOTATE_SYSTEM if looking else NARRATE_SYSTEM},
+            {"role": "user", "content": content},
         ])
         narrative = ""
         try:
@@ -85,7 +123,8 @@ def narrate_video(client: Any, schemas: list[dict[str, Any]], windows: list[list
         if not narrative:
             narrative = " ".join(c["description"][:300] for c in clips)   # never drop a window
         rows.append({"clip_id": f"narrative:{k}", "granularity": "narrative_window", "time_span": span,
-                     "scene_description": narrative[:2500], "source_clip_count": len(window)})
+                     "scene_description": narrative[:2500], "source_clip_count": len(window),
+                     "frames_seen": len(frames), "dialogue_lines": len(payload.get("dialogue") or [])})
         previous = narrative
     return rows
 
@@ -101,13 +140,19 @@ def main(argv: list[str] | None = None) -> int:
                     help="Append the original clips after the narrative rows (hybrid catalog) instead of replacing them.")
     ap.add_argument("--keys-py", type=Path, default=Path("/fs/gamma-projects/vlm-robot/keys.py"))
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--frames-per-window", type=int, default=0,
+                    help="Look at this many evenly spaced frames per window (0 = text-only re-organisation).")
+    ap.add_argument("--asr-dir", type=Path, help="Per-video whisper JSON (scripts/eval/transcribe_videos.py); dialogue in each window is passed to the model.")
+    ap.add_argument("--no-clip-text", action="store_true", help="Do not pass the clip descriptions; frames + dialogue only.")
     args = ap.parse_args(argv)
+    if args.no_clip_text and not args.frames_per_window:
+        ap.error("--no-clip-text needs --frames-per-window > 0")
 
     index = json.loads(args.example_index.read_text())
     wanted = set(args.example_ids.read_text().split()) if args.example_ids else set(index)
     client = OpenRouterClient(model=args.model, api_key=load_openrouter_api_key(keys_py_path=args.keys_py),
                               max_tokens=1200, temperature=0.0, reasoning={"effort": "minimal", "exclude": True},
-                              timeout_s=240)
+                              timeout_s=300)
     cache_dir = args.output_root / "narratives"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -122,7 +167,14 @@ def main(argv: list[str] | None = None) -> int:
             return video_id, json.loads(cache.read_text())
         example = json.loads(Path(index[by_video[video_id][0]]["path"]).read_text())
         schemas, _ = retrieval_catalog(example)
-        rows = narrate_video(client, schemas, window_clips(schemas, args.window_s))
+        asr = None
+        if args.asr_dir:
+            asr_path = args.asr_dir / f"{video_id}.json"
+            asr = (json.loads(asr_path.read_text()).get("segments") or []) if asr_path.exists() else []
+        rows = narrate_video(client, schemas, window_clips(schemas, args.window_s),
+                             video_path=(example.get("video") or {}).get("primary_path"),
+                             frames_per_window=args.frames_per_window, asr_segments=asr,
+                             use_clip_text=not args.no_clip_text)
         cache.write_text(json.dumps(rows, ensure_ascii=False))
         return video_id, rows
 
@@ -143,7 +195,9 @@ def main(argv: list[str] | None = None) -> int:
             metadata = dict(example.get("metadata") or {})
             metadata["clip_schemas"] = rows + (list(schemas) if args.keep_clips else [])
             metadata["coarse_clip_schemas"] = []
-            metadata["clip_schema_model"] = f"narrative:{args.model}" + ("+clips" if args.keep_clips else "")
+            metadata["clip_schema_model"] = (f"narrative:{args.model}" + (f"+frames{args.frames_per_window}" if args.frames_per_window else "")
+                                             + ("+asr" if args.asr_dir else "") + ("-cliptext" if args.no_clip_text else "")
+                                             + ("+clips" if args.keep_clips else ""))
             example["metadata"] = metadata
             out_dir = args.output_root / "stages" / example_id.replace(":", "_")
             out_dir.mkdir(parents=True, exist_ok=True)

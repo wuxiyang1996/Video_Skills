@@ -649,6 +649,36 @@ clips (`ANCHOR_REPASS_TOP_N=16`), 4 scavenger shards each; both re-measured
 on the fresh 300 against 41.0. The narrative-synthesis path is retired as an
 accuracy lever (kept as a cheap catalog-format tool).
 
+Three describer runs are in flight on the same 191 videos (2026-09-06):
+
+| lever | what changes | where it runs | measured on |
+|---|---|---|---|
+| `frames8` | Qwen3.5-9B, 8 frames per clip instead of 4 | scavenger, 8 shards (~35 min/video at 4 frames, resubmitted on preemption) | derived copies, fresh 300 |
+| `repass16` | 9B re-describes the 16 question-nearest clips at 6 frames *with the question in context*; base catalog seeded from the frozen v3 stage files (300 per-question stage dirs, `UNIQUE_VIDEOS=0`) | scavenger, 8 shards | the 300 fresh questions directly (repass rows are question-conditioned, so derived copies cannot carry them) |
+| `desc235b` | Qwen3-VL-235B on OpenRouter as the describer, 4 frames, same schema prompt | login node, 4 processes × 12 workers (smoke: 26 clips in ~60 s, 0 errors, ~2.7k tokens per clip, ≈$15 for all 191 videos) | derived copies, fresh 300 |
+
+All three are compared paired against ours 41.0 and the human rows 53.3
+with the same 235B reader. Note for `repass16`: 10 of the 300 seeded base
+catalogs are the post-repair v3 version (more clips than the derived copies
+behind 41.0); the other 290 are identical.
+
+**desc235b result (2026-09-06, fresh 300, paired):** 39.3 vs ours 41.0,
+−1.7 [−5.3, +2.0]; vs human rows −14.0 [−19.7, −8.3]. No type moves (MHR
+−4.9, PAR +3.3, all n.s.). A 25× larger describer, same 4 frames, same
+question-agnostic schema prompt, changes nothing. So the perception gap is
+not describer *capacity*. What the human rows have and both describers lack
+must come from one of: temporal context (a human row covers ~30–60 s and
+reads actions as a sequence; a clip is 4 s and 4 frames), the question
+(human rows were written knowing the film's point), or the *format* (our
+schema asks for observable facts and marks relations uncertain; the human
+rows narrate identities, intent and social reading). `frames8` tests the
+first; `repass16` the second; the third needs a narrative-from-pixels
+describer (long window, many frames, human-annotator prompt) — the
+experiment that sits between "narrative from our text" (−2.3) and "human
+narrative" (+12.3).
+
+
+
 
 ## CG-Bench QA accuracy (first measurement, 2026-09-05)
 

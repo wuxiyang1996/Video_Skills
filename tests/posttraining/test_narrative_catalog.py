@@ -49,3 +49,40 @@ def test_a_bad_reply_never_drops_a_window() -> None:
             return "not json at all"
     rows = narrate_video(_Broken(), _schemas(6), window_clips(_schemas(6), target_s=10.0, min_windows=2))
     assert len(rows) == 2 and all(r["scene_description"] for r in rows)
+
+
+def test_asr_segments_are_selected_by_overlap_with_padding() -> None:
+    from scripts.eval.build_narrative_catalog import asr_in_span
+    segs = [{"start_s": 0.0, "end_s": 3.0, "text": "a"}, {"start_s": 10.5, "end_s": 12.0, "text": "b"},
+            {"start_s": 30.0, "end_s": 31.0, "text": "c"}]
+    picked = asr_in_span(segs, {"start_s": 4.0, "end_s": 10.0})      # 1 s pad reaches 'b', not 'a' or 'c'
+    assert [p["text"] for p in picked] == ["b"]
+
+
+def test_looking_mode_sends_frames_and_dialogue_and_keeps_clip_text_optional(monkeypatch) -> None:
+    import scripts.eval.build_narrative_catalog as mod
+    monkeypatch.setattr(mod, "sample_clip_frames", lambda path, span, count, width=448: ["AAA="] * count)
+
+    class _Client:
+        def __init__(self):
+            self.messages = []
+
+        def chat(self, messages):
+            self.messages.append(messages)
+            return json.dumps({"narrative": "the man with the backpack hears footsteps", "cast": ["the man with the backpack"]})
+
+    client = _Client()
+    schemas = _schemas(6)
+    asr = [{"start_s": 1.0, "end_s": 2.0, "text": "**footsteps**"}]
+    rows = mod.narrate_video(client, schemas, mod.window_clips(schemas, target_s=12.0, min_windows=2),
+                             video_path="/nonexistent.mp4", frames_per_window=4, asr_segments=asr, use_clip_text=False)
+    system, user = client.messages[0]
+    assert system["content"] == mod.ANNOTATE_SYSTEM
+    parts = user["content"]
+    assert isinstance(parts, list) and sum(1 for p in parts if p["type"] == "image_url") == 4
+    payload = json.loads(parts[0]["text"])
+    assert "clips" not in payload and payload["dialogue"] == asr
+    assert rows[0]["frames_seen"] == 4 and rows[0]["dialogue_lines"] == 1
+    # the second window has no dialogue and still carries the previous paragraph
+    payload2 = json.loads(client.messages[1][1]["content"][0]["text"])
+    assert payload2["dialogue"] == [] and payload2["previous_narrative"].startswith("the man with the backpack")
