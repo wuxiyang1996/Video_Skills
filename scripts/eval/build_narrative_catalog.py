@@ -49,6 +49,36 @@ ANNOTATE_SYSTEM = (
 )
 
 
+KEY_MOMENTS_ADDENDUM = (
+    " Additionally list the 2-3 most telling moments of this stretch as \"key_moments\": each with \"time_s\" "
+    "(seconds, within the stretch), \"clue\" (what is seen or heard, concrete), and \"implication\" (what it "
+    "reveals about intent, relationship, cause, or what will happen), the way a film annotator marks the shots a "
+    "viewer must not miss. Reply with JSON only: {\"narrative\": ..., \"cast\": [...], "
+    "\"key_moments\": [{\"time_s\": <num>, \"clue\": ..., \"implication\": ...}]}."
+)
+
+
+def key_moment_rows(moments: list[dict[str, Any]], window: int, span: dict[str, float], half_width_s: float = 2.0) -> list[dict[str, Any]]:
+    """Key moments become their own catalog rows, timed to a short span around the moment."""
+    rows: list[dict[str, Any]] = []
+    for j, m in enumerate(moments or [], start=1):
+        if not isinstance(m, dict):
+            continue
+        try:
+            t = float(m.get("time_s"))
+        except (TypeError, ValueError):
+            continue
+        t = min(max(t, float(span.get("start_s") or 0.0)), float(span.get("end_s") or t))
+        clue = str(m.get("clue") or "").strip()
+        impl = str(m.get("implication") or "").strip()
+        if not clue:
+            continue
+        rows.append({"clip_id": f"key_moment:{window}.{j}", "granularity": "key_moment",
+                     "time_span": {"start_s": round(max(0.0, t - half_width_s), 2), "end_s": round(t + half_width_s, 2)},
+                     "scene_description": f"Key moment at {t:.0f}s: {clue}" + (f" — implies: {impl}" if impl else "")})
+    return rows
+
+
 def asr_in_span(segments: list[dict[str, Any]], span: dict[str, Any], pad_s: float = 1.0) -> list[dict[str, Any]]:
     """Transcript segments overlapping the window (padded), as {start_s, end_s, text}."""
     lo, hi = float(span.get("start_s") or 0.0) - pad_s, float(span.get("end_s") or 0.0) + pad_s
@@ -76,7 +106,7 @@ def window_clips(schemas: list[dict[str, Any]], target_s: float = 45.0, min_wind
 def narrate_video(client: Any, schemas: list[dict[str, Any]], windows: list[list[int]],
                   per_clip_chars: int = 900, *, video_path: str | None = None, frames_per_window: int = 0,
                   asr_segments: list[dict[str, Any]] | None = None, use_clip_text: bool = True,
-                  frame_width: int = 448) -> list[dict[str, Any]]:
+                  frame_width: int = 448, key_moments: bool = False) -> list[dict[str, Any]]:
     """Sequential synthesis: each window sees the previous narrative and the running cast.
 
     With `frames_per_window` > 0 the model also *looks* at evenly spaced frames of the window
@@ -106,14 +136,19 @@ def narrate_video(client: Any, schemas: list[dict[str, Any]], windows: list[list
                 content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{jpeg}"}})
         else:
             content = json.dumps(payload, ensure_ascii=False)
+        system = ANNOTATE_SYSTEM if looking else NARRATE_SYSTEM
+        if key_moments:
+            system = system + KEY_MOMENTS_ADDENDUM
         text = client.chat([
-            {"role": "system", "content": ANNOTATE_SYSTEM if looking else NARRATE_SYSTEM},
+            {"role": "system", "content": system},
             {"role": "user", "content": content},
         ])
+        moments: list[dict[str, Any]] = []
         narrative = ""
         try:
             parsed = json.loads(re.search(r"\{.*\}", text or "", re.S).group(0)) or {}
             narrative = str(parsed.get("narrative") or "").strip()
+            moments = list(parsed.get("key_moments") or []) if key_moments else []
             for name in parsed.get("cast") or []:
                 name = str(name).strip()
                 if name and name not in cast:
@@ -125,6 +160,7 @@ def narrate_video(client: Any, schemas: list[dict[str, Any]], windows: list[list
         rows.append({"clip_id": f"narrative:{k}", "granularity": "narrative_window", "time_span": span,
                      "scene_description": narrative[:2500], "source_clip_count": len(window),
                      "frames_seen": len(frames), "dialogue_lines": len(payload.get("dialogue") or [])})
+        rows.extend(key_moment_rows(moments, k, span))
         previous = narrative
     return rows
 
@@ -144,6 +180,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="Look at this many evenly spaced frames per window (0 = text-only re-organisation).")
     ap.add_argument("--asr-dir", type=Path, help="Per-video whisper JSON (scripts/eval/transcribe_videos.py); dialogue in each window is passed to the model.")
     ap.add_argument("--no-clip-text", action="store_true", help="Do not pass the clip descriptions; frames + dialogue only.")
+    ap.add_argument("--key-moments", action="store_true", help="Also ask for 2-3 key moments per window and add them as rows (annotator's inference shots).")
     args = ap.parse_args(argv)
     if args.no_clip_text and not args.frames_per_window:
         ap.error("--no-clip-text needs --frames-per-window > 0")
@@ -174,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
         rows = narrate_video(client, schemas, window_clips(schemas, args.window_s),
                              video_path=(example.get("video") or {}).get("primary_path"),
                              frames_per_window=args.frames_per_window, asr_segments=asr,
-                             use_clip_text=not args.no_clip_text)
+                             use_clip_text=not args.no_clip_text, key_moments=args.key_moments)
         cache.write_text(json.dumps(rows, ensure_ascii=False))
         return video_id, rows
 
@@ -196,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
             metadata["clip_schemas"] = rows + (list(schemas) if args.keep_clips else [])
             metadata["coarse_clip_schemas"] = []
             metadata["clip_schema_model"] = (f"narrative:{args.model}" + (f"+frames{args.frames_per_window}" if args.frames_per_window else "")
-                                             + ("+asr" if args.asr_dir else "") + ("-cliptext" if args.no_clip_text else "")
+                                             + ("+asr" if args.asr_dir else "") + ("-cliptext" if args.no_clip_text else "") + ("+keymoments" if args.key_moments else "")
                                              + ("+clips" if args.keep_clips else ""))
             example["metadata"] = metadata
             out_dir = args.output_root / "stages" / example_id.replace(":", "_")

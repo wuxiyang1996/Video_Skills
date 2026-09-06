@@ -86,3 +86,27 @@ def test_looking_mode_sends_frames_and_dialogue_and_keeps_clip_text_optional(mon
     # the second window has no dialogue and still carries the previous paragraph
     payload2 = json.loads(client.messages[1][1]["content"][0]["text"])
     assert payload2["dialogue"] == [] and payload2["previous_narrative"].startswith("the man with the backpack")
+
+
+def test_key_moments_become_timed_rows_clipped_to_the_window() -> None:
+    from scripts.eval.build_narrative_catalog import key_moment_rows
+    rows = key_moment_rows([{"time_s": 12, "clue": "she hides the key", "implication": "she expects him"},
+                            {"time_s": 99, "clue": "door opens"}, {"clue": "no time"}, "junk"],
+                           window=2, span={"start_s": 0.0, "end_s": 30.0})
+    assert [r["clip_id"] for r in rows] == ["key_moment:2.1", "key_moment:2.2"]
+    assert rows[0]["time_span"] == {"start_s": 10.0, "end_s": 14.0} and "implies: she expects him" in rows[0]["scene_description"]
+    assert rows[1]["time_span"] == {"start_s": 28.0, "end_s": 32.0}      # 99 s clipped to the window end
+
+
+def test_key_moments_flag_extends_the_prompt_and_appends_rows(monkeypatch) -> None:
+    import scripts.eval.build_narrative_catalog as mod
+    monkeypatch.setattr(mod, "sample_clip_frames", lambda path, span, count, width=448: ["AAA="] * count)
+
+    class _Client:
+        def chat(self, messages):
+            assert "key_moments" in messages[0]["content"]
+            return json.dumps({"narrative": "p", "cast": [], "key_moments": [{"time_s": 3, "clue": "c", "implication": "i"}]})
+    schemas = _schemas(6)
+    rows = mod.narrate_video(_Client(), schemas, mod.window_clips(schemas, target_s=12.0, min_windows=2),
+                             video_path="/x.mp4", frames_per_window=2, asr_segments=[], use_clip_text=False, key_moments=True)
+    assert [r["granularity"] for r in rows] == ["narrative_window", "key_moment", "narrative_window", "key_moment"]
