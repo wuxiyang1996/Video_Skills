@@ -576,6 +576,81 @@ def visual_probe(
     return {"time_span": span, "question": probe_question, "observation": observation[:600]}
 
 
+GROUNDER_SYSTEM = (
+    "You are shown evenly spaced frames from one stretch of a video, in time order, plus the dialogue heard "
+    "in it (if any) and one factual question. Write ONE paragraph, like a careful annotator, of what happens in "
+    "this stretch that bears on the question: who is present (stable descriptors), what they do and say, how "
+    "they react, what changes. Quote dialogue. Do NOT answer the question, do NOT list what is absent, do NOT "
+    "speculate beyond the frames and dialogue."
+)
+
+
+def probe_window(span: dict[str, Any], window_s: float, duration_s: float | None) -> dict[str, float]:
+    """The ±window_s/2 stretch around a clip, clipped to the video."""
+    start = float(span.get("start_s") or 0.0)
+    end = float(span.get("end_s") or start)
+    mid = (start + end) / 2.0
+    lo = max(0.0, mid - window_s / 2.0)
+    hi = mid + window_s / 2.0
+    if duration_s:
+        hi = min(float(duration_s), hi)
+    return {"start_s": round(lo, 2), "end_s": round(max(hi, lo + 1.0), 2)}
+
+
+def merge_probe_targets(targets: list[tuple[dict[str, float], str | None]]) -> list[tuple[dict[str, float], list[str]]]:
+    """Overlapping windows become one look; their sub-questions travel together."""
+    merged: list[tuple[dict[str, float], list[str]]] = []
+    for span, q in sorted(targets, key=lambda t: t[0]["start_s"]):
+        if merged and span["start_s"] <= merged[-1][0]["end_s"]:
+            merged[-1][0]["end_s"] = max(merged[-1][0]["end_s"], span["end_s"])
+            if q and q not in merged[-1][1]:
+                merged[-1][1].append(q)
+        else:
+            merged.append((dict(span), [q] if q else []))
+    return merged
+
+
+def asr_segments_for(example: dict[str, Any], asr_dir: Path | None) -> list[dict[str, Any]]:
+    if not asr_dir:
+        return []
+    video_id = (example.get("video") or {}).get("video_id") or ""
+    path = Path(asr_dir) / f"{video_id}.json"
+    if not path.exists():
+        return []
+    try:
+        return list(json.loads(path.read_text(encoding="utf-8")).get("segments") or [])
+    except Exception:
+        return []
+
+
+def window_grounder(
+    client: OpenRouterClient,
+    span: dict[str, float],
+    frames: list[str],
+    dialogue: list[dict[str, Any]],
+    questions: list[str],
+) -> dict[str, Any] | None:
+    """Look at a whole stretch (many frames + its dialogue) and return an annotator-style paragraph.
+
+    The per-clip probe (4 frames of a 4-s clip, verdict-style reply) flipped answers the wrong way:
+    "nothing visible" statements pushed the ranker off inferential options.  The evidence that the
+    catalog actually lacked lived in 30-s stretches and in the audio (narr_px), so the grounder
+    re-describes the stretch as a row of evidence, not as a verdict.
+    """
+    if not frames:
+        return None
+    payload = {"time_span": span, "questions": questions, "dialogue": dialogue}
+    parts: list[dict[str, Any]] = [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]
+    for jpeg in frames:
+        parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{jpeg}"}})
+    text = client.chat([{"role": "system", "content": GROUNDER_SYSTEM}, {"role": "user", "content": parts}])
+    observation = (text or "").strip()
+    if not observation:
+        return None
+    return {"time_span": span, "question": "; ".join(questions) if questions else None,
+            "observation": observation[:1500], "frames_seen": len(frames), "dialogue_lines": len(dialogue)}
+
+
 def strip_verdicts(findings: dict[str, Any]) -> dict[str, Any]:
     """Drop the graph's per-option scores and its vote, keep the observations.
 
@@ -914,6 +989,10 @@ def main(argv: list[str] | None = None) -> int:
                              "most concordant option over located event pairs (else fall back to the ranking).")
     parser.add_argument("--rank-probabilities", action="store_true",
                         help="graph2: score options as a probability distribution (margin becomes a confidence).")
+    parser.add_argument("--probe-window-s", type=float, default=0.0,
+                        help="Window grounder: look at ±W/2 s around each probed clip with --frames-per-clip frames and the "
+                             "dialogue in it (needs --asr-dir), returned as an annotator-style paragraph. 0 = per-clip probe.")
+    parser.add_argument("--asr-dir", type=Path, default=None, help="Per-video whisper JSON (scripts/eval/transcribe_videos.py).")
     parser.add_argument("--probe-subquestions", action="store_true",
                         help="graph2: probe with factual sub-questions derived from the top-two dispute "
                              "instead of handing the abstract question to the frames.")
@@ -1174,17 +1253,32 @@ def main(argv: list[str] | None = None) -> int:
                         targets = [(indices[pos], q) for pos, q in targets][: args.frame_max_clips]
                     else:
                         targets = [(i, None) for i in disputed_clip_indices(ranking, indices, args.frame_max_clips)]
-                    for probe_index, probe_q in targets:
-                        schema_now = schemas_now[probe_index] if 0 <= probe_index < len(schemas_now) else {}
-                        jpegs = sample_clip_frames(
-                            video_path, (schema_now or {}).get("time_span") or {},
-                            args.frames_per_clip, args.frame_width,
-                        )
-                        seen = _with_rate_limit_retry(
-                            lambda: visual_probe(probe_client, example, probe_index, jpegs, probe_q)
-                        )
-                        if seen:
-                            probes.append(seen)
+                    if args.probe_window_s > 0:
+                        # window grounder: look at the whole stretch around each disputed clip, with its dialogue
+                        duration_s = (example.get("video") or {}).get("duration_s")
+                        asr = asr_segments_for(example, args.asr_dir)
+                        raw = []
+                        for probe_index, probe_q in targets:
+                            schema_now = schemas_now[probe_index] if 0 <= probe_index < len(schemas_now) else {}
+                            raw.append((probe_window((schema_now or {}).get("time_span") or {}, args.probe_window_s, duration_s), probe_q))
+                        for span_w, qs in merge_probe_targets(raw):
+                            jpegs = sample_clip_frames(video_path, span_w, args.frames_per_clip, args.frame_width)
+                            dialogue = [g for g in asr if float(g.get("end_s") or 0) > span_w["start_s"] - 1 and float(g.get("start_s") or 0) < span_w["end_s"] + 1]
+                            seen = _with_rate_limit_retry(lambda: window_grounder(probe_client, span_w, jpegs, dialogue, qs))
+                            if seen:
+                                probes.append(seen)
+                    else:
+                        for probe_index, probe_q in targets:
+                            schema_now = schemas_now[probe_index] if 0 <= probe_index < len(schemas_now) else {}
+                            jpegs = sample_clip_frames(
+                                video_path, (schema_now or {}).get("time_span") or {},
+                                args.frames_per_clip, args.frame_width,
+                            )
+                            seen = _with_rate_limit_retry(
+                                lambda: visual_probe(probe_client, example, probe_index, jpegs, probe_q)
+                            )
+                            if seen:
+                                probes.append(seen)
                     if probes:
                         ranked = _with_rate_limit_retry(
                             lambda: rank_hypotheses(answer_client, example, indices, probes,
@@ -1211,10 +1305,25 @@ def main(argv: list[str] | None = None) -> int:
                     example, indices, highlight, args.frames_per_clip, args.frame_max_clips, args.frame_width
                 )
                 probes = []
-                for probe_index, jpegs in frames.items():
-                    seen = _with_rate_limit_retry(lambda: visual_probe(probe_client, example, probe_index, jpegs))
-                    if seen:
-                        probes.append(seen)
+                if args.probe_window_s > 0:
+                    schemas_now, _ = retrieval_catalog(example)
+                    video_path = ((example.get("video") or {}).get("primary_path")) or ""
+                    duration_s = (example.get("video") or {}).get("duration_s")
+                    asr = asr_segments_for(example, args.asr_dir)
+                    raw = [(probe_window((schemas_now[i] or {}).get("time_span") or {}, args.probe_window_s, duration_s), None)
+                           for i in frames if 0 <= i < len(schemas_now)]
+                    for span_w, qs in merge_probe_targets(raw):
+                        jpegs = sample_clip_frames(video_path, span_w, args.frames_per_clip, args.frame_width)
+                        dialogue = [g for g in asr if float(g.get("end_s") or 0) > span_w["start_s"] - 1 and float(g.get("start_s") or 0) < span_w["end_s"] + 1]
+                        seen = _with_rate_limit_retry(lambda: window_grounder(probe_client, span_w, jpegs, dialogue,
+                                                                              [(example.get("question") or {}).get("question_text") or ""]))
+                        if seen:
+                            probes.append(seen)
+                else:
+                    for probe_index, jpegs in frames.items():
+                        seen = _with_rate_limit_retry(lambda: visual_probe(probe_client, example, probe_index, jpegs))
+                        if seen:
+                            probes.append(seen)
                 rollout = _with_rate_limit_retry(
                     lambda: answer(example, indices, highlight, {"notes": probes, "vote": None}, attach_frames=False)
                 )
