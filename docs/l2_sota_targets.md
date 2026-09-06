@@ -812,6 +812,7 @@ shows nothing.
 | VH fresh 300, old catalog, graph2 no-look | −1.7 [−6.7, +3.7] | TRAR 34.0 → 35.0, **+1.0 [−4.0, +6.0]** |
 | VH fresh 300, old catalog, graph2 + sub-question look | −0.7 [−6.0, +4.7] | TRAR 34.0 → 36.0, **+2.0 [−3.3, +7.3]** |
 | VRBench 480 (pilot 60 videos) | −0.8 [−4.6, +2.7] | correct ∧ any step hit 40.8 → 41.0, +0.2 [−4.2, +4.6]; correct ∧ recall ≥ 0.5 31.7 → 29.2, −2.5 [−6.7, +1.9]; correct ∧ precision ≥ 0.5 24.4 → 28.3, **+4.0 [−0.4, +8.1]** |
+| CG-Bench 237 (67 videos), graph2 vs direct+rationale, clue_intervals | −1.3 [−6.8, +4.2] | correct ∧ any clue hit 27.4 → 28.3, +0.8 [−4.6, +6.3]; correct ∧ precision ≥ 0.5 14.8 → 19.8, **+5.1 [−0.4, +10.1]** |
 
 Reading so far: the direction is consistent (right answers come with
 better-aimed citations: VRBench precision 53.7 vs 50.9 on cited questions,
@@ -822,6 +823,20 @@ fewer, better clips, the rationale cites more, so it covers more steps. Two
 more measurements are running: VH on the narr_px_plus catalog (direct +
 rationale vs graph2, official judge), and CG-Bench 237 (direct + rationale vs
 graph2, clue intervals). The table is updated when they land.
+
+**Pooled, VRBench 480 + CG-Bench 237 (n = 717 paired, decomposition − cited
+direct, 2026-09-06):** accuracy −1.0 [−4.0, +2.1]; correct ∧ any cited gold
+hit +0.4 [−3.1, +3.8]; **correct ∧ citation precision ≥ 0.5: 21.2 → 25.5,
++4.3 [+1.0, +7.7]** (CI-clean). So the statement the data supports is:
+*the decomposition does not change how often the answer is right, and it
+raises by about four points how often a right answer comes with citations
+that are mostly on the annotated evidence.* Two caveats travel with it: the
+precision criterion was chosen after seeing that the recall criterion is
+null (the chain cites fewer, better clips; the rationale cites more, so it
+covers as many gold steps), and both sets were used for earlier decisions.
+A clean confirmation needs untouched data with the criterion fixed first —
+the VRBench held-out 60 videos (61–120 by duration) are the natural set.
+
 
 ## CG-Bench QA accuracy (first measurement, 2026-09-05)
 
