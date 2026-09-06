@@ -880,6 +880,24 @@ ordering (done, half the TA gap); (3) the window grounder for the
 perception tail. The 60% majority is where "atomic skills as an RLVR variant
 that regularises reasoning" would have to act, and only training can test it.
 
+**The counting skill, tried (2026-09-06, VRBench pilot, 94 counting
+questions, paired vs direct 31.9).** `scripts/eval/count_events_skill.py`:
+the model only enumerates instances per 15-row chunk with the running list
+in view; merging (explicit links, same identity within 15 s), the count, and
+the count→option mapping are code. Deterministic mode **8.5 (−23.4 [−33.0,
+−13.8])**; the reader given the enumerated list 21.3 (−10.6). Diagnosis:
+the enumeration is wrong in both directions — occurrences are under-counted
+(median −2; "meetings between Hong Kim and Hoa Hiep" → 0 found, the names
+and the event are not in the clip text), and "major scenes" / "relationships"
+/ "activities" are over-counted 5–10× (41 raw instances for a gold of 3),
+because the unit is the annotator's story segmentation, not a clip-level
+event. Gold counts are 3–5 on 85% of questions and direct is at 32% ≈
+chance: VRBench counting is a *semantic* count over a narrative, not a
+deterministic one over events. So the deterministic-skill pattern holds
+only where the unit is well defined (time order); it does not transfer to
+counting here. Retired.
+
+
 ## CG-Bench QA accuracy (first measurement, 2026-09-05)
 
 Only grounding had ever been measured on CG. Direct answering over the whole
