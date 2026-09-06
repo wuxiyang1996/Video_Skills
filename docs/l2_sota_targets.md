@@ -786,6 +786,43 @@ under-powered at n=237. Built in ~1 h on the login node.
 
 
 
+## Reasoning-grounded accuracy: does the decomposition make *right answers more right*? (2026-09-06)
+
+Plain accuracy pays for ungrounded guesses; process metrics pay for citations
+that lead nowhere. The claim the decomposition has to support is the joint
+one: **the answer is right AND the evidence it gives is right.** Each
+benchmark judges the second half with its own supervision:
+
+- Video-Holmes: the official `evaluate_reasoning.py` judge — grounded = TRAR
+  (right answer, right reasoning); a right answer with wrong reasoning (TWAR)
+  does not count.
+- VRBench: annotated timed reasoning steps — grounded = right answer AND the
+  cited clips hit the steps (`scripts/eval/grounded_accuracy.py`: step recall
+  ≥ 0.5, or any hit, or citation precision ≥ 0.5).
+- CG-Bench: `clue_intervals` — grounded = right answer AND the cited clips hit
+  a clue interval.
+
+The control is always the **single-call direct answer with a rationale that
+cites clips** (same model, same catalog, same pointer): the decomposition must
+beat a reader that is also asked to show its evidence, not a reader that
+shows nothing.
+
+| paired comparison (decomposition − cited direct) | accuracy | grounded accuracy |
+|---|---|---|
+| VH fresh 300, old catalog, graph2 no-look | −1.7 [−6.7, +3.7] | TRAR 34.0 → 35.0, **+1.0 [−4.0, +6.0]** |
+| VH fresh 300, old catalog, graph2 + sub-question look | −0.7 [−6.0, +4.7] | TRAR 34.0 → 36.0, **+2.0 [−3.3, +7.3]** |
+| VRBench 480 (pilot 60 videos) | −0.8 [−4.6, +2.7] | correct ∧ any step hit 40.8 → 41.0, +0.2 [−4.2, +4.6]; correct ∧ recall ≥ 0.5 31.7 → 29.2, −2.5 [−6.7, +1.9]; correct ∧ precision ≥ 0.5 24.4 → 28.3, **+4.0 [−0.4, +8.1]** |
+
+Reading so far: the direction is consistent (right answers come with
+better-aimed citations: VRBench precision 53.7 vs 50.9 on cited questions,
+478 vs 413 questions citing at all; VH TRAR share 91% vs 84%) but no
+grounded-accuracy difference is CI-clean yet, and on VRBench it flips sign
+between a precision- and a recall-based grounding criterion — the chain cites
+fewer, better clips, the rationale cites more, so it covers more steps. Two
+more measurements are running: VH on the narr_px_plus catalog (direct +
+rationale vs graph2, official judge), and CG-Bench 237 (direct + rationale vs
+graph2, clue intervals). The table is updated when they land.
+
 ## CG-Bench QA accuracy (first measurement, 2026-09-05)
 
 Only grounding had ever been measured on CG. Direct answering over the whole
