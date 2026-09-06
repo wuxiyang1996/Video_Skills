@@ -1052,6 +1052,11 @@ watershed is ≥ 41 on the same 300 (rationale format), and the full-test bar
 stays 45.0. For reference the 235B reads the same catalog at 47.0 and the
 API 8B at 37.3.
 
+Scheduling note (2026-09-06 18:00): `repass16` (question-aware 9B repass,
+87/300 done) was paused to free the user's scavenger share for the train-split
+L1; its stage caches are kept and the shards can be resubmitted with
+`scripts/launch/launch_vh_l1_levers.sh repass16` to fill T3 later.
+
 
 
 ## Feasibility probe: are reasoning failures reusable sub-trajectories? (2026-09-06)
