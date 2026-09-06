@@ -622,7 +622,12 @@ nothing new — then the same reader answers over the synthesised rows
 (narrative only, and narrative + original clips). A gain says fragmentation
 and costs no GPU to deploy; no gain says perception and points GPU at the
 describer (stronger model, more frames, question-aware repass). Running on
-the fresh 300.
+the fresh 300 (191 videos, ~3–7 windows each). The synthesised rows read like
+the human ones — e.g. "the man in the green t-shirt ... shares a moment of
+laughter before he suddenly appears to choke ... the woman with long dark
+hair wearing a dark zip-up hoodie watches from the doorway with a slight
+smile. She then walks to the refrigerator" — identities and causes now carry
+across what were 17–18 isolated 4-s clips per window.
 
 ## CG-Bench QA accuracy (first measurement, 2026-09-05)
 
