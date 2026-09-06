@@ -1033,6 +1033,19 @@ VRBench (trained), groundedness up (process-reward arm vs outcome-only),
 and deployment efficiency (9B dense on one 48 GB GPU vs a 235B-A22B reader)
 measured as latency/throughput locally and API cost per 1k questions.
 
+**Full three-benchmark evaluation (decided 2026-09-06).** Video-Holmes is
+complete (1,837). CG-Bench will be run on the official mini set (3,000 q over
+1,118 videos, mean 28 min; 67 built) and VRBench on a duration-stratified
+240-video subset (60 per duration quartile, mean 105 min, disjoint from the
+pilot 60 and held-out 60; ~2,000 q), extended to all 957 usable videos if
+GPU allows. Cost: CG-mini L1 ≈ 1,051 videos × ~15 min ≈ 260 GPU-h plus ~$600
+of window narratives (subtitles serve as dialogue); VRBench subset ≈ 240 ×
+~40 min ≈ 160 GPU-h plus ~$150 whisper and ~$150 narratives; answering both
+with the 235B reader and the trained 9B ≈ $100. Allowlists and launchers:
+`scripts/launch/launch_cg_mini_l1.sh` (16 shards), `launch_vrbench_subset240.sh`
+(12 shards); queued behind the train-split L1.
+
+
 
 ## Feasibility probe: are reasoning failures reusable sub-trajectories? (2026-09-06)
 
