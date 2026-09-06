@@ -837,6 +837,18 @@ covers as many gold steps), and both sets were used for earlier decisions.
 A clean confirmation needs untouched data with the criterion fixed first —
 the VRBench held-out 60 videos (61–120 by duration) are the natural set.
 
+**Pre-registration (2026-09-06, before any held-out number exists).** VRBench
+videos ranked 61–120 by duration (25.0–38.6 min; the pilot used 1–60),
+every question of each video, L1 built with the pilot's exact settings,
+same reader/pointer/flags as the pilot. Primary outcome: paired difference,
+graph2 (probability ranking, no looking) minus single-call direct with a
+clip-citing rationale, on **correct ∧ citation precision ≥ 0.5**. Secondary:
+accuracy, correct ∧ any gold step hit, correct ∧ step recall ≥ 0.5. Success =
+the primary CI excludes 0 in the positive direction. Chain:
+`scratchpad/vrbench_heldout_chain.sh`; outputs
+`/fs/nexus-scratch/wuxiyang/vrbench_pilot_v1/heldout60/`.
+
+
 
 ## CG-Bench QA accuracy (first measurement, 2026-09-05)
 
