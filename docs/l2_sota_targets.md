@@ -862,6 +862,17 @@ what a small model would need is *reader* training — and the only
 verifiable signals for that are the ones the skill structure provides
 (answer, citation hits on annotated evidence, deterministic checks).
 
+**Controller as efficiency (2026-09-06, fresh 300, narr_px_plus, 235B reads
+only the top-k BM25 rows of ~66):** top-8 38.7, top-16 36.7, top-24 38.3 —
+−8 to −10 [CI-clean] vs the whole catalog 47.0. An untrained selector does
+not reach parity at any k, so "same accuracy at 1/4 the reader input" is
+not free; it is a target a trained selector would have to hit (from ~38 to
+47 at k=16). The old OPD reranker was trained on clip-only catalogs and
+scored ≈ BM25 on clue recall; whether it closes this gap on the narrative
+catalog is the one measurement that would justify a controller on
+efficiency grounds.
+
+
 
 
 
