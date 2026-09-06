@@ -736,6 +736,23 @@ by start time instead of narrative-first): 45.3, −2.0 [−3.4, −0.7] vs the
 narrative-first 47.4; TA unchanged (−0.5). The TA loss is not the ordering;
 narrative-first stays the reported configuration.
 
+**The decomposition on the catalog that has the facts (fresh 300, 2026-09-06).**
+The design's premise was "reasoning assembly over an evidence graph that
+already contains the facts". With the narr_px_plus catalog, graph2
+(probability ranking, no looking, BM25 pointer) scores 44.7 against 44.3 for
+direct with the same pointer on the same catalog: **+0.3 [−3.3, +3.7]** —
+parity again, exactly where it was on the old catalog (−2.3 n.s.). The
+graph does inherit the catalog gain (44.7 vs 38.7 on the old catalog, +6.0
+[+1.3, +10.3]); it just adds nothing on top of a single reader. By type MHR
++4.9 [0, +11.5] and SR +9.1 n.s. versus TA −9.7 and CTI −6.7 n.s.: the same
+pattern as before (finds clues in multi-hop questions, loses on timelines).
+Side finding: on this catalog the **BM25 pointer hurts direct** (44.3 vs
+47.0 without it, −2.7 [−5.0, −0.3]) — with narrative rows present, pointing
+the reader at four clips pulls it away from the paragraphs. The full-test
+47.4 was run *with* the pointer for comparability; the no-pointer full test
+(the configuration actually selected on the fresh 300) is running.
+
+
 
 
 
