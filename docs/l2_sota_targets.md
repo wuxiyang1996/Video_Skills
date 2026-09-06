@@ -777,6 +777,32 @@ skill graph's notes (hybrid −8.7, observations-only −13.3). Rule confirmed a
 third way: give the reader evidence, never conclusions. The stripped
 variant (same v2 narratives, key-moment rows removed) is being measured to
 separate the two changes.
+
+Stripped variant: the same v2 narratives without the key-moment rows also
+score 40.0 (±0 vs v2), so the −7 came from the *narrative text* changing
+under the amended prompt, not from the rows. That is a generation-variance
+warning for the +6 itself: a replicate of v1 (identical prompt, fresh
+generation) is being measured on the same 300.
+
+**Window grounder (2026-09-06, fresh 300, narr_px_plus catalog, pointer):
+null.** `--probe-window-s 30 --frames-per-clip 16 --asr-dir`: graph2 looks
+at the ±15-s window around each disputed clip (16 frames + dialogue,
+annotator-style row; 250/300 fired, 453 windows, 418 with dialogue) and
+re-ranks: 43.7 vs 44.7 no-look, −1.0 [−4.3, +2.3]; on fired questions 41.6
+→ 41.2, 10 wrong→right vs 11 right→wrong. Direct with the grounder on the
+four pointed windows every time: 41.7, −2.7 [−6.3, +1.0] vs direct+pointer
+and **−5.3 [−9.0, −1.7]** vs direct without pointer (47.0). The
+observations read well (identities, actions, quoted dialogue) — they are
+the same perception the catalog already holds: narr_px_plus was built by
+the same describer over the same 30-s windows with the same 16 frames and
+dialogue, so question-time re-perception with the same describer returns
+what is already there, and the extra rows dilute. A grounder can only add
+what L1 lacks — a different capability (speaker attribution, on-screen
+text, film form, finer frame rate), not the same look again. Next:
+`--continuity`, a second strictly descriptive pass per window (who says
+what, on-screen text verbatim, shot scale / POV / repeated shots / cuts,
+non-speech sounds) added as rows to the untouched v1 narratives.
+
  On **CG-Bench** the no-pointer
 variant scores 43.9 (vs 44.7 with pointer, −0.8 n.s.; vs 40.5 +3.4 n.s.).
 
