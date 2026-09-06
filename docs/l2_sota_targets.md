@@ -692,6 +692,25 @@ paragraph (smoke output quotes dialogue, names "Sonya" from the audio, and
 carries her across windows). Two catalogs on the fresh 300: narrative rows
 only, and narrative rows + our clips (time grid for TA).
 
+**narr_px result (2026-09-06, fresh 300, paired, same 235B reader) — the
+first CI-clean accuracy gain on Video-Holmes from any lever:**
+
+| catalog | acc | vs ours 41.0 | vs human 53.3 |
+|---|---|---|---|
+| narrative-from-pixels + dialogue, rows only (~9 per video) | 42.3 | +1.3 [−3.0, +5.7] | −11.0 [−16.3, −6.0] |
+| **narrative-from-pixels + dialogue + our clips** | **47.0** | **+6.0 [+1.3, +10.7]** | −6.3 [−11.3, −1.3] |
+
+By type (hybrid): CTI +13.3, TCI +13.2, SR +6.8, PAR +6.7, IMC +2.0, MHR
++1.6, TA 0.0 (each n.s. alone). The narrative alone is not enough — the
+fine clip grid still matters (TA −6.5 without it) — and together they close
+half of the human gap. What changed relative to desc235b (same model, −1.7):
+the describer sees 30 s at once instead of 4 s, hears the dialogue, keeps
+the cast across windows, and is asked to narrate like an annotator instead
+of listing observable facts. Next: isolate the dialogue's share (our clips +
+dialogue rows, no narrative), and run the hybrid on the full test (1,837)
+for a number comparable to 42.5 / Gemini 45.0.
+
+
 
 
 
