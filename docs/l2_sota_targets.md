@@ -1013,6 +1013,11 @@ can be installed alongside the local FA2 environment without breaking it.
 Train L1 for the 233 train videos runs on the gamma partition (32 GB / 4
 CPU QoS); the base reader's own baseline (Qwen3.5-9B via vLLM, fresh 300,
 direct and cited) is queued so the trained model is compared with itself.
+Pipeline smoke on the fresh 300 (not training data): the 235B teacher is
+right on 135/300, so verified SFT rows come from ~45% of questions per
+teacher sample (sample 4× on the rest); tokenised prompts are p50 10.7k /
+p90 15.6k / max 16.2k tokens, so training runs at max_len 24k (30/135 rows
+would be dropped at 16k) with LoRA, batch 1, gradient checkpointing.
 
 
 ## Feasibility probe: are reasoning failures reusable sub-trajectories? (2026-09-06)
