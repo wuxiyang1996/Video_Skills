@@ -764,7 +764,20 @@ Two companions (2026-09-06): the **8B reader** (`qwen/qwen3-vl-8b-instruct`)
 on the same catalog with pointer scores 40.8 on the full test, +1.7 [−0.1,
 +3.4] over its old-catalog 39.1 (IMC +4.7*, TA −4.5) — the small reader
 extracts far less from the richer catalog than the 235B does (+4.8/+5.8),
-so the catalog gain is reader-limited. Without the pointer the 8B scores 40.4 (−0.3 n.s. vs its pointer run; +1.4 [−0.4, +3.2] vs 39.1): the pointer is neutral for the small reader. On **CG-Bench** the no-pointer
+so the catalog gain is reader-limited. Without the pointer the 8B scores 40.4 (−0.3 n.s. vs its pointer run; +1.4 [−0.4, +3.2] vs 39.1): the pointer is neutral for the small reader.
+
+**narr_px v2 — machine-written "key moments" hurt (2026-09-06, fresh 300,
+no pointer).** Asking the window describer to add 2–3 annotator-style
+key-moment rows per window ("Key moment at 41s: she hides the key — implies:
+she expects him"; 18.5 rows per video on top of the narrative) scores
+**40.0 vs 47.0, −7.0 [−10.7, −3.7]**; SR −18.2*, CTI −11.1*, PAR −10.0,
+TCI −7.9. The human clue rows were worth +8.7 because they are *correct*;
+model-written implications are the same interpretive claims that sank the
+skill graph's notes (hybrid −8.7, observations-only −13.3). Rule confirmed a
+third way: give the reader evidence, never conclusions. The stripped
+variant (same v2 narratives, key-moment rows removed) is being measured to
+separate the two changes.
+ On **CG-Bench** the no-pointer
 variant scores 43.9 (vs 44.7 with pointer, −0.8 n.s.; vs 40.5 +3.4 n.s.).
 
 
