@@ -1057,6 +1057,27 @@ Scheduling note (2026-09-06 18:00): `repass16` (question-aware 9B repass,
 L1; its stage caches are kept and the shards can be resubmitted with
 `scripts/launch/launch_vh_l1_levers.sh repass16` to fill T3 later.
 
+**Where the 9B loses to the 235B on the same catalog (fresh 300, cited
+rationale runs; 2026-09-06).** 235B right / 9B wrong: 64; 9B right / 235B
+wrong: 41; both right: 73 — the union is 59%, so the small model is not a
+strict subset and has room. Three findings that shape the training recipe:
+(1) **letter prior**: the 9B picks B 64× and C 61× against gold 47 / 32, and F
+only 45× against gold 70 — a positional bias worth several points on its own,
+so training data is generated in several option orders (`--shuffle-options`,
+permutation recorded and replayed) and the model cannot learn a letter;
+(2) **localisation**: in the 64 questions the 235B gets right and the 9B
+wrong, the 9B cites none of the 235B's clips in 53% — half of the loss is
+looking at the wrong evidence, which cited-rationale SFT targets directly
+(only teacher rationales with citation precision ≥ 0.5 are kept where
+gold spans exist); the other half is inference over the right evidence;
+(3) **not length**: accuracy by catalog-size tercile is 42 / 29 / 43 for the
+9B, flat for the 235B — no long-context degradation to fix. Types with the
+largest gaps: PAR (30 vs 53), TCI (26 vs 42), TA (36 vs 48); MHR and SR are
+equal. Recipe for the watershed: teacher rationales sampled up to 4× per
+question in 2 option orders, filtered by answer and citation precision,
+mixed with the base model's own correct-and-cited samples (K = 8), LoRA SFT
+at 24k tokens; evaluated in the rationale format against 38.0.
+
 
 
 ## Feasibility probe: are reasoning failures reusable sub-trajectories? (2026-09-06)
