@@ -629,6 +629,27 @@ hair wearing a dark zip-up hoodie watches from the doorway with a slight
 smile. She then walks to the refrigerator" — identities and causes now carry
 across what were 17–18 isolated 4-s clips per window.
 
+**Verdict: perception (2026-09-06).** Re-organising our own clip text into
+narratives gains nothing with the same 235B reader (fresh 300, paired):
+
+| catalog (fresh 300, 235B reader) | accuracy | vs ours 41.0 |
+|---|---|---|
+| narrative synthesised from our clips only (191 videos, 3–7 windows) | 38.7 | −2.3 [−6.3, +1.7] |
+| synthesised narrative + our clips | 39.3 | −1.7 [−5.3, +2.0] |
+| human narrative rows | 53.3 | +12.3 [+7.0, +17.7] |
+
+Synthesised narrative vs human narrative: −14.7 [−20.0, −9.3]. No type
+improves (MHR −3.3, SR −6.8, TA −6.5, CTI +2.2). The continuity the human
+rows have (who did what to whom, and why) is not recoverable from our clip
+text, so the 9B describer never perceived it. The remaining ~12 points are a
+**describer** problem. GPU is now pointed at the describer on the same 191
+videos (outputs on scratch, `output/vh_l1_levers/`): 8 frames per clip
+(`CLIP_FRAMES=8`) and question-aware re-description of the top-16 anchor
+clips (`ANCHOR_REPASS_TOP_N=16`), 4 scavenger shards each; both re-measured
+on the fresh 300 against 41.0. The narrative-synthesis path is retired as an
+accuracy lever (kept as a cheap catalog-format tool).
+
+
 ## CG-Bench QA accuracy (first measurement, 2026-09-05)
 
 Only grounding had ever been measured on CG. Direct answering over the whole

@@ -18,6 +18,8 @@ SMOKE="${SMOKE:-0}"
 QUERY_TIME_RETRIEVAL="${QUERY_TIME_RETRIEVAL:-1}"
 CLIP_FRAMES="${CLIP_FRAMES:-4}"
 ANCHOR_REPASS_TOP_N="${ANCHOR_REPASS_TOP_N:-0}"
+# 0 keeps every question of a video (needed for question-conditioned anchor repass over a per-question allowlist).
+UNIQUE_VIDEOS="${UNIQUE_VIDEOS:-1}"
 EXAMPLE_ID_ALLOWLIST="${EXAMPLE_ID_ALLOWLIST:-}"
 # ``transformers serve`` runs without continuous batching, so concurrent clip
 # workers queue behind one another and blow the per-request timeout: a pilot
@@ -181,7 +183,7 @@ else
       --dataset "${DATASET}" \
       --split "${SPLIT}" \
       --mode video_only \
-      --unique-videos \
+      ${UNIQUE_VIDEOS:+$([[ "${UNIQUE_VIDEOS}" == "1" ]] && echo --unique-videos)} \
       --start-index "${START_INDEX}" \
       --limit "${LIMIT}" \
       --clip-schema-model "${MODEL}" \
