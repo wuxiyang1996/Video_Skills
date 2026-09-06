@@ -818,6 +818,18 @@ generations' narrative rows + clips) on the fresh 300 — if two independent
 descriptions of the same window beat either alone, generation noise is a
 lever, not just a hazard.
 
+**Continuity channel (2026-09-06, fresh 300, gen-1 narratives + 1,185
+continuity rows + clips, no pointer): 44.7 vs 47.0, −2.3 [−5.3, +0.7].** The
+rows are exactly what was asked for (attributed dialogue line by line,
+on-screen text verbatim, shot form, sounds — see sample in
+`narr_px_cont/continuity/`), and they do not help: SR −6.8, TCI −7.9, PAR
++3.3, all n.s. Fourth added-rows variant in a row that is flat or negative
+(grounder rows, key moments, continuity). The reader is not short of
+descriptive detail at this point; the catalog's remaining gap to the human
+rows is in *what the describer notices as mattering*, which the human rows
+have and no extra descriptive channel supplies.
+
+
 
  On **CG-Bench** the no-pointer
 variant scores 43.9 (vs 44.7 with pointer, −0.8 n.s.; vs 40.5 +3.4 n.s.).
