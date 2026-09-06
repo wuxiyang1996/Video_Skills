@@ -47,7 +47,9 @@ def prose_spans(rollout: dict[str, Any], indices: list[int], catalog_spans: list
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--eval-jsonl", type=Path, required=True)
+    ap.add_argument("--eval-jsonl", type=Path, required=True,
+                    help="VRBench_eval.jsonl, or CG-Bench cgbench.json with --gold cgbench")
+    ap.add_argument("--gold", choices=["vrbench", "cgbench"], default="vrbench")
     ap.add_argument("--rollouts", type=Path, required=True)
     ap.add_argument("--l1-index", type=Path, required=True)
     ap.add_argument("--cite", choices=["chain", "prose", "none"], default="chain")
@@ -56,10 +58,17 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     gold: dict[str, Any] = {}
-    for line in args.eval_jsonl.open(encoding="utf-8"):
-        row = json.loads(line)
-        for key, qa in (row.get("mcq") or {}).items():
-            gold[f"vrbench:{row['video_id']}:{key}"] = qa
+    if args.gold == "cgbench":
+        # CG-Bench: gold = clue_intervals [[start, end], ...]; the "steps" are the clue intervals
+        for row in json.load(args.eval_jsonl.open(encoding="utf-8")):
+            gold[f"cg_bench:{row['qid']}"] = {"answer": row.get("answer"),
+                                             "clue_spans": [{"start_s": float(a), "end_s": float(b)}
+                                                            for a, b in (row.get("clue_intervals") or []) if b is not None]}
+    else:
+        for line in args.eval_jsonl.open(encoding="utf-8"):
+            row = json.loads(line)
+            for key, qa in (row.get("mcq") or {}).items():
+                gold[f"vrbench:{row['video_id']}:{key}"] = qa
     index = json.load(args.l1_index.open())
     out_path = args.rollouts.with_suffix(".grounded.jsonl")
     n = n_timed = correct = grounded = 0
@@ -73,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
             schemas, _ = retrieval_catalog(example)
             spans = [{"start_s": float((s.get("time_span") or {}).get("start_s") or 0),
                       "end_s": float((s.get("time_span") or {}).get("end_s") or 0)} for s in schemas]
-            steps = step_spans(gold[eid].get("reasoning_process"))
+            steps = gold[eid]["clue_spans"] if args.gold == "cgbench" else step_spans(gold[eid].get("reasoning_process"))
             indices = rec.get("indices") or []
             if args.cite == "chain":
                 cited = cited_spans(rec["rollout"], indices, spans, args.top_options)
@@ -82,7 +91,11 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 cited = []
             sc = score_question(steps, cited)
-            is_correct = str((rec["rollout"].get("final_answer") or {}).get("label")) == str(gold[eid].get("answer"))
+            final = rec["rollout"].get("final_answer") or {}
+            if rec.get("gold_label") is not None:      # dumped rollouts carry the option letter the row was scored against
+                is_correct = str(final.get("label")) == str(rec["gold_label"])
+            else:
+                is_correct = str(final.get("label")) == str(gold[eid].get("answer"))
             is_grounded = bool(steps) and is_correct and sc["step_recall"] >= args.min_step_recall
             n += 1; n_timed += bool(steps); correct += is_correct; grounded += is_grounded
             out.write(json.dumps({"example_id": eid, "correct": is_correct, "timed": bool(steps),
