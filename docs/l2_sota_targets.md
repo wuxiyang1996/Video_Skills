@@ -760,6 +760,14 @@ pointer variant kept for flag-for-flag comparability with 42.5. By type
 (no pointer vs old catalog): MHR 43.4, SR 59.2, IMC 56.2, TCI 49.1, CTI
 47.0, TA 30.0, PAR 49.0.
 
+Two companions (2026-09-06): the **8B reader** (`qwen/qwen3-vl-8b-instruct`)
+on the same catalog with pointer scores 40.8 on the full test, +1.7 [−0.1,
++3.4] over its old-catalog 39.1 (IMC +4.7*, TA −4.5) — the small reader
+extracts far less from the richer catalog than the 235B does (+4.8/+5.8),
+so the catalog gain is reader-limited. On **CG-Bench** the no-pointer
+variant scores 43.9 (vs 44.7 with pointer, −0.8 n.s.; vs 40.5 +3.4 n.s.).
+
+
 
 **Generality on CG-Bench (237-question heldout, 67 videos, mean 31 min,
 2026-09-06).** Same lever, 60-s windows × 16 frames, the benchmark's own
