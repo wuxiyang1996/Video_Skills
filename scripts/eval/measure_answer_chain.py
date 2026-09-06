@@ -1005,6 +1005,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--findings-mode", choices=("full", "observations_only"), default="full",
                         help="hybrid: 'full' passes the skills' per-option scores and vote; "
                              "'observations_only' passes just their observations.")
+    parser.add_argument("--answer-api-base", default=None,
+                        help="Chat-completions URL for the answer model (e.g. a local vLLM server); default OpenRouter.")
     parser.add_argument("--answer-model", default=None,
                         help="Model for the direct/hybrid answer call when different from --planner-model (e.g. a VLM).")
     parser.add_argument("--frames-per-clip", type=int, default=0,
@@ -1143,7 +1145,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.answer_model or args.votes > 1:
         answer_client = OpenRouterClient(
             model=args.answer_model or args.planner_model,
-            api_key=load_openrouter_api_key(keys_py_path=args.keys_py),
+            api_key=(load_openrouter_api_key(keys_py_path=args.keys_py) if not args.answer_api_base else "local"),
+            api_base=args.answer_api_base or "https://openrouter.ai/api/v1/chat/completions",
             max_tokens=max(answer_model_budget(args.reasoning_effort, args.max_tokens), 3000 if args.rationale else 0),
             temperature=args.vote_temperature if args.votes > 1 else 0.0,
             reasoning={"effort": args.reasoning_effort, "exclude": True},
