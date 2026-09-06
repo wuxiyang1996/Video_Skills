@@ -839,6 +839,30 @@ full-test generation. (A candidate cause besides sampling: OpenRouter routes
 the 235B across providers with different quantisations; pinning a provider
 is worth doing for any final run.)
 
+**Full-test replicate (2026-09-06, second generation of all 270 videos'
+narratives, same prompt, no pointer): 45.6**, +3.1 [+1.1, +5.1] vs ours
+42.6 (CI-clean), −2.7 [−4.4, −1.1] vs the first generation's 48.3. Both
+generations clear Gemini-2.5-Pro's 45.0; the honest statement is
+**+3 to +6 over the clip catalog depending on the draw, mean of two
+generations 47.0 (+4.4)**, and the paper reports both. PAR is the one type
+that gains in both generations with CI clear of 0 (+12.9 here, +6.2 before);
+TA loses in both (−4.0 / −4.5). OpenRouter serves this model from five
+providers at fp8 / bf16 / unknown quantisation; the client now records the
+serving provider and can pin one (`OPENROUTER_PROVIDER_ORDER`), which any
+final number should do.
+
+**Grounding headroom for a small reader: none (2026-09-06, fresh 300, 8B
+reader on narr_px_plus).** Whole catalog 37.3; the gold inference-shot rows
+as a pointer 37.3 (**+0.0 [−2.3, +2.3]**); gold rows only (top-8 by overlap)
+35.3 (−0.4 n.s.). Pointing the 8B at the exact human-annotated evidence does
+nothing, so its 10-point gap to the 235B on the same catalog (47.0) is
+inference over evidence it already has, not evidence selection. A learned
+grounder for small readers therefore has nothing to win on Video-Holmes;
+what a small model would need is *reader* training — and the only
+verifiable signals for that are the ones the skill structure provides
+(answer, citation hits on annotated evidence, deterministic checks).
+
+
 
 
 
