@@ -45,8 +45,9 @@ from trainer.grpo.train_l2_terminal_on_policy import filter_example_for_retrieva
 class _LazyExamples:
     """Mapping from example_id to a freshly loaded frozen L1 example."""
 
-    def __init__(self, path_by_id: dict[str, Path]) -> None:
+    def __init__(self, path_by_id: dict[str, Path], catalog_order: str = "given") -> None:
         self._paths = path_by_id
+        self._catalog_order = catalog_order
 
     def __contains__(self, example_id: object) -> bool:
         return example_id in self._paths
@@ -61,7 +62,25 @@ class _LazyExamples:
         loaded = load_frozen_l1_examples([self._paths[example_id]])
         if not loaded:
             raise KeyError(example_id)
-        return loaded[0]
+        example = loaded[0]
+        if self._catalog_order == "time":
+            order_catalog_by_time(example)
+        return example
+
+
+def order_catalog_by_time(example: dict[str, Any]) -> None:
+    """Interleave catalog rows by start time (stable), so narrative windows sit among the clips they cover.
+
+    Catalog builders append narrative/dialogue rows *before* the clips; a reader
+    ordering events for a timeline question then sees two time axes.  Rows
+    without a time span keep their relative position at the end.
+    """
+    metadata = example.get("metadata") or {}
+    rows = metadata.get("clip_schemas") or []
+    timed = [(i, r) for i, r in enumerate(rows) if isinstance(r, dict) and isinstance(r.get("time_span"), dict)]
+    untimed = [r for r in rows if not (isinstance(r, dict) and isinstance(r.get("time_span"), dict))]
+    timed.sort(key=lambda ir: (float(ir[1]["time_span"].get("start_s") or 0.0), ir[0]))
+    metadata["clip_schemas"] = [r for _, r in timed] + untimed
 
 
 def _with_rate_limit_retry(call, *, attempts: int = 4, base_sleep_s: float = 10.0, sleep=None):
@@ -920,6 +939,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dump-rollouts", type=Path,
                         help="Also append every full rollout (plan, skill outputs, commit) to this jsonl for diagnosis.")
     parser.add_argument("--sample", type=int, default=40)
+    parser.add_argument("--catalog-order", choices=["given", "time"], default="given",
+                        help="'time' interleaves catalog rows by start time (narrative/dialogue rows among the clips they cover).")
     parser.add_argument("--example-ids", type=Path,
                         help="Newline-separated example ids to run instead of a seeded sample (for re-running a hung tail).")
     parser.add_argument("--seed", type=int, default=20260904)
@@ -991,7 +1012,7 @@ def main(argv: list[str] | None = None) -> int:
         if example_id and example_id not in path_by_id:
             path_by_id[example_id] = path
         del head
-    examples = _LazyExamples(path_by_id)
+    examples = _LazyExamples(path_by_id, catalog_order=args.catalog_order)
     if args.example_ids:
         wanted = [line.strip() for line in args.example_ids.read_text(encoding="utf-8").splitlines() if line.strip()]
         chosen = [e for e in wanted if e in examples]
