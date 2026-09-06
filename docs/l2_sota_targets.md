@@ -537,6 +537,33 @@ comparative step's citations land on the annotated reasoning steps more often
 and more precisely than the retriever that fed it. A single-call direct with
 a cited rationale is running as the fair citation-bearing baseline.
 
+**FINAL pilot (459 questions, 57 videos, paired bootstrap):**
+
+| reasoning type | n | direct | graph2 | graph2 − direct |
+|---|---|---|---|---|
+| Event Attribution | 95 | 75.8 | 72.6 | −3.2 [−8.4, +1.1] |
+| Counting | 88 | 33.0 | 33.0 | 0.0 [−6.8, +6.8] |
+| Hypothetical Reasoning | 78 | 83.3 | 67.9 | **−15.4 [−24.4, −6.4]** |
+| Event Prediction | 69 | 81.2 | 73.9 | **−7.2 [−13.0, −1.4]** |
+| Event Summarization | 58 | 93.1 | 91.4 | −1.7 [−5.2, 0.0] |
+| Implicit Inference | 49 | 75.5 | 71.4 | −4.1 [−12.2, +4.1] |
+| Logical Linkage | 22 | 86.4 | 77.3 | −9.1 [−27.3, +9.1] |
+| **ALL** | 459 | **72.3** | **66.9** | **−5.5 [−8.3, −2.6]** |
+
+Process score of graph2's cited clips vs the annotated timed steps (382
+questions): **step recall 50.3, citation precision 53.6**, mean best IoU
+14.8; by type, recall 43–60 and precision 40–69 (Counting 68.1, Logical
+Linkage 68.9, Implicit Inference 62.4 highest). Against the BM25 pointer's
+top-4 as citations (43.3 / 39.4) the paired CIs are below.
+
+Reading: on VRBench the decomposition costs 5.5 accuracy points, concentrated
+in counterfactual/predictive questions (the same "infers worse over the same
+evidence" pattern as Video-Holmes), and in return produces a reasoning chain
+whose citations land on the annotated steps half the time and beat the
+retrieval pointer that fed it. Whether that process credit also beats a
+single answer call that cites in prose is the pending baseline
+(`direct_rationale`).
+
 ## Disk (2026-09-04)
 
 `/gamma/projects` has a 2 TB quota and was 100% full (2.6 GB free). With the
