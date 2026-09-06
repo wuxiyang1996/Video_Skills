@@ -710,6 +710,15 @@ of listing observable facts. Next: isolate the dialogue's share (our clips +
 dialogue rows, no narrative), and run the hybrid on the full test (1,837)
 for a number comparable to 42.5 / Gemini 45.0.
 
+**Dialogue's share (fresh 300, paired):** our clips + whisper dialogue rows
+(no narrative, no re-perception) = 44.3, +3.3 [−0.7, +7.3] vs ours; the
+narrative on top of that adds +2.7 [−1.3, +6.7] (47.0 vs 44.3). Neither half
+is significant alone; the sum is. Dialogue helps IMC/CTI/PAR (+6–7 each),
+the narrative adds SR/TCI/CTI. So roughly half of the gain is a modality
+the pipeline had simply never ingested, and half is describing 30-s
+stretches as a story rather than 4-s clips as facts.
+
+
 
 
 
