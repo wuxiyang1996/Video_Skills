@@ -554,7 +554,8 @@ Process score of graph2's cited clips vs the annotated timed steps (382
 questions): **step recall 50.3, citation precision 53.6**, mean best IoU
 14.8; by type, recall 43–60 and precision 40–69 (Counting 68.1, Logical
 Linkage 68.9, Implicit Inference 62.4 highest). Against the BM25 pointer's
-top-4 as citations (43.3 / 39.4) the paired CIs are below.
+top-4 as citations, paired on the same 382 questions: step recall **+7.0
+[+3.0, +11.0]**, citation precision **+14.2 [+10.6, +17.9]** — both CI-clean.
 
 Reading: on VRBench the decomposition costs 5.5 accuracy points, concentrated
 in counterfactual/predictive questions (the same "infers worse over the same
