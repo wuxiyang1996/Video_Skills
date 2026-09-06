@@ -537,47 +537,43 @@ comparative step's citations land on the annotated reasoning steps more often
 and more precisely than the retriever that fed it. A single-call direct with
 a cited rationale is running as the fair citation-bearing baseline.
 
-**FINAL pilot (459 questions, 57 videos, paired bootstrap):**
+**FINAL pilot (480 questions, all 60 videos, paired bootstrap):**
 
 | reasoning type | n | direct | graph2 | graph2 − direct |
 |---|---|---|---|---|
-| Event Attribution | 95 | 75.8 | 72.6 | −3.2 [−8.4, +1.1] |
-| Counting | 88 | 33.0 | 33.0 | 0.0 [−6.8, +6.8] |
-| Hypothetical Reasoning | 78 | 83.3 | 67.9 | **−15.4 [−24.4, −6.4]** |
-| Event Prediction | 69 | 81.2 | 73.9 | **−7.2 [−13.0, −1.4]** |
-| Event Summarization | 58 | 93.1 | 91.4 | −1.7 [−5.2, 0.0] |
-| Implicit Inference | 49 | 75.5 | 71.4 | −4.1 [−12.2, +4.1] |
-| Logical Linkage | 22 | 86.4 | 77.3 | −9.1 [−27.3, +9.1] |
-| **ALL** | 459 | **72.3** | **66.9** | **−5.5 [−8.3, −2.6]** |
-
-Process score of graph2's cited clips vs the annotated timed steps (382
-questions): **step recall 50.3, citation precision 53.6**, mean best IoU
-14.8; by type, recall 43–60 and precision 40–69 (Counting 68.1, Logical
-Linkage 68.9, Implicit Inference 62.4 highest). Against the BM25 pointer's
-top-4 as citations, paired on the same 382 questions: step recall **+7.0
-[+3.0, +11.0]**, citation precision **+14.2 [+10.6, +17.9]** — both CI-clean.
+| Event Attribution | 99 | 76.8 | 72.7 | −4.0 [−9.1, 0.0] |
+| Counting | 94 | 31.9 | 31.9 | 0.0 [−6.4, +6.4] |
+| Hypothetical Reasoning | 80 | 82.5 | 66.2 | **−16.3 [−25.0, −7.5]** |
+| Event Prediction | 72 | 80.6 | 73.6 | **−6.9 [−13.9, −1.4]** |
+| Event Summarization | 61 | 93.4 | 91.8 | −1.6 [−4.9, 0.0] |
+| Implicit Inference | 51 | 76.5 | 72.5 | −3.9 [−11.8, +3.9] |
+| Logical Linkage | 23 | 87.0 | 78.3 | −8.7 [−26.1, +8.7] |
+| **ALL** | 480 | **72.1** | **66.5** | **−5.6 [−8.5, −2.9]** |
 
 Reading: on VRBench the decomposition costs 5.5 accuracy points, concentrated
 in counterfactual/predictive questions (the same "infers worse over the same
 evidence" pattern as Video-Holmes), and in return produces a reasoning chain
 whose citations land on the annotated steps half the time and beat the
-retrieval pointer that fed it. **The fair citation-bearing baseline settles it (459 questions, paired).**
+retrieval pointer that fed it. **The fair citation-bearing baseline settles it (480 questions, paired).**
 A single call asked to reason step by step and cite clip ranks in prose
-(`--rationale`) scores **67.1** — the same −5.2 [−8.7, −1.7] against plain
-direct as graph2's −5.5, and graph2 vs that baseline is −0.2 [−3.9, +3.5].
+(`--rationale`) scores **67.3** — the same −4.8 [−8.1, −1.5] against plain
+direct as graph2's −5.6, and graph2 vs that baseline is −0.8 [−4.4, +2.9].
 So the accuracy cost is not the decomposition's: it is the **cost of making
 the reader articulate**; a reader that must justify loses five points
-whether it does so in one call or through the graph. On process credit,
-parsing the clip ranks the rationale cites (327/382 timed questions cite at
-least one): step recall 52.2 vs graph2 50.3 (−1.9 [−5.9, +2.2], tied) and
-citation precision 44.0 vs graph2 **53.6 (+9.7 [+5.9, +13.4])**.
+whether it does so in one call or through the graph.
 
-| VRBench pilot, 459 q | accuracy | step recall | citation precision |
+| VRBench pilot, 480 q (process on 399 timed) | accuracy | step recall | citation precision |
 |---|---|---|---|
-| direct, plain | **72.3** | — | — |
-| direct, cited rationale (one call) | 67.1 | 52.2 | 44.0 |
-| graph2 (comparative ranking, citations) | 66.9 | 50.3 | **53.6** |
-| BM25 pointer top-4 as citations | — | 43.3 | 39.4 |
+| direct, plain | **72.1** | — | — |
+| direct, cited rationale (one call) | 67.3 | **52.7** | 43.8 |
+| graph2 (comparative ranking, citations) | 66.5 | 50.3 | **53.5** |
+| BM25 pointer top-4 as citations | — | 43.2 | 39.2 |
+
+graph2 − cited rationale: step recall −2.4 [−6.5, +1.6] (tied), citation
+precision **+9.7 [+6.0, +13.4]**. graph2 − BM25 pointer: +7.0 [+3.1, +10.9]
+and **+14.3 [+10.8, +17.8]**. Both articulated systems recall the annotated
+steps about equally; the decomposition's structure is what makes the
+citations *precise*.
 
 Paper reading: the decomposition's *structure* buys citation precision
 (+9.7 over a single call that also cites, +14.2 over the retriever), at no
