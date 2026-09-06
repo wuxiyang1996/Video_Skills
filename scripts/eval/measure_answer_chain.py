@@ -791,21 +791,15 @@ DIRECT_SYSTEM = (
 )
 
 
-def direct_answer(
-    client: OpenRouterClient,
+def direct_messages(
     example: dict[str, Any],
     indices: list[int],
     highlight: list[int] | None = None,
     findings: dict[str, Any] | None = None,
     frames: dict[int, list[str]] | None = None,
     rationale: bool = False,
-) -> dict[str, Any]:
-    """Ask the same model the same question over the same clips, with no skill graph.
-
-    This is the control for the atomic-skill decomposition: it holds the model,
-    the evidence and the budget fixed and removes only the plan-and-execute
-    structure, so any difference is attributable to the decomposition itself.
-    """
+) -> tuple[str, Any]:
+    """(system, user_content) of the direct-answer prompt — shared by evaluation and reader training."""
     schemas, _ = retrieval_catalog(example)
     question = example.get("question") or {}
     clips = []
@@ -853,9 +847,28 @@ def direct_answer(
             "with the descriptions"
         )
         system = DIRECT_SYSTEM_MULTIMODAL
+    return system, multimodal_user_content(payload, indices, frames or {})
+
+
+def direct_answer(
+    client: OpenRouterClient,
+    example: dict[str, Any],
+    indices: list[int],
+    highlight: list[int] | None = None,
+    findings: dict[str, Any] | None = None,
+    frames: dict[int, list[str]] | None = None,
+    rationale: bool = False,
+) -> dict[str, Any]:
+    """Ask the same model the same question over the same clips, with no skill graph.
+
+    This is the control for the atomic-skill decomposition: it holds the model,
+    the evidence and the budget fixed and removes only the plan-and-execute
+    structure, so any difference is attributable to the decomposition itself.
+    """
+    system, user_content = direct_messages(example, indices, highlight, findings, frames, rationale)
     text = client.chat([
         {"role": "system", "content": system},
-        {"role": "user", "content": multimodal_user_content(payload, indices, frames or {})},
+        {"role": "user", "content": user_content},
     ])
     label = None
     thinking = ""
