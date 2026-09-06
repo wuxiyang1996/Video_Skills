@@ -561,9 +561,28 @@ Reading: on VRBench the decomposition costs 5.5 accuracy points, concentrated
 in counterfactual/predictive questions (the same "infers worse over the same
 evidence" pattern as Video-Holmes), and in return produces a reasoning chain
 whose citations land on the annotated steps half the time and beat the
-retrieval pointer that fed it. Whether that process credit also beats a
-single answer call that cites in prose is the pending baseline
-(`direct_rationale`).
+retrieval pointer that fed it. **The fair citation-bearing baseline settles it (459 questions, paired).**
+A single call asked to reason step by step and cite clip ranks in prose
+(`--rationale`) scores **67.1** — the same −5.2 [−8.7, −1.7] against plain
+direct as graph2's −5.5, and graph2 vs that baseline is −0.2 [−3.9, +3.5].
+So the accuracy cost is not the decomposition's: it is the **cost of making
+the reader articulate**; a reader that must justify loses five points
+whether it does so in one call or through the graph. On process credit,
+parsing the clip ranks the rationale cites (327/382 timed questions cite at
+least one): step recall 52.2 vs graph2 50.3 (−1.9 [−5.9, +2.2], tied) and
+citation precision 44.0 vs graph2 **53.6 (+9.7 [+5.9, +13.4])**.
+
+| VRBench pilot, 459 q | accuracy | step recall | citation precision |
+|---|---|---|---|
+| direct, plain | **72.3** | — | — |
+| direct, cited rationale (one call) | 67.1 | 52.2 | 44.0 |
+| graph2 (comparative ranking, citations) | 66.9 | 50.3 | **53.6** |
+| BM25 pointer top-4 as citations | — | 43.3 | 39.4 |
+
+Paper reading: the decomposition's *structure* buys citation precision
+(+9.7 over a single call that also cites, +14.2 over the retriever), at no
+accuracy cost relative to any articulated answer and at the same five-point
+cost every articulated answer pays relative to a bare letter.
 
 ## Disk (2026-09-04)
 
