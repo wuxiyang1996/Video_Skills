@@ -811,6 +811,7 @@ shows nothing.
 |---|---|---|
 | VH fresh 300, old catalog, graph2 no-look | −1.7 [−6.7, +3.7] | TRAR 34.0 → 35.0, **+1.0 [−4.0, +6.0]** |
 | VH fresh 300, old catalog, graph2 + sub-question look | −0.7 [−6.0, +4.7] | TRAR 34.0 → 36.0, **+2.0 [−3.3, +7.3]** |
+| VH fresh 300, **narr_px_plus catalog**, graph2 vs direct+rationale (official judge) | −1.0 [−6.3, +4.0] | TRAR 39.0 → 39.3, **+0.3 [−4.3, +5.3]** (TRAR share of right answers 88% vs 85%) |
 | VRBench 480 (pilot 60 videos) | −0.8 [−4.6, +2.7] | correct ∧ any step hit 40.8 → 41.0, +0.2 [−4.2, +4.6]; correct ∧ recall ≥ 0.5 31.7 → 29.2, −2.5 [−6.7, +1.9]; correct ∧ precision ≥ 0.5 24.4 → 28.3, **+4.0 [−0.4, +8.1]** |
 | CG-Bench 237 (67 videos), graph2 vs direct+rationale, clue_intervals | −1.3 [−6.8, +4.2] | correct ∧ any clue hit 27.4 → 28.3, +0.8 [−4.6, +6.3]; correct ∧ precision ≥ 0.5 14.8 → 19.8, **+5.1 [−0.4, +10.1]** |
 
@@ -819,10 +820,9 @@ better-aimed citations: VRBench precision 53.7 vs 50.9 on cited questions,
 478 vs 413 questions citing at all; VH TRAR share 91% vs 84%) but no
 grounded-accuracy difference is CI-clean yet, and on VRBench it flips sign
 between a precision- and a recall-based grounding criterion — the chain cites
-fewer, better clips, the rationale cites more, so it covers more steps. Two
-more measurements are running: VH on the narr_px_plus catalog (direct +
-rationale vs graph2, official judge), and CG-Bench 237 (direct + rationale vs
-graph2, clue intervals). The table is updated when they land.
+fewer, better clips, the rationale cites more, so it covers more steps. Both pending measurements have landed (rows above): on Video-Holmes the
+decomposition does not raise judge-grounded accuracy on either catalog; on
+VRBench and CG-Bench it raises precision-grounded accuracy.
 
 **Pooled, VRBench 480 + CG-Bench 237 (n = 717 paired, decomposition − cited
 direct, 2026-09-06):** accuracy −1.0 [−4.0, +2.1]; correct ∧ any cited gold
