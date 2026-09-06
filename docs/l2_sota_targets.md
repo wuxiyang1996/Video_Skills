@@ -1024,6 +1024,15 @@ GRPO proper is available locally after all: the `swift` conda env (which
 `trainer/reader/rewards.py` reward as the plugin; the RFT loop stays as the
 fallback.
 
+Scope decision (2026-09-06): the VRBench pilot-60 questions (480, catalogs
+already built) join the training set so VRBench is a trained domain too;
+the held-out 60 videos stay evaluation-only. CG-Bench has no trainable
+catalogs (the 67-video / 237-q set is the evaluation set) and is reported as
+zero-shot transfer. Claims the plan can support: accuracy up on VH and
+VRBench (trained), groundedness up (process-reward arm vs outcome-only),
+and deployment efficiency (9B dense on one 48 GB GPU vs a 235B-A22B reader)
+measured as latency/throughput locally and API cost per 1k questions.
+
 
 ## Feasibility probe: are reasoning failures reusable sub-trajectories? (2026-09-06)
 
