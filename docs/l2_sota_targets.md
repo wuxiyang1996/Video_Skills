@@ -764,7 +764,7 @@ Two companions (2026-09-06): the **8B reader** (`qwen/qwen3-vl-8b-instruct`)
 on the same catalog with pointer scores 40.8 on the full test, +1.7 [−0.1,
 +3.4] over its old-catalog 39.1 (IMC +4.7*, TA −4.5) — the small reader
 extracts far less from the richer catalog than the 235B does (+4.8/+5.8),
-so the catalog gain is reader-limited. On **CG-Bench** the no-pointer
+so the catalog gain is reader-limited. Without the pointer the 8B scores 40.4 (−0.3 n.s. vs its pointer run; +1.4 [−0.4, +3.2] vs 39.1): the pointer is neutral for the small reader. On **CG-Bench** the no-pointer
 variant scores 43.9 (vs 44.7 with pointer, −0.8 n.s.; vs 40.5 +3.4 n.s.).
 
 
