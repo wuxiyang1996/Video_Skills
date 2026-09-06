@@ -752,6 +752,14 @@ the reader at four clips pulls it away from the paragraphs. The full-test
 47.4 was run *with* the pointer for comparability; the no-pointer full test
 (the configuration actually selected on the fresh 300) is running.
 
+**Generality on CG-Bench (237-question heldout, 67 videos, mean 31 min,
+2026-09-06).** Same lever, 60-s windows × 16 frames, the benchmark's own
+subtitles as dialogue, narrative rows (~31 per video) prepended to the
+original catalog, same reader and pointer as `cg_direct_237`: **44.7 vs
+40.5, +4.2 [−1.3, +9.7]** — the same direction and size as Video-Holmes,
+under-powered at n=237. Built in ~1 h on the login node.
+
+
 
 
 
