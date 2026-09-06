@@ -1018,6 +1018,11 @@ right on 135/300, so verified SFT rows come from ~45% of questions per
 teacher sample (sample 4× on the rest); tokenised prompts are p50 10.7k /
 p90 15.6k / max 16.2k tokens, so training runs at max_len 24k (30/135 rows
 would be dropped at 16k) with LoRA, batch 1, gradient checkpointing.
+GRPO proper is available locally after all: the `swift` conda env (which
+`.venv-qwen35-serve` resolves to) carries ms-swift 3.10, TRL 0.23 and vLLM
+0.8.5, so Stage 2 can run as GRPO with a vLLM rollout server and the
+`trainer/reader/rewards.py` reward as the plugin; the RFT loop stays as the
+fallback.
 
 
 ## Feasibility probe: are reasoning failures reusable sub-trajectories? (2026-09-06)
