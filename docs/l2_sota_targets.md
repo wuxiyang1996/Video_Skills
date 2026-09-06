@@ -612,6 +612,18 @@ per clip (currently 4), and question-aware re-description
 are also *fewer and coarser* than ours (3.4 vs ~61), so the gain is quality
 and narrative continuity, not coverage.
 
+**Fragmentation or perception? (2026-09-06, no GPU).** Two explanations
+for the human rows' +12 with opposite remedies: the information is in our
+61 clips but fragmented (no identity or cause carried across 4-s clips), or
+it was never perceived by the 9B describer. `scripts/eval/build_narrative_catalog.py`
+windows our own clip text (~45 s per window) and has the 235B write one
+paragraph per window *sequentially* with a persistent cast — looking at
+nothing new — then the same reader answers over the synthesised rows
+(narrative only, and narrative + original clips). A gain says fragmentation
+and costs no GPU to deploy; no gain says perception and points GPU at the
+describer (stronger model, more frames, question-aware repass). Running on
+the fresh 300.
+
 ## CG-Bench QA accuracy (first measurement, 2026-09-05)
 
 Only grounding had ever been measured on CG. Direct answering over the whole
