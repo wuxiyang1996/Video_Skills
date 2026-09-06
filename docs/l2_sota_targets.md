@@ -963,6 +963,44 @@ the primary CI excludes 0 in the positive direction. Chain:
 
 
 
+## Pre-registered: train the small reader with skill-derived verifiable rewards (decided 2026-09-06)
+
+**Why this and nothing else.** Every prompt-only lever is exhausted: the
+catalog is where accuracy came from (+3 to +6), decomposition is at parity,
+question-time grounding adds nothing, and the 8B reader has zero grounding
+headroom (gold pointer +0.0) — its 10-point gap to the 235B on the same
+catalog is inference over evidence it already has. The one untested path is
+to *train the reader*, and the only dense verifiable signals for that are
+the ones the atomic-skill structure provides: answer correctness, citation
+hits on annotated evidence (Video-Holmes inference shots; VRBench reasoning
+steps; CG clue intervals), and deterministic checks (time-order consistency
+of cited clips). This is the RLVR reading of atomic skills: they define the
+reward, not the reasoning.
+
+**Setup.**
+- Base: an open ~8B instruct model (the deployed reader family). Input:
+  question + options + the narr_px_plus-style catalog (clips + dialogue +
+  window narratives) as text. Output: a short cited rationale + option.
+- Train data: Video-Holmes **train** split only (videos disjoint from test),
+  L1 built with the same recipe (9B clips, whisper, 235B window narratives).
+  Optionally VRBench pilot-60 questions (never the held-out 60).
+- Stage 1 SFT (LoRA): targets = 235B cited rationales on train questions,
+  kept only when the answer is right; ~1–2k examples.
+- Stage 2 GRPO: on-policy samples (G=8) per train question; reward =
+  1.0·correct + 0.5·(citation precision on inference shots, only when
+  correct) + 0.1·format − 0.05·length; time-order consistency penalty on
+  TA-type questions. Control arm: same GRPO with outcome-only reward.
+- Eval (never trained on): Video-Holmes test 1,837 (both catalog
+  generations), VRBench held-out 60, CG 237. Metrics: accuracy, grounded
+  accuracy (correct ∧ citation precision ≥ 0.5), official judge TRAR share.
+
+**Success criteria fixed now.** Primary: 8B+RLVR ≥ 45.0 on the full VH test
+with the paired CI vs the 8B direct run (40.4) excluding 0, and grounded
+accuracy above the 8B direct. Secondary: process-reward arm > outcome-only
+arm on grounded accuracy (this is the atomic-skills claim); transfer on
+VRBench held-out. Budget: 3 weeks; if Stage 2 does not beat Stage 1 on the
+fresh 300 within that, report Stage 1 and stop.
+
 ## Feasibility probe: are reasoning failures reusable sub-trajectories? (2026-09-06)
 
 `scripts/eval/mine_failure_subtrajectories.py` fits every direct-reader
