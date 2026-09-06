@@ -731,6 +731,12 @@ describer, whisper-1, Qwen3-VL-235B as window describer and text reader),
 no question-conditioned perception, no learned retrieval, no decomposition.
 Pipeline cost per video ≈ 6 windows × 16 frames + ASR, a few cents.
 
+Post-hoc ordering check (full test, `--catalog-order time`, rows interleaved
+by start time instead of narrative-first): 45.3, −2.0 [−3.4, −0.7] vs the
+narrative-first 47.4; TA unchanged (−0.5). The TA loss is not the ordering;
+narrative-first stays the reported configuration.
+
+
 
 
 
