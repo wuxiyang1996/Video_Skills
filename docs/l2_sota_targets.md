@@ -752,6 +752,15 @@ the reader at four clips pulls it away from the paragraphs. The full-test
 47.4 was run *with* the pointer for comparability; the no-pointer full test
 (the configuration actually selected on the fresh 300) is running.
 
+**No-pointer full test (2026-09-06): 48.3, +5.8 [+3.9, +7.7] over ours 42.6;
+vs the pointer run +1.0 [−0.2, +2.2] (n.s.).** This is the configuration
+selected on the fresh 300 *before* any full-test run (whole catalog, no
+pointer), so **48.3 is the headline Video-Holmes number**; 47.4 is the
+pointer variant kept for flag-for-flag comparability with 42.5. By type
+(no pointer vs old catalog): MHR 43.4, SR 59.2, IMC 56.2, TCI 49.1, CTI
+47.0, TA 30.0, PAR 49.0.
+
+
 **Generality on CG-Bench (237-question heldout, 67 videos, mean 31 min,
 2026-09-06).** Same lever, 60-s windows × 16 frames, the benchmark's own
 subtitles as dialogue, narrative rows (~31 per video) prepended to the
