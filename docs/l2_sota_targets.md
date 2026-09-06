@@ -803,6 +803,22 @@ text, film form, finer frame rate), not the same look again. Next:
 what, on-screen text verbatim, shot scale / POV / repeated shots / cuts,
 non-speech sounds) added as rows to the untouched v1 narratives.
 
+**Replicate of narr_px v1 (identical prompt and flags, fresh generation,
+2026-09-06): 43.0 on the fresh 300** — −4.0 [−7.7, −0.3] vs the original
+generation's 47.0, and only +2.0 [−2.7, +6.7] vs ours 41.0. The describer's
+output varies from generation to generation (the 235B MoE is not
+deterministic at temperature 0), and the fresh-300 +6 was a favourable
+draw. What stands: the full-test 48.3 / 47.4 are measured numbers on 1,837
+questions for *that* catalog (+5.8 CI-clean vs 42.6 on the same questions),
+and the dialogue share (+3.3) does not depend on generation. What does not
+stand yet: the size of the narrative's contribution. Two things follow:
+(1) a full-test replicate (all 270 videos regenerated, 1,837 answers) so
+the paper reports both generations; (2) a two-view catalog (both
+generations' narrative rows + clips) on the fresh 300 — if two independent
+descriptions of the same window beat either alone, generation noise is a
+lever, not just a hazard.
+
+
  On **CG-Bench** the no-pointer
 variant scores 43.9 (vs 44.7 with pointer, −0.8 n.s.; vs 40.5 +3.4 n.s.).
 
