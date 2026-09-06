@@ -154,6 +154,12 @@ class OpenRouterClient:
         }
         if self.max_tokens is not None:
             payload["max_tokens"] = self.max_tokens
+        provider_order = os.environ.get("OPENROUTER_PROVIDER_ORDER", "").strip()
+        if provider_order and self.is_openrouter_endpoint:
+            # OpenRouter serves one model id from several providers at different quantisations
+            # (fp8 / bf16 / unknown); pin the order and forbid fallbacks so a run is reproducible.
+            payload["provider"] = {"order": [p.strip() for p in provider_order.split(",") if p.strip()],
+                                   "allow_fallbacks": os.environ.get("OPENROUTER_ALLOW_FALLBACKS", "0") == "1"}
         if self.reasoning is not None and self.is_openrouter_endpoint:
             payload["reasoning"] = self.reasoning
         if response_format is not None and self.is_openrouter_endpoint:
@@ -197,6 +203,7 @@ class OpenRouterClient:
         self.last_response_metadata.update(
             {
                 "finish_reason": response_payload["choices"][0].get("finish_reason"),
+                "provider": response_payload.get("provider"),
                 "prompt_tokens": usage.get("prompt_tokens"),
                 "completion_tokens": usage.get("completion_tokens"),
                 "total_tokens": usage.get("total_tokens"),
