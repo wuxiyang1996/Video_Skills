@@ -79,6 +79,67 @@ def key_moment_rows(moments: list[dict[str, Any]], window: int, span: dict[str, 
     return rows
 
 
+FILM_FORM_SYSTEM = (
+    "You are given evenly spaced frames from one stretch of a short film, in time order, and the dialogue heard in "
+    "it. Write STRICTLY DESCRIPTIVE notes on things a plot summary leaves out, as a continuity annotator would: "
+    "(1) who speaks each dialogue line (attribute lines to a person by a stable descriptor, e.g. 'the woman in the "
+    "red coat: \"...\"'; say 'off-screen voice' if unseen); (2) any on-screen text, phone screens, notes, signs, "
+    "captions, read verbatim; (3) film form: shot scale (close-up/wide), point of view, camera movement, mirrors "
+    "or reflections, a shot that repeats an earlier one, freeze/slow motion, black-and-white or colour shifts, "
+    "cuts between two locations; (4) sounds that are not speech (a phone ringing, footsteps, music cue). Report "
+    "only what is seen or heard. No interpretation, no implication, no guessing at meaning. Reply with JSON only: "
+    '{"speakers": [{"line": "<dialogue text>", "speaker": "<descriptor>"}], "on_screen_text": ["<verbatim>"], '
+    '"film_form": ["<one descriptive note>"], "sounds": ["<non-speech sound>"]}'
+)
+
+
+def film_form_rows(parsed: dict[str, Any], window: int, span: dict[str, float]) -> list[dict[str, Any]]:
+    """The continuity notes become one descriptive row per window (attributed dialogue, on-screen text, film form)."""
+    parts: list[str] = []
+    for sp in parsed.get("speakers") or []:
+        if isinstance(sp, dict) and sp.get("line"):
+            parts.append(f"{str(sp.get('speaker') or 'unknown speaker').strip()}: \"{str(sp['line']).strip()}\"")
+    text = [str(t).strip() for t in parsed.get("on_screen_text") or [] if str(t).strip()]
+    form = [str(t).strip() for t in parsed.get("film_form") or [] if str(t).strip()]
+    sounds = [str(t).strip() for t in parsed.get("sounds") or [] if str(t).strip()]
+    segments = []
+    if parts:
+        segments.append("Who says what: " + " | ".join(parts))
+    if text:
+        segments.append("On-screen text: " + " | ".join(text))
+    if form:
+        segments.append("Film form: " + "; ".join(form))
+    if sounds:
+        segments.append("Sounds: " + "; ".join(sounds))
+    if not segments:
+        return []
+    return [{"clip_id": f"continuity:{window}", "granularity": "continuity_window", "time_span": dict(span),
+             "scene_description": " ".join(segments)[:2500]}]
+
+
+def annotate_continuity(client: Any, schemas: list[dict[str, Any]], windows: list[list[int]], *, video_path: str,
+                        frames_per_window: int, asr_segments: list[dict[str, Any]] | None, frame_width: int = 448) -> list[dict[str, Any]]:
+    """Second, independent pass over the same windows: descriptive continuity notes only (no narrative, no conclusions)."""
+    rows: list[dict[str, Any]] = []
+    for k, window in enumerate(windows, start=1):
+        span = {"start_s": float(schemas[window[0]]["time_span"].get("start_s") or 0.0),
+                "end_s": float(schemas[window[-1]]["time_span"].get("end_s") or 0.0)}
+        frames = sample_clip_frames(video_path, span, frames_per_window, width=frame_width)
+        if not frames:
+            continue
+        payload = {"window": k, "of": len(windows), "time_span": span, "dialogue": asr_in_span(asr_segments or [], span)}
+        content: Any = [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]
+        for jpeg in frames:
+            content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{jpeg}"}})
+        text = client.chat([{"role": "system", "content": FILM_FORM_SYSTEM}, {"role": "user", "content": content}])
+        try:
+            parsed = json.loads(re.search(r"\{.*\}", text or "", re.S).group(0)) or {}
+        except Exception:
+            parsed = {}
+        rows.extend(film_form_rows(parsed, k, span))
+    return rows
+
+
 def asr_in_span(segments: list[dict[str, Any]], span: dict[str, Any], pad_s: float = 1.0) -> list[dict[str, Any]]:
     """Transcript segments overlapping the window (padded), as {start_s, end_s, text}."""
     lo, hi = float(span.get("start_s") or 0.0) - pad_s, float(span.get("end_s") or 0.0) + pad_s
@@ -180,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="Look at this many evenly spaced frames per window (0 = text-only re-organisation).")
     ap.add_argument("--asr-dir", type=Path, help="Per-video whisper JSON (scripts/eval/transcribe_videos.py); dialogue in each window is passed to the model.")
     ap.add_argument("--no-clip-text", action="store_true", help="Do not pass the clip descriptions; frames + dialogue only.")
+    ap.add_argument("--continuity", action="store_true",
+                    help="Second descriptive pass per window (speaker attribution, on-screen text, film form, sounds) added as rows; cached under continuity/.")
     ap.add_argument("--key-moments", action="store_true", help="Also ask for 2-3 key moments per window and add them as rows (annotator's inference shots).")
     args = ap.parse_args(argv)
     if args.no_clip_text and not args.frames_per_window:
@@ -215,6 +278,23 @@ def main(argv: list[str] | None = None) -> int:
         cache.write_text(json.dumps(rows, ensure_ascii=False))
         return video_id, rows
 
+    def build_continuity(video_id: str) -> tuple[str, list[dict[str, Any]]]:
+        cdir = args.output_root / "continuity"; cdir.mkdir(parents=True, exist_ok=True)
+        cache = cdir / f"{video_id}.json"
+        if cache.exists():
+            return video_id, json.loads(cache.read_text())
+        example = json.loads(Path(index[by_video[video_id][0]]["path"]).read_text())
+        schemas, _ = retrieval_catalog(example)
+        asr = None
+        if args.asr_dir:
+            asr_path = args.asr_dir / f"{video_id}.json"
+            asr = (json.loads(asr_path.read_text()).get("segments") or []) if asr_path.exists() else []
+        rows = annotate_continuity(client, schemas, window_clips(schemas, args.window_s),
+                                   video_path=(example.get("video") or {}).get("primary_path") or "",
+                                   frames_per_window=args.frames_per_window, asr_segments=asr)
+        cache.write_text(json.dumps(rows, ensure_ascii=False))
+        return video_id, rows
+
     from concurrent.futures import ThreadPoolExecutor
     narratives: dict[str, list[dict[str, Any]]] = {}
     with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
@@ -222,9 +302,16 @@ def main(argv: list[str] | None = None) -> int:
             narratives[video_id] = rows
             print(f"[{len(narratives)}/{len(by_video)}] {video_id}: {len(rows)} narrative rows", flush=True)
 
+    continuity: dict[str, list[dict[str, Any]]] = {}
+    if args.continuity:
+        with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
+            for video_id, rows in pool.map(build_continuity, sorted(by_video)):
+                continuity[video_id] = rows
+        print(f"continuity rows: {sum(len(r) for r in continuity.values())} over {len(continuity)} videos", flush=True)
+
     out_index: dict[str, Any] = {}
     for video_id, example_ids in by_video.items():
-        rows = narratives.get(video_id) or []
+        rows = (narratives.get(video_id) or []) + (continuity.get(video_id) or [])
         for example_id in example_ids:
             meta = index[example_id]
             example = json.loads(Path(meta["path"]).read_text())
@@ -233,7 +320,7 @@ def main(argv: list[str] | None = None) -> int:
             metadata["clip_schemas"] = rows + (list(schemas) if args.keep_clips else [])
             metadata["coarse_clip_schemas"] = []
             metadata["clip_schema_model"] = (f"narrative:{args.model}" + (f"+frames{args.frames_per_window}" if args.frames_per_window else "")
-                                             + ("+asr" if args.asr_dir else "") + ("-cliptext" if args.no_clip_text else "") + ("+keymoments" if args.key_moments else "")
+                                             + ("+asr" if args.asr_dir else "") + ("-cliptext" if args.no_clip_text else "") + ("+keymoments" if args.key_moments else "") + ("+continuity" if args.continuity else "")
                                              + ("+clips" if args.keep_clips else ""))
             example["metadata"] = metadata
             out_dir = args.output_root / "stages" / example_id.replace(":", "_")

@@ -110,3 +110,14 @@ def test_key_moments_flag_extends_the_prompt_and_appends_rows(monkeypatch) -> No
     rows = mod.narrate_video(_Client(), schemas, mod.window_clips(schemas, target_s=12.0, min_windows=2),
                              video_path="/x.mp4", frames_per_window=2, asr_segments=[], use_clip_text=False, key_moments=True)
     assert [r["granularity"] for r in rows] == ["narrative_window", "key_moment", "narrative_window", "key_moment"]
+
+
+def test_continuity_rows_are_descriptive_and_skip_empty_windows() -> None:
+    from scripts.eval.build_narrative_catalog import film_form_rows
+    parsed = {"speakers": [{"line": "Where is it?", "speaker": "the woman in the cardigan"}], "on_screen_text": ["RETCH"],
+              "film_form": ["close-up of her eye", "split screen: kitchen | floor"], "sounds": ["phone rings"]}
+    rows = film_form_rows(parsed, 3, {"start_s": 60.0, "end_s": 90.0})
+    assert rows[0]["clip_id"] == "continuity:3" and rows[0]["granularity"] == "continuity_window"
+    d = rows[0]["scene_description"]
+    assert 'the woman in the cardigan: "Where is it?"' in d and "On-screen text: RETCH" in d and "split screen" in d and "phone rings" in d
+    assert film_form_rows({}, 1, {"start_s": 0.0, "end_s": 30.0}) == []
