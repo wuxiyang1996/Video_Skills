@@ -1045,6 +1045,13 @@ with the 235B reader and the trained 9B ≈ $100. Allowlists and launchers:
 `scripts/launch/launch_cg_mini_l1.sh` (16 shards), `launch_vrbench_subset240.sh`
 (12 shards); queued behind the train-split L1.
 
+**Base reader's own baseline (2026-09-06, Qwen3.5-9B via local vLLM, text
+prompt, narr_px_plus catalog, fresh 300, no pointer): direct 36.3, with cited
+rationale 38.0.** The trained model is compared against these; the SFT
+watershed is ≥ 41 on the same 300 (rationale format), and the full-test bar
+stays 45.0. For reference the 235B reads the same catalog at 47.0 and the
+API 8B at 37.3.
+
 
 
 ## Feasibility probe: are reasoning failures reusable sub-trajectories? (2026-09-06)
