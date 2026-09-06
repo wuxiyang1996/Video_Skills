@@ -580,6 +580,47 @@ Paper reading: the decomposition's *structure* buys citation precision
 accuracy cost relative to any articulated answer and at the same five-point
 cost every articulated answer pays relative to a bare letter.
 
+## Where the remaining accuracy is (2026-09-05)
+
+Every answer-step lever on Video-Holmes measured null — frames +0.0, 5-vote
+self-consistency −1.0, reasoning effort −1.7, perfect retrieval −3.0, OPD
+pointer −0.3, top-8 +0.7 — and only a stronger reader moved the number
+(120b → 235b, +5.8). That leaves the L1 descriptions, whose ceiling had never
+been measured. `scripts/eval/build_oracle_description_examples.py` swaps our
+9B-written catalog for the benchmark's **own human annotations** (timed
+Segment Description rows plus Inference Shot clue/conclusion rows, ~5 per
+video) and re-answers with the same 235B reader.
+
+| catalog given to the same reader (fresh 300) | accuracy | vs ours |
+|---|---|---|
+| ours (Qwen3.5-9B, question-agnostic, ~61 clips) | 41.0 | — |
+| human narrative rows only (~3.4 rows) | 53.3 | **+12.3 [+7.0, +17.7]** |
+| human narrative + clue rows (~5 rows) | **62.0** | **+21.0 [+15.3, +26.7]** |
+
+By type the gap is largest exactly where the graph's reasoning errors
+concentrated: MHR +34.4, IMC +29.4, TCI +29.0; TA is the only type that does
+not improve (−6.5, timeline questions need the fine time grid our catalog
+has and the 5-row annotation lacks). The clue rows are worth +8.7 [+4.7,
++12.7] of the 21 and are the source the questions were generated from, so
+**53.3 is the honest ceiling estimate and 62.0 the leakage-inflated one**.
+
+Reading: ~12 points of Video-Holmes accuracy sit in description quality, not
+in retrieval, not in the answer step, and not in the decomposition. Three
+untested levers act there: a stronger describer than Qwen3.5-9B, more frames
+per clip (currently 4), and question-aware re-description
+(`--anchor-repass-top-n`, implemented, never evaluated). Note the human rows
+are also *fewer and coarser* than ours (3.4 vs ~61), so the gain is quality
+and narrative continuity, not coverage.
+
+## CG-Bench QA accuracy (first measurement, 2026-09-05)
+
+Only grounding had ever been measured on CG. Direct answering over the whole
+catalog with the BM25 pointer and the 235B reader, on the same 237 heldout
+questions: **40.5% [34.2, 46.8]** (6–8 options per question; by domain
+Instruction & Knowledge 57.1, Art & Culture 53.3, Music/TV 48.0, Life Record
+32.4). This is a second accuracy axis the paper can report next to the
+grounding table.
+
 ## Disk (2026-09-04)
 
 `/gamma/projects` has a 2 TB quota and was 100% full (2.6 GB free). With the
