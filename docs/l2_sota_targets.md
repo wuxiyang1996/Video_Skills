@@ -829,6 +829,17 @@ descriptive detail at this point; the catalog's remaining gap to the human
 rows is in *what the describer notices as mattering*, which the human rows
 have and no extra descriptive channel supplies.
 
+Two-view catalog (gen-1 + gen-2 narrative rows + clips, fresh 300): 43.3 —
++0.3 n.s. vs gen-2 alone, −3.7 [−7.0, −0.3] vs gen-1. Adding the second
+generation does not recover the first one's score, so the gap between
+generations is not "more evidence in one of them"; it is which things one
+draw happened to say. Until the full-test replicate lands, the narrative
+lever should be quoted as +2 to +6 on the fresh 300 and +5.8 on the one
+full-test generation. (A candidate cause besides sampling: OpenRouter routes
+the 235B across providers with different quantisations; pinning a provider
+is worth doing for any final run.)
+
+
 
 
  On **CG-Bench** the no-pointer
