@@ -40,9 +40,22 @@ def index_frozen_by_video(paths: Iterable[Path]) -> dict[str, dict[str, Any]]:
     return by_video
 
 
-def derive_example(frozen: dict[str, Any], item: Any) -> dict[str, Any]:
+HEAVY_METADATA_KEYS = ['clue_memory_graph', 'graph_compose', 'coarse_fine_graph', 'reasoning_rollout_shell', 'reasoning_rollout', 'index_fine_expansion', 'perception', 'answerability_diagnostic']
+
+
+def slim_example(example: dict[str, Any]) -> dict[str, Any]:
+    """Keep what the reader and the catalog accessor use (question, video, clip_schemas, coarse_clip_schemas)."""
+    metadata = example.get("metadata") or {}
+    for key in HEAVY_METADATA_KEYS:
+        metadata.pop(key, None)
+    return example
+
+
+def derive_example(frozen: dict[str, Any], item: Any, slim: bool = False) -> dict[str, Any]:
     """Frozen L1 for the video, with this item's identity and question."""
     example = copy.deepcopy(frozen)
+    if slim:
+        slim_example(example)
     example["example_id"] = str(item.example_id)
     example["question"] = copy.deepcopy(getattr(item, "question", None) or {})
     metadata = example.setdefault("metadata", {})
@@ -65,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset-root", type=Path, default=Path("/fs/gamma-projects/vlm-robot/datasets"))
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--limit-videos", type=int)
+    parser.add_argument("--slim", action="store_true", help="Drop the clue graph and other heavy metadata; keep the catalog and question only (~10x smaller).")
     args = parser.parse_args(argv)
 
     from dataset_clip_wrapper.adapters import get_adapter
@@ -84,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         if frozen is None:
             skipped_no_l1 += 1
             continue
-        example = derive_example(frozen, item)
+        example = derive_example(frozen, item, slim=args.slim)
         safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", example["example_id"])
         out_dir = args.output_root / args.dataset / args.split / "derived" / "stages" / safe
         out_dir.mkdir(parents=True, exist_ok=True)

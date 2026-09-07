@@ -241,6 +241,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="Look at this many evenly spaced frames per window (0 = text-only re-organisation).")
     ap.add_argument("--asr-dir", type=Path, help="Per-video whisper JSON (scripts/eval/transcribe_videos.py); dialogue in each window is passed to the model.")
     ap.add_argument("--no-clip-text", action="store_true", help="Do not pass the clip descriptions; frames + dialogue only.")
+    ap.add_argument("--slim", action="store_true", help="Write slim examples (drop clue graph and other heavy metadata).")
     ap.add_argument("--continuity", action="store_true",
                     help="Second descriptive pass per window (speaker attribution, on-screen text, film form, sounds) added as rows; cached under continuity/.")
     ap.add_argument("--key-moments", action="store_true", help="Also ask for 2-3 key moments per window and add them as rows (annotator's inference shots).")
@@ -317,6 +318,10 @@ def main(argv: list[str] | None = None) -> int:
             example = json.loads(Path(meta["path"]).read_text())
             schemas, _ = retrieval_catalog(example)
             metadata = dict(example.get("metadata") or {})
+            if args.slim:
+                from scripts.eval.derive_full_question_examples import HEAVY_METADATA_KEYS
+                for key in HEAVY_METADATA_KEYS:
+                    metadata.pop(key, None)
             metadata["clip_schemas"] = rows + (list(schemas) if args.keep_clips else [])
             metadata["coarse_clip_schemas"] = []
             metadata["clip_schema_model"] = (f"narrative:{args.model}" + (f"+frames{args.frames_per_window}" if args.frames_per_window else "")

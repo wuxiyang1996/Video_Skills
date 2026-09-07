@@ -31,3 +31,10 @@ def test_inference_shots_can_be_left_out() -> None:
 
 def test_empty_annotation_yields_no_clips() -> None:
     assert annotation_clips({}, include_inference=True) == []
+
+
+def test_slim_drops_heavy_metadata_but_keeps_the_catalog() -> None:
+    from scripts.eval.derive_full_question_examples import slim_example
+    ex = {"metadata": {"clip_schemas": [1], "coarse_clip_schemas": [], "clue_memory_graph": {"big": 1}, "graph_compose": {}, "retrieval": {}}}
+    slim_example(ex)
+    assert set(ex["metadata"]) == {"clip_schemas", "coarse_clip_schemas", "retrieval"}
