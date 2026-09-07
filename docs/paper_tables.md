@@ -40,7 +40,8 @@ TA 30.0/30.0 vs 34.0; PAR 49.0/53.1 vs 40.2.
 | descriptive continuity rows (speakers, on-screen text, film form) | 44.7 | −2.3 [−5.3, +0.7] vs 47.0 | more description does not help |
 | two generations' narratives together | 43.3 | −3.7 [−7.0, −0.3] vs 47.0 | generation variance, not coverage |
 | question-time window grounder (re-look ±15 s, 16 frames + dialogue) | 41.7 | −5.3 [−9.0, −1.7] vs 47.0 | same perception as L1 adds nothing |
-| 8 frames per clip (9B) / question-aware repass (9B, 16 clips) | pending | | |
+| 8 frames per clip (9B describer) | 41.3 | +0.3 [−3.3, +4.0] vs 41.0 | frame density is not the gap |
+| question-aware repass (9B, 16 clips, 6 frames) | paused at 87/300 | | resumable |
 
 ## T4. Readers and pointers (full test unless noted)
 

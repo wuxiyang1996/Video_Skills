@@ -662,6 +662,14 @@ with the same 235B reader. Note for `repass16`: 10 of the 300 seeded base
 catalogs are the post-repair v3 version (more clips than the derived copies
 behind 41.0); the other 290 are identical.
 
+**frames8 result (2026-09-07, fresh 300, paired, 235B reader):** 41.3 vs
+ours 41.0, +0.3 [−3.3, +4.0]; no type moves (TCI +5.3, MHR −4.9, both
+n.s.); −12.0 vs the human rows. Doubling the frames per 4-s clip changes
+nothing: the describer's temporal density was not the gap either. With
+desc235b (−1.7) this closes the describer-side levers at the clip level —
+what helped was the *unit* (30-s windows) and the *modality* (dialogue),
+not frames or model size.
+
 **desc235b result (2026-09-06, fresh 300, paired):** 39.3 vs ours 41.0,
 −1.7 [−5.3, +2.0]; vs human rows −14.0 [−19.7, −8.3]. No type moves (MHR
 −4.9, PAR +3.3, all n.s.). A 25× larger describer, same 4 frames, same
