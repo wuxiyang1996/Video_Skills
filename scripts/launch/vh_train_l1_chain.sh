@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Monitor/resubmit the train L1 shards until every allowlisted video has 04_l1_example.json.
-set -uo pipefail; cd /fs/gamma-projects/vlm-robot/Video_Skills; P=/fs/nexus-scratch/wuxiyang/vh_train_l1; S=/tmp/claude-17237/-fs-gamma-projects-vlm-robot/373c29f6-2b6a-4ecf-8d7c-76c68a83d10a/scratchpad; RUN=video_holmes/train/start_0_limit_300
+set -uo pipefail; cd /fs/gamma-projects/vlm-robot/Video_Skills; P=/fs/nexus-scratch/wuxiyang/vh_train_l1; S=/tmp/claude-17237/-fs-gamma-projects-vlm-robot/373c29f6-2b6a-4ecf-8d7c-76c68a83d10a/scratchpad; RUN=video_holmes/start_0_limit_300
 declare -A resub
 while :; do total=0; done_n=0; line=""
   for s in 0 1 2 3 4 5 6 7; do n=$(grep -c . $P/allowlists/shard$s.txt); c=0
