@@ -25,7 +25,7 @@ def test_messages_match_the_evaluator_format_and_target_round_trips() -> None:
 
 def test_reward_pays_process_only_when_correct(monkeypatch) -> None:
     import trainer.reader.rewards as rw
-    monkeypatch.setattr(rw, "oracle_gold_spans", lambda ex: [{"start_s": 4.0, "end_s": 8.0}])
+    monkeypatch.setattr(rw, "gold_spans_for", lambda ex: [{"start_s": 4.0, "end_s": 8.0}])
     ex = _example()
     good = rw.reader_reward(ex, reader_target("clip 2 hides the key so B", "B"), "B")
     assert good["correct"] and good["citation_precision"] == 1.0 and abs(good["reward"] - 1.6) < 1e-6

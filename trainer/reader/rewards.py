@@ -13,8 +13,26 @@ from __future__ import annotations
 
 from typing import Any
 
+from pathlib import Path
+
 from scripts.eval.measure_answer_chain import oracle_gold_spans, retrieval_catalog
+from trainer.build_l2_dataset_opd import load_dataset_reward_supervision, supervision_key
 from trainer.reader.prompting import cited_ranks, parse_reader_output
+
+_SUPERVISION: dict[str, dict[str, Any]] | None = None
+DATASET_ROOT = Path("/fs/gamma-projects/vlm-robot/datasets")
+
+
+def gold_spans_for(example: dict[str, Any]) -> list[dict[str, Any]]:
+    """Annotated evidence spans from the evaluator-side supervision index (keyed by dataset:video).
+
+    Video-Holmes inference shots (train and test annotations), CG clue intervals.  The example
+    itself never carries them — hidden supervision stays out of the prompt by construction.
+    """
+    global _SUPERVISION
+    if _SUPERVISION is None:
+        _SUPERVISION = load_dataset_reward_supervision(DATASET_ROOT)
+    return oracle_gold_spans(_SUPERVISION.get(supervision_key(example)) or {})
 
 
 def _hit(a: dict[str, Any], b: dict[str, Any]) -> bool:
@@ -23,7 +41,7 @@ def _hit(a: dict[str, Any], b: dict[str, Any]) -> bool:
 
 def citation_precision(example: dict[str, Any], ranks: list[int]) -> float | None:
     """None when the example carries no annotated evidence spans (no process signal)."""
-    gold = oracle_gold_spans(example) or []
+    gold = gold_spans_for(example) or []
     if not gold:
         return None
     schemas, _ = retrieval_catalog(example)
