@@ -1188,6 +1188,28 @@ n = 231), −6.5 [−12.6, 0.0]; the base 9B at 32k context scored 37.0 on the
 leaves CG roughly where the base 9B is: no transfer gain, no loss; the
 long-video gap to the 235B remains.
 
+**CG-Bench 237, base 9B at 64k (2026-09-08 18:40):** 39.0 on the 231 it
+could answer (6 prompts still too long), identical to the VH-trained sft_v2
+(39.0; paired +0.0 [−6.5, +6.5], 175/231 same correctness, so a genuine tie
+and not a served-model mix-up); vs the 235B on the same subset (41.1) −2.2
+[−9.5, +5.2]. VH-only SFT transfers nothing to CG-Bench; the 9B already
+reads the CG catalog at roughly the 235B's level. The in-domain CG training
+set (1,080 questions on 161 already-built videos, not in cgbench_mini and
+not on the 67 evaluation videos) is being teacher-labelled now (order 0:
+1,080 rows, 0 errors, 45.9% teacher accuracy, $8.2).
+
+**Process-reward arm, SFT version (sft_v3p = the 822 citation-precise rows,
+same lr/epochs; fresh 300, 2026-09-08 18:40): accuracy 41.0, grounded
+accuracy 5.3, mean citation precision 16.0.** Paired vs sft_v2 (46.0 / 6.0 /
+13.6): accuracy −5.0 [−10.0, +0.0], grounded accuracy −0.7 [−4.0, +2.7];
+vs base 9B (38.0) +3.0 [−3.3, +9.3]; vs the 235B cited rationale (45.7)
+−4.7 [−10.0, +0.7]. Filtering the SFT data to precise citations raises
+mean precision by 2.4 points, does not raise grounded accuracy, and costs
+5 accuracy points (a third of the data). So precision-filtered *imitation*
+is not the process lever; groundedness needs the citation term in the
+reward at RL time (the GRPO arm), where the model's own samples are
+scored rather than the teacher's selected.
+
 **FULL VIDEO-HOLMES TEST, trained 9B (2026-09-08 12:40; sft_v2 final adapter,
 merged weights, rationale format, gen-1 catalog, no pointer): 51.2 on all
 1,837 questions.** Paired: vs the 235B teacher on the same catalog (48.3,
