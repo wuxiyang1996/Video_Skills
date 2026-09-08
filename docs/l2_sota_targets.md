@@ -1077,6 +1077,15 @@ full-sequence logits (13k × 248k vocab in fp32 ≈ 13 GB); fixed by
 materialising logits for the supervised tail only (`logits_to_keep`), one
 epoch to fit the 8-h scavenger limit. Resubmitted.
 
+The resubmitted run trained at ~560 s per optimizer step (8 × 16k-token
+sequences), i.e. ~70 s per sequence — ten times the expected cost — because
+Qwen3.5's Gated-DeltaNet layers fell back to the torch implementation
+(`flash-linear-attention` and `causal-conv1d` were absent from the training
+env; transformers logs "fast path is not available"). The epoch-only-saving
+run was cancelled (it could not finish in 8 h); an insurance run with step
+checkpoints continues on the slow path; the fast-path libraries are being
+installed and the full run relaunched afterwards.
+
 **Where the 9B loses to the 235B on the same catalog (fresh 300, cited
 rationale runs; 2026-09-06).** 235B right / 9B wrong: 64; 9B right / 235B
 wrong: 41; both right: 73 — the union is 59%, so the small model is not a
