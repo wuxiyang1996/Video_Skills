@@ -5,7 +5,7 @@ set -uo pipefail; cd /fs/gamma-projects/vlm-robot/Video_Skills
 ROOT=$1; RUN=$2; TAG=$3; LAUNCH=$4; declare -A resub
 while :; do total=0; done_n=0; line=""
   for f in $ROOT/allowlists/shard*.txt; do s=$(basename $f .txt | sed 's/shard//'); n=$(grep -c . $f); c=0
-    while read -r eid; do [ -n "$eid" ] && [ -f "$ROOT/shard$s/$RUN/stages/${eid//:/_}/04_l1_example.json" ] && c=$((c+1)); done < $f
+    while read -r eid; do [ -n "$eid" ] && [ -f "$ROOT/shard$s/$RUN/stages/$(echo "$eid" | tr -c "A-Za-z0-9\n" "_")/04_l1_example.json" ] && c=$((c+1)); done < $f
     total=$((total+n)); done_n=$((done_n+c)); line="$line s$s:$c/$n"
     if [ $c -lt $n ] && [ -z "$(squeue -u wuxiyang -h -n $TAG-$s -o %i)" ]; then
       if [ "${resub[$s]:-0}" -lt 10 ]; then resub[$s]=$(( ${resub[$s]:-0} + 1 )); echo "$(date +%m-%d\ %H:%M) $TAG shard$s no job -> resubmit #${resub[$s]}"; bash $LAUNCH $s; fi
