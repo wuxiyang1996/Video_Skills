@@ -7,7 +7,15 @@ set -uo pipefail; cd /fs/gamma-projects/vlm-robot/Video_Skills
 export HF_HOME=/fs/gamma-projects/vlm-robot/Multi-hop-Reasoning-VLM-Agent/.hf_cache TRANSFORMERS_CACHE=/fs/gamma-projects/vlm-robot/Multi-hop-Reasoning-VLM-Agent/.hf_cache/hub
 export CUDA_HOME=/opt/common/cuda/cuda-13.0.2 CUDA_PATH=/opt/common/cuda/cuda-13.0.2 PATH=/opt/common/cuda/cuda-13.0.2/bin:$PWD/.venv-qwen35-vllm/bin:$PATH VLLM_USE_DEEP_GEMM=0 TOKENIZERS_PARALLELISM=false SETUPTOOLS_USE_DISTUTILS=stdlib PYTHONPATH=$PWD
 PORT=$((19000 + SLURM_JOB_ID % 1000)); BASE=Qwen/Qwen3.5-9B; NAME=$BASE
-LORA_ARGS=(); if [ -n "${ADAPTER:-}" ]; then LORA_ARGS=(--enable-lora --lora-modules "reader=$ADAPTER" --max-lora-rank 64); NAME=reader; fi
+LORA_ARGS=()
+if [ -n "${ADAPTER:-}" ]; then
+  # vLLM's LoRA serving mis-applies Qwen3.5 adapters (collapse to one option); merge into the weights instead.
+  MERGED=${MERGED:-$(dirname "$ADAPTER")/merged_$(basename "$ADAPTER")}
+  if [ ! -f "$MERGED/config.json" ]; then
+    PYTHONPATH=$PWD /fs/gamma-projects/vlm-robot/conda/envs/video-skills-grpo/bin/python -m trainer.reader.merge_adapter --adapter "$ADAPTER" --out "$MERGED" 2>&1 | grep -v Warning | tail -n 2
+  fi
+  BASE=$MERGED; NAME=reader
+fi
 .venv-qwen35-vllm/bin/vllm serve $BASE --host 127.0.0.1 --port $PORT --served-model-name $BASE --dtype bfloat16 --max-model-len 32768 --gpu-memory-utilization 0.90 "${LORA_ARGS[@]}" > /fs/nexus-scratch/wuxiyang/reader_train/slurm_logs/vllm-$SLURM_JOB_ID.log 2>&1 &
 for i in $(seq 1 600); do curl -sf http://127.0.0.1:$PORT/v1/models >/dev/null && break; sleep 2; done; curl -sf http://127.0.0.1:$PORT/v1/models >/dev/null || { echo "vllm did not start"; exit 1; }
 SPY=.venv-qwen35-serve/bin/python
