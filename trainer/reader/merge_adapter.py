@@ -41,8 +41,19 @@ def main(argv=None) -> int:
     snap = base_snapshot(args.base_model)
     model = AutoModelForCausalLM.from_pretrained(args.base_model, dtype=torch.bfloat16, device_map=args.device)
     model = PeftModel.from_pretrained(model, str(args.adapter)).merge_and_unload()
-    merged = {k: v.detach().to("cpu").contiguous() for k, v in model.state_dict().items()}
+    # save_pretrained applies HF's checkpoint key mapping (in-memory `model.layers.*` -> on-disk
+    # `model.language_model.layers.*`); read the saved tensors back so names match the base repo.
+    tmp = args.out.parent / (args.out.name + ".tmp_text")
+    if tmp.exists():
+        shutil.rmtree(tmp)
+    model.save_pretrained(str(tmp), safe_serialization=True, max_shard_size="4GB")
     del model
+    merged = {}
+    for shard in sorted(glob.glob(str(tmp / "*.safetensors"))):
+        with safe_open(shard, "pt") as f:
+            for key in f.keys():
+                merged[key] = f.get_tensor(key)
+    shutil.rmtree(tmp)
     # vision tower and anything else the text-only class does not carry, verbatim from the base shards
     index = json.load((snap / "model.safetensors.index.json").open())["weight_map"]
     extra = {}
@@ -74,8 +85,12 @@ def main(argv=None) -> int:
                "tokenizer_config.json", "tokenizer.json", "vocab.json", "merges.txt", "chat_template.jinja"]:
         if (snap / fn).exists():
             shutil.copy2(snap / fn, args.out / fn)
+    unexpected = sorted(set(tensors) - set(index))
     print(json.dumps({"merged": str(args.out), "text_keys": len(merged), "copied_base_keys": len(extra), "total_keys": len(tensors),
-                      "shards": len(shards), "missing_vs_base": len(set(index) - set(tensors))}))
+                      "shards": len(shards), "missing_vs_base": len(set(index) - set(tensors)), "unexpected_vs_base": len(unexpected),
+                      "unexpected_examples": unexpected[:3]}))
+    if unexpected or len(tensors) != len(index):
+        raise SystemExit("merged checkpoint does not match the base repo's parameter names")
     return 0
 
 
