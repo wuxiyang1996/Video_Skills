@@ -1132,6 +1132,23 @@ serving reproduced the same collapse for the same reason. Fix: serve as
 `qwen3.5-9b-reader`. All earlier LoRA/merged reads are void; the two
 evaluations are rerunning.
 
+**WATERSHED PASSED (2026-09-08 11:30, fresh 300, rationale format, paired vs
+the base Qwen3.5-9B at 38.0; merged weights served as qwen3.5-9b-reader,
+300/300 JSON-first, balanced labels):**
+
+| reader | acc | vs base 9B 38.0 | vs 235B cited rationale 45.7 |
+|---|---|---|---|
+| sft_v2 final (2,886 rows, lr 1e-4, 1 epoch) | **46.0** | **+8.0 [+2.3, +14.0]** | +0.3 [−5.0, +6.0] |
+| sft_v2 checkpoint-320 (dev-selected) | 48.0 | +10.0 [+3.7, +16.3] | +2.3 [−3.3, +8.0] |
+| sft_v2b (1,600 rows, lr 5e-5) | see log | | |
+
+One epoch of LoRA SFT on verified 235B rationales lifts the 9B to the 235B's
+level on the same catalog (by type: TCI +13–16, TA +13–16, MHR +7–10, CTI
++9, PAR +7–20). The pre-registered continuation now runs: full Video-Holmes
+test (1,837) with the final adapter against the base 9B on the same catalog
+and against the 235B's 48.3 / 42.6; CG-Bench 237 zero-shot (trained vs
+base 9B); VRBench held-out when its L1 lands; then the GRPO arms.
+
 **Where the 9B loses to the 235B on the same catalog (fresh 300, cited
 rationale runs; 2026-09-06).** 235B right / 9B wrong: 64; 9B right / 235B
 wrong: 41; both right: 73 — the union is 59%, so the small model is not a
