@@ -1085,6 +1085,13 @@ env; transformers logs "fast path is not available"). The epoch-only-saving
 run was cancelled (it could not finish in 8 h); an insurance run with step
 checkpoints continues on the slow path; the fast-path libraries are being
 installed and the full run relaunched afterwards.
+Fixed 2026-09-08 02:00: `flash-linear-attention` installed; `causal-conv1d`
+wheels and source build both mismatch the environment's C++ ABI, so a
+pure-torch `causal_conv1d` shim (depthwise causal conv, numerically
+identical) with distribution metadata makes transformers' fast-path gate
+pass. Full run `sft_v1c` (2,886 rows, 24k tokens, LoRA r=16, 1 epoch,
+checkpoints every 40 steps): **59 s/step vs 487 s/step** on the slow path;
+361 steps ≈ 6 h.
 
 **Where the 9B loses to the 235B on the same catalog (fresh 300, cited
 rationale runs; 2026-09-06).** 235B right / 9B wrong: 64; 9B right / 235B
