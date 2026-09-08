@@ -1065,6 +1065,18 @@ Scheduling note (2026-09-06 18:00): `repass16` (question-aware 9B repass,
 L1; its stage caches are kept and the shards can be resubmitted with
 `scripts/launch/launch_vh_l1_levers.sh repass16` to fill T3 later.
 
+**Training data built (2026-09-08 00:15).** Train-split L1 (233 videos, 9B
+clips), whisper, and window narratives + dialogue + clips for all 1,551
+train questions (slim examples). Teacher (235B, cited rationale) in three
+option orders: 62.3 / 62.5 / 61.4% right on the train split (vs 45% on the
+test fresh 300 — the train questions are easier). Verified SFT rows: 2,886
+(right answer; the citation-precision filter did not bind because the train
+examples carry no inference-shot spans); prompts p50 13.5k / p90 18.3k /
+max 22.2k tokens, 252 supervised tokens per row. First SFT job OOMed on the
+full-sequence logits (13k × 248k vocab in fp32 ≈ 13 GB); fixed by
+materialising logits for the supervised tail only (`logits_to_keep`), one
+epoch to fit the 8-h scavenger limit. Resubmitted.
+
 **Where the 9B loses to the 235B on the same catalog (fresh 300, cited
 rationale runs; 2026-09-06).** 235B right / 9B wrong: 64; 9B right / 235B
 wrong: 41; both right: 73 — the union is 59%, so the small model is not a
