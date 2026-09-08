@@ -78,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset-root", type=Path, default=Path("/fs/gamma-projects/vlm-robot/datasets"))
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--limit-videos", type=int)
+    parser.add_argument("--cg-full", action="store_true", help="CG-Bench: iterate the full cgbench.json (12k questions) instead of cgbench_mini")
     parser.add_argument("--slim", action="store_true", help="Drop the clue graph and other heavy metadata; keep the catalog and question only (~10x smaller).")
     args = parser.parse_args(argv)
 
@@ -86,7 +87,11 @@ def main(argv: list[str] | None = None) -> int:
     by_video = index_frozen_by_video(Path(p) for p in sorted(glob.glob(args.frozen_l1_glob, recursive=True)))
     if args.limit_videos:
         by_video = dict(list(by_video.items())[: args.limit_videos])
-    adapter = get_adapter(args.dataset, args.dataset_root)
+    if args.cg_full and args.dataset == "cg_bench":
+        from dataset_clip_wrapper.adapters.cg_bench import CGBenchAdapter
+        adapter = CGBenchAdapter(args.dataset_root, split=args.split, use_mini=False)
+    else:
+        adapter = get_adapter(args.dataset, args.dataset_root)
     adapter.split = args.split
     written = 0
     skipped_no_l1 = 0
