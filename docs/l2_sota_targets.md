@@ -1140,9 +1140,9 @@ the base Qwen3.5-9B at 38.0; merged weights served as qwen3.5-9b-reader,
 |---|---|---|---|
 | sft_v2 final (2,886 rows, lr 1e-4, 1 epoch) | **46.0** | **+8.0 [+2.3, +14.0]** | +0.3 [−5.0, +6.0] |
 | sft_v2 checkpoint-320 (dev-selected) | 48.0 | +10.0 [+3.7, +16.3] | +2.3 [−3.3, +8.0] |
-| sft_v2b (1,600 rows, lr 5e-5) | see log | | |
+| sft_v2b (1,600 rows, lr 5e-5) | 45.7 | +7.7 [+1.3, +13.7] | 0.0 |
 
-One epoch of LoRA SFT on verified 235B rationales lifts the 9B to the 235B's
+Robust across data size and learning rate (45.7–48.0). One epoch of LoRA SFT on verified 235B rationales lifts the 9B to the 235B's
 level on the same catalog (by type: TCI +13–16, TA +13–16, MHR +7–10, CTI
 +9, PAR +7–20). The pre-registered continuation now runs: full Video-Holmes
 test (1,837) with the final adapter against the base 9B on the same catalog
