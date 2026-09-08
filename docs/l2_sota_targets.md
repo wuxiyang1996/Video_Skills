@@ -1120,6 +1120,18 @@ adapter into the weights (`trainer/reader/merge_adapter.py`) and serve the
 merged model; the evaluation job now does this automatically. The
 LoRA-served early reads (27.3 / 28.3) are void.
 
+**Correction (2026-09-08 10:45): the collapse was the served model's *name*,
+not vLLM's LoRA path.** The evaluator's client sends
+`chat_template_kwargs: {enable_thinking: false}` only when the model name
+contains "qwen3"; the adapter was served as `reader`, so vLLM rendered the
+thinking-open prefix (`<think>\n`) and the trained reader — trained on the
+closed prefix — produced thinking prose and a collapsed label (62/230
+outputs even closed a `</think>` block; the base run, served as
+`Qwen/Qwen3.5-9B`, had thinking off and 300/300 JSON-first outputs). Merged
+serving reproduced the same collapse for the same reason. Fix: serve as
+`qwen3.5-9b-reader`. All earlier LoRA/merged reads are void; the two
+evaluations are rerunning.
+
 **Where the 9B loses to the 235B on the same catalog (fresh 300, cited
 rationale runs; 2026-09-06).** 235B right / 9B wrong: 64; 9B right / 235B
 wrong: 41; both right: 73 — the union is 59%, so the small model is not a
