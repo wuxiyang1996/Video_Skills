@@ -12,8 +12,14 @@ if [ -n "${ADAPTER:-}" ]; then
   # vLLM's LoRA serving mis-applies Qwen3.5 adapters (collapse to one option); merge into the weights instead.
   # merged weights are 17 GB each: keep them off the 200 GB scratch quota, under the project tree, and delete after use
   MERGED=${MERGED:-/fs/gamma-projects/vlm-robot/Video_Skills/dataset_clip_wrapper/output/reader_merged/$(basename $(dirname "$ADAPTER"))_$(basename "$ADAPTER")}
+  # several evaluation jobs may share one adapter: one merges (lock), the others wait for config.json
   if [ ! -f "$MERGED/config.json" ]; then
-    PYTHONPATH=$PWD /fs/gamma-projects/vlm-robot/conda/envs/video-skills-grpo/bin/python -m trainer.reader.merge_adapter --adapter "$ADAPTER" --out "$MERGED" 2>&1 | grep -v Warning | tail -n 2
+    if mkdir "$MERGED.lock" 2>/dev/null; then
+      PYTHONPATH=$PWD /fs/gamma-projects/vlm-robot/conda/envs/video-skills-grpo/bin/python -m trainer.reader.merge_adapter --adapter "$ADAPTER" --out "$MERGED" 2>&1 | grep -v Warning | tail -n 2
+      rmdir "$MERGED.lock"
+    else
+      for i in $(seq 1 360); do [ -f "$MERGED/config.json" ] && [ ! -d "$MERGED.lock" ] && break; sleep 10; done
+    fi
   fi
   BASE=$MERGED; NAME=qwen3.5-9b-reader   # name must contain "qwen3": the client only sends enable_thinking=false for Qwen3-family names
 fi
