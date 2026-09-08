@@ -969,6 +969,17 @@ the primary CI excludes 0 in the positive direction. Chain:
 `scratchpad/vrbench_heldout_chain.sh`; outputs
 `/fs/nexus-scratch/wuxiyang/vrbench_pilot_v1/heldout60/`.
 
+**HELD-OUT CONFIRMATION PASSED (2026-09-08, VRBench videos 61–120, 495
+questions, catalog + pointer as in the pilot, 235B):** graph2 − cited direct
+on the pre-registered primary outcome, correct ∧ citation precision ≥ 0.5:
+**25.1 → 31.5, +6.5 [+2.4, +10.7]**. Secondary: accuracy 71.7 → 69.9, −1.8
+[−5.3, +1.4]; correct ∧ any gold step hit +1.2 [−2.8, +5.3]; correct ∧ step
+recall ≥ 0.5 −3.2 [−7.7, +1.0]; plain direct 72.5. The pilot's +4.0 and the
+CG +5.1 replicate on untouched videos with a criterion fixed in advance: the
+decomposition does not change how often the answer is right and does make a
+right answer come with precisely aimed citations. This is the atomic-skill
+process claim, now confirmed out of sample.
+
 
 
 ## Pre-registered: train the small reader with skill-derived verifiable rewards (decided 2026-09-06)

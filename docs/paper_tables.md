@@ -96,7 +96,7 @@ Zero-shot transfer: VRBench pilot 480 sft_v2 66.9 vs base 67.1 (n.s.); CG 237 pe
 | **pooled VRBench + CG (n = 717)** | 21.2 | 25.5 | **+4.3 [+1.0, +7.7]** |
 | pooled: correct ∧ any gold step hit | 36.4 | 36.8 | +0.4 [−3.1, +3.8] |
 | VRBench inference-step recall: OPD vs BM25 (retrieval controller) | 11.00 | 14.57 | +3.57 CI-clean (no accuracy transfer) |
-| VRBench held-out 60 videos (pre-registered confirmation) | pending | | |
+| **VRBench held-out 60 videos (pre-registered; correct ∧ citation precision ≥ 0.5)** | 25.1 | 31.5 | **+6.5 [+2.4, +10.7]**; accuracy −1.8 n.s. |
 
 ## T7. Where the failures are (direct reader, fitted to the skill ontology)
 
