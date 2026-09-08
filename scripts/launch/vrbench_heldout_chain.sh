@@ -3,7 +3,7 @@
 # (also report accuracy and correct AND any gold hit). Monitor/resubmit L1 shards -> derive all questions -> graph2 + cited rationale -> score.
 set -uo pipefail; cd /fs/gamma-projects/vlm-robot/Video_Skills
 SPY=.venv-qwen35-serve/bin/python; P=/fs/nexus-scratch/wuxiyang/vrbench_pilot_v1; H=$P/heldout60; S=/tmp/claude-17237/-fs-gamma-projects-vlm-robot/373c29f6-2b6a-4ecf-8d7c-76c68a83d10a/scratchpad
-E=/fs/gamma-projects/vlm-robot/datasets/VRBench/VRBench_eval.jsonl; RUN=vrbench/train/start_0_limit_960
+E=/fs/gamma-projects/vlm-robot/datasets/VRBench/VRBench_eval.jsonl; RUN=vrbench/start_0_limit_960
 declare -A resub
 while :; do total=0; done_n=0; line=""
   for s in 0 1 2 3 4 5; do n=$(grep -c . $H/allowlists/shard$s.txt); c=0
