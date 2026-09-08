@@ -15,7 +15,7 @@ if [ -n "${ADAPTER:-}" ]; then
   if [ ! -f "$MERGED/config.json" ]; then
     PYTHONPATH=$PWD /fs/gamma-projects/vlm-robot/conda/envs/video-skills-grpo/bin/python -m trainer.reader.merge_adapter --adapter "$ADAPTER" --out "$MERGED" 2>&1 | grep -v Warning | tail -n 2
   fi
-  BASE=$MERGED; NAME=reader
+  BASE=$MERGED; NAME=qwen3.5-9b-reader   # name must contain "qwen3": the client only sends enable_thinking=false for Qwen3-family names
 fi
 .venv-qwen35-vllm/bin/vllm serve $BASE --host 127.0.0.1 --port $PORT --served-model-name $NAME --dtype bfloat16 --max-model-len 32768 --gpu-memory-utilization 0.90 "${LORA_ARGS[@]}" > /fs/nexus-scratch/wuxiyang/reader_train/slurm_logs/vllm-$SLURM_JOB_ID.log 2>&1 &
 for i in $(seq 1 600); do curl -sf http://127.0.0.1:$PORT/v1/models >/dev/null && break; sleep 2; done; curl -sf http://127.0.0.1:$PORT/v1/models >/dev/null || { echo "vllm did not start"; exit 1; }
