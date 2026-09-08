@@ -1093,6 +1093,18 @@ pass. Full run `sft_v1c` (2,886 rows, 24k tokens, LoRA r=16, 1 epoch,
 checkpoints every 40 steps): **59 s/step vs 487 s/step** on the slow path;
 361 steps ≈ 6 h.
 
+**Early read at checkpoint-80 (2026-09-08 05:00): 27.3 vs base 38.0, −10.7
+[−17.7, −3.7] — 262/300 answers "A".** Cause found, not the data: the
+training prompts were rendered with the tokenizer's default chat template,
+which opens a thinking block (`...assistant\n<think>\n`), while the
+evaluator serves with thinking disabled (`<think>\n\n</think>\n\n`). The
+adapter learned to emit the JSON after an open `<think>` and, given the
+closed prefix at evaluation, fell back to reasoning prose and a collapsed
+label. Fixed by rendering training prompts with `enable_thinking=False`
+(test asserts it); the mis-rendered run was cancelled and two corrected
+runs launched: `sft_v2` (all 2,886 rows, lr 1e-4) and `sft_v2b` (1,600
+rows, lr 5e-5) — each with step checkpoints and its own evaluation chain.
+
 **Where the 9B loses to the 235B on the same catalog (fresh 300, cited
 rationale runs; 2026-09-06).** 235B right / 9B wrong: 64; 9B right / 235B
 wrong: 41; both right: 73 — the union is 59%, so the small model is not a
