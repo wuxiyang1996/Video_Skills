@@ -1,14 +1,28 @@
-"""Merge a LoRA adapter into the base weights and save a standalone model for vLLM.
+"""Merge a LoRA adapter into Qwen3.5-9B and save a full-repo checkpoint that vLLM can serve.
 
-vLLM's LoRA path for Qwen3.5 (served through the ConditionalGeneration wrapper) applied the
-reader adapters wrongly: the same checkpoint that generates clean JSON under HF/PEFT collapsed to
-option "A" with 6k-character prose when served with --enable-lora.  Merging sidesteps LoRA serving.
+vLLM's LoRA path for Qwen3.5 mis-applies reader adapters (the same checkpoint generates clean
+JSON under HF/PEFT but collapses when served with --enable-lora), so we merge.  Merging through
+`AutoModelForCausalLM` yields the language-model weights under the base repo's names
+(`model.language_model.*`, `lm_head.weight`) but a text-only config (`qwen3_5_text`) that vLLM
+rejects.  This writes the merged text weights together with the base repo's vision weights,
+config, preprocessors and tokenizer, so the result loads exactly like the original repo.
 """
 from __future__ import annotations
 
 import argparse
+import glob
+import json
+import os
 import shutil
 from pathlib import Path
+
+
+def base_snapshot(model_id: str) -> Path:
+    home = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+    snaps = sorted(glob.glob(f"{home}/hub/models--{model_id.replace('/', '--')}/snapshots/*"))
+    if not snaps:
+        raise FileNotFoundError(f"no local snapshot for {model_id} under {home}")
+    return Path(snaps[-1])
 
 
 def main(argv=None) -> int:
@@ -20,15 +34,48 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     import torch
     from peft import PeftModel
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from safetensors import safe_open
+    from safetensors.torch import save_file
+    from transformers import AutoModelForCausalLM
 
+    snap = base_snapshot(args.base_model)
     model = AutoModelForCausalLM.from_pretrained(args.base_model, dtype=torch.bfloat16, device_map=args.device)
-    model = PeftModel.from_pretrained(model, str(args.adapter))
-    merged = model.merge_and_unload()
+    model = PeftModel.from_pretrained(model, str(args.adapter)).merge_and_unload()
+    merged = {k: v.detach().to("cpu").contiguous() for k, v in model.state_dict().items()}
+    del model
+    # vision tower and anything else the text-only class does not carry, verbatim from the base shards
+    index = json.load((snap / "model.safetensors.index.json").open())["weight_map"]
+    extra = {}
+    for shard in sorted(set(index.values())):
+        with safe_open(str(snap / shard), "pt") as f:
+            for key in f.keys():
+                if key not in merged:
+                    extra[key] = f.get_tensor(key)
     args.out.mkdir(parents=True, exist_ok=True)
-    merged.save_pretrained(str(args.out), safe_serialization=True)
-    AutoTokenizer.from_pretrained(args.base_model).save_pretrained(str(args.out))
-    print({"merged": str(args.out), "architectures": merged.config.architectures, "files": len(list(args.out.iterdir()))})
+    tensors = {**merged, **extra}
+    # write ~4 GB shards with an index, like the base repo
+    keys = sorted(tensors)
+    shards, cur, size = [], [], 0
+    for k in keys:
+        n = tensors[k].numel() * tensors[k].element_size()
+        if cur and size + n > 4_000_000_000:
+            shards.append(cur); cur, size = [], 0
+        cur.append(k); size += n
+    if cur:
+        shards.append(cur)
+    weight_map = {}
+    for i, ks in enumerate(shards, start=1):
+        name = f"model-{i:05d}-of-{len(shards):05d}.safetensors"
+        save_file({k: tensors[k] for k in ks}, str(args.out / name), metadata={"format": "pt"})
+        for k in ks:
+            weight_map[k] = name
+    (args.out / "model.safetensors.index.json").write_text(json.dumps({"metadata": {}, "weight_map": weight_map}, indent=1))
+    for fn in ["config.json", "generation_config.json", "preprocessor_config.json", "video_preprocessor_config.json",
+               "tokenizer_config.json", "tokenizer.json", "vocab.json", "merges.txt", "chat_template.jinja"]:
+        if (snap / fn).exists():
+            shutil.copy2(snap / fn, args.out / fn)
+    print(json.dumps({"merged": str(args.out), "text_keys": len(merged), "copied_base_keys": len(extra), "total_keys": len(tensors),
+                      "shards": len(shards), "missing_vs_base": len(set(index) - set(tensors))}))
     return 0
 
 
