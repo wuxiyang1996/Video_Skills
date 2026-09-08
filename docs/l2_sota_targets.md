@@ -1149,6 +1149,19 @@ test (1,837) with the final adapter against the base 9B on the same catalog
 and against the 235B's 48.3 / 42.6; CG-Bench 237 zero-shot (trained vs
 base 9B); VRBench held-out when its L1 lands; then the GRPO arms.
 
+**Groundedness on the fresh 300 (right answer ∧ citation precision ≥ 0.5
+against the annotated inference shots; `trainer/reader/grounded_vh.py`):**
+base 9B 6.3 (mean precision 18.5), sft_v2 6.0 (13.6), checkpoint-320 5.7
+(12.3), sft_v2b 8.0 (15.9), 235B cited rationale 5.3 (17.0). Outcome-only
+SFT moves accuracy (+8.0) and not groundedness (−0.3 [−3.7, +3.0]) — the
+inference shots are 1–2 s and readers cite 3–10 rows, so precision is low
+for everyone. The process-reward arm is now concrete: of the 2,886 correct
+teacher rows only 822 have citation precision ≥ 0.5 (the reward function
+had been reading gold spans from the example instead of the supervision
+index; fixed). `sft_v3p` = SFT on those 822 rows (same lr/epochs) is
+training; the pre-registered comparison is sft_v3p vs sft_v2 on grounded
+accuracy (and accuracy) on the fresh 300, then the full test.
+
 **Where the 9B loses to the 235B on the same catalog (fresh 300, cited
 rationale runs; 2026-09-06).** 235B right / 9B wrong: 64; 9B right / 235B
 wrong: 41; both right: 73 — the union is 59%, so the small model is not a
