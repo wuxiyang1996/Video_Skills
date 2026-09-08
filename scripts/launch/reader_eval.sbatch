@@ -10,7 +10,8 @@ PORT=$((19000 + SLURM_JOB_ID % 1000)); BASE=Qwen/Qwen3.5-9B; NAME=$BASE
 LORA_ARGS=()
 if [ -n "${ADAPTER:-}" ]; then
   # vLLM's LoRA serving mis-applies Qwen3.5 adapters (collapse to one option); merge into the weights instead.
-  MERGED=${MERGED:-$(dirname "$ADAPTER")/merged_$(basename "$ADAPTER")}
+  # merged weights are 17 GB each: keep them off the 200 GB scratch quota, under the project tree, and delete after use
+  MERGED=${MERGED:-/fs/gamma-projects/vlm-robot/Video_Skills/dataset_clip_wrapper/output/reader_merged/$(basename $(dirname "$ADAPTER"))_$(basename "$ADAPTER")}
   if [ ! -f "$MERGED/config.json" ]; then
     PYTHONPATH=$PWD /fs/gamma-projects/vlm-robot/conda/envs/video-skills-grpo/bin/python -m trainer.reader.merge_adapter --adapter "$ADAPTER" --out "$MERGED" 2>&1 | grep -v Warning | tail -n 2
   fi
@@ -21,3 +22,4 @@ for i in $(seq 1 600); do curl -sf http://127.0.0.1:$PORT/v1/models >/dev/null &
 SPY=.venv-qwen35-serve/bin/python
 $SPY -m scripts.eval.measure_answer_chain --l1-glob "$L1GLOB" --indices-from all --conditions direct --rationale --example-ids "$IDS" --workers 8 --timeout-s 600 --skill-model openai/gpt-oss-120b --answer-model $NAME --answer-api-base http://127.0.0.1:$PORT/v1/chat/completions --dump-rollouts "$OUT.rollouts.jsonl" --output "$OUT.json" > "$OUT.log" 2>&1
 f=$OUT.rows.jsonl; r=$(cat $f|wc -l); c=$(grep -c '"correct": true' $f); echo "$(basename $OUT): $r rows, acc $(python3 -c "print(round(100*$c/max($r,1),1))")%"
+if [ -n "${ADAPTER:-}" ] && [ "${KEEP_MERGED:-0}" != "1" ]; then rm -rf "$MERGED"; echo "merged weights removed: $MERGED"; fi
