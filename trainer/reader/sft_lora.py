@@ -23,7 +23,10 @@ def load_rows(path: Path, limit: int = 0) -> list[dict[str, Any]]:
 
 def encode_example(tokenizer: Any, row: dict[str, Any], max_len: int) -> dict[str, Any] | None:
     """Prompt tokens masked with -100; completion (+eos) supervised. Drops rows whose prompt alone exceeds max_len."""
-    prompt_text = tokenizer.apply_chat_template(row["messages"], tokenize=False, add_generation_prompt=True)
+    # Render exactly what the evaluator's server renders: thinking disabled, so the assistant prefix is
+    # "<think>\n\n</think>\n\n" rather than an open "<think>\n".  Training on the default (thinking-open)
+    # prefix produced an adapter that collapsed to option A at evaluation (fresh 300: 27.3 vs base 38.0).
+    prompt_text = tokenizer.apply_chat_template(row["messages"], tokenize=False, add_generation_prompt=True, enable_thinking=False)
     prompt_ids = tokenizer(prompt_text, add_special_tokens=False)["input_ids"]
     completion_ids = tokenizer(row["completion"], add_special_tokens=False)["input_ids"] + [tokenizer.eos_token_id]
     if len(prompt_ids) >= max_len - 8:

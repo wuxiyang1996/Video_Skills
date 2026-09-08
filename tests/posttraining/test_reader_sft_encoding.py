@@ -4,7 +4,8 @@ from trainer.reader.sft_lora import encode_example
 class _Tok:
     eos_token_id = 0
 
-    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True, enable_thinking=None):
+        assert enable_thinking is False, "training must render the thinking-closed prefix the evaluator uses"
         return "|".join(m["content"] for m in messages) + "|A:"
 
     def __call__(self, text, add_special_tokens=False):
