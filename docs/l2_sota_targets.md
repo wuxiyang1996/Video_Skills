@@ -1103,7 +1103,7 @@ closed prefix at evaluation, fell back to reasoning prose and a collapsed
 label. Fixed by rendering training prompts with `enable_thinking=False`
 (test asserts it); the mis-rendered run was cancelled and two corrected
 runs launched: `sft_v2` (all 2,886 rows, lr 1e-4) and `sft_v2b` (1,600
-rows, lr 5e-5) — each with step checkpoints and its own evaluation chain.
+rows; intended lr 5e-5 but the LR knob did not pass through, so also 1e-4) — each with step checkpoints and its own evaluation chain.
 
 **Where the 9B loses to the 235B on the same catalog (fresh 300, cited
 rationale runs; 2026-09-06).** 235B right / 9B wrong: 64; 9B right / 235B
