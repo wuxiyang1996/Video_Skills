@@ -33,6 +33,25 @@ def encode_example(tokenizer: Any, row: dict[str, Any], max_len: int) -> dict[st
     return {"input_ids": ids, "labels": labels, "attention_mask": [1] * len(ids)}
 
 
+def completion_only_loss(model: Any, batch: dict[str, Any]) -> Any:
+    """Cross-entropy on the supervised tail only, materialising logits for just those positions.
+
+    Prompts are ~13k tokens and the vocabulary ~250k, so full-sequence logits alone are ~13 GB
+    in fp32 (the OOM of the first SFT job).  Since the completion is the tail of every
+    sequence, `logits_to_keep` restricts the LM head to the last k positions (k = supervised
+    tokens + 1); the shift-by-one then lines those logits up with the completion labels.
+    """
+    import torch
+
+    labels = batch["labels"]
+    supervised = (labels != -100).sum(dim=1)
+    k = int(supervised.max().item()) + 1
+    out = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"], logits_to_keep=k)
+    logits = out.logits[:, :-1, :].float()               # positions T-k .. T-2 predict tokens T-k+1 .. T-1
+    target = labels[:, -k + 1:]                           # the last k-1 labels
+    return torch.nn.functional.cross_entropy(logits.reshape(-1, logits.size(-1)), target.reshape(-1), ignore_index=-100)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data", type=Path, required=True)
@@ -92,8 +111,13 @@ def main(argv: list[str] | None = None) -> int:
                               lr_scheduler_type="cosine", warmup_ratio=0.05, bf16=True, logging_steps=10, save_strategy="epoch",
                               eval_strategy="epoch" if eval_ds else "no", report_to=[], seed=args.seed,
                               gradient_checkpointing=True, remove_unused_columns=False, dataloader_num_workers=2)
-    trainer = Trainer(model=model, args=targs, train_dataset=_DS(encoded), eval_dataset=eval_ds,
-                      data_collator=DataCollatorForSeq2Seq(tokenizer, padding=True, label_pad_token_id=-100))
+    class CompletionOnlyTrainer(Trainer):
+        def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+            loss = completion_only_loss(model, inputs)
+            return (loss, None) if return_outputs else loss
+
+    trainer = CompletionOnlyTrainer(model=model, args=targs, train_dataset=_DS(encoded), eval_dataset=eval_ds,
+                                    data_collator=DataCollatorForSeq2Seq(tokenizer, padding=True, label_pad_token_id=-100))
     trainer.train()
     model.save_pretrained(str(args.output_dir / "adapter"))
     tokenizer.save_pretrained(str(args.output_dir / "adapter"))
