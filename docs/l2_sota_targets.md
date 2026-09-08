@@ -1170,6 +1170,20 @@ there — no negative transfer. A VH+VRBench-trained model is the in-domain
 number to add. Full VH test, partial paired read at n = 1,035: base 41.7 →
 trained 51.6.
 
+**FULL VIDEO-HOLMES TEST, trained 9B (2026-09-08 12:40; sft_v2 final adapter,
+merged weights, rationale format, gen-1 catalog, no pointer): 51.2 on all
+1,837 questions.** Paired: vs the 235B teacher on the same catalog (48.3,
+no pointer) **+2.8 [+0.5, +5.1]**; vs the 235B pointer run (47.4) +3.8
+[+1.4, +6.2]; vs the old-catalog 235B (42.6) +8.6 [+6.0, +11.2]; vs the API
+8B on the new catalog (40.4) +10.7 [+8.3, +13.2]; vs its own base (partial,
+n = 1,356 answered) 41.4 → 51.0, +9.7 [+7.0, +12.3]. By type vs the teacher:
+TA **+20.0 [+12.0, +28.0]** (30.0 → 50.0 — the type every prompt-only lever
+lost is where training gains most), MHR +3.9, CTI +2.6, TCI +1.8, SR +0.3,
+PAR −1.6, IMC −4.0 (all n.s.). Published: Gemini-2.5-Pro 45.0, Qwen2.5-VL-7B
+27.8. **The 9B student, trained only on the teacher's verified rationales,
+exceeds the 235B teacher that produced them, and every published number,
+on the full test.**
+
 **Where the 9B loses to the 235B on the same catalog (fresh 300, cited
 rationale runs; 2026-09-06).** 235B right / 9B wrong: 64; 9B right / 235B
 wrong: 41; both right: 73 — the union is 59%, so the small model is not a

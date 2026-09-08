@@ -22,6 +22,19 @@ Full-test by type (gen 1 / gen 2 vs ours): MHR 43.4/43.1 vs 39.8; SR 59.2/57.2
 vs 53.8; IMC 56.2/50.7 vs 49.3; TCI 49.1/41.4 vs 39.9; CTI 47.0/41.5 vs 37.8;
 TA 30.0/30.0 vs 34.0; PAR 49.0/53.1 vs 40.2.
 
+## T1b. Training the reader (Qwen3.5-9B, LoRA SFT on verified 235B rationales; rationale format)
+
+| reader | fresh 300 | full test 1,837 | vs 235B teacher (48.3) | vs base 9B |
+|---|---|---|---|---|
+| base Qwen3.5-9B | 38.0 | (running) | | — |
+| sft_v2 (2,886 rows, 1 epoch) | 46.0 | **51.2** | **+2.8 [+0.5, +5.1]** | +9.7 [+7.0, +12.3] (partial n=1,356) |
+| sft_v2 checkpoint-320 | 48.0 | — | | |
+| sft_v2b (1,600 rows, lr 5e-5) | 45.7 | — | | |
+| sft_v3p (822 citation-precise rows; process arm) | pending | | | |
+
+By type on the full test (sft_v2 − 235B): TA +20.0*, MHR +3.9, CTI +2.6, TCI +1.8, SR +0.3, PAR −1.6, IMC −4.0.
+Zero-shot transfer: VRBench pilot 480 sft_v2 66.9 vs base 67.1 (n.s.); CG 237 pending.
+
 ## T2. Generalisation of the catalog recipe
 
 | benchmark | ours | + dialogue + narrative + clips | Δ |
