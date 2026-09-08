@@ -3,7 +3,7 @@
 set -uo pipefail; cd /fs/gamma-projects/vlm-robot/Video_Skills
 S=/tmp/claude-17237/-fs-gamma-projects-vlm-robot/373c29f6-2b6a-4ecf-8d7c-76c68a83d10a/scratchpad; R=/fs/nexus-scratch/wuxiyang/reader_train; P=/fs/nexus-scratch/wuxiyang/vh_l1_levers; M=dataset_clip_wrapper/output/l2_paper_cg_vh_20260901/full_vh_mm
 TAG=${TAG:-sft_v1}
-jid=$(DATA=$R/sft_v1.jsonl OUT=$R/$TAG EPOCHS=1 LIMIT=${LIMIT:-} MAXLEN=${MAXLEN:-} LR=${LR:-1e-4} LR=${LR:-1e-4} sbatch --parsable scripts/launch/reader_sft.sbatch); echo "$(date +%m-%d\ %H:%M) SFT job $jid"
+jid=$(DATA=${DATA:-$R/sft_v1.jsonl} OUT=$R/$TAG EPOCHS=1 LIMIT=${LIMIT:-} MAXLEN=${MAXLEN:-} LR=${LR:-1e-4} LR=${LR:-1e-4} sbatch --parsable scripts/launch/reader_sft.sbatch); echo "$(date +%m-%d\ %H:%M) SFT job $jid"
 while [ -n "$(squeue -h -j $jid -o %i 2>/dev/null)" ]; do sleep 300; done
 ADP=$R/$TAG/adapter; if [ ! -f $ADP/adapter_config.json ]; then ADP=$(ls -d $R/$TAG/checkpoint-* 2>/dev/null | sort -t- -k2 -n | tail -1); fi
 if [ -z "$ADP" ] || [ ! -f $ADP/adapter_config.json ]; then echo "$(date +%m-%d\ %H:%M) SFT produced no adapter or checkpoint; tail of err:"; tail -n 5 $R/slurm_logs/sft-$jid.err | cut -c1-200; exit 1; fi
