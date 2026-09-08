@@ -1210,6 +1210,15 @@ is not the process lever; groundedness needs the citation term in the
 reward at RL time (the GRPO arm), where the model's own samples are
 scored rather than the teacher's selected.
 
+**Catalog-generation robustness (gen-2 narrative catalog, same sft_v2
+adapter; partial n = 1,007 of 1,837, 2026-09-08 18:45):** trained 9B 51.5
+on gen-2 vs 51.6 on gen-1 for the same questions (−0.1 [−3.1, +2.9]); vs the
+235B on the gen-2 catalog (46.6 on these questions; 45.6 full) **+5.0
+[+1.8, +8.1]**. The student's gain over the teacher is not an artefact of
+the one catalog it was trained on: it holds on an independently generated
+catalog, where the teacher itself drops 2.7 points and the student does
+not move.
+
 **FULL VIDEO-HOLMES TEST, trained 9B (2026-09-08 12:40; sft_v2 final adapter,
 merged weights, rationale format, gen-1 catalog, no pointer): 51.2 on all
 1,837 questions.** Paired: vs the 235B teacher on the same catalog (48.3,
