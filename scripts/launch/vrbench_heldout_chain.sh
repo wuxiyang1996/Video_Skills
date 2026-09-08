@@ -7,7 +7,7 @@ E=/fs/gamma-projects/vlm-robot/datasets/VRBench/VRBench_eval.jsonl; RUN=vrbench/
 declare -A resub
 while :; do total=0; done_n=0; line=""
   for s in 0 1 2 3 4 5; do n=$(grep -c . $H/allowlists/shard$s.txt); c=0
-    while read -r eid; do [ -n "$eid" ] && [ -f "$H/shard$s/$RUN/stages/$(echo "$eid" | tr -c "A-Za-z0-9\n" "_")/04_l1_example.json" ] && c=$((c+1)); done < $H/allowlists/shard$s.txt
+    while read -r eid; do [ -n "$eid" ] && [ -f "$H/shard$s/$RUN/stages/$(echo "$eid" | sed -E "s/[^A-Za-z0-9_.-]+/_/g")/04_l1_example.json" ] && c=$((c+1)); done < $H/allowlists/shard$s.txt
     total=$((total+n)); done_n=$((done_n+c)); line="$line s$s:$c/$n"
     if [ $c -lt $n ] && [ -z "$(squeue -u wuxiyang -h -n vrbh-$s -o %i)" ]; then
       if [ "${resub[$s]:-0}" -lt 6 ]; then resub[$s]=$(( ${resub[$s]:-0} + 1 )); echo "$(date +%m-%d\ %H:%M) shard$s no job -> resubmit #${resub[$s]}"; bash $S/launch_vrbench_heldout.sh $s; fi
