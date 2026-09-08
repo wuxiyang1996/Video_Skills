@@ -53,7 +53,7 @@ def main(argv=None) -> int:
         with safe_open(shard, "pt") as f:
             for key in f.keys():
                 merged[key] = f.get_tensor(key)
-    shutil.rmtree(tmp)
+    shutil.rmtree(tmp, ignore_errors=True)
     # vision tower and anything else the text-only class does not carry, verbatim from the base shards
     index = json.load((snap / "model.safetensors.index.json").open())["weight_map"]
     extra = {}
