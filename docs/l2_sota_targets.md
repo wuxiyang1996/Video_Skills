@@ -1162,6 +1162,14 @@ index; fixed). `sft_v3p` = SFT on those 822 rows (same lr/epochs) is
 training; the pre-registered comparison is sft_v3p vs sft_v2 on grounded
 accuracy (and accuracy) on the fresh 300, then the full test.
 
+**VRBench pilot 480, zero-shot for the reader (trained only on VH train):**
+sft_v2 66.9 vs base 9B 67.1, −0.2 [−3.8, +3.5]; vs the 235B cited rationale
+67.3, −0.4 n.s. The base 9B already reads the VRBench catalog at the
+235B's cited-rationale level, and VH-only SFT neither helps nor hurts
+there — no negative transfer. A VH+VRBench-trained model is the in-domain
+number to add. Full VH test, partial paired read at n = 1,035: base 41.7 →
+trained 51.6.
+
 **Where the 9B loses to the 235B on the same catalog (fresh 300, cited
 rationale runs; 2026-09-06).** 235B right / 9B wrong: 64; 9B right / 235B
 wrong: 41; both right: 73 — the union is 59%, so the small model is not a
