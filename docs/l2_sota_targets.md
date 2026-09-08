@@ -1106,6 +1106,20 @@ runs launched: `sft_v2` (all 2,886 rows, lr 1e-4) and `sft_v2b` (1,600
 rows, lr 5e-5 — confirmed from the checkpoint's trainer state) — each with step checkpoints and its own evaluation chain. Both run on the
 fast path (52–58 s/step); loss 7.0 → 5.2 over the first 40 steps.
 
+**The collapse was vLLM's LoRA serving, not the adapter (2026-09-08 07:20).**
+The corrected-prefix checkpoint-40 still collapsed when served with
+`--enable-lora` (230/257 "A", 6k-char prose). An HF-only diagnostic
+(`trainer/reader/debug_adapter.py`) on training rows shows the adapter is
+healthy: completion-only loss equals the full-logits loss at the same
+positions (0.865 = 0.865; alignment correct), the adapter lowers the loss
+against the base (1.21 → 0.87, 0.82 → 0.54), and greedy generation from the
+training prompt yields clean `{"reasoning": …, "label": …}` JSON with clip
+citations. vLLM 0.25's LoRA path for Qwen3.5 (served through the
+ConditionalGeneration wrapper) mis-applies the adapter. Fix: merge the
+adapter into the weights (`trainer/reader/merge_adapter.py`) and serve the
+merged model; the evaluation job now does this automatically. The
+LoRA-served early reads (27.3 / 28.3) are void.
+
 **Where the 9B loses to the 235B on the same catalog (fresh 300, cited
 rationale runs; 2026-09-06).** 235B right / 9B wrong: 64; 9B right / 235B
 wrong: 41; both right: 73 — the union is 59%, so the small model is not a
