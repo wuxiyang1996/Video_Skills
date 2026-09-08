@@ -66,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--grad-accum", type=int, default=8)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--seed", type=int, default=20260906)
+    ap.add_argument("--save-steps", type=int, default=0, help="Checkpoint the adapter every N optimizer steps (0 = only at epoch end).")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
 
@@ -108,7 +109,8 @@ def main(argv: list[str] | None = None) -> int:
         eval_ds = _DS([e for e in (encode_example(tokenizer, r, args.max_len) for r in load_rows(args.eval_data)) if e])
     targs = TrainingArguments(output_dir=str(args.output_dir), per_device_train_batch_size=1, per_device_eval_batch_size=1,
                               gradient_accumulation_steps=args.grad_accum, num_train_epochs=args.epochs, learning_rate=args.lr,
-                              lr_scheduler_type="cosine", warmup_ratio=0.05, bf16=True, logging_steps=10, save_strategy="epoch",
+                              lr_scheduler_type="cosine", warmup_ratio=0.05, bf16=True, logging_steps=10,
+                              save_strategy=("steps" if args.save_steps else "epoch"), save_steps=(args.save_steps or 500), save_total_limit=2,
                               eval_strategy="epoch" if eval_ds else "no", report_to=[], seed=args.seed,
                               gradient_checkpointing=True, remove_unused_columns=False, dataloader_num_workers=2)
     class CompletionOnlyTrainer(Trainer):
