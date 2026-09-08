@@ -17,7 +17,7 @@ if [ -n "${ADAPTER:-}" ]; then
   fi
   BASE=$MERGED; NAME=reader
 fi
-.venv-qwen35-vllm/bin/vllm serve $BASE --host 127.0.0.1 --port $PORT --served-model-name $BASE --dtype bfloat16 --max-model-len 32768 --gpu-memory-utilization 0.90 "${LORA_ARGS[@]}" > /fs/nexus-scratch/wuxiyang/reader_train/slurm_logs/vllm-$SLURM_JOB_ID.log 2>&1 &
+.venv-qwen35-vllm/bin/vllm serve $BASE --host 127.0.0.1 --port $PORT --served-model-name $NAME --dtype bfloat16 --max-model-len 32768 --gpu-memory-utilization 0.90 "${LORA_ARGS[@]}" > /fs/nexus-scratch/wuxiyang/reader_train/slurm_logs/vllm-$SLURM_JOB_ID.log 2>&1 &
 for i in $(seq 1 600); do curl -sf http://127.0.0.1:$PORT/v1/models >/dev/null && break; sleep 2; done; curl -sf http://127.0.0.1:$PORT/v1/models >/dev/null || { echo "vllm did not start"; exit 1; }
 SPY=.venv-qwen35-serve/bin/python
 $SPY -m scripts.eval.measure_answer_chain --l1-glob "$L1GLOB" --indices-from all --conditions direct --rationale --example-ids "$IDS" --workers 8 --timeout-s 600 --skill-model openai/gpt-oss-120b --answer-model $NAME --answer-api-base http://127.0.0.1:$PORT/v1/chat/completions --dump-rollouts "$OUT.rollouts.jsonl" --output "$OUT.json" > "$OUT.log" 2>&1
