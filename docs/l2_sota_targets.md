@@ -1181,6 +1181,13 @@ there — no negative transfer. A VH+VRBench-trained model is the in-domain
 number to add. Full VH test, partial paired read at n = 1,035: base 41.7 →
 trained 51.6.
 
+**CG-Bench 237, zero-shot for the reader (64k context; 6 prompts still
+too long):** trained 9B 39.0 vs the 235B on the same catalog 45.5 (paired
+n = 231), −6.5 [−12.6, 0.0]; the base 9B at 32k context scored 37.0 on the
+192 questions it could answer (64k rerun queued). So VH-only training
+leaves CG roughly where the base 9B is: no transfer gain, no loss; the
+long-video gap to the 235B remains.
+
 **FULL VIDEO-HOLMES TEST, trained 9B (2026-09-08 12:40; sft_v2 final adapter,
 merged weights, rationale format, gen-1 catalog, no pointer): 51.2 on all
 1,837 questions.** Paired: vs the 235B teacher on the same catalog (48.3,
