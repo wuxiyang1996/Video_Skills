@@ -6,4 +6,4 @@
 set -uo pipefail; cd /fs/gamma-projects/vlm-robot/Video_Skills
 export HF_HOME=/fs/gamma-projects/vlm-robot/Multi-hop-Reasoning-VLM-Agent/.hf_cache TRANSFORMERS_CACHE=/fs/gamma-projects/vlm-robot/Multi-hop-Reasoning-VLM-Agent/.hf_cache/hub PYTHONPATH=$PWD TOKENIZERS_PARALLELISM=false
 PY=/fs/gamma-projects/vlm-robot/conda/envs/video-skills-grpo/bin/python
-$PY -m trainer.reader.sft_lora --data "$DATA" --output-dir "$OUT" --max-len 24576 --epochs "${EPOCHS:-2}" --lr "${LR:-1e-4}" --grad-accum 8 ${EVAL:+--eval-data "$EVAL"} 2>&1 | tail -n 40
+$PY -m trainer.reader.sft_lora --data "$DATA" --output-dir "$OUT" --max-len 24576 --epochs "${EPOCHS:-1}" --lr "${LR:-1e-4}" --grad-accum 8 ${EVAL:+--eval-data "$EVAL"} 2>&1 | tail -n 40
