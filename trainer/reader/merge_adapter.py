@@ -45,7 +45,7 @@ def main(argv=None) -> int:
     # `model.language_model.layers.*`); read the saved tensors back so names match the base repo.
     tmp = args.out.parent / (args.out.name + ".tmp_text")
     if tmp.exists():
-        shutil.rmtree(tmp)
+        shutil.rmtree(tmp, ignore_errors=True)   # NFS keeps .nfs* handles briefly; the whole tree is deleted after evaluation
     model.save_pretrained(str(tmp), safe_serialization=True, max_shard_size="4GB")
     del model
     merged = {}
