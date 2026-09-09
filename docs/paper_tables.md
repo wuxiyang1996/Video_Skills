@@ -112,3 +112,14 @@ Zero-shot transfer: VRBench pilot 480 sft_v2 66.9 vs base 67.1 (n.s.); CG 237 (6
 - T3: frames8, repass16 (GPU, scavenger).
 - T6: VRBench held-out confirmation of the +4.3 (GPU L1 queued; criterion pre-registered).
 - Training line (separate paper section, ARR): Qwen3.5-9B reader baseline → SFT → GRPO with skill-derived rewards; VH test ≥ 45 is the bar.
+
+## T8. Efficiency: trained 9B reader vs the 235B teacher (Video-Holmes full test, 1,837 questions, same catalog)
+
+| reader | params (active) | where | throughput | cost / 1,837 q | accuracy |
+|---|---|---|---|---|---|
+| Qwen3-VL-235B-A22B (API, OpenRouter/Alibaba, $0.21/M in, $1.9/M out) | 235B (22B) | cloud, 6 workers | ≈24 q/min | ≈$5.7 (p50 prompt 11.8k tok + ~300 out ≈ $0.0031/q; measured CG-length prompts $0.0076/q) | 48.3 |
+| trained Qwen3.5-9B (LoRA merged, vLLM bf16, 64k ctx) | 9B | one L40S (48 GB), 8 workers | ≈23 q/min (1,837 q in 80 min after a 5-min load) | ≈$2.5 at a rented $1.8/h L40S ($0.0014/q); $0 on owned hardware | 51.2 |
+
+Same wall-clock throughput on a single 48 GB GPU as the 235B API at 6 concurrent calls, ≈2× cheaper per question at rental prices,
+26× fewer parameters, data never leaves the machine, and +2.8 accuracy. Timing from Slurm job 7475561 (base 9B, identical serving path);
+API cost from OpenRouter pricing on 2026-09-08 and the measured CG teacher pass ($8.2 / 1,080 questions).
