@@ -28,7 +28,7 @@ fi
 for i in $(seq 1 600); do curl -sf http://127.0.0.1:$PORT/v1/models >/dev/null && break; sleep 2; done; curl -sf http://127.0.0.1:$PORT/v1/models >/dev/null || { echo "vllm did not start"; exit 1; }
 SPY=.venv-qwen35-serve/bin/python
 # preemption-resumable: each attempt answers only the ids not yet in an earlier attempt's rows; attempts are merged at the end
-ATT=$OUT.attempt${SLURM_RESTART_COUNT:-0}; RUN_IDS=$IDS
+ATT=$OUT.attempt${SLURM_JOB_ID}_${SLURM_RESTART_COUNT:-0}; RUN_IDS=$IDS   # seeds from earlier runs may be placed as $OUT.attempt<anything>.rows.jsonl
 python3 - "$OUT" "$IDS" "$ATT.ids.txt" <<'PYX'
 import json,glob,sys
 out,ids,dst=sys.argv[1:4]; done=set()
