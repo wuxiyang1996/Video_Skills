@@ -1235,7 +1235,11 @@ Qwen2.5-VL-7B 27.8 (published) → base 9B on our catalog 41.0 → Gemini-2.5-Pr
 epoch, 32k; 2026-09-09 13:30).** Same adapter on the three held-out sets:
 - *Video-Holmes fresh 300:* 47.3 vs sft_v2 46.0 (+1.3 [−3.0, +5.7]), vs
   base 38.0 (+9.3 [+3.0, +15.3]), vs 235B 45.7 (+1.7 n.s.). Adding two
-  other datasets does not cost VH. Full-test run queued.
+  other datasets does not cost VH. *Full test 1,837 (16:20):* **51.3** vs
+  sft_v2 51.2 (+0.1 [−1.9, +2.1]; by type MHR +3.3, SR +3.1, PAR +3.6, TA
+  −6.0, TCI −4.0, all n.s.), vs the 235B teacher 48.3 **+2.9 [+0.7, +5.1]**,
+  vs base 9B 41.0 +10.2 [+7.9, +12.6]. One adapter now beats the teacher
+  on VH (full test) and VRBench (held-out) and ties it on CG.
 - *VRBench held-out 495 (videos 61–120, never trained on):* **75.4** vs the
   235B cited rationale 71.7, **+3.6 [+0.2, +7.3]**; vs the 235B plain direct
   72.5 (+2.8 n.s.); vs graph2 69.9 (+5.5 [+1.8, +9.1]); vs the VH-only
