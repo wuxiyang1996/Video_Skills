@@ -1211,13 +1211,14 @@ reward at RL time (the GRPO arm), where the model's own samples are
 scored rather than the teacher's selected.
 
 **Catalog-generation robustness (gen-2 narrative catalog, same sft_v2
-adapter; partial n = 1,007 of 1,837, 2026-09-08 18:45):** trained 9B 51.5
-on gen-2 vs 51.6 on gen-1 for the same questions (−0.1 [−3.1, +2.9]); vs the
-235B on the gen-2 catalog (46.6 on these questions; 45.6 full) **+5.0
-[+1.8, +8.1]**. The student's gain over the teacher is not an artefact of
-the one catalog it was trained on: it holds on an independently generated
-catalog, where the teacher itself drops 2.7 points and the student does
-not move.
+adapter; full n = 1,837, 2026-09-09 02:20, 0 errors):** trained 9B **51.4**
+on gen-2 vs 51.2 on gen-1 (+0.3 [−1.8, +2.3]); vs the 235B on the gen-2
+catalog (45.6) **+5.8 [+3.5, +8.2]** (TA +22.5 [+14.5, +30.5], TCI +6.2,
+CTI +5.9 CI-clean; MHR +3.9, IMC +4.4, SR +1.7, PAR −0.5 n.s.); vs the base
+9B +10.4 [+8.1, +12.9]. The student's gain over the teacher is not an
+artefact of the one catalog it was trained on: on an independently
+generated catalog the teacher drops 2.7 points and the student does not
+move, so the margin widens from +2.8 to +5.8.
 
 **Base Qwen3.5-9B on the full Video-Holmes test (same gen-1 catalog, rationale
 format, 64k; 2026-09-08 22:20): 41.0 on all 1,837 (0 errors).** Paired vs
