@@ -26,8 +26,8 @@ TA 30.0/30.0 vs 34.0; PAR 49.0/53.1 vs 40.2.
 
 | reader | fresh 300 | full test 1,837 | vs 235B teacher (48.3) | vs base 9B |
 |---|---|---|---|---|
-| base Qwen3.5-9B | 38.0 | (running) | | — |
-| sft_v2 (2,886 rows, 1 epoch) | 46.0 | **51.2** | **+2.8 [+0.5, +5.1]** | +9.7 [+7.0, +12.3] (partial n=1,356) |
+| base Qwen3.5-9B | 38.0 | 41.0 | −7.3 [−9.7, −4.9] | — |
+| sft_v2 (2,886 rows, 1 epoch) | 46.0 | **51.2** | **+2.8 [+0.5, +5.1]** | **+10.1 [+7.8, +12.5]** (n=1,837) |
 | sft_v2 checkpoint-320 | 48.0 | — | | |
 | sft_v2b (1,600 rows, lr 5e-5) | 45.7 | — | | |
 | sft_v3p (822 citation-precise rows; process arm) | 41.0 (grounded 5.3 vs sft_v2 6.0, n.s.) | — | | +3.0 [−3.3, +9.3] |

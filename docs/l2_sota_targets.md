@@ -1219,6 +1219,16 @@ the one catalog it was trained on: it holds on an independently generated
 catalog, where the teacher itself drops 2.7 points and the student does
 not move.
 
+**Base Qwen3.5-9B on the full Video-Holmes test (same gen-1 catalog, rationale
+format, 64k; 2026-09-08 22:20): 41.0 on all 1,837 (0 errors).** Paired vs
+the trained sft_v2 (51.2): **+10.1 [+7.8, +12.5]**; by type MHR +14.8
+[+9.0, +20.5], IMC +12.7, TA +12.0, CTI +10.4, TCI +10.3, PAR +8.3 (all
+CI-clean), SR +2.1 n.s. The 235B teacher (48.3) beats the untrained 9B by
+7.3 [4.9, 9.7]; one epoch of LoRA SFT on 2,886 verified teacher rationales
+closes that gap and overshoots it by 2.8. Final ladder on the full test:
+Qwen2.5-VL-7B 27.8 (published) → base 9B on our catalog 41.0 → Gemini-2.5-Pro
+45.0 (published) → 235B teacher 48.3 → trained 9B 51.2.
+
 **FULL VIDEO-HOLMES TEST, trained 9B (2026-09-08 12:40; sft_v2 final adapter,
 merged weights, rationale format, gen-1 catalog, no pointer): 51.2 on all
 1,837 questions.** Paired: vs the 235B teacher on the same catalog (48.3,
