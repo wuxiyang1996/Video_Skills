@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=rdr-eval --partition=scavenger --account=scavenger --qos=scavenger
 #SBATCH --gres=gpu:1 --constraint="Ampere|Ada|Hopper|Blackwell" --exclude=cbcb26,clip04,clip11,clip14,cml12,cml17,cml18,cml19,cml20,cml21,cml22,cml23,cml24,cml25,cml26,cml27,cml28,gammagpu00,gammagpu01,gammagpu02,gammagpu03,gammagpu04,gammagpu05,gammagpu06,gammagpu07,gammagpu08,gammagpu09,tron06,tron07,tron08,tron09,tron10,tron11,tron12,tron13,tron14,tron15,tron16,tron17,tron18,tron19,tron20,tron21,tron22,tron23,tron24,tron25,tron26,tron27,tron28,tron29,tron30,tron31,tron32,tron33,tron34,tron35,tron36,tron37,tron38,tron39,tron40,tron41,tron42,tron43,tron44,tron45,tron46,tron47,tron48,tron49,tron50,tron51,tron52,tron53,tron54,tron55,tron56,tron57,tron58,tron59,tron60,tron61,tron64,tron67,vulcan33,vulcan34,vulcan35,vulcan36,vulcan37,vulcan38,vulcan39,vulcan40,vulcan41,vulcan42,vulcan43,vulcan44 --cpus-per-task=8 --mem=64G --time=06:00:00
+#SBATCH --requeue --open-mode=append
 #SBATCH --output=/fs/nexus-scratch/wuxiyang/reader_train/slurm_logs/eval-%j.out --error=/fs/nexus-scratch/wuxiyang/reader_train/slurm_logs/eval-%j.err
 # Serve Qwen3.5-9B (+ optional LoRA adapter $ADAPTER) with vLLM and answer $IDS over $L1GLOB in the rationale format. Env: ADAPTER, L1GLOB, IDS, OUT (prefix)
 set -uo pipefail; cd /fs/gamma-projects/vlm-robot/Video_Skills
@@ -26,6 +27,34 @@ fi
 .venv-qwen35-vllm/bin/vllm serve $BASE --host 127.0.0.1 --port $PORT --served-model-name $NAME --dtype bfloat16 --max-model-len "${MAXLEN:-32768}" --gpu-memory-utilization 0.90 "${LORA_ARGS[@]}" > /fs/nexus-scratch/wuxiyang/reader_train/slurm_logs/vllm-$SLURM_JOB_ID.log 2>&1 &
 for i in $(seq 1 600); do curl -sf http://127.0.0.1:$PORT/v1/models >/dev/null && break; sleep 2; done; curl -sf http://127.0.0.1:$PORT/v1/models >/dev/null || { echo "vllm did not start"; exit 1; }
 SPY=.venv-qwen35-serve/bin/python
-$SPY -m scripts.eval.measure_answer_chain --l1-glob "$L1GLOB" --indices-from all --conditions direct --rationale --example-ids "$IDS" --workers 8 --timeout-s 600 --skill-model openai/gpt-oss-120b --answer-model $NAME --answer-api-base http://127.0.0.1:$PORT/v1/chat/completions --dump-rollouts "$OUT.rollouts.jsonl" --output "$OUT.json" > "$OUT.log" 2>&1
+# preemption-resumable: each attempt answers only the ids not yet in an earlier attempt's rows; attempts are merged at the end
+ATT=$OUT.attempt${SLURM_RESTART_COUNT:-0}; RUN_IDS=$IDS
+python3 - "$OUT" "$IDS" "$ATT.ids.txt" <<'PYX'
+import json,glob,sys
+out,ids,dst=sys.argv[1:4]; done=set()
+for f in glob.glob(out+'.attempt*.rows.jsonl'):
+    for l in open(f):
+        try: r=json.loads(l)
+        except Exception: continue
+        if not r.get('error'): done.add(r['example_id'])
+want=[x.strip() for x in open(ids) if x.strip()]; rem=[x for x in want if x not in done]
+open(dst,'w').write('\n'.join(rem)+('\n' if rem else '')); print(f'resume: {len(done)} done, {len(rem)} remaining of {len(want)}')
+PYX
+RUN_IDS=$ATT.ids.txt
+$SPY -m scripts.eval.measure_answer_chain --l1-glob "$L1GLOB" --indices-from all --conditions direct --rationale --example-ids "$RUN_IDS" --workers 8 --timeout-s 600 --skill-model openai/gpt-oss-120b --answer-model $NAME --answer-api-base http://127.0.0.1:$PORT/v1/chat/completions --dump-rollouts "$ATT.rollouts.jsonl" --output "$ATT.json" > "$ATT.log" 2>&1
+python3 - "$OUT" <<'PYX'
+import json,glob,sys
+out=sys.argv[1]
+for kind in ('rows','rollouts'):
+    best={}
+    for f in sorted(glob.glob(f'{out}.attempt*.{kind}.jsonl')):
+        for l in open(f):
+            try: r=json.loads(l)
+            except Exception: continue
+            k=r.get('example_id'); 
+            if k not in best or (best[k].get('error') and not r.get('error')): best[k]=r
+    open(f'{out}.{kind}.jsonl','w').write(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in best.values())); print(kind,len(best))
+PYX
+cp "$ATT.json" "$OUT.json" 2>/dev/null; cat "$OUT".attempt*.log > "$OUT.log" 2>/dev/null
 f=$OUT.rows.jsonl; r=$(cat $f|wc -l); c=$(grep -c '"correct": true' $f); echo "$(basename $OUT): $r rows, acc $(python3 -c "print(round(100*$c/max($r,1),1))")%"
 if [ -n "${ADAPTER:-}" ] && [ "${KEEP_MERGED:-0}" != "1" ]; then rm -rf "$MERGED"; echo "merged weights removed: $MERGED"; fi
