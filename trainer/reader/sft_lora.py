@@ -71,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, default=20260906)
     ap.add_argument("--save-steps", type=int, default=0, help="Checkpoint the adapter every N optimizer steps (0 = only at epoch end).")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--resume", action="store_true", help="Resume from the latest checkpoint-* under --output-dir (for preempted/requeued jobs).")
     args = ap.parse_args(argv)
 
     from transformers import AutoTokenizer
@@ -123,7 +124,13 @@ def main(argv: list[str] | None = None) -> int:
 
     trainer = CompletionOnlyTrainer(model=model, args=targs, train_dataset=_DS(encoded), eval_dataset=eval_ds,
                                     data_collator=DataCollatorForSeq2Seq(tokenizer, padding=True, label_pad_token_id=-100))
-    trainer.train()
+    resume_from = None
+    if args.resume:
+        cks = sorted(args.output_dir.glob("checkpoint-*"), key=lambda d: int(d.name.split("-")[-1]) if d.name.split("-")[-1].isdigit() else -1)
+        cks = [c for c in cks if (c / "trainer_state.json").exists()]
+        resume_from = str(cks[-1]) if cks else None
+        print(json.dumps({"resume_from": resume_from}), flush=True)
+    trainer.train(resume_from_checkpoint=resume_from)
     model.save_pretrained(str(args.output_dir / "adapter"))
     tokenizer.save_pretrained(str(args.output_dir / "adapter"))
     print(json.dumps({"saved": str(args.output_dir / "adapter"), "attn": attn}))

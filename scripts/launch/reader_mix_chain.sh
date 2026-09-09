@@ -17,7 +17,7 @@ for name in ['sft_v1','sft_vrb_p50','sft_cg_p50']:
 random.Random(0).shuffle(rows); open(f'{R}/sft_mix.jsonl','w').write(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in rows)); print('sft_mix',len(rows))
 PY
 /fs/gamma-projects/vlm-robot/conda/envs/video-skills-grpo/bin/python -m trainer.reader.sft_lora --data $R/sft_mix.jsonl --output-dir $R/sft_mix --max-len 32768 --dry-run 2>&1 | tail -1
-jid=$(DATA=$R/sft_mix.jsonl OUT=$R/sft_mix MAXLEN=32768 SAVE_STEPS=80 sbatch --parsable scripts/launch/reader_sft.sbatch); echo "$(date +%m-%d\ %H:%M) SFT mix job $jid"
+jid=${SFT_JID:-}; [ -z "$jid" ] && jid=$(DATA=$R/sft_mix.jsonl OUT=$R/sft_mix MAXLEN=32768 SAVE_STEPS=80 sbatch --parsable scripts/launch/reader_sft.sbatch); echo "$(date +%m-%d\ %H:%M) SFT mix job $jid"
 while [ -n "$(squeue -h -j $jid -o %i)" ]; do sleep 300; done; ls $R/sft_mix/adapter/adapter_config.json >/dev/null || { echo "SFT mix produced no adapter; see $R/slurm_logs/sft-$jid.err"; exit 1; }
 A=$R/sft_mix/adapter; export KEEP_MERGED=1
 j1=$(ADAPTER=$A L1GLOB="$P/narr_px_plus/stages/*/04_l1_example.json" IDS=$M/fresh_ids_300.txt OUT=$M/rdr_sft_mix_rationale_fresh300 sbatch --parsable scripts/launch/reader_eval.sbatch)

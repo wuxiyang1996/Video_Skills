@@ -8,7 +8,7 @@ echo "VH+VRB mix (CG teacher blocked on credits)"
 echo "$(date +%m-%d\ %H:%M) in-domain data ready"
 # same filter as VH sft_v1: right answer + citation precision >= 0.5 where gold spans exist
 /fs/gamma-projects/vlm-robot/conda/envs/video-skills-grpo/bin/python -m trainer.reader.sft_lora --data $R/sft_mix_vv.jsonl --output-dir $R/sft_mix_vv --max-len 32768 --dry-run 2>&1 | tail -1
-jid=$(DATA=$R/sft_mix_vv.jsonl OUT=$R/sft_mix_vv MAXLEN=32768 SAVE_STEPS=80 sbatch --parsable scripts/launch/reader_sft.sbatch); echo "$(date +%m-%d\ %H:%M) SFT mix job $jid"
+jid=${SFT_JID:-}; [ -z "$jid" ] && jid=$(DATA=$R/sft_mix_vv.jsonl OUT=$R/sft_mix_vv MAXLEN=32768 SAVE_STEPS=80 sbatch --parsable scripts/launch/reader_sft.sbatch); echo "$(date +%m-%d\ %H:%M) SFT mix job $jid"
 while [ -n "$(squeue -h -j $jid -o %i)" ]; do sleep 300; done; ls $R/sft_mix_vv/adapter/adapter_config.json >/dev/null || { echo "SFT mix produced no adapter; see $R/slurm_logs/sft-$jid.err"; exit 1; }
 A=$R/sft_mix_vv/adapter; export KEEP_MERGED=1
 j1=$(ADAPTER=$A L1GLOB="$P/narr_px_plus/stages/*/04_l1_example.json" IDS=$M/fresh_ids_300.txt OUT=$M/rdr_sft_mix_vv_rationale_fresh300 sbatch --parsable scripts/launch/reader_eval.sbatch)
