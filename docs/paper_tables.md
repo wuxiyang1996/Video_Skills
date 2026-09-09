@@ -31,6 +31,7 @@ TA 30.0/30.0 vs 34.0; PAR 49.0/53.1 vs 40.2.
 | sft_v2 checkpoint-320 | 48.0 | — | | |
 | sft_v2b (1,600 rows, lr 5e-5) | 45.7 | — | | |
 | sft_v3p (822 citation-precise rows; process arm) | 41.0 (grounded 5.3 vs sft_v2 6.0, n.s.) | — | | +3.0 [−3.3, +9.3] |
+| sft_mix (VH + VRBench-480 + CG-train, 4,520 rows) | 47.3 | (queued) | VRBench held-out 495: **75.4** vs 235B 71.7, +3.6 [+0.2, +7.3]; CG 237: 39.4 vs 235B 41.1 (n.s.) | +9.3 [+3.0, +15.3] |
 
 By type on the full test (sft_v2 − 235B): TA +20.0*, MHR +3.9, CTI +2.6, TCI +1.8, SR +0.3, PAR −1.6, IMC −4.0.
 Zero-shot transfer: VRBench pilot 480 sft_v2 66.9 vs base 67.1 (n.s.); CG 237 (64k) sft_v2 39.0 = base 9B 39.0 (+0.0 [−6.5, +6.5]), 235B 45.5. In-domain VH+VRBench and VH+VRBench+CG readers in training.

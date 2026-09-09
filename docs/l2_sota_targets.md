@@ -1230,6 +1230,35 @@ closes that gap and overshoots it by 2.8. Final ladder on the full test:
 Qwen2.5-VL-7B 27.8 (published) → base 9B on our catalog 41.0 → Gemini-2.5-Pro
 45.0 (published) → 235B teacher 48.3 → trained 9B 51.2.
 
+**IN-DOMAIN READER, three datasets (sft_mix = VH 2,886 + VRBench pilot-480
+1,021 + CG-train 613 verified rows, precision ≥ 0.5 filter everywhere; 1
+epoch, 32k; 2026-09-09 13:30).** Same adapter on the three held-out sets:
+- *Video-Holmes fresh 300:* 47.3 vs sft_v2 46.0 (+1.3 [−3.0, +5.7]), vs
+  base 38.0 (+9.3 [+3.0, +15.3]), vs 235B 45.7 (+1.7 n.s.). Adding two
+  other datasets does not cost VH. Full-test run queued.
+- *VRBench held-out 495 (videos 61–120, never trained on):* **75.4** vs the
+  235B cited rationale 71.7, **+3.6 [+0.2, +7.3]**; vs the 235B plain direct
+  72.5 (+2.8 n.s.); vs graph2 69.9 (+5.5 [+1.8, +9.1]); vs the VH-only
+  sft_v2 72.7 (+2.6 [−0.4, +5.9]). The VH-only student was already at the
+  teacher's level here (+1.0 n.s.); in-domain rows lift it above.
+  Pre-registered grounded accuracy (correct ∧ citation precision ≥ 0.5):
+  235B 25.1, sft_v2 26.1, mix 25.5 (mix − 235B +0.4 [−3.8, +4.6]); the
+  decomposition's graph2 (31.5) remains the only thing that moves it
+  (mix − graph2 −6.1 [−10.1, −2.0]). Mean citation precision 40.8 / 41.7 /
+  39.7 vs graph2 49.7.
+- *CG-Bench 237 (64k; 231 answerable):* 39.4 vs sft_v2 39.0 (+0.4), vs base
+  39.0, vs the 235B 41.1 on the same subset (−1.7 [−8.2, +4.8]; 45.5 on all
+  237). 613 CG rows (the precision filter keeps 613 of 1,539 correct
+  teacher rows because CG clue intervals are coarse) do not move CG. An
+  ablation with all 1,539 CG rows (sft_mix2, 5,446 rows) is training.
+
+Reading: outcome SFT on skill-verified teacher rationales makes the 9B
+student match or beat the 235B teacher on Video-Holmes (CI-clean, two
+catalogs) and VRBench (CI-clean, held-out videos), and leaves CG at the
+teacher's shadow (n.s. below). Groundedness is unchanged by any SFT
+variant; it is the decomposition (graph2) that raises it, which is the
+process claim, and the RL citation-reward arm is the open experiment.
+
 **FULL VIDEO-HOLMES TEST, trained 9B (2026-09-08 12:40; sft_v2 final adapter,
 merged weights, rationale format, gen-1 catalog, no pointer): 51.2 on all
 1,837 questions.** Paired: vs the 235B teacher on the same catalog (48.3,
